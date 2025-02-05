@@ -3,6 +3,21 @@
 uvicorn server:app --reload
 ```
 
+## Environment Variables
+Create a `.env` file in the root directory with the following configurations:
+
+```env
+# Google API Configuration
+GOOGLE_API_KEY=your_google_api_key_here
+```
+
+### Required Environment Variables
+| Variable | Description | Required |
+|----------|-------------|----------|
+| GOOGLE_API_KEY | API key for Google services integration | Yes |
+
+**Note:** Never commit your actual API keys to version control. The values shown above are just examples.
+
 ## WebSocket Connection
 The application provides a WebSocket endpoint for real-time communication.
 
