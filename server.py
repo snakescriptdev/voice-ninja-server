@@ -72,6 +72,11 @@ async def websocket_endpoint(websocket: WebSocket):
     # Get authentication header
     try:
         auth_header = websocket.query_params['authorization']
+        voice = websocket.query_params.get('voice')
+        if voice not in ["Aoede", "Charon", "Fenrir", "Kore", "Puck"]:
+            voice = "Charon"
+        else:
+            voice = voice
         
         if not auth_header.startswith('Basic '):
             logger.warning("Missing or invalid Authorization header")
@@ -86,7 +91,7 @@ async def websocket_endpoint(websocket: WebSocket):
         else:
             logger.info("Authentication successful")
             await websocket.accept()
-        await run_bot(websocket)
+        await run_bot(websocket, voice)
 
         
     except Exception as e:

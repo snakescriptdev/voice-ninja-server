@@ -50,7 +50,6 @@ tools = [
     }
 ]
 
-
 system_instruction =  """
     Always start with "I am Sage, an AI empowered agent. How can I help you today?"
     I am SAGE, your engaging voice assistant for this conversation. My responses will be:
@@ -87,6 +86,8 @@ def load_kb_from_csv(csv_path: str) -> pd.DataFrame:
     """Load knowledge base from CSV file"""
     return pd.read_csv(csv_path)
 
+kb_df = load_kb_from_csv("snakescript_kb.csv")
+
 def query_kb(df: pd.DataFrame, query: str) -> Optional[str]:
     """Query the knowledge base using simple keyword matching"""
     # Convert query to lowercase for case-insensitive matching
@@ -115,7 +116,37 @@ def payment_kb(input: str) -> str:
     Please contact our support team for accurate information."""
     return default_response
 
-async def run_bot(websocket_client):
+def get_kb_content(csv_path: str) -> str:
+    """
+    Get knowledge base content in a readable string format
+    
+    Args:
+        csv_path (str): Path to the CSV file
+        
+    Returns:
+        str: Formatted string containing KB content
+    """
+    try:
+        # Read CSV file
+        df = pd.read_csv(csv_path)
+        
+        # Format content
+        content_parts = []
+        for idx, row in df.iterrows():
+            question = row['question'].strip()
+            answer = row['answer'].strip()
+            content_parts.append(f"Q: {question}\nA: {answer}\n")
+            
+        # Join all parts with separator
+        formatted_content = "\n".join(content_parts)
+        
+        return formatted_content
+    
+    except Exception as e:
+        logger.error(f"Error reading KB content: {str(e)}")
+        return "Error: Unable to read knowledge base content"
+
+async def run_bot(websocket_client, voice):
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
         params=FastAPIWebsocketParams(
@@ -130,19 +161,28 @@ async def run_bot(websocket_client):
             serializer=ProtobufFrameSerializer(),
         )
     )
+    service_system_instruction = f"""
+        You are a helpful LLM Snakescript's Advanced Guidance Expert (SAGE) in Snakescript LLP Company.
+        Your goal is to demonstrate your capabilities in a succinct way.
+        Your output will be converted to audio so don't include special characters in your answers. 
+        Respond to what the user said in a creative and helpful way.
+        there tools (get_snakescript_info) are available to you to get information about the company(snakescript) and its products, service , voice agent ,web development list of sectors.
+        
+        ### Knowledge Base ###
+        {get_kb_content("snakescript_kb.csv")}
+    """
     llm = GeminiMultimodalLiveLLMService(
+        system_instruction=service_system_instruction,
         api_key=os.getenv("GOOGLE_API_KEY"),
-        tools=tools,
-        voice_id="Aoede",                    # Voices: Aoede, Charon, Fenrir, Kore, Puck
+        voice_id=voice,                    # Voices: Aoede, Charon, Fenrir, Kore, Puck
     )
-    llm.register_function("get_snakescript_info", payment_kb)
 
 
 
     context = OpenAILLMContext(
         
         [{"role": "system", "content": system_instruction},
-            {"role": "user", "content": "Say Hello and introduce yourself as SAGE and What Does SAGE Mean?"}],
+            {"role": "user", "content": "Say Hello and introduce yourself as SAGE"}],
     )
     context_aggregator = llm.create_context_aggregator(context)
     audiobuffer = AudioBufferProcessor(sample_rate=SAMPLE_RATE)

@@ -1,5 +1,10 @@
 class WebSocketClient {
     constructor() {
+        // Add base URL configuration
+        this.BASE_URL = window.location.hostname === 'localhost' 
+            ? 'ws://localhost:8000'
+            : `wss://${window.location.host}`;
+            
         // Update these constants for better performance
         this.SAMPLE_RATE = 24000; // Increased from 16000
         this.NUM_CHANNELS = 1;  // Changed from 2 to 1 for better streaming
@@ -58,6 +63,7 @@ class WebSocketClient {
             this.logContainer = document.getElementById('log-container');
             this.connectBtn = document.getElementById('start-btn');
             this.disconnectBtn = document.getElementById('stop-btn');
+            this.languageSelect = document.getElementById('language-select');
         } catch (error) {
             this.log(`Error initializing DOM elements: ${error.message}`, 'error');
         }
@@ -100,7 +106,12 @@ class WebSocketClient {
     log(message, type = 'info') {
         const entry = document.createElement('div');
         entry.className = `log-entry log-${type}`;
-        entry.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+        const timestamp = new Date().toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+        });
+        entry.textContent = `${timestamp}: ${message}`;
         this.logContainer.appendChild(entry);
         this.logContainer.scrollTop = this.logContainer.scrollHeight;
     }
@@ -124,6 +135,16 @@ class WebSocketClient {
         }
     }
     
+    get_voice(){
+        try{
+            const voice = this.languageSelect.value;
+            return voice;
+        } catch (error) {
+            this.log(`Error getting voice: ${error.message}`, 'error');
+            return "";
+        }
+    }
+    
     async initAudioContext() {
         try {
             window.AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -141,21 +162,26 @@ class WebSocketClient {
     
     async connect() {
         try {
-            
             this.updateStatus('connecting', 'Connecting...');
             this.log('Attempting to connect...');
             
-            // Create WebSocket connection with authorization header as query parameter
+            // Use dynamic WebSocket URL
             const authHeader = this.getAuthHeader();
-            const wsUrl = `ws://localhost:8000/ws?authorization=${encodeURIComponent(authHeader)}`;
+            const voice = this.get_voice();
+            const wsUrl = `${this.BASE_URL}/ws?authorization=${encodeURIComponent(authHeader)}&voice=${encodeURIComponent(voice)}`;
+            
             this.ws = new WebSocket(wsUrl);
             this.ws.binaryType = 'arraybuffer';
             
             this.ws.onopen = () => {
                 this.updateStatus('connected', 'Connected');
-                this.log('Connected successfully!');
+                this.log('Connected successfully!', 'info');
+                this.log('Selected Voice: ' + voice, 'info');
                 this.connectBtn.disabled = true;
+                this.connectBtn.hidden = true;
                 this.disconnectBtn.disabled = false;
+                this.disconnectBtn.hidden = false;
+                this.languageSelect.disabled = true;
                 if (!this.audioContext) {
                     this.initAudioContext();
                 }
@@ -178,12 +204,14 @@ class WebSocketClient {
             
             this.ws.onclose = () => {
                 this.updateStatus('', 'Disconnected');
-                this.log('Connection closed');
+                this.log('Connection closed', 'error');
                 this.connectBtn.disabled = false;
+                this.connectBtn.hidden = false;
                 this.disconnectBtn.disabled = true;
-                this.formatBtn.disabled = true;
-                this.sendBtn.disabled = true;
+                this.disconnectBtn.hidden = true;
+                this.languageSelect.disabled = false;
                 this.stopAudio(false);
+                window.location.reload();
             };
             
         } catch (error) {

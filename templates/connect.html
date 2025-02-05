@@ -14,14 +14,26 @@
             <input hidden id="username" placeholder="Username" value="admin">
             <input hidden id="password" placeholder="Password" value="admin123">
         
-        <div>
-            Status: <div class="status-indicator"></div>
-            <span id="connection-status">Disconnected</span>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <div >
+                Status: <div class="status-indicator"></div>
+                <span id="connection-status">Disconnected</span>
+            </div>
+            <div>
+                <label for="language-select"> Select Voice</label>
+                <select id="language-select" class="language-dropdown">
+                    <option value="Aoede">Aoede</option>
+                    <option value="Charon">Charon</option>
+                    <option value="Fenrir">Fenrir</option>
+                    <option value="Kore">Kore</option>
+                    <option value="Puck">Puck</option>
+                </select>
+            </div>
         </div>
         
         <div class="button-group">
             <button id="start-btn" class="connect-btn">Start</button>
-            <button id="stop-btn" class="disconnect-btn" disabled>Stop</button>
+            <button id="stop-btn" class="disconnect-btn" disabled hidden>Stop</button>
         </div>
         
         <div class="log-container" id="log-container"></div>

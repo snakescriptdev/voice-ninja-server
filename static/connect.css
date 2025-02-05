@@ -113,3 +113,26 @@ button:disabled {
 .log-container::-webkit-scrollbar-thumb:hover {
     background: #357abd;
 }
+
+.language-dropdown {
+    padding: 8px;
+    margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+    width: 200px;
+}
+
+.language-dropdown:focus {
+    outline: none;
+    border-color: #007bff;
+    box-shadow: 0 0 0 2px rgba(0,123,255,.25);
+}
+
+.log-info {
+    color: #007bff;
+}
+
+.log-error {
+    color: #ff4444;
+}
