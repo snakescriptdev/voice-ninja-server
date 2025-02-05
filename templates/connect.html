@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <script src="//cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js"></script>
+    <title>WebSocket Connection Demo</title>
+    <style>
+        .container {
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+        
+        .status-indicator {
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: inline-block;
+            background-color: gray;
+            transition: background-color 0.3s ease;
+        }
+        
+        .status-indicator.connecting { background-color: yellow; }
+        .status-indicator.connected { background-color: green; }
+        .status-indicator.error { background-color: red; }
+        
+        .log-container {
+            margin-top: 20px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            height: 200px;
+            overflow-y: auto;
+        }
+        
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        button {
+            padding: 10px 20px;
+            margin: 10px 0;
+            cursor: pointer;
+        }
+        
+        .credentials-form {
+            margin-bottom: 20px;
+        }
+        
+        .message-form {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        
+        #message-input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        
+        #send-btn {
+            padding: 8px 20px;
+        }
+        
+        #send-btn:disabled {
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+        
+        #json-input {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-family: monospace;
+            margin-bottom: 10px;
+            resize: vertical;
+        }
+        
+        .button-group {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .json-error {
+            border-color: red;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>WebSocket Connection Demo</h1>
+        
+        <div class="credentials-form">
+            <input type="text" id="username" placeholder="Username" value="admin">
+            <input type="password" id="password" placeholder="Password" value="admin123">
+        </div>
+        
+        <div>
+            Status: <div class="status-indicator"></div>
+            <span id="connection-status">Disconnected</span>
+        </div>
+        
+        <button id="connect-btn">Connect to WebSocket</button>
+        <button id="disconnect-btn" disabled>Disconnect</button>
+        
+        <div class="message-form">
+            <textarea id="json-input" placeholder="Enter JSON message..." rows="4"></textarea>
+            <div class="button-group">
+                <button id="format-btn">Format JSON</button>
+                <button id="send-btn" disabled>Send</button>
+                <!-- <button id="enable-audio" class="btn">Enable Audio</button> -->
+            </div>
+        </div>
+        
+        <div class="log-container" id="log-container"></div>
+    </div>
+    <script src="static/websocket.js"></script>
+</body>
+</html>
