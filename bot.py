@@ -21,7 +21,7 @@ from pipecat.transports.network.fastapi_websocket import (
     FastAPIWebsocketTransport,
 )
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService
-SAMPLE_RATE = 8000
+SAMPLE_RATE = 24000
 load_dotenv(override=True)
 
 logger.remove(0)
@@ -112,11 +112,11 @@ def payment_kb(input: str) -> str:
     Please contact our support team for accurate information."""
     return default_response
 
-async def run_bot(websocket_client, stream_sid):
+async def run_bot(websocket_client):
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
         params=FastAPIWebsocketParams(
-            audio_out_sample_rate=16000,
+            audio_out_sample_rate=24000,
             audio_out_enabled=True,
             add_wav_header=True,
             vad_enabled=True,
@@ -125,15 +125,6 @@ async def run_bot(websocket_client, stream_sid):
             serializer=ProtobufFrameSerializer()
         )
     )
-
-    # llm = OpenAILLMService(api_key=os.getenv("OPENAI_API_KEY"), model="gpt-4o")
-
-    # stt = DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
-
-    # tts = CartesiaTTSService(
-    #     api_key=os.getenv("CARTESIA_API_KEY"),
-    #     voice_id="79a125e8-cd45-4c13-8a67-188112f4dd22",  # British Lady
-    # )
     llm = GeminiMultimodalLiveLLMService(
         api_key=os.getenv("GOOGLE_API_KEY"),
         system_instruction=system_instruction,
@@ -144,15 +135,7 @@ async def run_bot(websocket_client, stream_sid):
     )
     llm.register_function("get_payment_info", payment_kb)
 
-        
-    # messages = [
-    #     {
-    #         "role": "system",
-    #         "content": "You are a helpful LLM in an audio call. Your goal is to demonstrate your capabilities in a succinct way. Your output will be converted to audio so don't include special characters in your answers. Respond to what the user said in a creative and helpful way.",
-    #     },
-    # ]
 
-    # context = OpenAILLMContext(messages)
 
     context = OpenAILLMContext(
         
@@ -167,7 +150,7 @@ async def run_bot(websocket_client, stream_sid):
             context_aggregator.user(),
             llm,  # LLM
             transport.output(),  # Websocket output to client
-            audiobuffer,  # Used to buffer the audio in the pipeline
+            audiobuffer,
             context_aggregator.assistant(),
         ]
     )

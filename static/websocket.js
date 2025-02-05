@@ -1,58 +1,68 @@
-let isPlaying = true;
-let lastMessageTime = 0;
-const SAMPLE_RATE = 16000;
-const NUM_CHANNELS = 1;
-const PLAY_TIME_RESET_THRESHOLD_MS = 1.0;
-let Frame = null;
-let audioContext = null;
-// AudioContext play time.
-let playTime = 0;
-const proto = protobuf.load('static/frame.proto', (err, root) => {
-    if (err) {
-        console.error("Error loading protobuf schema", err);
-        throw err;
-    }
-    Frame = root.lookupType('Frame');
-});
-
-audioContext = new (window.AudioContext || window.webkitAudioContext)({
-    latencyHint: 'interactive',
-    sampleRate: SAMPLE_RATE
-});
 
 class WebSocketClient {
     constructor() {
+        // Update these constants for better performance
+        this.SAMPLE_RATE = 24000; // Increased from 16000
+        this.NUM_CHANNELS = 1;  // Changed from 2 to 1 for better streaming
+        this.PLAY_TIME_RESET_THRESHOLD_MS = 0.5; // Reduced from 4.0 for faster reset
+        this.BUFFER_SIZE = 2048; // Increased buffer size
+        
+        // Audio state
+        this.isPlaying = true;
+        this.lastMessageTime = 0;
+        this.playTime = 0;
+        this.Frame = null;
+        this.audioContext = null;
+        
+        // Initialize protobuf
+        this.initProtobuf();
+        
+        // DOM elements
+        this.initDOMElements();
+        
+        // Audio setup
+        this.initAudioSystem();
+        
+        // Setup remaining properties
         this.ws = null;
+        this.audioQueue = [];
+        this.audioWorkletNode = null;
+        this.audioProcessor = null;
+
+        // Microphone setup
+        this.microphoneStream = null;
+        this.scriptProcessor = null;
+        this.source = null;
+        
+        this.setupEventListeners();
+    }
+
+    initProtobuf() {
+        protobuf.load('static/frame.proto', (err, root) => {
+            if (err) {
+                console.error("Error loading protobuf schema", err);
+                throw err;
+            }
+            this.Frame = root.lookupType('Frame');
+        });
+    }
+
+    initDOMElements() {
         this.statusIndicator = document.querySelector('.status-indicator');
         this.statusText = document.getElementById('connection-status');
         this.logContainer = document.getElementById('log-container');
         this.connectBtn = document.getElementById('connect-btn');
         this.disconnectBtn = document.getElementById('disconnect-btn');
-        
-        // Add new message input elements
         this.jsonInput = document.getElementById('json-input');
         this.formatBtn = document.getElementById('format-btn');
         this.sendBtn = document.getElementById('send-btn');
-        
-        // Remove enableAudioBtn since we won't need it
-        this.audioContext = audioContext;
-        this.initAudioContext();
-        
-        this.audioQueue = [];
-        this.isPlaying = false;
-        
-        // Add audio processing properties
-        this.audioWorkletNode = null;
-        this.audioProcessor = null;
-        this.sampleRate = SAMPLE_RATE; // Match the sample rate from TwilioFrameSerializer
-        
-        // Add new audio configuration
-        this.BUFFER_SIZE = 512;
-        this.latencyHint = 'interactive';
-        this.playTime = playTime;
-        this.PLAY_TIME_RESET_THRESHOLD_MS = PLAY_TIME_RESET_THRESHOLD_MS;
-        
-        this.setupEventListeners();
+    }
+
+    initAudioSystem() {
+        this.audioContext = new (window.AudioContext || window.webkitAudioContext)({
+            latencyHint: 'interactive',
+            sampleRate: this.SAMPLE_RATE
+        });
     }
     
     setupEventListeners() {
@@ -70,6 +80,7 @@ class WebSocketClient {
         
         this.connectBtn.addEventListener('click', () => this.connect());
         this.disconnectBtn.addEventListener('click', () => this.disconnect());
+        this.Frame = null;
         
         // Replace message input event listener with JSON input
         this.formatBtn.addEventListener('click', () => this.formatJSON());
@@ -135,11 +146,12 @@ class WebSocketClient {
                 this.disconnectBtn.disabled = false;
                 this.formatBtn.disabled = false;
                 this.sendBtn.disabled = false;
+                this.handleWebSocketOpen();
             };
             
             this.ws.onmessage = async (event) => {
                 try {
-                    handleWebSocketMessage(event);
+                    this.handleWebSocketMessage(event);
                 } catch (error) {
                     this.log(`Error handling message: ${error.message}`, 'error');
                 }
@@ -208,41 +220,101 @@ class WebSocketClient {
             }
         }
     }
-}
 
-
-function handleWebSocketMessage(event) {
-    const arrayBuffer = event.data;
-    if (isPlaying) {
-        enqueueAudioFromProto(arrayBuffer);
-    }
-}
-
-function enqueueAudioFromProto(arrayBuffer) {
-    const parsedFrame = Frame.decode(new Uint8Array(arrayBuffer));
-    if (!parsedFrame?.audio) {
-        return false;
+    handleWebSocketMessage(event) {
+        const arrayBuffer = event.data;
+        if (this.isPlaying) {
+            this.enqueueAudioFromProto(arrayBuffer);
+        }
     }
 
-    // Reset play time if it's been a while we haven't played anything.
-    const diffTime = audioContext.currentTime - lastMessageTime;
-    if ((playTime == 0) || (diffTime > PLAY_TIME_RESET_THRESHOLD_MS)) {
-        playTime = audioContext.currentTime;
+    enqueueAudioFromProto(arrayBuffer) {
+        const parsedFrame = this.Frame.decode(new Uint8Array(arrayBuffer));
+        if (!parsedFrame?.audio) {
+            return false;
+        }
+
+        // Optimize timing logic
+        const currentTime = this.audioContext.currentTime;
+        if (this.playTime < currentTime) {
+            this.playTime = currentTime;
+        }
+
+        // Process audio data with optimized buffering
+        const audioVector = Array.from(parsedFrame.audio.audio);
+        const audioArray = new Uint8Array(audioVector);
+
+        this.audioContext.decodeAudioData(audioArray.buffer, (buffer) => {
+            const source = new AudioBufferSourceNode(this.audioContext, {
+                playbackRate: 1.0 // Ensure normal playback rate
+            });
+            source.buffer = buffer;
+            
+            // Add minimal scheduling delay
+            const scheduleDelay = 0.05; // 50ms scheduling delay
+            const startTime = Math.max(this.playTime, currentTime + scheduleDelay);
+            
+            source.start(startTime);
+            source.connect(this.audioContext.destination);
+            
+            // Update playTime for next chunk
+            this.playTime = startTime + buffer.duration;
+        }).catch(error => {
+            this.log(`Audio decoding error: ${error}`, 'error');
+        });
     }
-    lastMessageTime = audioContext.currentTime;
 
-    // We should be able to use parsedFrame.audio.audio.buffer but for
-    // some reason that contains all the bytes from the protobuf message.
-    const audioVector = Array.from(parsedFrame.audio.audio);
-    const audioArray = new Uint8Array(audioVector);
+    handleWebSocketOpen(event) {
+        console.log('WebSocket connection established.', event)
 
-    audioContext.decodeAudioData(audioArray.buffer, function (buffer) {
-        const source = new AudioBufferSourceNode(audioContext);
-        source.buffer = buffer;
-        source.start(playTime);
-        source.connect(audioContext.destination);
-        playTime = playTime + buffer.duration;
-    });
+        navigator.mediaDevices.getUserMedia({
+            audio: {
+                sampleRate: this.SAMPLE_RATE,
+                channelCount: this.NUM_CHANNELS,
+                autoGainControl: true,
+                echoCancellation: true,
+                noiseSuppression: true,
+            }
+        }).then((stream) => {
+            this.microphoneStream = stream;
+            // 512 is closest thing to 200ms.
+            this.scriptProcessor = this.audioContext.createScriptProcessor(512, 1, 1);
+            this.source = this.audioContext.createMediaStreamSource(stream);
+            this.source.connect(this.scriptProcessor);
+            this.scriptProcessor.connect(this.audioContext.destination);
+
+            this.scriptProcessor.onaudioprocess = (event) => {
+                if (!this.ws) {
+                    return;
+                }
+
+                const audioData = event.inputBuffer.getChannelData(0);
+                const pcmS16Array = this.convertFloat32ToS16PCM(audioData);
+                const pcmByteArray = new Uint8Array(pcmS16Array.buffer);
+                const frame = this.Frame.create({
+                    audio: {
+                        audio: Array.from(pcmByteArray),
+                        sampleRate: this.SAMPLE_RATE,
+                        numChannels: this.NUM_CHANNELS
+                    }
+                });
+                const encodedFrame = new Uint8Array(this.Frame.encode(frame).finish());
+                this.ws.send(encodedFrame);
+            };
+        }).catch((error) => console.error('Error accessing microphone:', error));
+    }
+    
+    convertFloat32ToS16PCM(float32Array) {
+        let int16Array = new Int16Array(float32Array.length);
+
+        for (let i = 0; i < float32Array.length; i++) {
+            let clampedValue = Math.max(-1, Math.min(1, float32Array[i]));
+            int16Array[i] = clampedValue < 0 ? clampedValue * 32768 : clampedValue * 32767;
+        }
+        return int16Array;
+    }
+
+
 }
 
 // Initialize the WebSocket client

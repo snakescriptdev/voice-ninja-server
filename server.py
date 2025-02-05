@@ -86,14 +86,7 @@ async def websocket_endpoint(websocket: WebSocket):
         else:
             logger.info("Authentication successful")
             await websocket.accept()
-
-        start_data = websocket.iter_text()
-        await start_data.__anext__()
-        call_data = json.loads(await start_data.__anext__())
-        logger.debug(f"Received call data: {call_data}")
-        stream_sid = call_data["start"]["streamSid"]
-        logger.info(f"WebSocket connection accepted for stream: {stream_sid}")
-        await run_bot(websocket, stream_sid)
+        await run_bot(websocket)
 
         
     except Exception as e:
