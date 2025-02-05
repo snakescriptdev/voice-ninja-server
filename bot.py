@@ -3,10 +3,10 @@ import sys
 
 import boto3
 from dotenv import load_dotenv
-from loguru import logger
 from datetime import datetime
 import pandas as pd
 from typing import Optional
+from loguru import logger
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.filters.noisereduce_filter import NoisereduceFilter
@@ -24,9 +24,10 @@ from pipecat.transports.network.fastapi_websocket import (
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService
 SAMPLE_RATE = 24000
 load_dotenv(override=True)
-
 logger.remove(0)
 logger.add(sys.stderr, level="DEBUG")
+
+
 
 tools = [
     {
@@ -133,8 +134,6 @@ async def run_bot(websocket_client):
         api_key=os.getenv("GOOGLE_API_KEY"),
         tools=tools,
         voice_id="Aoede",                    # Voices: Aoede, Charon, Fenrir, Kore, Puck
-        transcribe_user_audio=True,          # Enable speech-to-text for user input
-        transcribe_model_audio=True,         # Enable speech-to-text for model responses
     )
     llm.register_function("get_snakescript_info", payment_kb)
 
@@ -143,7 +142,7 @@ async def run_bot(websocket_client):
     context = OpenAILLMContext(
         
         [{"role": "system", "content": system_instruction},
-            {"role": "user", "content": "Say hello."}],
+            {"role": "user", "content": "Say Hello and introduce yourself as SAGE and What Does SAGE Mean?"}],
     )
     context_aggregator = llm.create_context_aggregator(context)
     audiobuffer = AudioBufferProcessor(sample_rate=SAMPLE_RATE)

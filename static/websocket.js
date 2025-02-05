@@ -1,4 +1,3 @@
-
 class WebSocketClient {
     constructor() {
         // Update these constants for better performance
@@ -51,11 +50,8 @@ class WebSocketClient {
         this.statusIndicator = document.querySelector('.status-indicator');
         this.statusText = document.getElementById('connection-status');
         this.logContainer = document.getElementById('log-container');
-        this.connectBtn = document.getElementById('connect-btn');
-        this.disconnectBtn = document.getElementById('disconnect-btn');
-        this.jsonInput = document.getElementById('json-input');
-        this.formatBtn = document.getElementById('format-btn');
-        this.sendBtn = document.getElementById('send-btn');
+        this.connectBtn = document.getElementById('start-btn');
+        this.disconnectBtn = document.getElementById('stop-btn');
     }
 
     initAudioSystem() {
@@ -81,10 +77,7 @@ class WebSocketClient {
         this.connectBtn.addEventListener('click', () => this.connect());
         this.disconnectBtn.addEventListener('click', () => this.disconnect());
         this.Frame = null;
-        
-        // Replace message input event listener with JSON input
-        this.formatBtn.addEventListener('click', () => this.formatJSON());
-        this.sendBtn.addEventListener('click', () => this.sendMessage());
+
         
         // Remove the enable audio button listener since we're auto-enabling
     }
@@ -140,8 +133,6 @@ class WebSocketClient {
                 this.log('Connected successfully!');
                 this.connectBtn.disabled = true;
                 this.disconnectBtn.disabled = false;
-                this.formatBtn.disabled = false;
-                this.sendBtn.disabled = false;
                 if (!this.audioContext) {
                     this.initAudioContext();
                 }
@@ -318,19 +309,27 @@ class WebSocketClient {
     stopAudio(closeWebsocket) {
         this.playTime = 0;
         this.isPlaying = false;
-        this.startBtn.disabled = false;
-        this.stopBtn.disabled = true;
 
         if (this.ws && closeWebsocket) {
             this.ws.close();
             this.ws = null;
         }
 
+        // Properly cleanup audio resources
         if (this.scriptProcessor) {
             this.scriptProcessor.disconnect();
+            this.scriptProcessor = null;
         }
+        
         if (this.source) {
             this.source.disconnect();
+            this.source = null;
+        }
+
+        // Stop all microphone tracks
+        if (this.microphoneStream) {
+            this.microphoneStream.getTracks().forEach(track => track.stop());
+            this.microphoneStream = null;
         }
     }
 
