@@ -1,0 +1,115 @@
+body {
+    background: #1a1a1a;
+    color: #ffffff;
+    margin: 0;
+    font-family: 'Segoe UI', Arial, sans-serif;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 30px;
+    background: #2d2d2d;
+    min-height: 100vh;
+    box-shadow: 0 0 20px rgba(0,0,0,0.3);
+}
+
+h1 {
+    text-align: center;
+    color: #4a9eff;
+    font-size: 2.2em;
+    margin-bottom: 30px;
+}
+
+.status-indicator {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+}
+
+.status-indicator.connecting { background-color: #ffd700; box-shadow: 0 0 10px #ffd700; }
+.status-indicator.connected { background-color: #00ff95; box-shadow: 0 0 10px #00ff95; }
+.status-indicator.error { background-color: #ff4444; box-shadow: 0 0 10px #ff4444; }
+
+.log-container {
+    margin-top: 30px;
+    padding: 20px;
+    border: none;
+    border-radius: 15px;
+    height: 400px;
+    background: #363636;
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+}
+
+.log-entry {
+    margin: 10px 0;
+    padding: 12px;
+    border-radius: 10px;
+    background: #404040;
+    border: none;
+    animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+button {
+    background: #4a9eff;
+    color: white;
+    border: none;
+    border-radius: 25px;
+    padding: 12px 30px;
+    font-size: 1em;
+    transition: all 0.3s ease;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-weight: 600;
+}
+
+button:hover {
+    background: #357abd;
+    transform: translateY(-2px);
+    box-shadow: 0 5px 15px rgba(74, 158, 255, 0.3);
+}
+
+button:disabled {
+    background: #666;
+    transform: none;
+    box-shadow: none;
+}
+
+.button-group {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+    margin-top: 20px;
+}
+
+#connection-status {
+    color: #999;
+    margin-left: 10px;
+    font-size: 0.9em;
+}
+
+/* Scrollbar styling */
+.log-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.log-container::-webkit-scrollbar-track {
+    background: #363636;
+    border-radius: 4px;
+}
+
+.log-container::-webkit-scrollbar-thumb {
+    background: #4a9eff;
+    border-radius: 4px;
+}
+
+.log-container::-webkit-scrollbar-thumb:hover {
+    background: #357abd;
+}
