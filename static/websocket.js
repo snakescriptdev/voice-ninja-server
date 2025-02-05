@@ -125,10 +125,6 @@ class WebSocketClient {
     
     async connect() {
         try {
-            // Initialize audio context but don't force resume
-            if (!this.audioContext) {
-                await this.initAudioContext();
-            }
             
             this.updateStatus('connecting', 'Connecting...');
             this.log('Attempting to connect...');
@@ -146,6 +142,9 @@ class WebSocketClient {
                 this.disconnectBtn.disabled = false;
                 this.formatBtn.disabled = false;
                 this.sendBtn.disabled = false;
+                if (!this.audioContext) {
+                    this.initAudioContext();
+                }
                 this.handleWebSocketOpen();
             };
             
@@ -170,6 +169,7 @@ class WebSocketClient {
                 this.disconnectBtn.disabled = true;
                 this.formatBtn.disabled = true;
                 this.sendBtn.disabled = true;
+                this.stopAudio(false);
             };
             
         } catch (error) {
@@ -182,6 +182,7 @@ class WebSocketClient {
         if (this.ws) {
             this.ws.close();
             this.ws = null;
+            this.stopAudio(true);
         }
     }
     
@@ -312,6 +313,25 @@ class WebSocketClient {
             int16Array[i] = clampedValue < 0 ? clampedValue * 32768 : clampedValue * 32767;
         }
         return int16Array;
+    }
+
+    stopAudio(closeWebsocket) {
+        this.playTime = 0;
+        this.isPlaying = false;
+        this.startBtn.disabled = false;
+        this.stopBtn.disabled = true;
+
+        if (this.ws && closeWebsocket) {
+            this.ws.close();
+            this.ws = null;
+        }
+
+        if (this.scriptProcessor) {
+            this.scriptProcessor.disconnect();
+        }
+        if (this.source) {
+            this.source.disconnect();
+        }
     }
 
 
