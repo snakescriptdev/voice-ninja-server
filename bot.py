@@ -1,15 +1,9 @@
 import os
 import sys
-
-import boto3
 from dotenv import load_dotenv
-from datetime import datetime
 import pandas as pd
-from typing import Optional
 from loguru import logger
-
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.audio.filters.noisereduce_filter import NoisereduceFilter
 from pipecat.frames.frames import EndFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -26,29 +20,6 @@ SAMPLE_RATE = 24000
 load_dotenv(override=True)
 logger.remove(0)
 logger.add(sys.stderr, level="DEBUG")
-
-
-
-tools = [
-    {
-        "function_declarations": [
-            {
-                "name": "payment_kb",
-                "description": "Used to get any snakescript company-related FAQ or details",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "input": {
-                            "type": "string",
-                            "description": "The query or question related to snakescript company."
-                        }
-                    },
-                    "required": ["input"]
-                }
-            }
-        ]
-    }
-]
 
 system_instruction =  """
     Always start with "I am Sage, an AI empowered agent. How can I help you today?"
@@ -81,40 +52,6 @@ system_instruction =  """
     - Avoid technical jargon unless specifically asked
     - Use natural transitions and acknowledgments (e.g., "I understand...", "Great question...", "Ah, I see...", "Uh-huh", "Mm-hmm")
 """
-
-def load_kb_from_csv(csv_path: str) -> pd.DataFrame:
-    """Load knowledge base from CSV file"""
-    return pd.read_csv(csv_path)
-
-kb_df = load_kb_from_csv("snakescript_kb.csv")
-
-def query_kb(df: pd.DataFrame, query: str) -> Optional[str]:
-    """Query the knowledge base using simple keyword matching"""
-    # Convert query to lowercase for case-insensitive matching
-    query = query.lower()
-    
-    # Search through questions/keywords column (adjust column name as needed)
-    for idx, row in df.iterrows():
-        if row['question'].lower() in query:
-            return row['answer']
-    
-    # If no match found, return None
-    return None
-
-def payment_kb(input: str) -> str:
-    """Can be used to get any payment related FAQ/ details"""
-    kb_df = load_kb_from_csv("snakescript_kb.csv")
-    
-    # Try to find answer in knowledge base
-    answer = query_kb(kb_df, input)
-    
-    if answer:
-        return answer
-    
-    # If no answer found in KB, use default response
-    default_response = """I apologize, but I don't have specific information about that query. 
-    Please contact our support team for accurate information."""
-    return default_response
 
 def get_kb_content(csv_path: str) -> str:
     """
@@ -150,8 +87,8 @@ async def run_bot(websocket_client, voice):
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
         params=FastAPIWebsocketParams(
-            audio_in_sample_rate=24000,
-            audio_out_sample_rate=24000,
+            audio_in_sample_rate=SAMPLE_RATE,
+            audio_out_sample_rate=SAMPLE_RATE,
             audio_out_enabled=True,
             audio_in_enabled=True,
             add_wav_header=True,
@@ -199,7 +136,8 @@ async def run_bot(websocket_client, voice):
     )
 
 
-    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=False))
+    task = PipelineTask(pipeline, params=PipelineParams())
+    runner = PipelineRunner(handle_sigint=False)
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
@@ -208,8 +146,7 @@ async def run_bot(websocket_client, voice):
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        await task.queue_frames([EndFrame()])
-
-    runner = PipelineRunner(handle_sigint=False)
+        await task.cancel()
+        await runner.cancel()
 
     await runner.run(task)
