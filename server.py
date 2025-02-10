@@ -1,17 +1,20 @@
-import json
-
-# from bot import run_bot
 from fastapi import FastAPI, WebSocket, status
 from fastapi.middleware.cors import CORSMiddleware
-from starlette.responses import JSONResponse,HTMLResponse
+from starlette.responses import JSONResponse, FileResponse
 from fastapi.security import HTTPBasic
 import secrets
 from typing import Dict
-from logger_setup import logger
-from bot import run_bot
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi import Request
+from utils import AudioStorage, logger, CORS_SETTINGS, ALLOWED_VOICES, DEFAULT_VOICE, USERS, run_bot
+from schemas.audio import (
+    ErrorResponse, 
+    SuccessResponse, 
+    AudioFileResponse, 
+    AudioFileListResponse
+)
+import uuid
 
 templates = Jinja2Templates(directory="templates")
 
@@ -20,10 +23,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for testing
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    **CORS_SETTINGS
 )
 
 
@@ -73,10 +73,8 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         auth_header = websocket.query_params['authorization']
         voice = websocket.query_params.get('voice')
-        if voice not in ["Aoede", "Charon", "Fenrir", "Kore", "Puck"]:
-            voice = "Charon"
-        else:
-            voice = voice
+        if voice not in ALLOWED_VOICES:
+            voice = DEFAULT_VOICE
         
         if not auth_header.startswith('Basic '):
             logger.warning("Missing or invalid Authorization header")
@@ -91,9 +89,98 @@ async def websocket_endpoint(websocket: WebSocket):
         else:
             logger.info("Authentication successful")
             await websocket.accept()
-        await run_bot(websocket, voice)
+            uid = uuid.uuid4()
+            json_data = {
+                "type": "UID",
+                "uid": str(uid)
+            }
+            await websocket.send_json(json_data)
+            await run_bot(websocket, voice, uid)
 
         
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}", exc_info=True)
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+
+
+@app.get(
+    "/audio/{session_id}",
+    responses={
+        200: {"model": AudioFileResponse},
+        404: {"model": ErrorResponse},
+        500: {"model": ErrorResponse}
+    }
+)
+async def get_audio_file(session_id: str):
+    """Get audio file for a session"""
+    try:
+        audio_file = AudioStorage.get_audio_path(session_id)
+        if not audio_file:
+            return JSONResponse(
+                status_code=404,
+                content=ErrorResponse(error="Audio file not found").dict()
+            )
+        
+        return FileResponse(
+            path=audio_file,
+            media_type="audio/wav",
+            filename=audio_file.name,
+            headers={
+                "Accept-Ranges": "bytes",
+                "Content-Disposition": f'attachment; filename="{audio_file.name}"'
+            }
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(error=f"Error retrieving audio file: {str(e)}").dict()
+        )
+
+
+@app.get(
+    "/audio",
+    response_model=AudioFileListResponse,
+    responses={
+        500: {"model": ErrorResponse}
+    }
+)
+async def get_audio_file_list(request: Request):
+    try:
+        audio_files = AudioStorage.get_audio_files()
+        return AudioFileListResponse(
+            audio_files=[
+                AudioFileResponse(
+                    filename=file.name,
+                    session_id=file.stem,
+                    file_url=str(request.url_for('get_audio_file', session_id=file.stem))
+                ) for file in audio_files
+            ]
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(error=f"Error retrieving audio files: {str(e)}").dict()
+        )
+
+@app.delete(
+    "/audio/{session_id}",
+    response_model=SuccessResponse,
+    responses={
+        404: {"model": ErrorResponse},
+        500: {"model": ErrorResponse}
+    }
+)
+async def delete_audio_file(session_id: str):
+    """Delete audio file for session"""
+    try:
+        if AudioStorage.delete_audio(session_id):
+            return SuccessResponse(message="Audio file deleted successfully")
+        return JSONResponse(
+            status_code=404,
+            content=ErrorResponse(error="Audio file not found").dict()
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content=ErrorResponse(error=f"Error deleting audio file: {str(e)}").dict()
+        )

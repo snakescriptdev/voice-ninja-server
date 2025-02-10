@@ -3,3 +3,4 @@ venv
 server.log
 .env
 .vscode
+audio_storage/

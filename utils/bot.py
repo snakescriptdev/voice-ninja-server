@@ -16,42 +16,31 @@ from pipecat.transports.network.fastapi_websocket import (
     FastAPIWebsocketTransport,
 )
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService
-SAMPLE_RATE = 24000
 load_dotenv(override=True)
 logger.remove(0)
 logger.add(sys.stderr, level="DEBUG")
+import io
+import wave
+import aiofiles
+from .config import AUDIO_STORAGE_DIR, SAMPLE_RATE
 
-system_instruction =  """
-    Always start with "I am Sage, an AI empowered agent. How can I help you today?"
-    I am SAGE, your engaging voice assistant for this conversation. My responses will be:
-    - Brief and clear
-    - Natural and conversational, not robotic
-    - Easy to understand over the phone
-
-    Guidelines for responses:
-    1. Keep answers concise and informative:
-       - Focus on the most relevant information
-       - Use clear, everyday language
-       - Add brief context only when necessary for clarity
-    
-    2. Maintain a helpful and friendly tone:
-       - Be warm and approachable
-       - Show empathy and understanding
-       - Stay professional while being conversational
-    
-    3. Structure responses effectively:
-       - Start with the most important information
-       - Use simple, direct language
-       - Provide actionable insights when applicable
-    
-    4. if user asks about Snakescript, use the payment_kb tool to get information about the company
-
-    Remember:
-    - If asked about my name, explain that SAGE stands for Snakescript's Advanced Guidance Expert
-    - Speak as if having a friendly phone conversation
-    - Avoid technical jargon unless specifically asked
-    - Use natural transitions and acknowledgments (e.g., "I understand...", "Great question...", "Ah, I see...", "Uh-huh", "Mm-hmm")
-"""
+# Update the save_audio function in bot.py
+async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str):
+    if len(audio) > 0:
+        filename = f"{SID}.wav"
+        file_path = AUDIO_STORAGE_DIR / filename
+        
+        with io.BytesIO() as buffer:
+            with wave.open(buffer, "wb") as wf:
+                wf.setsampwidth(2)
+                wf.setnchannels(num_channels)
+                wf.setframerate(sample_rate)
+                wf.writeframes(audio)
+            async with aiofiles.open(file_path, "wb") as file:
+                await file.write(buffer.getvalue())
+        print(f"Audio saved to {file_path}")
+    else:
+        print("No audio data to save")
 
 def get_kb_content(csv_path: str) -> str:
     """
@@ -83,7 +72,8 @@ def get_kb_content(csv_path: str) -> str:
         logger.error(f"Error reading KB content: {str(e)}")
         return "Error: Unable to read knowledge base content"
 
-async def run_bot(websocket_client, voice):
+async def run_bot(websocket_client, voice, uid):
+    SID = uid
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
         params=FastAPIWebsocketParams(
@@ -117,9 +107,7 @@ async def run_bot(websocket_client, voice):
 
 
     context = OpenAILLMContext(
-        
-        [{"role": "system", "content": system_instruction},
-            {"role": "user", "content": "Say Hello and introduce yourself as SAGE"}],
+        [{"role": "user", "content": "Say Hello and introduce yourself as SAGE"}],
     )
     context_aggregator = llm.create_context_aggregator(context)
     audiobuffer = AudioBufferProcessor(sample_rate=SAMPLE_RATE)
@@ -137,15 +125,24 @@ async def run_bot(websocket_client, voice):
 
 
     task = PipelineTask(pipeline, params=PipelineParams())
+
+    @audiobuffer.event_handler("on_audio_data")
+    async def on_audio_data(buffer, audio, sample_rate, num_channels):
+        await save_audio(audio, sample_rate, num_channels, SID)
+
+
     runner = PipelineRunner(handle_sigint=False)
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-
+        await audiobuffer.start_recording()
         await task.queue_frames([context_aggregator.user().get_context_frame()])
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
+        if audiobuffer.has_audio():
+            print("Audio buffer has audio")
+        await audiobuffer.stop_recording()
         await task.cancel()
         await runner.cancel()
 

@@ -5,8 +5,9 @@ class WebSocketClient {
             ? 'ws://localhost:8000'
             : `wss://${window.location.host}`;
             
+        this.uid = null;
         // Update these constants for better performance
-        this.SAMPLE_RATE = 24000; // Increased from 16000
+        this.SAMPLE_RATE = 8000; // Increased from 16000
         this.NUM_CHANNELS = 1;  // Changed from 2 to 1 for better streaming
         this.PLAY_TIME_RESET_THRESHOLD_MS = 0.5; // Reduced from 4.0 for faster reset
         this.BUFFER_SIZE = 2048; // Increased buffer size
@@ -190,6 +191,13 @@ class WebSocketClient {
             
             this.ws.onmessage = async (event) => {
                 try {
+                    if (!this.uid) {
+                        const message = JSON.parse(event.data);
+                        if (message.type === "UID") {
+                            this.uid = message.uid;
+                            this.log(`UID: ${this.uid}`, 'info');
+                        }
+                    }
                     this.handleWebSocketMessage(event);
                 } catch (error) {
                     this.log(`Error handling message: ${error.message}`, 'error');
@@ -211,6 +219,7 @@ class WebSocketClient {
                 this.disconnectBtn.hidden = true;
                 this.languageSelect.disabled = false;
                 this.stopAudio(false);
+                this.uid = null;
                 window.location.reload();
             };
             
