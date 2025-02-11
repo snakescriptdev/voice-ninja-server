@@ -13,7 +13,7 @@ class AudioList {
 
     async loadRecordings() {
         try {
-            const response = await fetch('/audio-files');
+            const response = await fetch('/audio-files/');
             const data = await response.json();
             
             if (data.audio_files) {

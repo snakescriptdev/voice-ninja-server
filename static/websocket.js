@@ -62,6 +62,11 @@ class WebSocketClient {
             this.connectBtn = document.getElementById('start-btn');
             this.disconnectBtn = document.getElementById('stop-btn');
             this.languageSelect = document.getElementById('language-select');
+            this.audioListBtn = document.getElementById('audio-list-btn');
+
+            this.audioListBtn.addEventListener('click', () => {
+                window.location.href = '/audio_list/';
+            });
         } catch (error) {
             this.log(`Error initializing DOM elements: ${error.message}`, 'error');
         }
