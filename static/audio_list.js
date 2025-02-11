@@ -87,7 +87,7 @@ class AudioList {
         }
 
         try {
-            const response = await fetch(`/audio-delete/${sessionId}`, {
+            const response = await fetch(`/audio-delete/${sessionId}/`, {
                 method: 'DELETE'
             });
 
