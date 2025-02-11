@@ -4,3 +4,4 @@ server.log
 .env
 .vscode
 audio_storage/
+.DS_Store

@@ -7,14 +7,11 @@ class WebSocketClient {
             
         this.uid = null;
         // Update these constants for better performance
-        this.SAMPLE_RATE = 8000; // Increased from 16000
+        this.SAMPLE_RATE = 16000; // Increased from 16000
         this.NUM_CHANNELS = 1;  // Changed from 2 to 1 for better streaming
-        this.PLAY_TIME_RESET_THRESHOLD_MS = 0.5; // Reduced from 4.0 for faster reset
-        this.BUFFER_SIZE = 2048; // Increased buffer size
         
         // Audio state
         this.isPlaying = true;
-        this.lastMessageTime = 0;
         this.playTime = 0;
         this.Frame = null;
         this.audioContext = null;
@@ -118,9 +115,22 @@ class WebSocketClient {
     }
     
     updateStatus(status, message) {
-        try{
-            this.statusIndicator.className = `status-indicator ${status}`;
-            this.statusText.textContent = message;
+        try {
+            const statusPanel = document.querySelector('.status-panel');
+            const statusText = document.getElementById('connection-status');
+            
+            // Remove all previous status classes
+            statusPanel.classList.remove('connecting', 'connected', 'error');
+            
+            // Add the new status class
+            if (status) {
+                statusPanel.classList.add(status);
+            }
+            
+            // Update the status text
+            if (statusText) {
+                statusText.textContent = message;
+            }
         } catch (error) {
             this.log(`Error updating status: ${error.message}`, 'error');
         }

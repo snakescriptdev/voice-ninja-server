@@ -7,7 +7,6 @@ AUDIO_STORAGE_DIR.mkdir(exist_ok=True)
 # Audio file settings
 MAX_AUDIO_FILE_SIZE = 10 * 1024 * 1024  # 10MB
 ALLOWED_AUDIO_TYPES = [".wav", ".mp3"]
-SAMPLE_RATE = 8000
 
 # CORS Configuration
 CORS_SETTINGS = {

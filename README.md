@@ -1,3 +1,8 @@
+System Requirements:
+```bash
+sudo apt-get install libsndfile1
+```
+
 # FASTAPI Run
 ```bash
 uvicorn server:app --reload

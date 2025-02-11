@@ -4,23 +4,38 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <script src="//cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js"></script>
+    <!-- Add Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <title>AI Voice Assistant</title>
     <link rel="stylesheet" href="static/connect.css">
+    <script src="static/animations.js"></script>
 </head>
 <body>
     <div class="container">
-        <h1>AI Voice Assistant</h1>
+        <div class="ai-header">
+            <i class="fas fa-robot ai-icon"></i>
+            <h1>AI Voice Assistant</h1>
+        </div>
         
-            <input hidden id="username" placeholder="Username" value="admin">
-            <input hidden id="password" placeholder="Password" value="admin123">
+        <input hidden id="username" placeholder="Username" value="admin">
+        <input hidden id="password" placeholder="Password" value="admin123">
         
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div >
-                Status: <div class="status-indicator"></div>
-                <span id="connection-status">Disconnected</span>
+        <div class="control-panel">
+            <div class="status-panel">
+                <div class="connection-wrapper">
+                    <div class="connection-ring"></div>
+                    <div class="connection-circle">
+                        <i class="fas fa-broadcast-tower connection-icon"></i>
+                    </div>
+                    <div class="connection-text">
+                        <span class="connection-label">Status</span>
+                        <span id="connection-status">Disconnected</span>
+                    </div>
+                </div>
             </div>
-            <div>
-                <label for="language-select"> Select Voice</label>
+            <div class="voice-selector">
+                <i class="fas fa-microphone"></i>
+                <label for="language-select">Select Voice</label>
                 <select id="language-select" class="language-dropdown">
                     <option value="Aoede">Aoede</option>
                     <option value="Charon">Charon</option>
@@ -32,11 +47,21 @@
         </div>
         
         <div class="button-group">
-            <button id="start-btn" class="connect-btn">Start</button>
-            <button id="stop-btn" class="disconnect-btn" disabled hidden>Stop</button>
+            <button id="start-btn" class="connect-btn">
+                <i class="fas fa-play"></i> Start
+            </button>
+            <button id="stop-btn" class="disconnect-btn" disabled hidden>
+                <i class="fas fa-stop"></i> Stop
+            </button>
         </div>
         
-        <div class="log-container" id="log-container"></div>
+        <div class="log-wrapper">
+            <div class="log-header">
+                <i class="fas fa-terminal"></i>
+                <span>Activity Log</span>
+            </div>
+            <div class="log-container" id="log-container"></div>
+        </div>
     </div>
     <script src="static/websocket.js"></script>
 </body>

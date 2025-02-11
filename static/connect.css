@@ -1,98 +1,197 @@
+:root {
+    --primary-color: #00f7ff;
+    --secondary-color: #1a1a2e;
+    --accent-color: #4ecca3;
+    --background-color: #0a192f;
+    --text-color: #e4e4e4;
+    --error-color: #ff4757;
+    --success-color: #2ed573;
+    --warning-color: #ffa502;
+    --neon-shadow: 0 0 10px var(--primary-color), 0 0 20px var(--primary-color), 0 0 30px var(--primary-color);
+}
+
 body {
-    background: #1a1a1a;
-    color: #ffffff;
+    background: var(--background-color);
+    color: var(--text-color);
     margin: 0;
     font-family: 'Segoe UI', Arial, sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    overflow-x: hidden;
 }
 
 .container {
-    max-width: 800px;
-    margin: 0 auto;
+    max-width: 900px;
+    width: 90%;
+    margin: 20px;
     padding: 30px;
-    background: #2d2d2d;
-    min-height: 100vh;
-    box-shadow: 0 0 20px rgba(0,0,0,0.3);
+    background: rgba(26, 26, 46, 0.95);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(0, 247, 255, 0.1);
+    box-shadow: 0 0 20px rgba(0, 247, 255, 0.1);
+    border-radius: 20px;
+    animation: glow 3s infinite;
+}
+
+.container_list {
+    max-width: 100%;
+    width: 90%;
+    margin: 20px;
+    padding: 30px;
+    background: rgba(26, 26, 46, 0.95);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(0, 247, 255, 0.1);
+    box-shadow: 0 0 20px rgba(0, 247, 255, 0.1);
+    border-radius: 20px;
+    animation: glow 3s infinite;
+}
+
+.ai-header {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    text-align: center;
+    margin-bottom: 40px;
+    position: relative;
+}
+
+.ai-icon {
+    font-size: 3em;
+    color: var(--primary-color);
+    margin-bottom: 15px;
+    animation: pulse 2s infinite;
 }
 
 h1 {
-    text-align: center;
-    color: #4a9eff;
-    font-size: 2.2em;
-    margin-bottom: 30px;
+    color: var(--text-color);
+    font-size: 2.5em;
+    margin: 10px 0;
+    font-weight: 600;
+    position: relative;
+}
+
+.control-panel {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(26, 26, 46, 0.8);
+    padding: 20px;
+    border-radius: 15px;
+    margin-bottom: 20px;
+    border: 1px solid rgba(0, 247, 255, 0.2);
+}
+
+.status-panel, .voice-selector {
+    display: flex;
+    align-items: center;
+    gap: 10px;
 }
 
 .status-indicator {
-    width: 12px;
-    height: 12px;
-    border-radius: 50%;
-    display: inline-block;
-    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    display: none;
 }
 
-.status-indicator.connecting { background-color: #ffd700; box-shadow: 0 0 10px #ffd700; }
-.status-indicator.connected { background-color: #00ff95; box-shadow: 0 0 10px #00ff95; }
-.status-indicator.error { background-color: #ff4444; box-shadow: 0 0 10px #ff4444; }
-
-.log-container {
-    margin-top: 30px;
-    padding: 20px;
-    border: none;
-    border-radius: 15px;
-    height: 400px;
-    background: #363636;
-    box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
-}
-
-.log-entry {
-    margin: 10px 0;
-    padding: 12px;
+.language-dropdown {
+    padding: 10px 15px;
+    border: 2px solid var(--primary-color);
     border-radius: 10px;
-    background: #404040;
-    border: none;
-    animation: fadeIn 0.3s ease;
-}
-
-@keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
-    to { opacity: 1; transform: translateY(0); }
-}
-
-button {
-    background: #4a9eff;
-    color: white;
-    border: none;
-    border-radius: 25px;
-    padding: 12px 30px;
-    font-size: 1em;
+    font-size: 14px;
+    background: rgba(26, 26, 46, 0.9);
+    color: var(--text-color);
+    cursor: pointer;
     transition: all 0.3s ease;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    font-weight: 600;
-}
-
-button:hover {
-    background: #357abd;
-    transform: translateY(-2px);
-    box-shadow: 0 5px 15px rgba(74, 158, 255, 0.3);
-}
-
-button:disabled {
-    background: #666;
-    transform: none;
-    box-shadow: none;
+    box-shadow: 0 0 10px rgba(0, 247, 255, 0.2);
 }
 
 .button-group {
     display: flex;
     gap: 15px;
     justify-content: center;
-    margin-top: 20px;
+    margin: 30px 0;
 }
 
-#connection-status {
-    color: #999;
-    margin-left: 10px;
-    font-size: 0.9em;
+button {
+    background: transparent;
+    color: white;
+    border: 1px solid var(--primary-color);
+    border-radius: 12px;
+    padding: 12px 30px;
+    font-size: 1em;
+    transition: all 0.3s ease;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 0 10px rgba(0, 247, 255, 0.2);
+    position: relative;
+    overflow: hidden;
+}
+
+button:before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(0, 247, 255, 0.2),
+        transparent
+    );
+    transition: 0.5s;
+}
+
+button:hover:before {
+    left: 100%;
+}
+
+.log-wrapper {
+    background: rgba(26, 26, 46, 0.8);
+    border-radius: 15px;
+    overflow: hidden;
+    border: 1px solid rgba(0, 247, 255, 0.2);
+}
+
+.log-header {
+    background: var(--secondary-color);
+    color: white;
+    padding: 15px 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 1.1em;
+    border-bottom: 1px solid var(--primary-color);
+}
+
+.log-container {
+    margin: 0;
+    padding: 20px;
+    height: 270px;
+    overflow-y: auto;
+    background: rgba(26, 26, 46, 0.5);
+}
+
+.log-entry {
+    margin: 10px 0;
+    padding: 12px 15px;
+    border-radius: 8px;
+    background: rgba(26, 26, 46, 0.9);
+    border-left: 4px solid var(--primary-color);
+    box-shadow: 0 0 10px rgba(0, 247, 255, 0.1);
+}
+
+.log-info {
+    color: var(--primary-color);
+    border-left-color: var(--primary-color);
+}
+
+.log-error {
+    color: var(--error-color);
+    border-left-color: var(--error-color);
 }
 
 /* Scrollbar styling */
@@ -101,38 +200,214 @@ button:disabled {
 }
 
 .log-container::-webkit-scrollbar-track {
-    background: #363636;
-    border-radius: 4px;
+    background: #F8F9FA;
 }
 
 .log-container::-webkit-scrollbar-thumb {
-    background: #4a9eff;
+    background: var(--primary-color);
     border-radius: 4px;
 }
 
 .log-container::-webkit-scrollbar-thumb:hover {
-    background: #357abd;
+    background: #5851DB;
 }
 
-.language-dropdown {
-    padding: 8px;
-    margin-bottom: 10px;
-    border: 1px solid #ccc;
-    border-radius: 4px;
-    font-size: 14px;
-    width: 200px;
+/* Responsive Design */
+@media (max-width: 768px) {
+    .control-panel {
+        flex-direction: column;
+        gap: 20px;
+    }
+    
+    .container {
+        padding: 20px;
+    }
+    
+    h1 {
+        font-size: 2em;
+    }
 }
 
-.language-dropdown:focus {
-    outline: none;
-    border-color: #007bff;
-    box-shadow: 0 0 0 2px rgba(0,123,255,.25);
+/* Animation Keyframes */
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
 }
 
-.log-info {
-    color: #007bff;
+/* Add floating particles background */
+.particles {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: -1;
 }
 
-.log-error {
-    color: #ff4444;
+.particle {
+    position: absolute;
+    background: var(--primary-color);
+    border-radius: 50%;
+    opacity: 0.3;
+    animation: float 15s infinite linear;
+}
+
+/* Add these new animations to your existing CSS */
+@keyframes float {
+    0% {
+        transform: translateY(0) translateX(0);
+    }
+    25% {
+        transform: translateY(-100px) translateX(50px);
+    }
+    50% {
+        transform: translateY(-200px) translateX(0);
+    }
+    75% {
+        transform: translateY(-100px) translateX(-50px);
+    }
+    100% {
+        transform: translateY(0) translateX(0);
+    }
+}
+
+@keyframes glow {
+    0% { box-shadow: 0 0 5px var(--primary-color); }
+    50% { box-shadow: 0 0 20px var(--primary-color); }
+    100% { box-shadow: 0 0 5px var(--primary-color); }
+}
+
+/* Add these new styles for the connection status */
+.connection-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 10px;
+    position: relative;
+}
+
+.connection-circle {
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    background: rgba(26, 26, 46, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 2;
+    border: 2px solid var(--primary-color);
+    transition: all 0.3s ease;
+}
+
+.connection-ring {
+    position: absolute;
+    width: 45px;
+    height: 45px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    left: 10px;
+    transition: all 0.3s ease;
+}
+
+.connection-icon {
+    font-size: 1.2em;
+    color: var(--primary-color);
+    transition: all 0.3s ease;
+}
+
+.connection-text {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.connection-label {
+    font-size: 0.9em;
+    color: var(--text-color);
+    opacity: 0.8;
+}
+
+#connection-status {
+    font-weight: 600;
+    font-size: 1.1em;
+}
+
+/* Status States */
+.status-panel.connecting .connection-ring {
+    border-color: var(--warning-color);
+    animation: rotate 2s linear infinite;
+}
+
+.status-panel.connecting .connection-circle {
+    border-color: var(--warning-color);
+}
+
+.status-panel.connecting .connection-icon {
+    color: var(--warning-color);
+}
+
+.status-panel.connected .connection-ring {
+    border-color: var(--success-color);
+    animation: pulse-ring 2s ease infinite;
+}
+
+.status-panel.connected .connection-circle {
+    border-color: var(--success-color);
+    animation: pulse-circle 2s ease infinite;
+}
+
+.status-panel.connected .connection-icon {
+    color: var(--success-color);
+}
+
+.status-panel.error .connection-ring {
+    border-color: var(--error-color);
+}
+
+.status-panel.error .connection-circle {
+    border-color: var(--error-color);
+}
+
+.status-panel.error .connection-icon {
+    color: var(--error-color);
+}
+
+/* Animations */
+@keyframes rotate {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@keyframes pulse-ring {
+    0% {
+        transform: scale(1);
+        opacity: 0.5;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 0.3;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 0.5;
+    }
+}
+
+@keyframes pulse-circle {
+    0% {
+        transform: scale(1);
+    }
+    50% {
+        transform: scale(1.05);
+    }
+    100% {
+        transform: scale(1);
+    }
 }

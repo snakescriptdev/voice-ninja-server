@@ -31,9 +31,13 @@ app.add_middleware(
 async def index(request: Request):
     return templates.TemplateResponse("connect.html", {"request": request})
 
+@app.get("/audio_list/")
+async def audio_list(request: Request):
+    return templates.TemplateResponse("audio_list.html", {"request": request})
 
 
-@app.get("/heartbeat")
+
+@app.get("/heartbeat/")
 async def heartbeat():
     logger.info("Heartbeat endpoint called")
     return JSONResponse(content={"message": "Voice Agent is running and ready to receive calls"})
@@ -104,7 +108,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 @app.get(
-    "/audio/{session_id}",
+    "/audio/{session_id}/",
     responses={
         200: {"model": AudioFileResponse},
         404: {"model": ErrorResponse},
@@ -138,7 +142,7 @@ async def get_audio_file(session_id: str):
 
 
 @app.get(
-    "/audio",
+    "/audio-files/",
     response_model=AudioFileListResponse,
     responses={
         500: {"model": ErrorResponse}
@@ -146,13 +150,16 @@ async def get_audio_file(session_id: str):
 )
 async def get_audio_file_list(request: Request):
     try:
-        audio_files = AudioStorage.get_audio_files()
+        audio_files = AudioStorage.get_audio_files(request)
         return AudioFileListResponse(
             audio_files=[
                 AudioFileResponse(
                     filename=file.name,
-                    session_id=file.stem,
-                    file_url=str(request.url_for('get_audio_file', session_id=file.stem))
+                    session_id=file.session_id,
+                    file_url=file.url,
+                    created_at=file.created_at,
+                    voice=file.voice,
+                    duration=file.duration
                 ) for file in audio_files
             ]
         )
@@ -163,7 +170,7 @@ async def get_audio_file_list(request: Request):
         )
 
 @app.delete(
-    "/audio/{session_id}",
+    "/audio-delete/{session_id}/",
     response_model=SuccessResponse,
     responses={
         404: {"model": ErrorResponse},

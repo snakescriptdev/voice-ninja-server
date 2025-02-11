@@ -1,0 +1,145 @@
+.recordings-wrapper {
+    background: rgba(26, 26, 46, 0.8);
+    border-radius: 15px;
+    overflow: hidden;
+    border: 1px solid rgba(0, 247, 255, 0.2);
+    margin-top: 20px;
+}
+
+.recordings-header {
+    background: var(--secondary-color);
+    color: white;
+    padding: 15px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 1.1em;
+    border-bottom: 1px solid var(--primary-color);
+}
+
+.recordings-container {
+    padding: 20px;
+    max-height: 500px;
+    overflow-y: auto;
+    background: rgba(26, 26, 46, 0.5);
+}
+
+.recordings-filter {
+    display: flex;
+    gap: 10px;
+    margin-left: auto;
+}
+
+.recordings-filter input,
+.recordings-filter select {
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: rgba(26, 26, 46, 0.9);
+    border: 1px solid var(--primary-color);
+    color: var(--text-color);
+    font-size: 0.9em;
+}
+
+.recording-item {
+    display: grid;
+    grid-template-columns: auto 150px;
+    gap: 15px;
+    margin: 15px 0;
+    padding: 20px;
+    border-radius: 12px;
+    background: rgba(26, 26, 46, 0.9);
+    border: 1px solid var(--primary-color);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: all 0.3s ease;
+}
+
+.recording-item:hover {
+    transform: translateX(5px);
+    box-shadow: 0 0 15px rgba(0, 247, 255, 0.2);
+}
+
+.recording-info {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.recording-title {
+    font-size: 1.2em;
+    color: var(--primary-color);
+    font-weight: 600;
+}
+
+.recording-metadata {
+    display: flex;
+    gap: 15px;
+    font-size: 0.9em;
+    color: var(--text-color);
+    opacity: 0.9;
+}
+
+.metadata-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.recording-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    justify-content: center;
+}
+
+.action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 15px;
+    border: 1px solid var(--primary-color);
+    background: transparent;
+    color: var(--text-color);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    width: 100%;
+}
+
+.action-btn:hover {
+    background: var(--primary-color);
+    color: var(--secondary-color);
+    transform: translateY(-2px);
+}
+
+.action-btn.delete {
+    border-color: var(--error-color);
+}
+
+.action-btn.delete:hover {
+    background: var(--error-color);
+    color: white;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .recordings-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 15px;
+    }
+    
+    .recordings-filter {
+        width: 100%;
+        flex-direction: column;
+    }
+    
+    .recording-item {
+        grid-template-columns: 1fr;
+    }
+    
+    .recording-actions {
+        flex-direction: row;
+    }
+} 

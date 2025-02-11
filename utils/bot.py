@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 import pandas as pd
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import EndFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
@@ -19,16 +18,17 @@ from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveL
 load_dotenv(override=True)
 logger.remove(0)
 logger.add(sys.stderr, level="DEBUG")
+from .config import AUDIO_STORAGE_DIR
+from .extra_utils import encode_filename
 import io
 import wave
 import aiofiles
-from .config import AUDIO_STORAGE_DIR, SAMPLE_RATE
 
 # Update the save_audio function in bot.py
-async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str):
+async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str,voice:str):
     if len(audio) > 0:
-        filename = f"{SID}.wav"
-        file_path = AUDIO_STORAGE_DIR / filename
+        file_name = encode_filename(SID,voice)
+        file_path = AUDIO_STORAGE_DIR / file_name
         
         with io.BytesIO() as buffer:
             with wave.open(buffer, "wb") as wf:
@@ -77,14 +77,12 @@ async def run_bot(websocket_client, voice, uid):
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
         params=FastAPIWebsocketParams(
-            audio_in_sample_rate=SAMPLE_RATE,
-            audio_out_sample_rate=SAMPLE_RATE,
             audio_out_enabled=True,
             audio_in_enabled=True,
             add_wav_header=True,
             vad_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
             vad_audio_passthrough=True,
+            vad_analyzer=SileroVADAnalyzer(),
             serializer=ProtobufFrameSerializer(),
         )
     )
@@ -110,7 +108,7 @@ async def run_bot(websocket_client, voice, uid):
         [{"role": "user", "content": "Say Hello and introduce yourself as SAGE"}],
     )
     context_aggregator = llm.create_context_aggregator(context)
-    audiobuffer = AudioBufferProcessor(sample_rate=SAMPLE_RATE)
+    audiobuffer = AudioBufferProcessor()
 
     pipeline = Pipeline(
         [
@@ -124,11 +122,11 @@ async def run_bot(websocket_client, voice, uid):
     )
 
 
-    task = PipelineTask(pipeline, params=PipelineParams())
+    task = PipelineTask(pipeline, params=PipelineParams(audio_in_sample_rate=16000,audio_out_sample_rate=16000))
 
     @audiobuffer.event_handler("on_audio_data")
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
-        await save_audio(audio, sample_rate, num_channels, SID)
+        await save_audio(audio, sample_rate, num_channels, SID,voice)
 
 
     runner = PipelineRunner(handle_sigint=False)
