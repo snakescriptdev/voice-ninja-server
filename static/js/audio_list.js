@@ -16,8 +16,8 @@ class AudioList {
             const response = await fetch('/api/audio-files/');
             const data = await response.json();
             
-            if (data.audio_files) {
-                this.renderRecordings(data.audio_files);
+            if (data.audio_records) {
+                this.renderRecordings(data.audio_records);
             }
         } catch (error) {
             console.error('Error loading recordings:', error);
@@ -53,7 +53,7 @@ class AudioList {
         
         element.innerHTML = `
             <div class="recording-info">
-                <span class="recording-title">${recording.filename}</span>
+                <span class="recording-title">${recording.file_name}</span>
                 <div class="recording-metadata">
                     <span class="metadata-item">
                         <i class="fas fa-microphone"></i> ${recording.voice}
@@ -71,7 +71,7 @@ class AudioList {
                     <i class="fas fa-play"></i>
                     <span class="button-text">Play</span>
                 </button>
-                <button class="action-btn delete" onclick="audioList.deleteRecording('${recording.filename}')">
+                <button class="action-btn delete" onclick="audioList.deleteRecording('${recording.id}')">
                     <i class="fas fa-trash"></i>
                     <span>Delete</span>
                 </button>

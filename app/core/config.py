@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     
     # Google API Configuration
     GOOGLE_API_KEY: str
+
+    # Database Configuration
+    DB_URL: str
     
     # Audio Settings
     AUDIO_STORAGE_DIR: Path = Path("./audio_storage")

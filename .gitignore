@@ -5,3 +5,4 @@ server.log
 .vscode
 audio_storage/
 .DS_Store
+alembic/versions/*

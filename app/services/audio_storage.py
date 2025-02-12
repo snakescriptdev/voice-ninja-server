@@ -5,7 +5,6 @@ from fastapi import UploadFile
 from app.core import VoiceSettings
 from app.utils import encode_filename,decode_filename,AudioFile,AudioFileMetaData
 from fastapi import Request
-import soundfile as sf
 
 
 class AudioStorage:
@@ -42,33 +41,3 @@ class AudioStorage:
         except Exception as e:
             print(f"Error deleting audio: {e}")
             return False
-        
-    @staticmethod
-    def get_audio_files(request: Optional[Request]=None) -> list[AudioFile]:
-        """Get all audio files"""
-        audio_files = list(VoiceSettings.AUDIO_STORAGE_DIR.glob("*.wav"))
-        result = []
-        
-        for file in audio_files:
-            decode_file_name = decode_filename(file.name)
-            url = (
-                f"{request.base_url._url}audio/{file.name}/"
-                if request
-                else f"/audio/{file.name}"
-            )
-            duration = sf.info(file).duration
-            
-            audio_file = AudioFile(
-                name=file.name,
-                url=url,
-                session_id=decode_file_name.SID,
-                voice=decode_file_name.voice,
-                created_at=decode_file_name.created_at,
-                duration=duration
-            )
-            result.append(audio_file)
-        
-        # Sort result by created_at in descending order (newest first)
-        result.sort(key=lambda x: x.created_at, reverse=True)
-            
-        return result

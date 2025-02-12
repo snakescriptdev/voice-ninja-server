@@ -24,16 +24,18 @@ from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveL
 from app.utils import encode_filename
 from app.core import VoiceSettings
 from .bot_tools import tools
-
+from app.databases.models import AudioRecordModel
+import soundfile as sf
+from fastapi_sqlalchemy import db
 
 load_dotenv(override=True)
 logger.remove(0)
 logger.add(sys.stderr, level="DEBUG")
 
 
-async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str,voice:str):
+async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str, voice: str):
     if len(audio) > 0:
-        file_name = encode_filename(SID,voice)
+        file_name = encode_filename(SID, voice)
         file_path = VoiceSettings.AUDIO_STORAGE_DIR / file_name
         
         with io.BytesIO() as buffer:
@@ -44,6 +46,15 @@ async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str
                 wf.writeframes(audio)
             async with aiofiles.open(file_path, "wb") as file:
                 await file.write(buffer.getvalue())
+        duration = sf.info(file_path).duration
+        
+        # Use the new create_record method
+        AudioRecordModel.create_record(
+            file_path=str(file_path),
+            file_name=file_name,
+            voice=voice,
+            duration=duration
+        )
         logger.info(f"Audio saved to {file_path}")
     else:
         logger.info("No audio data to save")
@@ -229,7 +240,7 @@ async def RunAssistant(websocket_client, voice, uid):
 
     @audiobuffer.event_handler("on_audio_data")
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
-        await save_audio(audio, sample_rate, num_channels, SID,voice)
+        await save_audio(audio, sample_rate, num_channels, SID, voice)
 
 
     runner = PipelineRunner(handle_sigint=False)

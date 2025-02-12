@@ -2,12 +2,12 @@ from fastapi import APIRouter,Request
 from .schemas.format import (
     ErrorResponse, 
     SuccessResponse, 
-    AudioFileResponse, 
-    AudioFileListResponse
 )
 from app.core import logger
 from app.services import AudioStorage
 from starlette.responses import JSONResponse, FileResponse
+from app.databases.models import AudioRecordModel
+from app.databases.schema import AudioRecordSchema, AudioRecordListSchema
 router = APIRouter(prefix="/api")
 
 
@@ -18,85 +18,48 @@ async def heartbeat():
 
 
 
-
-@router.get(
-    "/audio/{session_id}/",
-    responses={
-        200: {"model": AudioFileResponse},
-        404: {"model": ErrorResponse},
-        500: {"model": ErrorResponse}
-    }
-)
-async def get_audio_file(session_id: str):
-    """Get audio file for a session"""
-    try:
-        audio_file = AudioStorage.get_audio_path(session_id)
-        if not audio_file:
-            return JSONResponse(
-                status_code=404,
-                content=ErrorResponse(error="Audio file not found").dict()
-            )
-        
-        return FileResponse(
-            path=audio_file,
-            media_type="audio/wav",
-            filename=audio_file.name,
-            headers={
-                "Accept-Ranges": "bytes",
-                "Content-Disposition": f'attachment; filename="{audio_file.name}"'
-            }
-        )
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content=ErrorResponse(error=f"Error retrieving audio file: {str(e)}").dict()
-        )
-
-
 @router.get(
     "/audio-files/",
-    response_model=AudioFileListResponse,
     responses={
         500: {"model": ErrorResponse}
     }
 )
 async def get_audio_file_list(request: Request):
     try:
-        audio_files = AudioStorage.get_audio_files(request)
-        return AudioFileListResponse(
-            audio_files=[
-                AudioFileResponse(
-                    filename=file.name,
-                    session_id=file.session_id,
-                    file_url=file.url,
-                    created_at=file.created_at,
-                    voice=file.voice,
-                    duration=file.duration
-                ) for file in audio_files
-            ]
+        audio_files = AudioRecordModel.get_recent_records()
+        response_data = AudioRecordListSchema(audio_records=audio_files).model_dump(request=request)
+        response_data['status'] = "success"
+        response_data['message'] = "Audio files retrieved successfully"
+        return JSONResponse(
+            status_code=200,
+            content=response_data
         )
     except Exception as e:
+        print(e)
         return JSONResponse(
             status_code=500,
-            content=ErrorResponse(error=f"Error retrieving audio files: {str(e)}").dict()
+            content=ErrorResponse(error=f"Error retrieving audio files: {str(e)}").model_dump()
         )
 
 @router.delete(
-    "/audio-delete/{session_id}/",
+    "/audio-delete/{id}/",
     response_model=SuccessResponse,
     responses={
         404: {"model": ErrorResponse},
         500: {"model": ErrorResponse}
     }
 )
-async def delete_audio_file(session_id: str):
+async def delete_audio_file(id: int):
     """Delete audio file for session"""
     try:
-        if AudioStorage.delete_audio(session_id):
+        audio_record = AudioRecordModel.get_by_id(id)
+        if audio_record:
+            AudioStorage.delete_audio(audio_record.file_name)
+            audio_record.delete()
             return SuccessResponse(message="Audio file deleted successfully")
         return JSONResponse(
             status_code=404,
-            content=ErrorResponse(error="Audio file not found").dict()
+            content=ErrorResponse(error="Audio file not found").model_dump()
         )
     except Exception as e:
         return JSONResponse(
