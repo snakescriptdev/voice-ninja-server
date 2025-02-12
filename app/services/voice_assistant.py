@@ -236,14 +236,14 @@ async def RunAssistant(websocket_client, voice, uid):
     )
 
 
-    task = PipelineTask(pipeline, params=PipelineParams(audio_in_sample_rate=16000,audio_out_sample_rate=16000,allow_interruptions=True))
+    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
 
     @audiobuffer.event_handler("on_audio_data")
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
         await save_audio(audio, sample_rate, num_channels, SID, voice)
 
 
-    runner = PipelineRunner(handle_sigint=False)
+    runner = PipelineRunner(handle_sigint=False,force_gc=True)
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
