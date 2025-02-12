@@ -1,37 +1,42 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <title>Voice Chat Recordings</title>
-    <link rel="stylesheet" href="/static/connect.css">
-    <link rel="stylesheet" href="/static/audio_list.css">
-    <script src="/static/animations.js"></script>
-</head>
-<body>
-    <div class="container_list">
-        <div class="ai-header">
-            <i class="fas fa-microphone-lines ai-icon"></i>
-            <h1>Voice Chat Recordings</h1>
+{% extends "base.html" %}
+
+{% block title %}Voice Chat Recordings{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="{{ url_for('static', path='css/audio_list.css') }}">
+{% endblock %}
+
+{% block container_class %}container_list{% endblock %}
+
+{% block header_icon %}
+<i class="fas fa-microphone-lines ai-icon"></i>
+{% endblock %}
+
+{% block header_title %}Voice Chat Recordings{% endblock %}
+
+{% block content %}
+<div class="recordings-wrapper">
+    <div class="recordings-header">
+        <i class="fas fa-list"></i>
+        <span>Recording List</span>
+        {% if enable_filters %}
+        <div class="recordings-filter">
+            <input type="text" id="searchRecording" placeholder="Search recordings...">
+            <select id="voiceFilter">
+                <option value="">All Voices</option>
+                {% for voice in voices %}
+                <option value="{{ voice }}">{{ voice }}</option>
+                {% endfor %}
+            </select>
         </div>
-        
-        <div class="recordings-wrapper">
-            <div class="recordings-header">
-                <i class="fas fa-list"></i>
-                <span>Recording List</span>
-                <!-- <div class="recordings-filter">
-                    <input type="text" id="searchRecording" placeholder="Search recordings...">
-                    <select id="voiceFilter">
-                        <option value="">All Voices</option>
-                    </select>
-                </div> -->
-            </div>
-            <div class="recordings-container" id="recordings-container">
-                <!-- Recordings will be populated here -->
-            </div>
-        </div>
+        {% endif %}
     </div>
-    <script src="/static/audio_list.js"></script>
-</body>
-</html>
+    <div class="recordings-container" id="recordings-container">
+        <!-- Recordings will be populated here -->
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', path='js/audio_list.js') }}"></script>
+{% endblock %}

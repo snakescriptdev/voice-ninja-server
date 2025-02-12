@@ -13,7 +13,7 @@ class AudioList {
 
     async loadRecordings() {
         try {
-            const response = await fetch('/audio-files/');
+            const response = await fetch('/api/audio-files/');
             const data = await response.json();
             
             if (data.audio_files) {
@@ -87,7 +87,7 @@ class AudioList {
         }
 
         try {
-            const response = await fetch(`/audio-delete/${sessionId}/`, {
+            const response = await fetch(`/api/audio-delete/${sessionId}/`, {
                 method: 'DELETE'
             });
 

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}AI Voice Assistant{% endblock %}</title>
+    
+    <!-- Common CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="{{ url_for('static', path='css/connect.css') }}">
+    
+    {% block extra_css %}{% endblock %}
+    
+    <!-- Common JS -->
+    <script src="{{ url_for('static', path='js/animations.js') }}"></script>
+    {% block extra_head %}{% endblock %}
+</head>
+<body>
+    <div class="{% block container_class %}container{% endblock %}">
+        <div class="ai-header">
+            {% block header_icon %}
+            <i class="fas fa-robot ai-icon"></i>
+            {% endblock %}
+            <h1>{% block header_title %}{% endblock %}</h1>
+        </div>
+        
+        {% block content %}{% endblock %}
+    </div>
+    
+    {% block scripts %}{% endblock %}
+</body>
+</html> 

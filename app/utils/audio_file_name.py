@@ -1,22 +1,6 @@
-import base64
 from datetime import datetime
-from dataclasses import dataclass
-
-@dataclass
-class AudioFileMetaData:
-    SID:str
-    voice:str
-    created_at:datetime
-    audio_type:str
-
-@dataclass
-class AudioFile:
-    name: str
-    url: str
-    session_id: str
-    voice: str
-    created_at: datetime
-    duration: float
+import base64
+from .helper import AudioFileMetaData
 
 def encode_filename(SID:str="none", voice:str="none") -> str:
     # Create the base string without extension
@@ -40,4 +24,3 @@ def decode_filename(filename:str) -> AudioFileMetaData:
     created_at = datetime.strptime(created_at, "%Y%m%dT%H:%M:%S")
     audio_type = filename.split(".")[-1]
     return AudioFileMetaData(SID=SID, voice=voice, created_at=created_at, audio_type=audio_type)
-    

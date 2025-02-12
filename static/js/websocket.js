@@ -184,7 +184,7 @@ class WebSocketClient {
             // Use dynamic WebSocket URL
             const authHeader = this.getAuthHeader();
             const voice = this.get_voice();
-            const wsUrl = `${this.BASE_URL}/ws?authorization=${encodeURIComponent(authHeader)}&voice=${encodeURIComponent(voice)}`;
+            const wsUrl = `${this.BASE_URL}/ws/voices/?authorization=${encodeURIComponent(authHeader)}&voice=${encodeURIComponent(voice)}`;
             
             this.ws = new WebSocket(wsUrl);
             this.ws.binaryType = 'arraybuffer';

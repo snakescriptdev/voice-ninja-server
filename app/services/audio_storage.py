@@ -2,8 +2,8 @@ import shutil
 from pathlib import Path
 from typing import Optional
 from fastapi import UploadFile
-from .config import AUDIO_STORAGE_DIR
-from .extra_utils import decode_filename,encode_filename,AudioFile
+from app.core import VoiceSettings
+from app.utils import encode_filename,decode_filename,AudioFile,AudioFileMetaData
 from fastapi import Request
 import soundfile as sf
 
@@ -15,7 +15,7 @@ class AudioStorage:
         try:
 
             filename = encode_filename(session_id,"none")
-            file_path = AUDIO_STORAGE_DIR / filename
+            file_path = VoiceSettings.AUDIO_STORAGE_DIR / filename
             
             with file_path.open("wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
@@ -28,14 +28,14 @@ class AudioStorage:
     @staticmethod
     def get_audio_path(session_id: str) -> Optional[Path]:
         """Get audio file for a session"""
-        file_path = AUDIO_STORAGE_DIR / session_id
+        file_path = VoiceSettings.AUDIO_STORAGE_DIR / session_id
         return file_path if file_path.exists() else None
 
     @staticmethod
     def delete_audio(filename: str) -> bool:
         """Delete audio file"""
         try:
-            file_path = AUDIO_STORAGE_DIR / filename
+            file_path = VoiceSettings.AUDIO_STORAGE_DIR / filename
             if file_path.exists():
                 file_path.unlink()
             return True
@@ -46,7 +46,7 @@ class AudioStorage:
     @staticmethod
     def get_audio_files(request: Optional[Request]=None) -> list[AudioFile]:
         """Get all audio files"""
-        audio_files = list(AUDIO_STORAGE_DIR.glob("*.wav"))
+        audio_files = list(VoiceSettings.AUDIO_STORAGE_DIR.glob("*.wav"))
         result = []
         
         for file in audio_files:
