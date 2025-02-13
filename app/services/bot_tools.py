@@ -20,6 +20,28 @@ tools = [
                     },
                     "required": ['reason']
                 }
+            },
+            {
+                "name": "submit_email_number",
+                "description": "Submit the email number",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "call_id": {
+                            "type": "string",
+                            "description": "The call id to submit",
+                        },
+                        "email": {
+                            "type": "string",
+                            "description": "The email to submit",
+                        },
+                        "number": {
+                            "type": "string",
+                            "description": "The number to submit",
+                        }
+                    },
+                    "required": ['call_id', 'email', 'number']
+                }
             }
         ]
     }

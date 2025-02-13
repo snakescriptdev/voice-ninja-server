@@ -26,14 +26,13 @@ from app.core import VoiceSettings
 from .bot_tools import tools
 from app.databases.models import AudioRecordModel
 import soundfile as sf
-from fastapi_sqlalchemy import db
 
 load_dotenv(override=True)
 logger.remove(0)
 logger.add(sys.stderr, level="DEBUG")
 
 
-async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str, voice: str):
+async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str, voice: str, record_id: int):
     if len(audio) > 0:
         file_name = encode_filename(SID, voice)
         file_path = VoiceSettings.AUDIO_STORAGE_DIR / file_name
@@ -47,14 +46,8 @@ async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str
             async with aiofiles.open(file_path, "wb") as file:
                 await file.write(buffer.getvalue())
         duration = sf.info(file_path).duration
-        
-        # Use the new create_record method
-        AudioRecordModel.create_record(
-            file_path=str(file_path),
-            file_name=file_name,
-            voice=voice,
-            duration=duration
-        )
+        audio_record = AudioRecordModel.get_by_id(record_id)
+        audio_record.update(file_path=str(file_path), file_name=file_name, duration=duration)
         logger.info(f"Audio saved to {file_path}")
     else:
         logger.info("No audio data to save")
@@ -91,6 +84,8 @@ def get_kb_content(csv_path: str) -> str:
 
 async def RunAssistant(websocket_client, voice, uid):
     SID = uid
+    audio_record = AudioRecordModel.create_record(file_path="", file_name="", voice=voice, duration=0, email="", number="")
+    print(audio_record.id)
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
         params=FastAPIWebsocketParams(
@@ -143,8 +138,17 @@ async def RunAssistant(websocket_client, voice, uid):
           2. When system commands trigger call termination
         
         End Call Process:
+        ### CALL ID: {audio_record.id}
         1. When user wants to end the call:
-           - First acknowledge their request: "Thank you for calling Snakescript. Have a great day!"
+           - Ask for contact information: "Before we end the call, may I have your email address and phone number for our records?"
+           - If user provides information:
+              - Confirm the details: "Just to confirm, I have your email as [email] and phone number as [number]. Is that correct?"
+              - Submit the email and number using the submit_email_number tool
+              - Thank them: "Thank you for providing your contact information."
+           - If user declines:
+              - Acknowledge politely: "No problem at all. I understand."
+           - Thank them for the call: "Thank you for calling Snakescript. Have a great day!"
+           - Use the end_call tool to disconnect
            - Ensure all pending responses or information have been communicated
            - Only then use the end_call tool to disconnect
         
@@ -211,10 +215,16 @@ async def RunAssistant(websocket_client, voice, uid):
         except Exception as e:
             logger.error(f"Error in end_call: {str(e)}")
             return {"status": "error", "message": f"Error processing end call: {str(e)}"}
-
-
+    
+    async def submit_email_number(function_name, tool_call_id, args, llm, context, result_callback) -> dict:
+        logger.info(f"Submit email number tool called with args: {args}")
+        audio_record = AudioRecordModel.get_by_id(args["call_id"])
+        audio_record.update(email=args["email"], number=args["number"])
+        logger.info(f"Audio record updated: {audio_record.id}")
+        await result_callback(f"record are saved please end the call using end_call tool if client want to end the call.")
 
     llm.register_function("end_call",end_call)
+    llm.register_function("submit_email_number",submit_email_number)
 
 
 
@@ -240,7 +250,7 @@ async def RunAssistant(websocket_client, voice, uid):
 
     @audiobuffer.event_handler("on_audio_data")
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
-        await save_audio(audio, sample_rate, num_channels, SID, voice)
+        await save_audio(audio, sample_rate, num_channels, SID, voice, audio_record.id)
 
 
     runner = PipelineRunner(handle_sigint=False,force_gc=True)

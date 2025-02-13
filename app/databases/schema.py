@@ -1,14 +1,16 @@
 from pydantic import BaseModel
 from datetime import datetime
-from typing import List
+from typing import List, Optional
 
 class AudioRecordSchema(BaseModel):
     id: int
-    file_name: str
-    duration: float
-    voice: str
-    created_at: datetime
-    file_url: str = ""
+    file_name: Optional[str] = ""
+    duration: Optional[float] = 0
+    voice: Optional[str] = ""
+    created_at: Optional[datetime] = None
+    file_url: Optional[str] = ""
+    email: Optional[str] = ""
+    number: Optional[str] = ""
 
     class Config:
         from_attributes = True

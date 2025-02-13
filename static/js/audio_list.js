@@ -64,6 +64,12 @@ class AudioList {
                     <span class="metadata-item">
                         <i class="fas fa-calendar"></i> ${date}
                     </span>
+                    <span class="metadata-item">
+                        <i class="fas fa-envelope"></i> ${recording.email}
+                    </span>
+                    <span class="metadata-item">
+                        <i class="fas fa-phone"></i> ${recording.number}
+                    </span>
                 </div>
             </div>
             <div class="recording-actions">

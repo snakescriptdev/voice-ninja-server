@@ -2,6 +2,10 @@ from pydantic_settings import BaseSettings
 from typing import List
 from pathlib import Path
 from functools import lru_cache
+import os
+
+
+os.makedirs("./audio_storage", exist_ok=True)
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "AI Voice Assistant"

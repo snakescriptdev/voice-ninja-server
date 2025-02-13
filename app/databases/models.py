@@ -11,12 +11,14 @@ class AudioRecordModel(Base):
     __tablename__ = "audio_records"
     
     id = Column(Integer, primary_key=True)
-    file_path = Column(String, nullable=False)  # Store the full path to audio file
-    file_name = Column(String, nullable=False)  # Store the encoded filename
-    duration = Column(Float, nullable=True)     # Duration in seconds
-    voice = Column(String, nullable=True)       # Voice type/model used
+    file_path = Column(String, nullable=True,default="")  # Store the full path to audio file
+    file_name = Column(String, nullable=True,default="")  # Store the encoded filename
+    duration = Column(Float, nullable=True,default=0)     # Duration in seconds
+    voice = Column(String, nullable=True,default="")       # Voice type/model used
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    email = Column(String, nullable=True,default="")
+    number = Column(String, nullable=True,default="")
 
     def get_file_url(self, request) -> str:
         """
@@ -34,7 +36,7 @@ class AudioRecordModel(Base):
         return f"<AudioRecord(id={self.id}, file_name={self.file_name})>"
 
     @classmethod
-    def create_record(cls, file_path: str, file_name: str, voice: str, duration: float) -> "AudioRecordModel":
+    def create_record(cls, file_path: str, file_name: str, voice: str, duration: float, email: str, number: str) -> "AudioRecordModel":
         """
         Create a new audio record
         """
@@ -43,7 +45,9 @@ class AudioRecordModel(Base):
                 file_path=file_path,
                 file_name=file_name,
                 voice=voice,
-                duration=duration
+                duration=duration,
+                email=email,
+                number=number
             )
             db.session.add(record)
             db.session.commit()
