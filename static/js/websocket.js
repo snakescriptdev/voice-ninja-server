@@ -7,7 +7,7 @@ class WebSocketClient {
             
         this.uid = null;
         // Update these constants for better performance
-        this.SAMPLE_RATE = 16000; // Increased from 16000
+        this.SAMPLE_RATE = 24000; // Increased from 16000
         this.NUM_CHANNELS = 1;  // Changed from 2 to 1 for better streaming
         
         // Audio state

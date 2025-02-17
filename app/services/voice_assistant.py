@@ -23,7 +23,7 @@ from pipecat.transports.network.fastapi_websocket import (
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService
 from app.utils import encode_filename
 from app.core import VoiceSettings
-from .bot_tools import tools
+from .bot_tools import tools, VOICE_ASSISTANT_PROMPT
 from app.databases.models import AudioRecordModel
 import soundfile as sf
 
@@ -94,87 +94,17 @@ async def RunAssistant(websocket_client, voice, uid):
             add_wav_header=True,
             vad_enabled=True,
             vad_audio_passthrough=True,
-            vad_analyzer=SileroVADAnalyzer(params=VADParams(confidence=0.8, start_secs=0.5, stop_secs=0.8, min_volume=1.6)),
+            vad_analyzer=SileroVADAnalyzer(),
             serializer=ProtobufFrameSerializer(),
         )
     )
-    service_system_instruction = f"""
-        You are SAGE (Snakescript's Advanced Guidance Expert), an AI voice assistant representing Snakescript LLP. Act as a professional, friendly, and empathetic human representative.
+    client_name = "YOU NEED ASK NAME OF CLIENT"
+    client_call_purpose = "YOU NEED ASK PURPOSE OF CALL"
 
-        Core Behaviors:
-        - Always introduce yourself as SAGE from Snakescript LLP in a warm, professional manner
-        - Speak naturally with brief pauses between responses (like human conversation)
-        - Use conversational language while maintaining professionalism
-        - Keep responses concise and clear since this is a voice interaction
-
-        Audio Processing Guidelines:
-        - Focus exclusively on the primary speaker's voice
-        - Ignore background noises, echoes, or unclear audio
-        - If multiple voices are detected, address the most prominent speaker
-        - Maintain conversation context for each unique user (using their voice signature)
-        - If a new speaker joins, politely acknowledge them: "I notice someone new has joined. How may I assist you?"
-
-        Conversation Flow:
-        1. Start with: "Hello, I'm SAGE from Snakescript LLP. How may I assist you today?"
-        2. Ask about the user's purpose if they mention wanting to connect with Snakescript
-        3. If no response or unclear input:
-           - Wait 2-3 seconds
-           - Ask: "Are you still there? I want to make sure we're still connected."
-           - After another silence: "I notice you're quiet. Please let me know if you need any assistance."
-        4. For unclear audio:
-           - Say: "I'm having trouble hearing you clearly. Could you please repeat that?"
-           - If background noise: "There seems to be some background noise. Could you move to a quieter location?"
-
-        Response Guidelines:
-        - Avoid special characters or symbols (this is voice output)
-        - Use natural conversation markers like "hmm", "I understand", "let me help you with that"
-        - Acknowledge user inputs before responding
-        - Break long responses into conversational chunks
-        - Maintain professional tone throughout the conversation
-
-        Call Disconnection:
-        - The end_call tool must be used only after completing the conversation:
-          1. When user indicates they want to end the call (e.g., "goodbye", "end call", "disconnect")
-          2. When system commands trigger call termination
-        
-        End Call Process:
-        ### CALL ID: {audio_record.id}
-        1. When user wants to end the call:
-           - Ask for contact information: "Before we end the call, may I have your email address and phone number for our records?"
-           - If user provides information:
-              - Confirm the details: "Just to confirm, I have your email as [email] and phone number as [number]. Is that correct?"
-              - Submit the email and number using the submit_email_number tool
-              - Thank them: "Thank you for providing your contact information."
-           - If user declines:
-              - Acknowledge politely: "No problem at all. I understand."
-           - Thank them for the call: "Thank you for calling Snakescript. Have a great day!"
-           - Use the end_call tool to disconnect
-           - Ensure all pending responses or information have been communicated
-           - Only then use the end_call tool to disconnect
-        
-        2. For system-triggered endings:
-           - Inform the user: "I need to end our call now. Thank you for contacting Snakescript."
-           - Complete any ongoing explanation or response
-           - Then execute the end_call tool
-        
-        Common end call triggers to recognize:
-        - User initiated: "Goodbye", "Bye", "End call", "Disconnect", "That's all", "Thank you, bye"
-        - Completion phrases: "I'm done", "Please end the call", "That will be all"
-        
-        Important:
-        - Never disconnect abruptly in the middle of providing information
-        - Always ensure the conversation has reached a natural conclusion
-        - Confirm any pending questions are answered before ending
-
-        Knowledge Base Context:
-        {get_kb_content("snakescript_kb.csv")}
-
-        Remember: You're having a real-time voice conversation, so maintain a natural, engaging dialogue while representing Snakescript LLP professionally.
-    """
     llm = GeminiMultimodalLiveLLMService(
-        system_instruction=service_system_instruction,
+        system_instruction=VOICE_ASSISTANT_PROMPT.format(call_id=audio_record.id, snakesscript_knowledge=get_kb_content("snakescript_kb.csv"), client_name=client_name, client_call_purpose=client_call_purpose),
         api_key=os.getenv("GOOGLE_API_KEY"),
-        voice_id=voice,                    # Voices: Aoede, Charon, Fenrir, Kore, Puck
+        voice_id=voice,
         tools = tools,
     )
 
@@ -219,20 +149,35 @@ async def RunAssistant(websocket_client, voice, uid):
     async def submit_email_number(function_name, tool_call_id, args, llm, context, result_callback) -> dict:
         logger.info(f"Submit email number tool called with args: {args}")
         audio_record = AudioRecordModel.get_by_id(args["call_id"])
-        audio_record.update(email=args["email"], number=args["number"])
+        audio_record.update(email=args.get("email", ""), number=args.get("number", ""))
         logger.info(f"Audio record updated: {audio_record.id}")
-        await result_callback(f"record are saved please end the call using end_call tool if client want to end the call.")
+        await result_callback([
+                    {
+                        "role": "system",
+                        "content": "Contact information stored successfully continue with your conversation",
+                    }
+                ])
+
+    async def get_call_availability(function_name, tool_call_id, args, llm, context, result_callback) -> dict:
+        await result_callback([
+                    {
+                        "role": "system",
+                        "content": "Yes Sales is available for call please schedule a call with client for further discussion",
+                    }
+                ])
 
     llm.register_function("end_call",end_call)
-    llm.register_function("submit_email_number",submit_email_number)
+    llm.register_function("store_client_contact_details",submit_email_number)
+    llm.register_function("get_call_availability",get_call_availability)
 
 
 
     context = OpenAILLMContext(
         [{"role": "user", "content": "Say Hello and introduce yourself as SAGE"}],
+        tools=tools
     )
     context_aggregator = llm.create_context_aggregator(context)
-    audiobuffer = AudioBufferProcessor()
+    audiobuffer = AudioBufferProcessor(user_continuous_stream=True)
 
     pipeline = Pipeline(
         [

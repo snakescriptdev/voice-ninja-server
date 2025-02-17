@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # Google API Configuration
     GOOGLE_API_KEY: str
 
+    # Cal API Configuration
+    CAL_API_KEY: str
+
     # Database Configuration
     DB_URL: str
     

@@ -3,12 +3,17 @@ class AudioList {
         this.container = document.getElementById('recordings-container');
         this.currentAudio = null;
         this.currentPlayingButton = null;
+        this.modalBackdrop = document.getElementById('modalBackdrop');
+        this.deleteModal = document.getElementById('deleteModal');
+        this.confirmDeleteButton = document.getElementById('confirmDelete');
+        this.pendingDeleteId = null;
         this.initialize();
     }
 
     async initialize() {
         await this.loadRecordings();
         // this.initializeFilters();
+        this.bindEvents();
     }
 
     async loadRecordings() {
@@ -50,36 +55,51 @@ class AudioList {
         element.className = 'recording-item';
         
         const date = new Date(recording.created_at).toLocaleString();
+        const duration = parseFloat(recording.duration).toFixed(1);
         
         element.innerHTML = `
             <div class="recording-info">
-                <span class="recording-title">${recording.file_name}</span>
                 <div class="recording-metadata">
-                    <span class="metadata-item">
-                        <i class="fas fa-microphone"></i> ${recording.voice}
-                    </span>
-                    <span class="metadata-item">
-                        <i class="fas fa-clock"></i> ${recording.duration}s
-                    </span>
-                    <span class="metadata-item">
-                        <i class="fas fa-calendar"></i> ${date}
-                    </span>
-                    <span class="metadata-item">
-                        <i class="fas fa-envelope"></i> ${recording.email}
-                    </span>
-                    <span class="metadata-item">
-                        <i class="fas fa-phone"></i> ${recording.number}
-                    </span>
+                    <div class="metadata-primary">
+                        <div class="voice-badge">
+                            <i class="fas fa-microphone-alt"></i>
+                            <span>${recording.voice}</span>
+                        </div>
+                        <div class="duration-badge">
+                            <i class="fas fa-clock"></i>
+                            <span>${duration}s</span>
+                        </div>
+                        <div class="contact-info">
+                            <div class="contact-badge">
+                                <i class="fas fa-envelope"></i>
+                                <span>${recording.email}</span>
+                            </div>
+                            <div class="contact-badge">
+                                <i class="fas fa-phone-alt"></i>
+                                <span>${recording.number}</span>
+                            </div>
+                        </div>
+                        <div class="timestamp">
+                            <i class="fas fa-calendar-alt"></i>
+                            <span>${date}</span>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="recording-actions">
                 <button class="action-btn play" onclick="audioList.togglePlayback('${recording.file_url}', this)">
-                    <i class="fas fa-play"></i>
-                    <span class="button-text">Play</span>
+                    <div class="btn-content">
+                        <i class="fas fa-play"></i>
+                        <span class="button-text">Play</span>
+                    </div>
+                    <div class="btn-backdrop"></div>
                 </button>
                 <button class="action-btn delete" onclick="audioList.deleteRecording('${recording.id}')">
-                    <i class="fas fa-trash"></i>
-                    <span>Delete</span>
+                    <div class="btn-content">
+                        <i class="fas fa-trash-alt"></i>
+                        <span class="button-text">Delete</span>
+                    </div>
+                    <div class="btn-backdrop"></div>
                 </button>
             </div>
         `;
@@ -87,17 +107,51 @@ class AudioList {
         return element;
     }
 
-    async deleteRecording(sessionId) {
-        if (!confirm('Are you sure you want to delete this recording?')) {
-            return;
-        }
+    bindEvents() {
+        // Close modal when clicking outside
+        this.deleteModal.addEventListener('click', (e) => {
+            if (e.target === this.deleteModal) {
+                this.hideModal();
+            }
+        });
 
+        // Close modal when clicking close button
+        const closeButtons = this.deleteModal.querySelectorAll('[data-bs-dismiss="modal"]');
+        closeButtons.forEach(button => {
+            button.addEventListener('click', () => this.hideModal());
+        });
+
+        // Confirm delete button
+        this.confirmDeleteButton.addEventListener('click', () => this.confirmDeleteRecording());
+    }
+
+    showModal() {
+        document.body.classList.add('modal-open');
+        this.modalBackdrop.style.display = 'block';
+        this.deleteModal.classList.add('show');
+        this.deleteModal.style.display = 'block';
+    }
+
+    hideModal() {
+        document.body.classList.remove('modal-open');
+        this.modalBackdrop.style.display = 'none';
+        this.deleteModal.classList.remove('show');
+        this.deleteModal.style.display = 'none';
+    }
+
+    async deleteRecording(sessionId) {
+        this.pendingDeleteId = sessionId;
+        this.showModal();
+    }
+
+    async confirmDeleteRecording() {
         try {
-            const response = await fetch(`/api/audio-delete/${sessionId}/`, {
+            const response = await fetch(`/api/audio-delete/${this.pendingDeleteId}/`, {
                 method: 'DELETE'
             });
 
             if (response.ok) {
+                this.hideModal();
                 await this.loadRecordings();
             } else {
                 const error = await response.json();
@@ -106,6 +160,8 @@ class AudioList {
         } catch (error) {
             console.error('Error deleting recording:', error);
             this.showError('Failed to delete recording');
+        } finally {
+            this.pendingDeleteId = null;
         }
     }
 
