@@ -20,7 +20,7 @@
 
 .recordings-container {
     padding: 20px;
-    max-height: 500px;
+    max-height: 460px;
     overflow-y: auto;
     background: rgba(26, 26, 46, 0.5);
 }
