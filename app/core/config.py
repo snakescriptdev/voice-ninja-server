@@ -32,7 +32,19 @@ class Settings(BaseSettings):
     # Voice Configuration
     ALLOWED_VOICES: List[str] = ["Aoede", "Charon", "Fenrir", "Kore", "Puck"]
     DEFAULT_VOICE: str = "Charon"
-    
+
+    # Mail Configuration
+    MAIL_USERNAME: str
+    MAIL_PASSWORD: str
+    MAIL_PORT: int
+    MAIL_SERVER: str
+    MAIL_TLS: bool
+    MAIL_SSL: bool
+    MAIL_FROM: str
+    TWILIO_ACCOUNT_SID: str
+    TWILIO_AUTH_TOKEN: str
+    TWILIO_PHONE_NUMBER: str
+    NGROK_BASE_URL: str 
     class Config:
         env_file = ".env"
 

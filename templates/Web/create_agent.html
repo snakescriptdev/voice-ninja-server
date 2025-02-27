@@ -1,0 +1,260 @@
+{% extends 'Web/base.html' %}
+
+
+{% block content %}
+    <div class="wrapper">
+        
+        {% include 'Web/sidebar.html' %}
+
+        <!-- Page Content  -->
+        <div id="content" class="page_content position-relative">
+            <button type="button"
+                        class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0 position-absolute ms-2">
+                        <img src="{{ url_for('static', path='/Web/images/hamburger-icon.svg') }}" class="img-fluid">
+                    </button>
+            <div class="agent_data_outer d-flex align-items-center gap-3">
+                <a href="{{ url_for('dashboard') }}" class="page_back_arrow d-flex align-items-center justify-content-center"><img
+                        src="{{ url_for('static', path='/Web/images/left-arrow.svg') }}" class="img-fluid"></a>
+                <div class="">
+                    <h3 id="agent-name" class="mb-0">{% if agent %}{{ agent.agent_name }}{% else %}Agent{% endif %}<span onclick="editHeading()">
+                            <img src="{{ url_for('static', path='/Web/images/pencil-icon.svg') }}" style="cursor: pointer;">
+                        </span>
+                    </h3>
+                    <p class="mb-0">Single Prompt Agent ID: agen..82c <span class="copy_icon cursor-pointer"><img
+                                src="{{ url_for('static', path='/Web/images/copy_icon.svg') }}" class="img-fluid"></span>
+                        . Retell llm ID: llm_...3aa <span class="copy_icon cursor-pointer"><img
+                                src="{{ url_for('static', path='/Web/images/copy_icon.svg') }}" class="img-fluid"></span> . 0.12/min
+                        <span class="pie_chart_icon cursor-pointer"><img src="{{ url_for('static', path='/Web/images/pie-chart-icon.svg') }}"
+                                class="img-fluid"></span> . 0.12/Estimated Latency: 1100-1250msmin
+                        <span class="pie_chart_icon cursor-pointer"><img src="{{ url_for('static', path='/Web/images/pie-chart-icon.svg') }}"
+                                class="img-fluid"></span>
+                    </p>
+                </div>
+            </div>
+            <div class="agent_type_box">
+                <div class="agent_type_dropdown d-flex align-items-center">
+                    <div class="agent_select_box position-relative">
+                        <select class="form-select" id="selected-model">
+                            <option {% if agent and agent.selected_model == "Gemini" %}selected{% endif %}>Gemini</option>
+                        </select>
+                        <div class="agent_type_select_icon">
+                            <img src="{{ url_for('static', path='/Web/images/ai-icon.svg') }}" class="img-fluid">
+                        </div>
+                        <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                            <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
+                        </div>
+                    </div>
+                    <div class="agent_select_box position-relative">
+                        <select class="form-select" id="selected-voice">
+                            <option {% if agent and agent.selected_voice == "Aoede" %}selected{% endif %}>Aoede</option>
+                            <option {% if agent and agent.selected_voice == "Charon" %}selected{% endif %}>Charon</option>
+                            <option {% if agent and agent.selected_voice == "Fenrir" %}selected{% endif %}>Fenrir</option>
+                            <option {% if agent and agent.selected_voice == "Kore" %}selected{% endif %}>Kore</option>
+                            <option {% if agent and agent.selected_voice == "Puck" %}selected{% endif %}>Puck</option>
+                        </select>
+                        <div class="agent_type_select_icon">
+                            <img src="{{ url_for('static', path='/Web/images/jack-img.svg') }}" class="img-fluid">
+                        </div>
+                        <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                            <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
+                        </div>
+                    </div>
+                    <div class="agent_select_box position-relative">
+                        <select class="form-select" id = "selected-language">
+                            <option selected>English</option>
+                        </select>
+                        <div class="agent_type_select_icon">
+                            <img src="{{ url_for('static', path='/Web/images/lang-icon.svg') }}" class="img-fluid">
+                        </div>
+                        <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                            <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
+                        </div>
+                    </div>
+                    <div class="agent_select_box position-relative">
+                        <select name="knowledge_base"  id="selected-knowledge-base">
+                                <option value="" disabled {% if not selected_knowledge %}selected{% endif %}>
+                                    Select Knowledge Base
+                                </option>
+                                {% for knowledge_base in knowledge_bases %}
+                                    <option value="{{ knowledge_base.id }}"
+                                        {% if selected_knowledge and selected_knowledge.id == knowledge_base.id %}selected{% endif %}>
+                                        {{ knowledge_base.knowledge_base_name }}
+                                    </option>
+                                {% endfor %}
+                            </select>
+
+                        <div class="agent_type_select_icon">
+                            <img src="{{ url_for('static', path='/Web/images/jack-img.svg') }}" class="img-fluid">
+                        </div>
+                        <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                            <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
+                        </div>
+                    </div>
+                    
+                </div>
+                <div class="agent_type_box_inner">
+                    <div class="agent_type_textarea">
+                        <textarea class="form-control" id="agent-prompt" placeholder="Enter your prompt here....">{% if agent %}{{ agent.agent_prompt }}{% endif %}</textarea>
+                    </div>
+                    {% if agent %}
+                    <div class=" mt-4">
+                        <label class="form-label">Your Agent Script</label>
+                        <div class="copy_link_box d-flex align-items-center justify-content-between mx-auto">
+                            <textarea class="copy_link_text" id="agent-script" disabled readonly></textarea>
+                            <script>
+                                document.addEventListener("DOMContentLoaded", function() {
+                                    const agentId = {{ agent.id }};
+                                    const origin = window.location.origin;
+                                    const scriptTag = `<script src="${origin}/chatbot-script.js/${agentId}/"><\/script>`;
+                                    document.getElementById("agent-script").value = scriptTag;
+                                });
+                            </script>
+                            <button class="copy_link_btn border-0 bg-transparent position-relative" id="copy-link-btn" onclick="copyScript()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-copy" viewBox="0 0 16 16">
+                                <path fill-rule="evenodd" d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1z"/>
+                            </svg>
+                            <div class="tooltip_text">Copy</div>
+                            </button>
+                        </div>
+                    </div>
+                    {% endif %}
+                    <div class="wlcm_msg_box pt-4">
+                        <label class="form-label">Welcome Message</label>
+                        <div class="custom-select">
+                            <div class="select-box position-relative" id="welcome-msg">
+                                {% if agent %}{{ agent.welcome_msg }}{% else %}Hi, how are you?{% endif %}
+                            </div>                            
+                            <div class="options">
+                                <div class="option" data-value="1">Hi  i am SAGE, how can i help you?</div>
+                                <div class="option" data-value="2">Hey there captain? How can i help you?</div>
+                                <div class="option" data-value="3">Hi there i am jack sparrow, how can i help you?</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="save_btn_box mt-3 text-center">
+                        <button type="button" class="save_btn" id="save-btn">
+                            {% if agent %}Update{% else %}Save{% endif %}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+
+
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const selectBox = document.getElementById("welcome-msg");
+            const optionsContainer = document.querySelector(".options");
+            const options = document.querySelectorAll(".option");
+    
+            // Toggle dropdown
+            selectBox.addEventListener("click", function() {
+                optionsContainer.classList.toggle("active");
+            });
+    
+            // Change the selected option
+            options.forEach(option => {
+                option.addEventListener("click", function() {
+                    selectBox.textContent = this.textContent;
+                    optionsContainer.classList.remove("active");
+                });
+            });
+    
+            // Close dropdown when clicking outside
+            document.addEventListener("click", function(event) {
+                if (!selectBox.parentElement.contains(event.target)) {
+                    optionsContainer.classList.remove("active");
+                }
+            });
+        });
+        
+        function copyScript(){
+            let script = $("#agent-script").val();
+            navigator.clipboard.writeText(script);
+            toastr.success("Script copied to clipboard", {positionClass: "toast-top-right"});
+        }
+    </script>
+
+<script>
+    
+    
+
+    $(document).ready(function () {
+        $(".select-box").click(function () {
+            $(".options").toggleClass("visible");
+        });
+
+        $(".option").click(function () {
+            let selectedText = $(this).text();
+            $(".select-box").text(selectedText);
+            $(".options").removeClass("visible");
+        });
+
+        // Close dropdown when clicking outside
+        $(document).click(function (e) {
+            if (!$(e.target).closest(".custom-select").length) {
+                $(".options").removeClass("visible");
+            }
+        });
+    });
+
+
+    $("#save-btn").click(function(){
+        let searchParams = new URLSearchParams(window.location.search);
+        let agentId = searchParams.get('agent_id');
+
+        let agentName = $("#agent-name").text().trim();
+        let agentPrompt = $("#agent-prompt").val();
+        let welcomeMsg = $("#welcome-msg").text();
+        let selectedModel = $("#selected-model").val();
+        let selectedVoice = $("#selected-voice").val();
+        let selectedLanguage = $("#selected-language").val();
+        let selectedKnowledgeBase = $("#selected-knowledge-base").val();
+        if(agentName == "" || agentPrompt == "" || welcomeMsg == "" || selectedModel == "" || selectedVoice == "" || selectedLanguage == ""){
+            toastr.error("Please fill all the fields", {positionClass: "toast-top-right"});
+            return;
+        }
+
+        // Use absolute URL to avoid redirect
+        let requestUrl = agentId ? `${window.location.origin}/api/edit_agent/` : `${window.location.origin}/api/create_new_agent/`;
+
+        $.ajax({    
+            url: requestUrl,
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                agent_id: agentId,
+                agent_name: agentName,
+                agent_prompt: agentPrompt,
+                welcome_msg: welcomeMsg,
+                selected_model: selectedModel,
+                selected_voice: selectedVoice,
+                selected_language: selectedLanguage,
+                selected_knowledge_base: selectedKnowledgeBase
+            }),
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            success: function(response){
+                if(response.status == "success"){
+                    toastr.success(response.message, {positionClass: "toast-top-right"});
+                    setTimeout(function(){
+                        window.location.href = "/dashboard"; // Use absolute path
+                    }, 2000);
+                }
+                else{
+                    toastr.error("Something went wrong!", {positionClass: "toast-top-right"});
+                }
+            },
+            error: function(xhr, status, error){
+                console.log("Error:", xhr.responseText); // Log error details
+                toastr.error("Something went wrong!", {positionClass: "toast-top-right"});
+            }
+        });
+    });
+
+</script>
+{% endblock %}

@@ -1,0 +1,274 @@
+
+{% extends 'Web/base.html' %}
+
+{% block title %}
+    <title>Dashboard</title>
+{% endblock %}
+
+{% block content %}
+
+<body>
+
+    <div class="wrapper">
+        <!-- Sidebar  -->
+       {% include 'Web/sidebar.html' %}
+
+        <!-- Page Content  -->
+        <div id="content" class="page_content position-relative">
+            <div class="agent_page_header d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button"
+                        class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
+                        <img src="{{ url_for('static', path='/Web/images/hamburger-icon.svg') }}" class="img-fluid">
+                    </button>
+                    <div class="d-flex align-items-center gap-2">
+                        <img src="{{ url_for('static', path='/Web/images/agent-icon.svg') }}" class="img-fluid">
+                        <h6 class="mb-0">Agents</h6>
+                    </div>
+                </div>
+                <div class="dropdown">
+                    <button class="bg-transparent border-0 dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                        aria-expanded="false">
+                        <img src="{{ url_for('static', path='/Web/images/person-img.svg') }}" class="img-fluid">
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li>
+                            <a class="dropdown-item d-flex align-items-center gap-2" href="{{ url_for('logout') }}">
+                                <span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
+                                        class="bi bi-box-arrow-right" viewBox="0 0 16 16">
+                                        <path fill-rule="evenodd"
+                                            d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z" />
+                                        <path fill-rule="evenodd"
+                                            d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z" />
+                                    </svg>
+                                </span>Log Out
+                            </a>
+                        </li>
+                        <li>
+                                <a class="dropdown-item d-flex align-items-center gap-2" href="{{ url_for('change_password') }}">
+                                <span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
+                                        class="bi bi-box-arrow-right" viewBox="0 0 16 16">
+                                        <path fill-rule="evenodd"
+                                            d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z" />
+                                        <path fill-rule="evenodd"
+                                            d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z" />
+                                    </svg>
+                                </span>
+                                Change Password
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="table_filters pt-0 d-flex justify-content-between align-items-center gap-2">
+                <div class="table_search_box position-relative">
+                    <input type="search" class="form-control" placeholder="Search">
+                    <div class="search_icon">
+                        <img src="{{ url_for('static', path='/Web/images/search-icon.svg') }}" class="img-fluid">
+                    </div>
+                </div>
+                <div class="dropdown filter_dropdown">
+                    <a href="{{ url_for('create_agent') }}" class="create_agent_btn"> 
+                        Create an Agent
+                    </a>
+                </div>
+            </div>
+            <div class="agent_table_outer">
+                <div class="agent_table">
+                    <div class="table-responsive">
+                        <table class="table mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Agent Name</th>
+                                    <th>Model</th>
+                                    <th>Voice</th>
+                                    <th>Phone</th>
+                                    <th>Delete</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for agent in page_obj.items %}
+                                <tr onclick="window.location.href='{{ url_for('update_agent') }}?agent_id={{ agent.id }}'" style="cursor: pointer;">
+                                    <td>
+                                        <div class="d-flex align-items-center justify-content-center gap-2 agent_name_data">
+                                            <span>
+                                                {% if agent.agent_name %}
+                                                <img src="{{ url_for('static', path='/Web/images/lucide_bot.svg') }}" class="img-fluid">
+                                                {% endif %}
+                                            </span>
+                                            {{ agent.agent_name }}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="max-content">
+                                            {% if agent.selected_model %}
+                                                {{ agent.selected_model }}
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="d-flex align-items-center justify-content-center gap-1 max-content">
+                                            <span>
+                                                {% if agent.selected_voice %}
+                                                <img src="{{ url_for('static', path='/Web/images/voice-icon.svg') }}" class="img-fluid">
+                                                {% endif %}
+                                            </span>
+                                            {{ agent.selected_voice }}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="max-content">
+                                            {% if agent.phone_number %}
+                                                {{ agent.phone_number }}
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <td>
+                                        <div class="max-content">
+                                            {% if agent.id %}
+                                            <button class="delete-btn btn btn-danger" 
+                                                    data-bs-toggle="modal" 
+                                                    data-bs-target="#deleteModal" 
+                                                    data-agent-id="{{ agent.id }}" 
+                                                    data-agent-name="{{ agent.agent_name }}"
+                                                    onclick="event.stopPropagation();">
+                                                <img src="{{ url_for('static', path='/Web/images/delete-icon.svg') }}" alt="Delete" class="img-fluid">
+                                            </button>
+                                            {% endif %}
+                                        </div>
+                                    </td>                                    
+                                </tr>
+                                {% else %}
+                                <tr>
+                                    <td colspan="5" class="text-center">No agents found</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                    <div class="table_pagination">
+                        <nav aria-label="Page navigation">
+                            <ul class="pagination justify-content-end gap-2 mb-0">
+                                {%- if page_obj.has_previous -%}
+                                <li class="page-item">
+                                    <a class="page-link pagination_arrow" href="{{ url_for('dashboard') }}?page={{ page_obj.previous_page_number }}" tabindex="-1" aria-disabled="false">&lt;</a>
+                                </li>
+                                {%- endif -%}
+                                
+                                {%- for page in page_obj.page_range -%}
+                                <li class="page-item {{ 'active' if page == page_obj.page else '' }}">
+                                    <a class="page-link" href="{{ url_for('dashboard') }}?page={{ page }}" {% if page == page_obj.page %}aria-current="page"{% endif %}>{{ page }}</a>
+                                </li>
+                                {%- endfor -%}
+                                
+                                {%- if page_obj.has_next -%}
+                                <li class="page-item">
+                                    <a class="page-link pagination_arrow" href="{{ url_for('dashboard') }}?page={{ page_obj.next_page_number }}">&gt;</a>
+                                </li>
+                                {%- endif -%}
+                            </ul>
+                        </nav>
+
+                        </nav>
+                    </div>
+                    
+                </div>
+                
+            </div>
+        </div>
+    </div>
+</body>
+
+
+
+<!-- Modal -->
+<div class="modal fade delete_modal" id="deleteModal" data-bs-backdrop="static" tabindex="-1" aria-labelledby="exampleModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body">
+                <div class="text-center">
+                    <h3>Are you sure?</h3>
+                    <p>You want to delete <strong id="modal-agent-name"></strong>?</p>
+                    <div class="d-flex justify-content-center align-items-center gap-2">
+                        <button type="button" class="btn btn-danger" id="confirm-delete">
+                            Delete
+                        </button>                      
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+
+<script>
+// Add this JavaScript code to your file
+document.addEventListener('DOMContentLoaded', function() {
+    // Select all delete buttons
+    const deleteButtons = document.querySelectorAll('.delete-btn');
+    
+    // Add click event listener to each delete button
+    deleteButtons.forEach(button => {
+        button.addEventListener('click', function() {
+            // Get agent ID and name from data attributes
+            const agentId = this.getAttribute('data-agent-id');
+            const agentName = this.getAttribute('data-agent-name');
+            
+            // Set the agent name in the modal
+            document.getElementById('modal-agent-name').textContent = agentName;
+            
+            // Store the agent ID in the confirm delete button
+            document.getElementById('confirm-delete').setAttribute('data-agent-id', agentId);
+        });
+    });
+});
+    
+    
+
+    document.getElementById('confirm-delete').addEventListener('click', function() {
+        const agentId = this.getAttribute('data-agent-id');
+        
+        fetch(`${window.location.origin}/api/delete_agent/?agent_id=${agentId}`, {
+            method: "DELETE",
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+            },
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === "success") {
+                // Find and remove the specific row with the deleted agent
+                const rowToRemove = document.querySelector(`tr[onclick*="agent_id=${agentId}"]`);
+                if (rowToRemove) {
+                    rowToRemove.remove();
+                }
+                
+                // Close the modal
+                const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
+                deleteModal.hide();
+                
+                // Show success message
+                toastr.success(data.message, { positionClass: "toast-top-right" });
+            } else {
+                toastr.error(data.message || "Failed to delete agent", { positionClass: "toast-top-right" });
+            }
+        })
+        .catch(error => {
+            console.error("Error:", error);
+            toastr.error("An error occurred while deleting the agent", { positionClass: "toast-top-right" });
+        });
+    });
+</script>
+
+
+
+{% endblock %}  
+

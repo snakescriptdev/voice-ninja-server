@@ -1,0 +1,222 @@
+@media(max-width:991.98px) {
+    .login_left {
+        gap: 120px;
+    }
+
+    .login_left .welcome_text h1 {
+        font-size: 50.16px;
+        line-height: 57.18px;
+    }
+
+    .login_left .welcome_text h1 span {
+        font-size: 51.03px;
+        line-height: 57.14px;
+    }
+
+    .login_left .welcome_text p {
+        margin-top: 20px;
+    }
+    .add_knowledge_base_heading{
+        flex-wrap: wrap;
+    }
+    .knowledge_base_files .file_inner{
+        padding: 7px 8px;
+    }
+    .knowledge_base_files{
+        padding: 12px 12px;
+    }
+}
+
+@media(max-width:767.98px) {
+    .page_content {
+        margin-left: 80px;
+    }
+
+    .sidebar {
+        min-width: 80px;
+        max-width: 80px;
+        text-align: center;
+        padding: 20px 0px;
+    }
+
+    .sidebar.active {
+        min-width: 250px;
+        max-width: 250px;
+        padding: 20px 10px;
+        transform: translateX(0%);
+    }
+
+
+    .sidebar_collapse_icon {
+        text-align: center;
+    }
+
+    .sidebar.active .sidebar_collapse_icon {
+        text-align: right;
+    }
+
+    body.open_menu {
+        position: relative;
+        overflow: hidden;
+    }
+
+    body.open_menu::after {
+        content: '';
+        background-color: #4f4f5a87;
+        top: 0px;
+        position: absolute;
+        left: 0px;
+        width: 100%;
+        height: 100%;
+    }
+    .login_left {
+        gap: 40px;
+        padding: 20px 20px;
+    }
+
+    .login_form {
+        max-width: 100%;
+        padding: 0px 40px 40px;
+    }
+
+    .mobile_hamburger_btn {
+        display: block;
+        padding: 0px;
+    }
+
+    .sidebar {
+        transform: translateX(-130%);
+    }
+
+    .page_content,
+    .open_menu .page_content {
+        margin-left: 0px;
+    }
+
+
+    .open_menu .close_sidebar_btn {
+        display: flex;
+        position: absolute;
+        right: 3px;
+        top: 3px;
+    }
+    .sidebar.active .sidebar_logo {
+        display: flex !important;
+    }
+    .sidebar.active .workspace_member_name button p, .sidebar.active .workspace_member_name .dropdown-toggle::after, .sidebar.active .sidebar_content_list li a span {
+        display: block;
+    }
+    .sidebar.active .sidebar_content_list li a, .sidebar.active .workspace_member_name button {
+        padding: 0px;
+        width: 100%;
+        height: unset;
+        justify-content: unset;
+        padding: 11px 19px;
+    }
+    .sidebar.active .workspace_member_name button{
+        padding: 13px 21px;
+    }
+    button.sidebarCollapse.sidebar_arrow_icon{
+        display: none;
+    }
+    .agent_page_header {
+        padding: 10px 15px 15px;
+    }
+    .page_content .table_filters {
+        padding: 15px 15px;
+    }
+    .agent_table th, .agent_table td{
+        padding: 15px 25px;
+    }
+    .agent_type_dropdown{
+        gap: 15px;
+    }
+    .agent_data_outer{
+        padding: 13px 8px;
+    }
+}
+
+@media(max-width:575.98px) {
+    .login_left .welcome_text h1 {
+        font-size: 40px;
+        line-height: 46px;
+    }
+
+    .login_left .welcome_text h1 span {
+        font-size: 36px;
+        line-height: 35px;
+    }
+
+    .login_left .welcome_text p {
+        margin-top: 15px;
+        font-size: 14px;
+    }
+
+    .login_left {
+        padding: 20px 0px 0px;
+    }
+
+    .login_signup_btn {
+        margin-top: 15px;
+    }
+
+    .login_form {
+        padding: 0px 0px 40px;
+    }
+
+    .login_form .form-floating input {
+        padding: 20px 25px;
+        padding-top: 40px;
+    }
+
+    .login_form .form-floating label {
+        padding: 10px 25px;
+    }
+
+    .login_form .form-floating>.form-control:focus,
+    .login_form .form-floating>.form-control:not(:placeholder-shown) {
+        padding-top: 40px;
+        padding-bottom: 20px;
+    }
+
+    .login_form .form-floating>.form-control-plaintext~label,
+    .login_form .form-floating>.form-control:focus~label,
+    .login_form .form-floating>.form-control:not(:placeholder-shown)~label,
+    .login_form .form-floating>.form-select~label {
+        transform: scale(.85) translateY(3px) translateX(7px);
+    }
+    .table_pagination {
+        padding: 20px 7px;
+    }
+    .agent_type_dropdown{
+        flex-wrap: wrap;
+    }
+}
+
+@media(max-width:479.98px) {
+    .table_filters {
+        flex-wrap: wrap;
+    }
+    .agent_select_box {
+        max-width: 100%;
+    }
+    .login_form_heading{
+        font-size: 14px;
+        line-height: 16px;
+    }
+    .inbound_call_modal .modal-header{
+        padding: 17px 10px;
+    }
+    .inbound_call_modal .modal-body {
+        padding: 10px 10px 20px;
+    }
+}
+@media(max-width:375.98px) {
+    .inbound_call_modal .form_input .input_label a {
+        font-size: 11px;
+    }
+    .inbound_call_modal label {
+        font-size: 12px;
+    }
+}
+

@@ -108,3 +108,22 @@ class ConversationList:
         ]
         
         return cls(conversation=conversations)
+    
+
+end_call_tool = [
+    {
+        "function_declarations": [
+            {
+                "name": "end_call",
+                "description": "This Tool is Desgin to disconnect the call with client system command will run to disconnect the call so be ware of using this tool"
+            },
+            
+        ]
+    }
+]
+
+
+
+
+
+
