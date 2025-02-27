@@ -7,3 +7,4 @@ class ErrorResponse(BaseModel):
 
 class SuccessResponse(BaseModel):
     message: str
+    

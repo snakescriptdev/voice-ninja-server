@@ -6,3 +6,4 @@ server.log
 audio_storage/
 .DS_Store
 alembic/versions/*.py
+media/

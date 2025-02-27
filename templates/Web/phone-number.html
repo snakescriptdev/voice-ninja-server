@@ -1,0 +1,209 @@
+{% extends 'Web/base.html' %}
+
+{% block content %}
+
+
+    <div class="wrapper">
+        <!-- Sidebar  -->
+        {% include 'Web/sidebar.html' %}
+
+        <!-- Page Content  -->
+        <div id="content" class="page_content">
+            <div class="agent_page_header knowledge_base_header d-flex align-items-center justify-content-between">
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button"
+                        class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
+                        <img src="{{ url_for('static', path='/Web/images/hamburger-icon.svg') }}" class="img-fluid">
+                    </button>
+                    <div class="d-flex align-items-center gap-2">
+                        <img src="{{ url_for('static', path='/Web/images/phone-icon.svg') }}" class="img-fluid">
+                        <h6 class="mb-0">Phone Number</h6>
+                    </div>
+                </div>
+                <div class="dropdown">
+                    <button class="bg-transparent border-0 dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                        aria-expanded="false">
+                        <img src="{{ url_for('static', path='/Web/images/person-img.svg') }}" class="img-fluid">
+                    </button>
+                    <ul class="dropdown-menu">
+                        <li>
+                            <a class="dropdown-item d-flex align-items-center gap-2" href="#">
+                                <span>
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
+                                        class="bi bi-box-arrow-right" viewBox="0 0 16 16">
+                                        <path fill-rule="evenodd"
+                                            d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z" />
+                                        <path fill-rule="evenodd"
+                                            d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z" />
+                                    </svg>
+                                </span>Log Out
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="knowledge_base_outer">
+                <div class="container-fluid">
+                    <div class="row gx-3">
+                        <div class="col-md-6 col-lg-4 mb-md-0 mb-2 px-0 px-md-2">
+                            <div class="add_knowledge_base">
+                                <div
+                                    class="add_knowledge_base_heading d-flex justify-content-between align-items-center">
+                                    <h6 class="d-flex align-items-center gap-2 mb-0"><span><img
+                                                src="{{ url_for('static', path='/Web/images/book-icon.svg') }}" class="img-fluid"></span> Phone Number
+                                    </h6>
+                                    <div class="position-relative">
+                                        <button type="button" class="d-flex gap-3 border-0 add_phone_number_btn" onclick="toggleBuyButton()"><img
+                                                src="{{ url_for('static', path='/Web/images/white-plus-icon.svg') }}" class="img-fluid">
+                                        <!-- <span>Add</span> -->
+                                        </button>
+                                        <button type="button" class="gap-3 justify-content-center border-0 buy_new_number_btn" data-bs-toggle="modal" data-bs-target="#addPhoneNumberModal">
+                                            + Buy New Number
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="knowledge_base_list">
+                                    <div class="list_data">
+                                        <a href="#" class="d-flex align-items-center gap-2 active_knowldege_base">
+                                            <img src="{{ url_for('static', path='/Web/images/light-phone-icon.svg') }}" class="img-fluid"> My Number
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6 col-lg-8 mb-md-0 mb-2 px-0 px-md-2">
+                            <div class="add_knowledge_base">
+                                <div class="add_knowledge_base_heading add_knowledge_base_right_heading d-flex align-items-center justify-content-between">
+                                    <div>
+                                        <h6 class="mb-0 d-flex align-items-start gap-1">My Number <span class="d-flex cursor-pointer"><img src="{{ url_for('static', path='/Web/images/square-edit-icon.svg') }}" class="img-fluid"></span></h6>
+                                        <p class="mb-0">ID: +17752648387</p>
+                                    </div>
+                                    <div class="d-flex align-items-center justify-content-end gap-2">
+                                        <button type="button" class="inbound-call-btn d-flex gap-2 dlt_btn align-items-center justify-content-center" data-bs-toggle="modal" data-bs-target="#makeInboundCallModal"><img
+                                            src="{{ url_for('static', path='/Web/images/inbound-call-icon.svg') }}" class="img-fluid">
+                                            Make an Outbound Call</button>
+                                    </div>
+                                </div>
+                                <div class="number_inner">
+                                    <div class="">
+                                        <label class="form-label">Outbound Call Agent</label>
+                                        <select class="form-select" id="agent_id">
+                                            <option value="" disabled selected>Select Agent</option>
+                                            {% for agent in agents %}
+                                            <option value="{{ agent.id }}">{{ agent.agent_name }}</option>
+                                            {% endfor %}
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+<!--Make an inbound call Modal -->
+<div class="modal fade inbound_call_modal" id="makeInboundCallModal" data-bs-backdrop="static" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header border-0">
+          <h3>Make Outbound Call</h3>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <form>
+            <div class="form_input">
+                <label class="form-label mb-3">Phone Number</label>
+                <div class="input-group mb-3">
+                    <span class="input-group-text" id="basic-addon1">In.</span>
+                    <input type="number" class="form-control" placeholder="+17752648387" aria-label="Username" aria-describedby="basic-addon1">
+                </div>
+            </div>
+            <div class="form_input">
+                <div class="input_label mb-3 d-flex justify-content-between align-items-center gap-1">
+                    <label class="form-label mb-0">Upload Recipients</label>
+                    <a href="#" download="" class="d-flex align-items-center gap-2"><img src="{{ url_for('static', path='/Web/images/download-blue-icon.svg') }}" class="img-fluid"> Download the format</a>
+                </div>
+                <div class="upload_area">
+                    <label for="uploadFile" class="d-flex justify-content-center flex-column align-items-center gap-1" id="uploadLabel"><span><img src="images/upload-file-icon.svg" class="img-fluid"></span>Choose a csv pr drag& drop it here.<span class="file_size_text">Up to 50 MB</span></label>
+                    <p id="fileName" class="d-none mb-0 text-center"></p>
+                    <input type="file" class="form-control d-none" id="uploadFile">
+                </div>
+            </div>
+            <div class="form_btns d-flex justify-content-end align-items-center gap-3">
+                <button type="button" class="" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" id="call_btn" class="bg_black_btn">Call</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<!-- Modal -->
+<div class="modal fade" id="addPhoneNumberModal" tabindex="-1" aria-labelledby="addPhoneNumberModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h1 class="modal-title fs-5" id="addPhoneNumberModalLabel">Add Phone Number</h1>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form>
+            <div class="form_input mb-3">
+                <label class="form-label">Nick Name</label>
+                <input type="text" class="form-control" placeholder="Enter Name" aria-label="Username" aria-describedby="basic-addon1">
+            </div>
+            <div class="form_input mb-3">
+                <label class="form-label">Phone Number</label>
+                <input type="number" class="form-control" placeholder="+17752648387" aria-label="Username" aria-describedby="basic-addon1">
+            </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        <button type="submit" class="btn btn-primary">Save changes</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+
+<script>
+    function toggleBuyButton() {
+        const buyBtn = document.querySelector('.buy_new_number_btn');
+        buyBtn.style.display = buyBtn.style.display === 'flex' ? 'none' : 'flex';
+    }
+</script>
+
+<script>
+    document.getElementById("call_btn").addEventListener("click", function(e) {
+        e.preventDefault();
+        var agent_id = document.getElementById("agent_id").value;
+        if (agent_id == "") {
+            toastr.error("No agent selected.");
+            return;
+        }
+        $.ajax({
+            url: "{{ url_for('call_agent') }}",
+            method: "POST",
+            data: JSON.stringify({
+                agent_id: agent_id
+            }),
+            contentType: "application/json",
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            success: function(response) {
+                if (response.status === 'success') {
+                    toastr.success(response.message);
+                } else {
+                    toastr.error(response.message);
+                }
+            }
+        });
+    });
+</script>
+
+{% endblock %}

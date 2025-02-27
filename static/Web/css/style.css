@@ -1,0 +1,1330 @@
+/* font kit start here */
+
+
+@font-face {
+    font-family: 'Poppins';
+    src: url('../fonts/Poppins-Medium.woff2') format('woff2'),
+        url('../fonts/Poppins-Medium.woff') format('woff');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Poppins';
+    src: url('../fonts/Poppins-Bold.woff2') format('woff2'),
+        url('../fonts/Poppins-Bold.woff') format('woff');
+    font-weight: bold;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Poppins';
+    src: url('../fonts/Poppins-SemiBold.woff2') format('woff2'),
+        url('../fonts/Poppins-SemiBold.woff') format('woff');
+    font-weight: 600;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Poppins';
+    src: url('../fonts/Poppins-Regular.woff2') format('woff2'),
+        url('../fonts/Poppins-Regular.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Poppins';
+    src: url('../fonts/Poppins-ExtraBold.woff2') format('woff2'),
+        url('../fonts/Poppins-ExtraBold.woff') format('woff');
+    font-weight: bold;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Inter';
+    src: url('../fonts/Inter-Medium.woff2') format('woff2'),
+        url('../fonts/Inter-Medium.woff') format('woff');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Inter';
+    src: url('../fonts/Inter-Bold.woff2') format('woff2'),
+        url('../fonts/Inter-Bold.woff') format('woff');
+    font-weight: bold;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Inter';
+    src: url('../fonts/Inter-ExtraBold.woff2') format('woff2'),
+        url('../fonts/Inter-ExtraBold.woff') format('woff');
+    font-weight: bold;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Inter';
+    src: url('../fonts/Inter-SemiBold.woff2') format('woff2'),
+        url('../fonts/Inter-SemiBold.woff') format('woff');
+    font-weight: 600;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Inter';
+    src: url('../fonts/Inter-Regular.woff2') format('woff2'),
+        url('../fonts/Inter-Regular.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Barlow';
+    src: url('../fonts/Barlow-Black.woff2') format('woff2'),
+        url('../fonts/Barlow-Black.woff') format('woff');
+    font-weight: 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Barlow';
+    src: url('../fonts/Barlow-ExtraBold.woff2') format('woff2'),
+        url('../fonts/Barlow-ExtraBold.woff') format('woff');
+    font-weight: bold;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Barlow';
+    src: url('../fonts/Barlow-Bold.woff2') format('woff2'),
+        url('../fonts/Barlow-Bold.woff') format('woff');
+    font-weight: bold;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Barlow';
+    src: url('../fonts/Barlow-Regular.woff2') format('woff2'),
+        url('../fonts/Barlow-Regular.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Barlow';
+    src: url('../fonts/Barlow-Medium.woff2') format('woff2'),
+        url('../fonts/Barlow-Medium.woff') format('woff');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+}
+
+@font-face {
+    font-family: 'Barlow';
+    src: url('../fonts/Barlow-SemiBold.woff2') format('woff2'),
+        url('../fonts/Barlow-SemiBold.woff') format('woff');
+    font-weight: 600;
+    font-style: normal;
+    font-display: swap;
+}
+
+/* font kit end here */
+body {
+    font-family: 'Poppins';
+    background: #fafafa;
+}
+
+a,
+a:hover,
+a:focus {
+    color: inherit;
+    text-decoration: none;
+    transition: all 0.3s;
+}
+
+.form-control:focus {
+    box-shadow: none;
+    border-color: #0C7FDA;
+}
+
+.navbar {
+    padding: 15px 10px;
+    background: #fff;
+    border: none;
+    border-radius: 0;
+    margin-bottom: 40px;
+    box-shadow: 1px 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.navbar-btn {
+    box-shadow: none;
+    outline: none !important;
+    border: none;
+}
+
+.line {
+    width: 100%;
+    height: 1px;
+    border-bottom: 1px dashed #ddd;
+    margin: 40px 0;
+}
+
+i,
+span {
+    display: inline-block;
+}
+
+/* login css start */
+
+.login-container {
+    min-height: 100vh;
+    background-image: url(../images/login-bg.png);
+    background-size: cover;
+    background-repeat: no-repeat;
+}
+
+.login-container .row {
+    min-height: 100vh;
+}
+
+.login_left h3 {
+    font-family: Inter;
+    font-weight: 600;
+    font-size: 39.24px;
+    line-height: 47.49px;
+    letter-spacing: 0.16em;
+    color: #ffffff;
+}
+
+.login_left h3 span {
+    font-weight: 800;
+}
+
+.login_left .welcome_text h1 {
+    font-family: Barlow;
+    font-weight: 500;
+    font-size: 70.16px;
+    line-height: 77.18px;
+    letter-spacing: 0.1em;
+    color: #ffffff;
+}
+
+.login_left .welcome_text h1 span {
+    font-family: Poppins;
+    font-weight: 800;
+    font-size: 61.03px;
+    line-height: 67.14px;
+}
+
+.login_left .welcome_text p {
+    font-family: Inter;
+    font-weight: 600;
+    font-size: 18px;
+    line-height: 21.6px;
+    letter-spacing: 0.1em;
+    color: #fff;
+    margin-top: 35px;
+}
+
+.login_left {
+    display: flex;
+    flex-direction: column;
+    padding: 100px 0px;
+    gap: 300px;
+}
+
+.login_form {
+    width: 100%;
+    max-width: 468px;
+}
+
+.login_form .form-floating label {
+    font-weight: 600;
+    font-size: 16px;
+    line-height: 24px;
+    color: #ECF2FF;
+    padding: 1rem 40px;
+}
+
+.login_form .form-floating>.form-control-plaintext~label,
+.login_form .form-floating>.form-control:focus~label,
+.login_form .form-floating>.form-control:not(:placeholder-shown)~label,
+.login_form .form-floating>.form-select~label {
+    opacity: 1;
+    transform: scale(.85) translateY(0px) translateX(9px);
+}
+
+.login_form .form-floating input {
+    border: 3px solid #FFFFFF;
+    border-radius: 5px;
+    background: #FFFFFF1A;
+    color: #fff;
+    padding: 25px 40px;
+    padding-top: 48px;
+}
+
+.login_form .form-floating::after {
+    content: '';
+    position: absolute;
+    left: 0px;
+    background: #fff;
+    height: 100%;
+    width: 18px;
+    top: 0px;
+    display: none;
+}
+
+.login_form .form-floating>.form-control::placeholder {
+    color: #ECF2FF;
+}
+
+.login_form .form-floating:has(input:focus)::after {
+    display: block;
+}
+
+.login_form .form-floating>.form-control:focus,
+.login_form .form-floating>.form-control:not(:placeholder-shown) {
+    padding-top: 48px;
+    padding-bottom: 25px;
+}
+
+.login_form .form-check label {
+    color: #FFFFFF;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.login_form .form-check .form-check-input {
+    background-color: transparent;
+    border: 1.5px solid #FFFFFF;
+}
+
+.login_form .form-check .form-check-input:focus {
+    border: 1.5px solid #FFFFFF;
+    box-shadow: none;
+}
+
+.forgot-password a {
+    color: #ffffff;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.login_signup_btn {
+    margin-top: 40px;
+}
+
+.login_signup_btn .login-button,
+.login_signup_btn .login-button {
+    border: 2px solid #FFFFFF;
+    border-radius: 5px;
+    padding: 12px 12px;
+    text-align: center;
+    color: #FFFFFF;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 24px;
+    background: transparent;
+}
+
+.login_signup_btn .login-button.active_btn {
+    background-color: #ffffff;
+    color: #5516AE;
+}
+
+.login_form_heading {
+    color: #ffffff;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 24px;
+    margin-bottom: 24px;
+}
+
+.forget_pass_btn.login_signup_btn .login-button.active_btn {
+    width: auto;
+    padding: 12px 75px;
+}
+
+/* login css end */
+
+/* ---------------------------------------------------
+    SIDEBAR STYLE
+----------------------------------------------------- */
+
+.wrapper {
+    display: flex;
+    align-items: stretch;
+    background-color: #F5F7FA;
+}
+
+.mobile_hamburger_btn,
+.close_sidebar_btn {
+    display: none;
+}
+
+.sidebar {
+    min-width: 300px;
+    max-width: 300px;
+    background: #FFFFFF;
+    color: #fff;
+    transition: all 0.3s;
+    position: fixed;
+    z-index: 9;
+    height: 100vh;
+    padding: 30px 10px;
+    box-shadow: 0px 4px 4px 0px #00000040;
+}
+
+.sidebar_logo h5 {
+    color: #232323;
+    font-weight: 600;
+    font-size: 18px;
+    line-height: 27px;
+}
+
+.sidebar.active {
+    min-width: 80px;
+    max-width: 80px;
+    padding: 30px 0px;
+}
+
+.sidebar.active .CTAs {
+    display: none;
+}
+
+.sidebar_collapse_icon {
+    text-align: end;
+}
+
+.sidebar.active .sidebar_collapse_icon {
+    text-align: center;
+}
+
+.workspace_member_name button {
+    box-shadow: 0px 0px 4px 0px #0000001A;
+    border-radius: 5px;
+    padding: 13px 21px;
+    width: 100%;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 21px;
+}
+
+.workspace_member_name button p {
+    width: 170px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.workspace_member_name .dropdown-toggle::after {
+    border: none;
+    background: url(../images/dropdown-arow.svg), center;
+    width: 14px;
+    height: 8px;
+    background-repeat: no-repeat;
+    background-size: contain;
+}
+
+.workspace_member_name .dropdown-toggle span {
+    height: 25px;
+    width: 25px;
+    background: linear-gradient(0deg, #0082A9, #0082A9),
+        linear-gradient(0deg, #0C7FDA, #0C7FDA);
+    border-radius: 5px;
+    color: #FFFFFF;
+}
+
+.workspace_member_name .dropdown-menu {
+    width: -webkit-fill-available;
+}
+
+.sidebar.active .workspace_member_name .dropdown-menu {
+    width: unset;
+}
+
+.sidebar_content_list li a {
+    padding: 11px 19px;
+    border-radius: 4px;
+    font-weight: 400;
+    font-size: 14.64px;
+    line-height: 21.95px;
+    letter-spacing: 0.01em;
+    color: #848484;
+    display: block;
+    transition: 0.5s;
+    gap: 11px;
+}
+
+.sidebar_content_list li a:hover,
+.sidebar_content_list li a.active_link {
+    background: #E9F5FE;
+
+}
+
+.sidebar_content_list li a.active_link {
+    color: #0C7FDA;
+}
+
+.sidebar_content_list li a.active_link svg {
+    background: #007AFF;
+    padding: 2px;
+    border-radius: 3px;
+}
+
+.sidebar_content_list li a.active_link svg rect {
+    fill: #007AFF;
+}
+
+.sidebar_content_list li a.active_link svg path {
+    fill: #ffffff;
+}
+
+.sidebar_content_list li a.active_link.agent_link svg path {
+    fill: unset;
+}
+
+.sidebar_content_list li a.active_link.agent_link svg {
+    padding: 0px;
+}
+
+.sidebar_content_list li a.active_link.phone_numeber_link svg path {
+    fill: unset;
+    stroke: #ffffff;
+}
+
+.sidebar_content_list {
+    height: calc(100vh - 148px);
+    overflow: auto;
+    padding: 0px 25px;
+}
+
+::-webkit-scrollbar {
+    background-color: transparent;
+    width: 5px;
+    height: 5px;
+}
+
+::-webkit-scrollbar-thumb {
+    background-color: #E9F5FE;
+    border-radius: 5px;
+}
+
+
+.sidebar.active .sidebar_content_list li a {
+    padding: 0px;
+    width: 40px;
+    height: 40px;
+    justify-content: center;
+}
+
+.sidebar.active .sidebar_logo {
+    display: none !important;
+}
+
+.sidebar.active .sidebar_content_list {
+    padding: 0px;
+    display: flex;
+    justify-content: center;
+}
+
+.sidebar.active .workspace_member_name button {
+    height: 35px;
+    width: 35px;
+    margin: auto;
+    padding: 0px;
+    justify-content: center;
+}
+
+.sidebar.active .workspace_member_name button p,
+.sidebar.active .workspace_member_name .dropdown-toggle::after,
+.sidebar.active .sidebar_content_list li a span {
+    display: none;
+}
+
+/* ---------------------------------------------------
+    CONTENT STYLE START
+----------------------------------------------------- */
+
+.page_content {
+    width: -webkit-fill-available;
+    min-height: 100vh;
+    transition: all 0.3s;
+    margin-left: 300px;
+}
+
+.open_menu .page_content {
+    margin-left: 80px;
+}
+
+/* agent page css start */
+.agent_page_header {
+    padding: 40px 20px 25px;
+}
+
+.agent_page_header .dropdown-toggle::after {
+    display: none;
+}
+
+.agent_page_header .dropdown-toggle img {
+    height: 45px;
+    width: 45px;
+    border-radius: 100%;
+}
+
+.page_content .table_filters {
+    padding: 20px 25px;
+}
+
+.table_search_box {
+    width: 100%;
+    max-width: 450px;
+}
+
+.table_search_box .search_icon {
+    position: absolute;
+    left: 17px;
+    top: 50%;
+    transform: translateY(-50%);
+}
+
+.table_search_box input {
+    padding: 12px 12px 12px 60px;
+    box-shadow: 0px 0px 4px 0px #0000001F;
+    font-weight: 400;
+    font-size: 17px;
+    line-height: 22px;
+    color: #3C3C4399;
+    border-radius: 9px;
+}
+
+.filter_dropdown .dropdown-toggle, .create_agent_btn {
+    padding: 14px 16px;
+    border-radius: 5px;
+    color: #FFFFFF;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 24px;
+    letter-spacing: -0.01em;
+    background-color: #0C7FDA;
+    display: block;
+}
+.create_agent_btn:hover{
+    color: #fff;
+}
+
+.save_btn{
+    padding: 10px 26px;
+    border-radius: 5px;
+    color: #FFFFFF;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 24px;
+    letter-spacing: -0.01em;
+    background-color: #0C7FDA;
+    color: #fff;
+    border: none;
+}
+
+.filter_dropdown .dropdown-toggle::after {
+    background-image: url(../images/white-bottom-arrow.svg);
+    border: none;
+    width: 16px;
+    height: 9px;
+    vertical-align: middle;
+    margin-left: 18px;
+    background-repeat: no-repeat;
+}
+
+.filter_dropdown .dropdown-toggle.show::after,
+.agent_type_dropdown .dropdown-toggle.show::after {
+    rotate: 180deg;
+}
+
+.filter_dropdown .dropdown-menu {
+    width: -webkit-fill-available;
+}
+
+.agent_table_outer {
+    padding: 0px 20px 20px;
+}
+
+.agent_table_outer .agent_table {
+    border: 1px solid #7272721A;
+    box-shadow: 0px 4px 7.6px 0px #0000001A;
+    border-radius: 6px;
+    background-color: #ffffff;
+}
+
+.agent_table th,
+.agent_table td {
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 21px;
+    color: #232323;
+    padding: 20px 55px;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.agent_table td {
+    color: #727272;
+}
+
+.agent_name_data {
+    width: max-content;
+}
+
+.max-content {
+    width: max-content;
+}
+
+table .max-content {
+    margin: auto;
+}
+
+.table_pagination {
+    padding: 25px 50px;
+}
+
+.table_pagination a.page-link,
+.table_pagination li.dots {
+    border: 1px solid #DFE3E8;
+    border-radius: 4px;
+    width: 32px;
+    height: 32px;
+    padding: 0px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #212B36;
+    font-weight: 600;
+    font-size: 14px;
+    line-height: 20px;
+}
+
+.table_pagination a.page-link:focus {
+    box-shadow: none;
+}
+
+.table_pagination li.active a.page-link {
+    border: 1px solid #0082A9;
+    background-color: transparent;
+    color: #0082A9;
+}
+
+.table_pagination li.page-item.disabled a {
+    background: #919eab80;
+    color: #fff;
+}
+
+.table_pagination .page-item:first-child .page-link,
+.table_pagination .page-item:last-child .page-link {
+    border-radius: 4px;
+}
+
+.table_pagination a.pagination_arrow {
+    color: #C4CDD5;
+}
+
+/* agent page css end */
+/* agent types css start */
+.page_back_arrow {
+    height: 36px;
+    width: 100%;
+    max-width: 36px;
+    border-radius: 100%;
+    border: 1px solid #0000001A;
+    box-shadow: 0px 2px 4px 0px #00000040;
+    background-color: #fff;
+}
+
+.cursor-pointer {
+    cursor: pointer;
+}
+
+.agent_data_outer {
+    box-shadow: 0px 4px 16.2px 0px #0000001F;
+    padding: 24px 20px;
+}
+
+.agent_data_outer h3 {
+    color: #232323;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.agent_data_outer p {
+    color: #727272;
+    font-weight: 400;
+    font-size: 13px;
+    line-height: 19.5px;
+}
+
+.agent_type_box {
+    margin: 26px 21px;
+    border: 1px solid #2323231A;
+    background-color: #ffffff;
+    border-radius: 5px;
+}
+
+.agent_type_dropdown {
+    padding: 12px 15px;
+    border-bottom: 1px solid #2323231A;
+    gap: 28px;
+}
+
+.agent_select_box {
+    width: 100%;
+    max-width: 150px;
+}
+
+.agent_type_dropdown select {
+    background-color: #F3F3F3;
+    border: 1px solid #0000001A;
+    border-radius: 8px;
+    padding: 10px 25px 10px 40px;
+    color: #848484;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 21px;
+    position: relative;
+}
+
+.agent_type_dropdown select:focus {
+    box-shadow: none;
+}
+
+.agent_type_select_icon {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    left: 10px;
+}
+
+.agent_type_dropdown .setting_icon {
+    position: absolute;
+    border: 1px solid #0000001A;
+    height: 20px;
+    width: 20px;
+    border-radius: 100%;
+    background: #FFFFFF;
+    top: -8px;
+    right: -7px;
+}
+
+.w-fit {
+    width: fit-content;
+}
+
+.agent_type_box_inner {
+    padding: 28px 18px;
+}
+
+.agent_type_box_inner textarea {
+    height: 265px;
+    resize: none;
+    border: 1px solid #0000001A;
+    background: #FAFAFA;
+    border-radius: 3px;
+    padding: 12px 9px;
+    color: #848484;
+    font-weight: 300;
+    font-size: 14px;
+    line-height: 21px;
+}
+
+.wlcm_msg_box label {
+    color: #232323;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.custom-select {
+    position: relative;
+    border-radius: 5px;
+    background: #fff;
+    cursor: pointer;
+}
+
+.custom-select .select-box {
+    border: 1px solid #0000001A;
+    border-radius: 4px;
+    padding: 13px 33px 13px 13px;
+    color: #848484;
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.custom-select .select-box::after {
+    content: '';
+    background-image: url(../images/grey-dropdown-arrow.svg);
+    width: 13px;
+    height: 8px;
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    background-repeat: no-repeat;
+
+}
+
+.custom-select .option b,
+.custom-select .select-box b {
+    font-weight: 500;
+}
+.custom-select .options
+ {
+    width: 100%;
+    background: white;
+    border: 1px solid #0000001A;
+    padding: 10px 10px;
+    margin-top: 8px;
+    border-radius: 4px;
+    box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+    display: none;
+    transition: opacity 0.3s ease-in-out;
+    max-height: 230px;
+    overflow: auto;
+    position: absolute;
+}
+
+.custom-select .options.active {
+    display: block;
+}
+
+.custom-select .option {
+    padding: 10px 10px;
+    cursor: pointer;
+    transition: background 0.3s;
+    border-radius: 4px;
+}
+
+.custom-select .option:hover {
+    background: #f0f0f0;
+}
+
+/* agent types css end */
+/* knowledge base css start */
+.add_knowledge_base {
+    border: 1px solid #0000001A;
+    background: #ffffff;
+    border-radius: 10px;
+    height: 100vh;
+}
+
+.knowledge_base_list {
+    max-height: calc(100vh - 72px);
+    overflow: auto;
+}
+
+.add_knowledge_base_heading {
+    background: #F1F5F8;
+    border-bottom: 1px solid #0000001A;
+    padding: 20px 15px;
+    border-radius: 10px 10px 0px 0px;
+}
+
+.add_knowledge_base_heading h6 {
+    color: #232323;
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.knowledge_base_outer {
+    padding: 20px 10px 20px;
+}
+
+.add_knowledge_base_heading button {
+    background: #0C7FDA;
+    border-radius: 4px;
+    padding: 8px 8px;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 14px;
+    color: #ffffff;
+}
+
+.add_knowledge_base_heading button span {
+    display: none;
+}
+
+.add_knowledge_base_heading button:hover span {
+    display: block;
+}
+
+.knowledge_base_list .list_data {
+    padding: 12px 22px;
+}
+
+.knowledge_base_list .list_data a {
+    padding: 11px 10px;
+    border-radius: 4px;
+    color: #848484;
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 24px;
+    transition: 0.5s;
+}
+
+.active_knowldege_base,
+.knowledge_base_list .list_data a:hover {
+    background: #F2FAFF;
+}
+
+.knowledge_base_list .list_data {
+    border-bottom: 1px solid #8484844D;
+}
+
+.add_knowledge_base_heading p {
+    color: #727272;
+    font-weight: 400;
+    font-size: 13px;
+    line-height: 19.5px;
+}
+
+.add_knowledge_base_heading button.dlt_btn {
+    box-shadow: 0px 4px 4px 0px #0000001A;
+    border: 1px solid #0000001A;
+    background-color: #fff;
+    color: #747474;
+    padding: 8px 9px;
+}
+
+.add_knowledge_base_right_heading {
+    padding: 13px 15px;
+}
+
+.knowledge_base_files {
+    padding: 22px 22px;
+    max-height: calc(100vh - 72px);
+    overflow: auto;
+}
+
+.edit_knowledge_base_files {
+    max-height: calc(100vh - 192px);
+}
+
+.knowledge_base_files .file_inner {
+    border: 1px solid #0000001A;
+    border-radius: 10px;
+    padding: 11px 25px;
+    margin-bottom: 8px;
+}
+
+.knowledge_base_files .file_inner h6 {
+    font-weight: 400;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.knowledge_base_files .file_inner p {
+    color: #727272;
+    font-weight: 400;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.edit_knowledge_base_heading h3 {
+    color: #232323;
+    font-weight: 500;
+    font-size: 18px;
+    line-height: 27px;
+}
+
+.file_inner .checkbox_input input {
+    float: none;
+    width: 23px;
+    height: 23px;
+    border-radius: 2px;
+    border: 1px solid #0000001A;
+    box-shadow: 0px 1px 4px 0px #0000001F;
+}
+
+.knowledge_base_name {
+    padding: 15px 23px;
+    border-bottom: 1px solid #2323231A;
+}
+
+.knowledge_base_name p {
+    color: #000000;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 21px;
+}
+
+.knowledge_base_name p span {
+    color: #000000;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.knowledge_base_btns {
+    padding: 10px 24px;
+}
+
+.knowledge_base_btns button {
+    border: 1px solid #0000001A;
+    padding: 7px 20px;
+    border-radius: 5px;
+    background-color: transparent;
+    color: #232323;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 21px;
+}
+
+.knowledge_base_btns .bg_black_btn,
+.bg_black_btn {
+    background-color: #232323;
+    color: #ffffff;
+}
+
+.table_action .dropdown-toggle::after {
+    display: none;
+}
+
+.agent_table .table_action_td {
+    padding: 20px 10px;
+    text-align: left;
+}
+
+.show_pass_icon {
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    cursor: pointer;
+}
+
+.knowledge_base_header {
+    padding: 20px 20px 0px;
+}
+
+.add_knowledge_base_heading button.dlt_btn.inbound-call-btn {
+    box-shadow: none;
+    color: #232323;
+    padding: 10px 9px;
+}
+
+/* knowledge base css end */
+
+/* phone number css start */
+.inbound_call_modal .modal-dialog {
+    max-width: 610px;
+}
+
+.inbound_call_modal .modal-header {
+    padding: 20px 27px;
+}
+
+.inbound_call_modal .modal-body {
+    padding: 10px 27px 30px;
+}
+
+.inbound_call_modal .modal-header h3 {
+    color: #232323;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.inbound_call_modal label {
+    color: #232323;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 21px;
+}
+
+.inbound_call_modal .form_input {
+    margin-bottom: 30px;
+}
+
+.inbound_call_modal .form_input .input_label a {
+    color: #007AFF;
+    font-weight: 400;
+    font-size: 13px;
+    line-height: 19.5px;
+}
+
+.inbound_call_modal form .upload_area {
+    border: 1.3px dashed #0000001A;
+    border-radius: 3px;
+    height: 115px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #F5F7FA;
+    padding: 0px 40px;
+}
+
+.inbound_call_modal .upload_area label {
+    color: #000000;
+    cursor: pointer;
+    text-align: center;
+}
+
+.inbound_call_modal .upload_area label .file_size_text {
+    color: #00000066;
+    font-weight: 500;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.inbound_call_modal .upload_area p {
+    color: #2c2c2c;
+    font-weight: 500;
+    font-size: 12px;
+    line-height: 18px;
+}
+
+.form_btns button {
+    border: 1px solid #0000001A;
+    background-color: #ffffff;
+    border-radius: 5px;
+    padding: 7px 20px;
+    color: #232323;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 21px;
+    width: 92px;
+}
+
+.form_btns button.bg_black_btn {
+    background-color: #232323;
+    color: #ffffff;
+}
+
+.modal .btn-close:focus {
+    box-shadow: none;
+}
+
+.number_inner {
+    padding: 30px 20px;
+}
+
+.number_inner label {
+    color: #232323cc;
+    font-weight: 500;
+    font-size: 13px;
+    line-height: 19.5px;
+}
+
+.number_inner select {
+    border: 1px solid #0000001A;
+    border-radius: 5px;
+    padding: 16px 23px;
+    font-weight: 500;
+    font-size: 13px;
+    line-height: 19.5px;
+    color: #000000cc;
+}
+
+.delete_modal h3{
+    font-size: 20px;
+    font-weight: 500;
+}
+
+.delete_modal .modal-body{
+    padding: 40px 20px;
+}
+/* phone number  css end */
+
+/* ---------------------------------------------------
+    CONTENT STYLE END
+----------------------------------------------------- */
+
+
+/* ---------------------------------------------------
+    COPY LINK STYLE START
+----------------------------------------------------- */
+
+
+.max-content .copy_btn{
+    cursor: pointer;
+    padding: 0;
+  }
+  .copy_link_box{
+    background-color: #F5F7FA;
+    padding: 10px;
+    border-radius: 5px;
+  }
+  .copy_link_btn .tooltip_text {
+    visibility: hidden;
+    position: absolute;
+    background-color: #555;
+    color: #fff;
+    text-align: center;
+    padding: 5px 0;
+    border-radius: 6px;
+    z-index: 1;
+    opacity: 0;
+    transition: opacity .6s;
+    left: 50%;
+    bottom: 125%;
+    padding: 2px 10px;
+    transform: translateX(-50%);
+    font-size: 12px;
+}
+.copy_link_btn:hover .tooltip_text {
+    visibility: visible;
+    opacity: 1;
+}
+.tooltip_text::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #555 transparent transparent transparent;
+}
+.copy_link_box textarea{
+    border: none;
+    background-color: transparent;
+    resize: none;
+    height: 20px;
+    width: 100%;
+    padding: 0px;
+}
+
+.add_knowledge_base_heading button.buy_new_number_btn {
+    display: none;
+    position: absolute;
+    left: 0px;
+    top: 38px;
+    z-index: 999;
+    width: 145px;
+    background: #fff;
+    color: #232323;
+    font-family: Poppins;
+    font-weight: 400;
+    font-size: 11.19px;
+    line-height: 16.78px;
+    text-align: center;
+    box-shadow: 0px 2px 4px 0px #00000026;
+}
+
+/* COPY LINK STYLE END */

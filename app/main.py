@@ -5,9 +5,18 @@ from fastapi.staticfiles import StaticFiles
 from .routers import APISRouter, WebRouter, WebSocketRouter
 from fastapi_sqlalchemy import DBSessionMiddleware,db
 from app.core import VoiceSettings
+from starlette.middleware.sessions import SessionMiddleware
+import os
+from config import MEDIA_DIR 
 
 app = FastAPI()
+
+# Ensure the media directory exists
+os.makedirs(MEDIA_DIR, exist_ok=True)
+
+
 app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 app.mount("/audio", StaticFiles(directory="audio_storage"), name="audio")
 
 app.add_middleware(
@@ -23,6 +32,8 @@ app.add_middleware(
     db_url=VoiceSettings.DB_URL,
     engine_args={"pool_pre_ping": True, "pool_size": 20, "max_overflow": 0}
 )
+
+app.add_middleware(SessionMiddleware, secret_key=VoiceSettings.SECRET_KEY)
 
 security = HTTPBasic()
 

@@ -1,11 +1,19 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine
+from sqlalchemy.orm import relationship, joinedload
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List
 from fastapi_sqlalchemy import db
+import bcrypt
+import os
+from config import MEDIA_DIR
+from datetime import datetime
 
+
+DB_URL="postgresql://postgres:1234@localhost/audio_assistant"
+engine = create_engine(DB_URL, echo=False)
 Base = declarative_base()
+
 
 class AudioRecordModel(Base):
     __tablename__ = "audio_records"
@@ -102,3 +110,411 @@ class AudioRecordModel(Base):
             return True
         except Exception:
             return False
+
+
+class UserModel(Base):
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True)
+    email = Column(String, nullable=True,default="")
+    password = Column(String, nullable=True,default="")
+    name = Column(String, nullable=True,default="")
+    is_verified = Column(Boolean, nullable=True,default=False)
+    last_login = Column(DateTime, nullable=True,default=func.now())
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<User(id={self.id}, email={self.email})>"
+
+    @classmethod
+    def get_by_email(cls, email: str) -> Optional["UserModel"]:
+        """
+        Get user by email
+        """
+        with db():
+            return db.session.query(cls).filter(cls.email == email).first()
+
+    @classmethod
+    def create(cls, email: str, name: str, password: str, is_verified: bool = False) -> "UserModel":
+        """
+        Create a new user with hashed password
+        """
+        with db():
+            hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+            user = cls(email=email, name=name, password=hashed_password.decode('utf-8'), is_verified=is_verified)
+            db.session.add(user)
+            db.session.commit()
+            db.session.refresh(user)
+            return user
+        
+    @classmethod
+    def get_all(cls) -> List["UserModel"]:
+        """
+        Get all users
+        """
+        with db():
+            return db.session.query(cls).all()
+
+    @classmethod
+    def delete(cls, user_id: int) -> bool:
+        """
+        Delete a user by ID
+        """
+        try:
+            with db():
+                user = db.session.query(cls).filter(cls.id == user_id).first()
+                if user:
+                    db.session.delete(user)
+                    db.session.commit()
+                return True
+        except Exception:
+            return False
+    
+    @classmethod
+    def update(cls, user_id: int, **kwargs) -> "UserModel":
+        """
+        Update user fields
+        """
+        with db():
+            user = db.session.query(cls).filter(cls.id == user_id).first()
+            if user:
+                for key, value in kwargs.items():
+                    if hasattr(user, key):
+                        setattr(user, key, value)
+                db.session.commit()
+                db.session.refresh(user)
+                return user
+            return None
+
+agent_knowledge_association = Table(
+    "agent_knowledge_association",
+    Base.metadata,
+    Column("agent_id", Integer, ForeignKey("agents.id"), primary_key=True),
+    Column("knowledge_base_id", Integer, ForeignKey("knowledge_base.id"), primary_key=True),
+)
+
+
+class AgentModel(Base):
+    __tablename__ = "agents"
+    
+    id = Column(Integer, primary_key=True)
+    created_by = Column(Integer, nullable=True,default=0)
+    agent_name = Column(String, nullable=True,default="")
+    selected_model = Column(String, nullable=True,default="")
+    selected_voice = Column(String, nullable=True,default="")
+    phone_number = Column(String, nullable=True,default="")
+    agent_prompt = Column(String, nullable=True,default="")
+    selected_language = Column(String, nullable=True,default="")
+    welcome_msg = Column(String, nullable=True,default="")
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    knowledge_base = relationship(
+        "KnowledgeBaseModel",
+        secondary=agent_knowledge_association,
+        back_populates="agents"
+    )
+    audio_recordings = relationship("AudioRecordings", back_populates="agent")
+    
+    def __repr__(self):
+        return f"<Agent(id={self.id}, agent_name={self.agent_name})>"
+    
+    @classmethod
+    def get_by_id(cls, agent_id: int) -> Optional["AgentModel"]:
+        """
+        Get agent by ID
+        """
+        with db():
+            return db.session.query(cls).filter(cls.id == agent_id).first()
+        
+    @classmethod
+    def get_all(cls) -> List["AgentModel"]:
+        """
+        Get all agents
+        """
+        with db():
+            return db.session.query(cls).all()
+        
+    @classmethod
+    def get_all_by_user(cls, user_id: int) -> List["AgentModel"]:
+        """
+        Get all agents by user ID
+        """
+        with db():
+            return db.session.query(cls).filter(cls.created_by == user_id).all()
+
+    @classmethod
+    def create(cls, agent_name: str, selected_model: str, selected_voice: str, phone_number: str, agent_prompt: str, selected_language: str, welcome_msg: str, created_by: int) -> "AgentModel":
+        """
+        Create a new agent
+        """
+        with db():  
+            agent = cls(agent_name=agent_name, selected_model=selected_model, selected_voice=selected_voice, phone_number=phone_number, agent_prompt=agent_prompt, selected_language=selected_language, welcome_msg=welcome_msg, created_by=created_by)
+            db.session.add(agent)
+            db.session.commit()
+            db.session.refresh(agent)
+            return agent
+        
+    @classmethod
+    def update(cls, agent_id: int, **kwargs) -> "AgentModel":
+        """
+        Update an agent by ID
+        """
+        with db():  
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                for key, value in kwargs.items():
+                    if hasattr(agent, key):
+                        setattr(agent, key, value)
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+        
+    @classmethod
+    def delete(cls, agent_id: int) -> bool:
+        """
+        Delete an agent by ID
+        """
+        try:
+            with db():
+                agent = db.session.query(cls).filter(cls.id == agent_id).first()
+                if agent:
+                    db.session.delete(agent)
+                    db.session.commit()
+                return True
+        except Exception:
+            return False
+
+class ResetPasswordModel(Base):
+    __tablename__ = "reset_password"
+    
+    id = Column(Integer, primary_key=True)
+    email = Column(String, nullable=True,default="")
+    token = Column(String, nullable=True,default="")
+
+    def __repr__(self):
+        return f"<ResetPassword(id={self.id}, email={self.email})>"
+    
+    @classmethod
+    def get_by_email(cls, email: str) -> Optional["ResetPasswordModel"]:
+        """
+        Get reset password by email
+        """
+        with db():
+            return db.session.query(cls).filter(cls.email == email).first()
+        
+    @classmethod
+    def create(cls, email: str, token: str) -> "ResetPasswordModel":
+        """
+        Create a new reset password record
+        """
+        with db():
+            reset_password = cls(email=email, token=token)
+            db.session.add(reset_password)
+            db.session.commit() 
+            db.session.refresh(reset_password)
+            return reset_password
+        
+    @classmethod
+    def delete(cls, email: str) -> bool:
+        """
+        Delete a reset password record by ID
+        """
+        try:
+            with db():
+                reset_password = db.session.query(cls).filter(cls.email == email).first()
+                if reset_password:
+                    db.session.delete(reset_password)
+                    db.session.commit()
+                return True
+        except Exception:
+            return False
+        
+    @classmethod
+    def update(cls, reset_password_id: int, **kwargs) -> "ResetPasswordModel":
+        """
+        Update a reset password record by ID
+        """
+        with db():
+            reset_password = db.session.query(cls).filter(cls.id == reset_password_id).first()
+            if reset_password:
+                for key, value in kwargs.items():
+                    if hasattr(reset_password, key):
+                        setattr(reset_password, key, value)
+                db.session.commit()
+                db.session.refresh(reset_password)
+                return reset_password
+            return None
+    
+    @classmethod
+    def get_by_token(cls, token: str) -> Optional["ResetPasswordModel"]:
+        """
+        Get reset password by token
+        """
+        with db():
+            return db.session.query(cls).filter(cls.token == token).first()
+
+class KnowledgeBaseModel(Base):
+    __tablename__ = "knowledge_base"
+
+    id = Column(Integer, primary_key=True)
+    created_by_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    knowledge_base_name = Column(String(255), nullable=False)
+    attachment_name = Column(String, nullable=True, default="")
+    attachment_path = Column(String, nullable=True, default="")
+    text_content = Column(String, nullable=True, default="")
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    agents = relationship(
+        "AgentModel",
+        secondary=agent_knowledge_association,
+        back_populates="knowledge_base"
+    )
+
+    def __repr__(self):
+        return f"{self.knowledge_base_name} created by {self.created_by_id}"
+
+    @classmethod
+    def get_by_id(cls, knowledge_base_id: int) -> Optional["KnowledgeBaseModel"]:
+        """Get knowledge base by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == knowledge_base_id).first()
+        
+    @classmethod
+    def get_all(cls) -> List["KnowledgeBaseModel"]:
+        """Get all knowledge base records"""
+        with db():
+            return db.session.query(cls).all()
+
+    @classmethod
+    def create(cls, knowledge_base_name: str, created_by_id: int, 
+               attachment_path: str = None, text_content: str = None, attachment_name: str = None) -> "KnowledgeBaseModel":
+        """Create a new knowledge base record"""
+        with db():
+            knowledge_base = cls(
+                knowledge_base_name=knowledge_base_name,
+                created_by_id=created_by_id,
+                attachment_path=attachment_path,
+                text_content=text_content,
+                attachment_name=attachment_name
+            )
+            db.session.add(knowledge_base)
+            db.session.commit()
+            db.session.refresh(knowledge_base)
+            return knowledge_base
+
+    @classmethod
+    def update(cls, knowledge_base_id: int, **kwargs) -> Optional["KnowledgeBaseModel"]:
+        """Update a knowledge base record"""
+        with db():
+            knowledge_base = db.session.query(cls).filter(cls.id == knowledge_base_id).first()
+            if knowledge_base:
+                for key, value in kwargs.items():
+                    if hasattr(knowledge_base, key):
+                        setattr(knowledge_base, key, value)
+                db.session.commit()
+                db.session.refresh(knowledge_base)
+                return knowledge_base
+            return None
+
+    @classmethod 
+    def delete(cls, knowledge_base_id: int) -> bool:
+        """Delete a knowledge base record and its associated file"""
+        try:
+            with db():
+                knowledge_base = db.session.query(cls).filter(cls.id == knowledge_base_id).first()
+                if knowledge_base and knowledge_base.attachment_path:
+                    # Delete the file from media directory
+                    file_path = os.path.join(MEDIA_DIR, knowledge_base.attachment_path)
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    
+                    # Delete database record
+                    db.session.delete(knowledge_base)
+                    db.session.commit()
+                    return True
+                return False
+        except Exception:
+            return False
+    
+    @classmethod
+    def get_all_by_user(cls, user_id: int) -> List["KnowledgeBaseModel"]:
+        """Get all knowledge base records by user ID"""
+        with db():
+            return db.session.query(cls).filter(cls.created_by_id == user_id).all()
+
+
+class AudioRecordings(Base):
+    __tablename__ = "audio_recordings"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey('agents.id', ondelete='CASCADE'))
+    audio_name = Column(String, nullable=False)
+    audio_file = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+
+    # Relationship
+    agent = relationship("AgentModel", back_populates="audio_recordings")
+
+    def __str__(self):
+        return f"{self.agent.agent_name} audio recording"
+
+    @classmethod
+    def create(cls, agent_id: int, audio_file: str, audio_name: str, created_at: datetime) -> "AudioRecordings":
+        """Create a new audio recording"""
+        with db():
+            recording = cls(
+                agent_id=agent_id,
+                audio_file=audio_file,
+                audio_name=audio_name,
+                created_at=created_at
+            )
+            db.session.add(recording)
+            db.session.commit()
+            db.session.refresh(recording)
+            return recording
+
+    @classmethod
+    def get_by_id(cls, recording_id: int) -> Optional["AudioRecordings"]:
+        """Get recording by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == recording_id).first()
+    
+    @classmethod
+    def get_all_by_agent(cls, agents: List["AgentModel"]) -> List["AudioRecordings"]:
+        """Get all audio recordings by agent ID"""
+        with db():
+            agent_ids = [agent.id for agent in agents]  # Extract IDs
+            return db.session.query(cls).filter(cls.agent_id.in_(agent_ids)).all()
+    
+    @classmethod
+    def get_all_by_user(cls, user_id: int) -> List["AudioRecordings"]:
+        """Get all audio recordings by user ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent.created_by == user_id).all()
+    
+    @classmethod    
+    def delete(cls, recording_id: int) -> bool:
+        """Delete an audio recording by ID and remove the file from directory"""
+        try:
+            with db():
+                recording = db.session.query(cls).filter(cls.id == recording_id).first()
+                if recording:
+                    # Remove the audio file from directory
+                    audio_file_path = recording.audio_file
+                    if os.path.exists(audio_file_path):
+                        os.remove(audio_file_path)
+                    
+                    # Delete record from database
+                    db.session.delete(recording)
+                    db.session.commit()
+                    return True
+            return False
+        except Exception as e:
+            print(f"Error deleting audio recording: {str(e)}")
+            return False
+
+
+Base.metadata.create_all(engine)

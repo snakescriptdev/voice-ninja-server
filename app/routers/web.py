@@ -1,12 +1,87 @@
 from fastapi import APIRouter,Request
 from fastapi.templating import Jinja2Templates
 from app.core import VoiceSettings
+from app.utils.helper import Paginator, check_session_expiry_redirect
+from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse
+from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel
+from sqlalchemy.orm import sessionmaker
+from app.databases.models import engine
+import os
 
 router = APIRouter()
 
 templates = Jinja2Templates(directory="templates")
 
 @router.get("/")
+async def index(request: Request):  
+    user = request.session.get("user")
+    if user and user.get("is_authenticated"):
+        return RedirectResponse(url="/dashboard")
+    return templates.TemplateResponse(
+        "Web/signup.html", 
+        {
+            "request": request,
+            "voices": VoiceSettings.ALLOWED_VOICES
+        }
+    )
+
+
+@router.get("/login")
+async def login(request: Request):
+    user = request.session.get("user")
+    if user and user.get("is_authenticated"):
+        return RedirectResponse(url="/dashboard")
+    return templates.TemplateResponse(
+        "Web/login.html", 
+        {
+            "request": request,
+            "voices": VoiceSettings.ALLOWED_VOICES
+        }
+    )
+
+@router.get("/forget_password")
+async def forget_password(request: Request):
+    return templates.TemplateResponse(
+        "Web/forget-password.html", 
+        {
+            "request": request,
+            "voices": VoiceSettings.ALLOWED_VOICES
+        }
+    )
+
+
+@router.get("/dashboard", name="dashboard")
+@check_session_expiry_redirect
+async def dashboard(request: Request, page: int = 1):
+    from app.databases.models import AgentModel
+
+    user = request.session.get("user")
+
+    if not user or not user.get("is_authenticated"):
+        return RedirectResponse(url="/login")
+
+    # Get all agents created by current user
+    agents = AgentModel.get_all_by_user(user.get("user_id"))
+
+    # Pagination
+    items_per_page = 10
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    
+    paginator = Paginator(agents, page, items_per_page, start, end)
+    return templates.TemplateResponse(
+        "Web/home.html",
+        {
+            "request": request,
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "page_obj": paginator,
+            "user": user
+        }
+    )
+
+
+
+@router.get("/chatbot/")
 async def index(request: Request):
     return templates.TemplateResponse(
         "connect.html", 
@@ -16,7 +91,7 @@ async def index(request: Request):
         }
     )
 
-@router.get("/audio_list/")
+@router.get("/chatbot/audio_list/")
 async def audio_list(request: Request):
     return templates.TemplateResponse(
         "audio_list.html", 
@@ -26,3 +101,257 @@ async def audio_list(request: Request):
             "enable_filters": False
         }
     )
+
+@router.get("/create_agent")
+@check_session_expiry_redirect
+async def create_agent(request: Request):
+    from app.databases.models import KnowledgeBaseModel
+    user_id = request.session.get("user").get("user_id")
+    knowledge_bases = KnowledgeBaseModel.get_all_by_user(user_id)
+    return templates.TemplateResponse(
+        "Web/create_agent.html", 
+        {
+            "request": request,
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "knowledge_bases":knowledge_bases
+        }
+    )
+
+
+@router.get("/update-agent")
+async def update_agent(request: Request):
+    agent_id = request.query_params.get("agent_id")
+    user_id = request.session.get("user", {}).get("user_id")
+
+    if not agent_id or not user_id:
+        return {"error": "Missing agent_id or user session"}
+    
+    from sqlalchemy import select, insert, delete
+    Session = sessionmaker(bind=engine)
+    session = Session()
+    # Fetch agent knowledge associations
+    result = session.execute(
+        select(agent_knowledge_association).where(agent_knowledge_association.c.agent_id == agent_id)
+    )
+    agent_knowledge_ids = [(row.agent_id, row.knowledge_base_id) for row in result.fetchall()]
+
+    # Fetch agent details
+    agent_result =  session.execute(select(AgentModel).where(AgentModel.id == agent_id))
+    agent = agent_result.scalars().first()
+
+    # Fetch all knowledge bases
+    knowledge_result =  session.execute(select(KnowledgeBaseModel))
+    knowledge_bases = knowledge_result.scalars().all()
+    # Get the selected knowledge base for this agent
+    selected_knowledge = None
+    if agent_knowledge_ids:
+        # Get the first knowledge base ID associated with this agent
+        knowledge_base_id = agent_knowledge_ids[0][1]
+        selected_knowledge = session.execute(
+            select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == knowledge_base_id)
+        ).scalars().first()
+    return templates.TemplateResponse(
+        "Web/create_agent.html",
+        {
+            "request": request,
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "agent": agent,
+            "knowledge_bases": knowledge_bases,
+            "agent_knowledge_ids": agent_knowledge_ids,
+            "selected_knowledge": selected_knowledge
+        },
+    )
+
+@router.get("/knowledge-base", name="knowledge_base")
+@check_session_expiry_redirect
+async def knowledge_base(request: Request, page: int = 1):
+    from app.databases.models import KnowledgeBaseModel
+    knowledge_bases = KnowledgeBaseModel.get_all_by_user(request.session.get("user").get("user_id"))
+    # Pagination
+    items_per_page = 10
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    
+    paginator = Paginator(knowledge_bases, page, items_per_page, start, end)
+    return templates.TemplateResponse(
+        "Web/knowledge-base.html", 
+        {
+            "request": request,
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "page_obj": paginator
+        }
+    )
+
+@router.get("/phone_number")
+@check_session_expiry_redirect
+async def phone_number(request: Request):
+    # Safely extract user_id from session
+    user = request.session.get("user", {})
+    user_id = user.get("user_id")
+    
+    if not user_id:
+        return {"error": "User not logged in."}  # Handle missing user session properly
+
+    # Fetch agent and phone number data
+    agents = AgentModel.get_all_by_user(user_id)  # Ensure this method exists
+
+
+    return templates.TemplateResponse(
+        "Web/phone-number.html", 
+        {
+            "request": request,
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "agents": agents,
+        }
+    )
+@router.get("/change_password")
+@check_session_expiry_redirect
+async def change_password(request: Request):
+
+    return templates.TemplateResponse(
+        "Web/change-password.html", 
+        {
+            "request": request,
+            "voices": VoiceSettings.ALLOWED_VOICES
+        }
+    )
+
+
+@router.get("/reset_password/{token}")  
+async def reset_password(request: Request, token: str):
+    from app.databases.models import ResetPasswordModel
+    reset_password = ResetPasswordModel.get_by_token(token)
+    if not reset_password:
+        return RedirectResponse(url="/forget_password")
+    
+    return templates.TemplateResponse(
+        "Web/reset-password.html", 
+        {
+            "request": request,
+            "token": token  
+        }
+    )
+
+
+@router.get("/verify-account/{token}")
+async def verify_account(request: Request, token: str):
+    from app.databases.models import ResetPasswordModel
+    user = ResetPasswordModel.get_by_token(token)
+    if not user:
+        return RedirectResponse(url="/login")   
+    return templates.TemplateResponse(
+        "Web/verify_email_template.html", 
+        {
+            "request": request,
+            "token": token
+        }
+    )
+
+@router.get("/call_history")
+async def call_history(request: Request, page: int = 1):
+    user_id = request.session.get("user", {}).get("user_id")
+    agents = AgentModel.get_all_by_user(user_id)
+    from app.databases.models import AudioRecordings
+    audio_recordings = AudioRecordings.get_all_by_agent(agents)
+
+    items_per_page = 10
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    
+    paginator = Paginator(audio_recordings, page, items_per_page, start, end)
+    final_response = []
+    for audio_rec in audio_recordings:
+        agent = AgentModel.get_by_id(audio_rec.agent_id)
+        final_response.append({
+            "id": audio_rec.id,
+            "agent_name": agent.agent_name,
+            "selected_voice": agent.selected_voice,
+            "created_at": audio_rec.created_at,
+            "audio_file": audio_rec.audio_file
+        })
+        
+
+    return templates.TemplateResponse(
+        "Web/call_history.html",
+        {
+            "request": request,
+            "audio_recordings": final_response,  
+            "page_obj": paginator  
+        }
+    )
+
+@router.get("/web.js")
+def serve_web_js():
+    # Assuming web.js is in a 'static' directory
+    js_file_path = os.path.join("static/js", "websocket.js")
+    return FileResponse(js_file_path, media_type="application/javascript")
+
+@router.get("/chatbot-script.js/{agent_id}")
+def chatbot_script(request: Request, agent_id: str):
+    # Determine the WebSocket protocol based on the request
+    ws_protocol = "wss" if request.url.scheme == "https" else "ws"
+    agent = AgentModel.get_by_id(int(agent_id))
+
+    if not agent:
+        response = HTMLResponse("Agent not found.", content_type="text/plain")
+        response['Cache-Control'] = 'public, max-age=3600'
+        return response
+    
+    script_content = f"""
+    document.addEventListener('DOMContentLoaded', function() {{
+        (function() {{
+            // Add protobuf script
+            const protobufScript = document.createElement('script');
+            protobufScript.src = "https://cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js";
+            document.head.appendChild(protobufScript);
+
+            // Include the WebSocket script
+            const webJsScript = document.createElement('script');
+            webJsScript.src = "/static/js/websocket.js";
+            document.head.appendChild(webJsScript);
+
+            // Wait for websocket.js to load before using its functions
+            webJsScript.onload = function() {{
+                // Now you can use functions from websocket.js
+                if (typeof WebSocketClient === 'function') {{
+                    const client = new WebSocketClient({agent_id});
+
+                }} else {{
+                    console.error("WebSocketClient is not defined");
+                }}
+            }};
+
+            var chatButton = document.createElement('div');
+            chatButton.innerHTML = '<img src="/static/Web/images/no-microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
+            chatButton.id = 'start-btn';
+            chatButton.style.position = 'fixed';
+            chatButton.style.bottom = '20px';
+            chatButton.style.right = '20px';
+            chatButton.style.background = 'transparent';
+            chatButton.style.color = 'white';
+            chatButton.style.padding = '9px 5px';
+            chatButton.style.borderRadius = '50px';
+            chatButton.style.cursor = 'pointer';
+            chatButton.style.fontSize = '16px';
+            chatButton.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
+            chatButton.style.display = 'flex';
+            chatButton.style.alignItems = 'center';
+            document.body.appendChild(chatButton);
+        }})();
+    }});
+    """
+    
+    # Add cache headers for better performance
+    headers = {
+        'Cache-Control': 'public, max-age=3600',
+        'Content-Type': 'application/javascript'
+    }
+    
+    return Response(content=script_content, media_type="application/javascript", headers=headers)
+    
+
+@router.get("/testing")
+async def testing(request: Request):
+    # Provide a context dictionary, even if it's empty
+    context = {"request": request}
+    return templates.TemplateResponse("testing.html", context)

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verify Account</title>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- Include Toastr CSS -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css" rel="stylesheet">
+    <!-- Include Toastr JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+</head>
+<style>
+    /* Loader style */
+    body{
+        padding: 0px;
+        margin: 0px;
+    }
+    .loader-outer{
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 1000;
+    }
+    .loader {
+        border: 16px solid #f3f3f3; /* Light grey */
+        border-top: 16px solid #3498db; /* Blue */
+        border-radius: 50%;
+        width: 120px;
+        height: 120px;
+        animation: spin 2s linear infinite;
+        /* Ensure it sits above other content */
+        }
+
+        /* Spin animation */
+        @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+        }
+</style>
+
+<div class="loader-outer">
+    <div id="loader" class="loader"></div>
+</div>
+
+<body>
+    
+    <script>
+        $(document).ready(function() {
+            // Function to extract token from URL
+            function getTokenFromUrl() {
+                try {
+                    const pathParts = window.location.pathname.split('/');
+                    return pathParts[pathParts.length - 1];
+                } catch (error) {
+                    console.error('Error getting token from URL:', error);
+                    return null;
+                }
+            }
+
+            // Get token and validate
+            const token = getTokenFromUrl();
+            if (!token) {
+                toastr.error('Verification token is missing', "Error", {
+                    "positionClass": "toast-top-right"
+                });
+                setTimeout(() => window.location.href = '/login/', 2000);
+                return;
+            }
+
+            // Make API request to verify account
+            $.ajax({
+                url: '/api/verify',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ 'token': token }),
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': "{{ csrf_token }}"
+                },
+                success: function(response) {
+                    if (response.status === 'success') {
+                        toastr.success(response.message, "Success", {
+                            "positionClass": "toast-top-right"
+                        });
+                    } else {
+                        toastr.error(response.error || 'Verification failed', "Error", {
+                            "positionClass": "toast-top-right"
+                        });
+                    }
+                    setTimeout(() => window.location.href = '/login/', 2000);
+                },
+                error: function(xhr, status, error) {
+                    if (xhr.responseJSON?.error) {
+                        toastr.error(xhr.responseJSON.error, "Error", {
+                            "positionClass": "toast-top-right"
+                        });
+                    } else {
+                        toastr.error('An error occurred during verification', "Error", {
+                            "positionClass": "toast-top-right"
+                        });
+                    }
+                    setTimeout(() => window.location.href = '/login/', 2000);
+                },
+                complete: function() {
+                    $('#loader').hide();
+                }
+            });
+        });
+    </script>
+</body>
+</html>
