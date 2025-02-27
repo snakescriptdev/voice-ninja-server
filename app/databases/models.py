@@ -516,5 +516,32 @@ class AudioRecordings(Base):
             print(f"Error deleting audio recording: {str(e)}")
             return False
 
+# class AgentPhoneNumberModel(Base):
+#     __tablename__ = "agent_phone_number"
+
+#     id = Column(Integer, primary_key=True)
+#     name = Column(String, nullable=False)
+#     agent_id = Column(Integer, nullable=True)
+#     phone_number = Column(String, nullable=False)
+#     created_by_id = Column(Integer, nullable=True)
+#     created_at = Column(DateTime, default=func.now())
+#     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+#     created_by = relationship("UserModel", back_populates="created_phone_numbers", foreign_keys=[created_by_id])
+#     agent = relationship("AgentModel", back_populates="phone_numbers")
+#     def __repr__(self):
+#         return f"<AgentPhoneNumber(id={self.id}, phone_number={self.phone_number})>"
+
+#     @classmethod
+#     def get_all_by_agent(cls, agent_id: int) -> List["AgentPhoneNumberModel"]:
+#         """Get all phone numbers by agent ID"""
+#         with db():
+#             return db.session.query(cls).filter(cls.agent_id == agent_id).all()
+        
+#     @classmethod
+#     def get_all_by_user(cls, user_id: int) -> List["AgentPhoneNumberModel"]:
+#         """Get all phone numbers by user ID"""
+#         with db():
+#             return db.session.query(cls).filter(cls.created_by_id == user_id).all()
 
 Base.metadata.create_all(engine)
