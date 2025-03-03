@@ -382,6 +382,8 @@ async def create_new_agent(request: Request):
             selected_language=selected_language,
             phone_number=phone_number
         )
+
+        agent_connection = AgentConnectionModel.create(agent_id=agent.id)
         if selected_knowledge_base:
             from sqlalchemy.orm import sessionmaker
             from app.databases.models import engine
