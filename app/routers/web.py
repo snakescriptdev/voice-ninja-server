@@ -280,7 +280,6 @@ def serve_web_js():
     return FileResponse(js_file_path, media_type="application/javascript")
 
 
-
 @router.get("/chatbot-script.js/{agent_id}")
 def chatbot_script(request: Request, agent_id: str):
     ws_protocol = "wss" if request.url.scheme == "https" else "ws"
@@ -297,6 +296,24 @@ def chatbot_script(request: Request, agent_id: str):
     document.addEventListener('DOMContentLoaded', function() {{
         (function() {{
             // Inject HTML content
+            // Add protobuf script
+            const protobufScript = document.createElement('script');
+            protobufScript.src = "https://cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js";
+            document.head.appendChild(protobufScript);
+
+            // Include the WebSocket script
+            const webJsScript = document.createElement('script');
+            webJsScript.src = "/static/js/websocket.js";
+            document.head.appendChild(webJsScript);
+
+            webJsScript.onload = function() {{
+            if (typeof WebSocketClient === 'function') {{
+                const client = new WebSocketClient({agent_id});
+            }} else {{
+                console.error("WebSocketClient is not defined");
+            }}
+            }};
+
             const container = document.createElement('div');
             container.innerHTML = `
                 <link rel="stylesheet" type="text/css" href="/static/Web/css/bot_style.css">
@@ -319,24 +336,6 @@ def chatbot_script(request: Request, agent_id: str):
             document.body.appendChild(container);
         }})();
     }});
-
-    // Add protobuf script
-    const protobufScript = document.createElement('script');
-    protobufScript.src = "https://cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js";
-    document.head.appendChild(protobufScript);
-    
-    // Include the WebSocket script
-    const webJsScript = document.createElement('script');
-    webJsScript.src = "/static/js/websocket.js";
-    document.head.appendChild(webJsScript);
-    
-    webJsScript.onload = function() {{
-        if (typeof WebSocketClient === 'function') {{
-            const client = new WebSocketClient({agent_id});
-        }} else {{
-            console.error("WebSocketClient is not defined");
-        }}
-    }};
     '''
     
     headers = {
@@ -345,7 +344,6 @@ def chatbot_script(request: Request, agent_id: str):
     }
     
     return Response(content=script_content, media_type="application/javascript", headers=headers)
-
 
 @router.get("/testing")
 async def testing(request: Request):
