@@ -3,7 +3,7 @@ from fastapi.templating import Jinja2Templates
 from app.core import VoiceSettings
 from app.utils.helper import Paginator, check_session_expiry_redirect
 from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse
-from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel
+from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel
 from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
 import os
@@ -286,69 +286,73 @@ def serve_web_js():
     js_file_path = os.path.join("static/js", "websocket.js")
     return FileResponse(js_file_path, media_type="application/javascript")
 
+
+
 @router.get("/chatbot-script.js/{agent_id}")
 def chatbot_script(request: Request, agent_id: str):
-    # Determine the WebSocket protocol based on the request
     ws_protocol = "wss" if request.url.scheme == "https" else "ws"
     agent = AgentModel.get_by_id(int(agent_id))
 
     if not agent:
         response = HTMLResponse("Agent not found.", content_type="text/plain")
-        response['Cache-Control'] = 'public, max-age=3600'
+        response.headers['Cache-Control'] = 'public, max-age=3600'
         return response
     
-    script_content = f"""
+    appearances = AgentConnectionModel.get_by_agent_id(agent_id)
+    
+    script_content = f'''
     document.addEventListener('DOMContentLoaded', function() {{
         (function() {{
-            // Add protobuf script
-            const protobufScript = document.createElement('script');
-            protobufScript.src = "https://cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js";
-            document.head.appendChild(protobufScript);
-
-            // Include the WebSocket script
-            const webJsScript = document.createElement('script');
-            webJsScript.src = "/static/js/websocket.js";
-            document.head.appendChild(webJsScript);
-
-            // Wait for websocket.js to load before using its functions
-            webJsScript.onload = function() {{
-                // Now you can use functions from websocket.js
-                if (typeof WebSocketClient === 'function') {{
-                    const client = new WebSocketClient({agent_id});
-
-                }} else {{
-                    console.error("WebSocketClient is not defined");
-                }}
-            }};
-
-            var chatButton = document.createElement('div');
-            chatButton.innerHTML = '<img src="/static/Web/images/no-microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
-            chatButton.id = 'start-btn';
-            chatButton.style.position = 'fixed';
-            chatButton.style.bottom = '20px';
-            chatButton.style.right = '20px';
-            chatButton.style.background = 'transparent';
-            chatButton.style.color = 'white';
-            chatButton.style.padding = '9px 5px';
-            chatButton.style.borderRadius = '50px';
-            chatButton.style.cursor = 'pointer';
-            chatButton.style.fontSize = '16px';
-            chatButton.style.boxShadow = '0 4px 6px rgba(0,0,0,0.1)';
-            chatButton.style.display = 'flex';
-            chatButton.style.alignItems = 'center';
-            document.body.appendChild(chatButton);
+            // Inject HTML content
+            const container = document.createElement('div');
+            container.innerHTML = `
+                <link rel="stylesheet" type="text/css" href="/static/Web/css/bot_style.css">
+                <div class="voice_icon" onclick="toggleRecorder()">
+                    <img src="{appearances.icon_url}" alt="voice_icon">
+                </div>
+                <div id="recorderControls" class="recorder-controls hidden">
+                    <div class="settings">
+                        <div id="colorPalette" class="color-palette">
+                            <div class="color-option" style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});"></div>
+                        </div>
+                    </div>
+                    <h1>Connect with me</h1>
+                    <div class="status-indicator">
+                        <img src="static/Web/images/wave.gif" alt="voice_icon">
+                    </div>
+                    <button onclick="stopRecorder()">Stop Recording</button>
+                </div>
+            `;
+            document.body.appendChild(container);
         }})();
     }});
-    """
+
+    // Add protobuf script
+    const protobufScript = document.createElement('script');
+    protobufScript.src = "https://cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js";
+    document.head.appendChild(protobufScript);
     
-    # Add cache headers for better performance
+    // Include the WebSocket script
+    const webJsScript = document.createElement('script');
+    webJsScript.src = "/static/js/websocket.js";
+    document.head.appendChild(webJsScript);
+    
+    webJsScript.onload = function() {{
+        if (typeof WebSocketClient === 'function') {{
+            const client = new WebSocketClient({agent_id});
+        }} else {{
+            console.error("WebSocketClient is not defined");
+        }}
+    }};
+    '''
+    
     headers = {
         'Cache-Control': 'public, max-age=3600',
         'Content-Type': 'application/javascript'
     }
     
     return Response(content=script_content, media_type="application/javascript", headers=headers)
-    
+
 
 @router.get("/testing")
 async def testing(request: Request):

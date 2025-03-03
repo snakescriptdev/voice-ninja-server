@@ -900,3 +900,49 @@ class WebSocketClient {
 
 // Initialize the WebSocket client
 // const client = new WebSocketClient();
+
+
+
+
+
+function toggleRecorder() {{
+    const recorderControls = document.getElementById('recorderControls');
+    const voiceIcon = document.querySelector('.voice_icon');
+
+    if (!recorderControls || !voiceIcon) {{
+        console.error('Required elements not found');
+        return;
+    }}
+
+    if (window.recorderTimeout) {{
+        clearTimeout(window.recorderTimeout);
+    }}
+
+    if (recorderControls.classList.contains('show')) {{
+        recorderControls.classList.remove('show');
+        window.recorderTimeout = setTimeout(() => {{
+            recorderControls.classList.add('hidden');
+            voiceIcon.style.display = 'flex';
+            voiceIcon.style.opacity = '1';
+        }}, 300);
+    }} else {{
+        recorderControls.classList.remove('hidden');
+        voiceIcon.style.opacity = '0';
+        window.recorderTimeout = setTimeout(() => {{
+            recorderControls.classList.add('show');
+            voiceIcon.style.display = 'none';
+        }}, 10);
+    }}
+}}
+
+function stopRecorder() {
+    const recorderControls = document.getElementById('recorderControls');
+    const voiceIcon = document.querySelector('.voice_icon');
+
+    recorderControls.classList.remove('show');
+    setTimeout(() => {
+        recorderControls.classList.add('hidden');
+        voiceIcon.style.display = 'flex'; 
+        voiceIcon.style.opacity = '1';
+    }, 500);
+}
