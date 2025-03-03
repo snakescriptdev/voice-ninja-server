@@ -578,6 +578,15 @@ class AgentConnectionModel(Base):
         return f"<AgentConnection(id={self.id}, agent_id={self.agent_id})>"
     
     @classmethod
+    def create(cls, agent_id: int) -> "AgentConnectionModel":
+        """Create a new agent connection"""
+        with db():
+            connection = cls(agent_id=agent_id)
+            db.session.add(connection)
+            db.session.commit()
+            return connection
+
+    @classmethod
     def create_connection(cls, agent_id: int, icon_url: str, primary_color: str, secondary_color: str, pulse_color: str) -> "AgentConnectionModel":
         """Create a new agent connection"""
         with db():
