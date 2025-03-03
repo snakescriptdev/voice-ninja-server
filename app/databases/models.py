@@ -333,12 +333,28 @@ class ResetPasswordModel(Base):
             return False
         
     @classmethod
-    def update(cls, reset_password_id: int, **kwargs) -> "ResetPasswordModel":
+    def update_by_id(cls, reset_password_id: int, **kwargs) -> "ResetPasswordModel":
         """
         Update a reset password record by ID
         """
         with db():
             reset_password = db.session.query(cls).filter(cls.id == reset_password_id).first()
+            if reset_password:
+                for key, value in kwargs.items():
+                    if hasattr(reset_password, key):
+                        setattr(reset_password, key, value)
+                db.session.commit()
+                db.session.refresh(reset_password)
+                return reset_password
+            return None
+    
+    @classmethod
+    def update(cls, email: str, **kwargs) -> "ResetPasswordModel":
+        """
+        Update a reset password record by email
+        """
+        with db():
+            reset_password = db.session.query(cls).filter(cls.email == email).first()
             if reset_password:
                 for key, value in kwargs.items():
                     if hasattr(reset_password, key):
