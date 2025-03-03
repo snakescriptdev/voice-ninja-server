@@ -254,73 +254,80 @@ async def user_register(request: Request):
         name = data.get("name") 
         password = data.get("password")
 
-        # Validate email format
-        if not email or "@" not in email:
-            error_response = {
-                "status": "error", 
-                "error": "Invalid email format",
-                "status_code": 400
+        try:
+            # Validate email format
+            if not email or "@" not in email:
+                error_response = {
+                    "status": "error", 
+                    "error": "Invalid email format",
+                    "status_code": 400
+                }
+                return JSONResponse(
+                    status_code=400,
+                    content=error_response
+                )
+
+            # Use filter method instead of get_by_email
+            user = UserModel.get_by_email(email)
+            if user:
+                error_response = {
+                    "status": "error", 
+                    "error": "User already exists",
+                    "status_code": 400
+                }
+                return JSONResponse(
+                    status_code=400,
+                    content=error_response
+                )
+            email_token = uuid.uuid4()
+            # Create user using SQLAlchemy
+            user = UserModel.create(email=email, name=name, password=password, is_verified=False)
+            if not ResetPasswordModel.get_by_email(email):    
+                ResetPasswordModel.create(email=email, token=email_token)
+            else:
+                ResetPasswordModel.update(email=email, token=email_token)
+
+            template = f"""
+                        <html>
+                        <body>                    
+
+                        <p>Hi {user.name} !!!
+                                <br>Please click on the link below to verify your account
+                                <br>
+                                <a href="http://localhost:8000/verify-account/{email_token}">Verify Account</a>
+                                <br>
+                                <br>
+                                <br>
+                                <br>
+                                </p>
+                        </body>
+                        </html>
+                        """
+
+            message = MessageSchema(
+                subject="Verify Account",
+                recipients=[email],
+                body=template,
+                subtype="html"
+                )
+
+            fm = FastMail(conf)
+            await fm.send_message(message)
+            response_data = {
+                "status": "success",
+                "message": "User registered successfully",
+                "status_code": 200
             }
             return JSONResponse(
-                status_code=400,
-                content=error_response
+                status_code=200,
+                content=response_data
             )
-
-        # Use filter method instead of get_by_email
-        user = UserModel.get_by_email(email)
-        if user:
-            error_response = {
-                "status": "error", 
-                "error": "User already exists",
-                "status_code": 400
-            }
-            return JSONResponse(
-                status_code=400,
-                content=error_response
-            )
-        email_token = uuid.uuid4()
-        # Create user using SQLAlchemy
-        user = UserModel.create(email=email, name=name, password=password, is_verified=False)
-        if not ResetPasswordModel.get_by_email(email):    
-            ResetPasswordModel.create(email=email, token=email_token)
-        else:
-            ResetPasswordModel.update(email=email, token=email_token)
-
-        template = f"""
-                    <html>
-                    <body>                    
-
-                    <p>Hi {user.name} !!!
-                            <br>Please click on the link below to verify your account
-                            <br>
-                            <a href="http://localhost:8000/verify-account/{email_token}">Verify Account</a>
-                            <br>
-                            <br>
-                            <br>
-                            <br>
-                            </p>
-                    </body>
-                    </html>
-                    """
-
-        message = MessageSchema(
-            subject="Verify Account",
-            recipients=[email],
-            body=template,
-            subtype="html"
-            )
-
-        fm = FastMail(conf)
-        await fm.send_message(message)
-        response_data = {
-            "status": "success",
-            "message": "User registered successfully",
-            "status_code": 200
-        }
-        return JSONResponse(
-            status_code=200,
-            content=response_data
-        )
+    
+        except Exception as e:
+            if user:
+                UserModel.delete(user.id)
+                raise e
+        
     except json.JSONDecodeError:
         error_response = {
             "status": "error", 
