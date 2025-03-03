@@ -717,7 +717,7 @@ async def send_mail(request: Request):
 
         fm = FastMail(conf)
         await fm.send_message(message)
-        return JSONResponse(status_code=200, content={"message": "email has been sent"})
+        return JSONResponse(status_code=200, content={"message": "email has been sent","status": "success", "status_code": 200})
     except Exception as e:
         error_response = {
             "status": "error", 
