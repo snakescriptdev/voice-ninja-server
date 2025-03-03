@@ -484,11 +484,10 @@ class AudioRecordings(Base):
             return db.session.query(cls).filter(cls.id == recording_id).first()
     
     @classmethod
-    def get_all_by_agent(cls, agents: List["AgentModel"]) -> List["AudioRecordings"]:
+    def get_all_by_agent(cls, agent_id: int) -> List["AudioRecordings"]:
         """Get all audio recordings by agent ID"""
         with db():
-            agent_ids = [agent.id for agent in agents]  # Extract IDs
-            return db.session.query(cls).filter(cls.agent_id.in_(agent_ids)).all()
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
     
     @classmethod
     def get_all_by_user(cls, user_id: int) -> List["AudioRecordings"]:

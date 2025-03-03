@@ -93,7 +93,7 @@
 
                     {% if request.url.path == '/update-agent' %}                    
                     <div class="agent_select_box position-relative">
-                        <a href="{{ url_for('call_history') }}">
+                        <a href="{{ url_for('call_history') }}?agent_id={{ agent.id }}">
                             <button class="w-max-content view-call-history-btn" id="create-agent-btn">View Call History</button>
                         </a>
                     </div>
@@ -218,7 +218,7 @@
                                     <div class="status-indicator">
                                        <img src="{{ url_for('static', path='/Web/images/wave.gif') }}" alt="voice_icon">
                                     </div>
-                                    <button onclick="savechanges()">Save Changes</button>
+                                    <button onclick="saveChanges()">Save Changes</button>
                                 </div>
                             </div>
                             {% endif %}
@@ -257,60 +257,16 @@
             </div>
         </div>
     </div>
-    
 
 <script>
-    function toggleRecorder() {
-        const customizeBotModal = document.getElementById('customize-bot-modal');
-        const voiceIcon = document.querySelector('.voice_icon');
-
-        if (customizeBotModal.classList.contains('show')) {
-            customizeBotModal.classList.remove('show');
-            setTimeout(() => {
-                customizeBotModal.classList.add('hidden');
-            }, 500);
-        } else {
-            customizeBotModal.classList.remove('hidden');
-            setTimeout(() => customizeBotModal.classList.add('show'), 10);
-            voiceIcon.style.display = 'none'; // Hide voice icon when opened
-        }
-    }
+    let selectedIconUrl = null; // Store selected icon in memory
+    let selectedTheme = {
+        primaryColor: null,
+        secondaryColor: null,
+        pulseColor: null
+    };
 
 
-    function toggleColorPalette() {
-        const colorPalette = document.getElementById('colorPalette');
-        colorPalette.classList.toggle('show');
-    }
-    function toggleIconPalette() {
-        const iconPalette = document.getElementById('iconPalette');
-        iconPalette.classList.toggle('show');
-    }
-
-    function changeTheme(primaryColor, secondaryColor, pulseColor) {
-        document.documentElement.style.setProperty('--primary-color', primaryColor);
-        document.documentElement.style.setProperty('--secondary-color', secondaryColor);
-        document.documentElement.style.setProperty('--pulse-shadow', pulseColor);
-        
-        const rgbMatch = primaryColor.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
-        if (rgbMatch) {
-            const r = parseInt(rgbMatch[1], 16);
-            const g = parseInt(rgbMatch[2], 16);
-            const b = parseInt(rgbMatch[3], 16);
-            document.documentElement.style.setProperty('--primary-color-rgb', `${r}, ${g}, ${b}`);
-        }
-        
-        const theme = {
-            primaryColor,
-            secondaryColor,
-            pulseColor
-        };
-        localStorage.setItem('voiceAssistantTheme', JSON.stringify(theme));
-        
-        document.getElementById('colorPalette').classList.remove('show');
-    }
-</script>
-
-<script>
     document.addEventListener("DOMContentLoaded", function() {
         const selectBox = document.getElementById("welcome-msg");
         const optionsContainer = document.querySelector(".options");
@@ -422,41 +378,42 @@
         });
     });
 
+    
     function changeIcon(iconUrl, element) {
-        // Remove active class from previous icon
+    // Remove active class from the previously selected icon
         let previousActive = document.querySelector('.icon-option.active');
         if (previousActive) {
             previousActive.classList.remove('active');
         }
-        
-        // Check if element exists and is valid
+
+        // Validate the element
         if (!element) {
             console.error('Element is undefined');
             return;
         }
-        
-        // Find closest parent with icon-option class
+
+        // Find the closest parent with the class 'icon-option'
         let iconOption = element.closest('.icon-option');
         if (!iconOption) {
             console.error('Could not find parent .icon-option element');
             return;
         }
-        
-        // Add active class to icon option
+
+        // Mark the new icon as active
         iconOption.classList.add('active');
-        
-        // Find img within icon option
+
+        // Find the image inside the icon option
         let icon = iconOption.querySelector('img');
         if (!icon) {
             console.error('Could not find img element');
             return;
         }
-        
-        // Update icon source
+
+        // Update the image source
         icon.src = iconUrl;
-        
-        // Save to localStorage
-        localStorage.setItem('voiceAssistantIcon', iconUrl);
+
+        // Update global variable (for potential backend sync)
+        selectedIconUrl = iconUrl;
     }
 
     document.addEventListener("DOMContentLoaded", function() {
@@ -507,68 +464,109 @@
         }
     });
 
-    function savechanges() {
+function saveChanges() {
         const customizeBotModal = document.getElementById('customize-bot-modal');
-        // Check if voice icon exists before accessing it
         const voiceIcon = document.querySelector('.voice_icon');
 
-        customizeBotModal.classList.remove('show');
-        setTimeout(() => {
-            customizeBotModal.style.display = 'none'; // Change to 'none' instead of adding 'hidden'
-            if (voiceIcon) {
-                voiceIcon.style.display = 'block';
-            }
-        }, 500);
-        let agentId = "{% if agent %}{{ agent.id }}{% endif %}";
-        let iconUrl = localStorage.getItem('voiceAssistantIcon') || "{{ url_for('static', path='/Web/images/gif-icon-1.gif') }}";
-        let voiceAssistantTheme = localStorage.getItem('voiceAssistantTheme');
-        let primaryColor = "#00b4d8";
-        let secondaryColor = "#0077b6";
-        let pulseColor = "rgba(0, 180, 216, 0.3)";
-        if(voiceAssistantTheme){
-            voiceAssistantTheme = JSON.parse(voiceAssistantTheme);
-            primaryColor = voiceAssistantTheme.primaryColor;
-            secondaryColor = voiceAssistantTheme.secondaryColor;
-            pulseColor = voiceAssistantTheme.pulseColor;
+        if (customizeBotModal) {
+            customizeBotModal.classList.remove('show');
+            setTimeout(() => {
+                customizeBotModal.style.display = 'none';
+                if (voiceIcon) {
+                    voiceIcon.style.display = 'block';
+                }
+            }, 500);
         }
 
-        // Create a plain object instead of FormData
-        var data = {
+        let agentId = "{{ agent.id if agent else '' }}"; // Use Jinja safely
+        let iconUrl = document.getElementById('selectedIcon')?.src || "{{ url_for('static', path='/Web/images/gif-icon-1.gif') }}";
+
+        // Get colors from CSS variables (avoiding localStorage)
+        let primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim() || "#00b4d8";
+        let secondaryColor = getComputedStyle(document.documentElement).getPropertyValue('--secondary-color').trim() || "#0077b6";
+        let pulseColor = getComputedStyle(document.documentElement).getPropertyValue('--pulse-shadow').trim() || "rgba(0, 180, 216, 0.3)";
+
+        // Create the data payload
+        let data = {
             agent_id: agentId,
             icon_url: iconUrl,
             primary_color: primaryColor,
             secondary_color: secondaryColor,
             pulse_color: pulseColor
         };
-        
-        $.ajax({
-            url: `${window.location.origin}/api/save_changes/`,
-            type: 'POST',
-            data: JSON.stringify(data),
-            contentType: 'application/json',
+
+        // Send data using Fetch API instead of jQuery AJAX
+        fetch(`${window.location.origin}/api/save_changes/`, {
+            method: 'POST',
             headers: {
-                'X-CSRFToken': '{{ csrf_token }}',
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}'
             },
-            success: function(response){
-                if(response.status == "success"){
-                    toastr.success("Changes saved successfully", {positionClass: "toast-top-right"});
-                }
-                else{
-                    toastr.error("Something went wrong!", {positionClass: "toast-top-right"});
-                }
-            },
-            error: function(xhr, status, error){
-                if(xhr.status == 400){  
-                    toastr.error(xhr.responseJSON.message, {positionClass: "toast-top-right"});
-                }
-                else if(xhr.status == 500){  
-                    toastr.error(xhr.responseJSON.message, {positionClass: "toast-top-right"});
-                }
-                else{
-                    toastr.error("Something went wrong!", {positionClass: "toast-top-right"});
-                }
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(response => {
+            if (response.status === "success") {
+                toastr.success("Changes saved successfully", { positionClass: "toast-top-right" });
+            } else {
+                throw new Error(response.message || "Something went wrong!");
             }
+        })
+        .catch(error => {
+            toastr.error(error.message, { positionClass: "toast-top-right" });
         });
     }
+
+
+    function toggleRecorder() {
+        const customizeBotModal = document.getElementById('customize-bot-modal');
+        const voiceIcon = document.querySelector('.voice_icon');
+
+        if (customizeBotModal.classList.contains('show')) {
+            customizeBotModal.classList.remove('show');
+            setTimeout(() => {
+                customizeBotModal.classList.add('hidden');
+            }, 500);
+        } else {
+            customizeBotModal.classList.remove('hidden');
+            setTimeout(() => customizeBotModal.classList.add('show'), 10);
+            voiceIcon.style.display = 'none'; // Hide voice icon when opened
+        }
+    }
+
+
+    function toggleColorPalette() {
+        const colorPalette = document.getElementById('colorPalette');
+        colorPalette.classList.toggle('show');
+    }
+    function toggleIconPalette() {
+        const iconPalette = document.getElementById('iconPalette');
+        iconPalette.classList.toggle('show');
+    }
+
+    function changeTheme(primaryColor, secondaryColor, pulseColor) {
+            // Apply colors to CSS variables
+            document.documentElement.style.setProperty('--primary-color', primaryColor);
+            document.documentElement.style.setProperty('--secondary-color', secondaryColor);
+            document.documentElement.style.setProperty('--pulse-shadow', pulseColor);
+
+            // Convert Hex to RGB and store as CSS variable
+            const rgbMatch = primaryColor.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+            if (rgbMatch) {
+                const r = parseInt(rgbMatch[1], 16);
+                const g = parseInt(rgbMatch[2], 16);
+                const b = parseInt(rgbMatch[3], 16);
+                document.documentElement.style.setProperty('--primary-color-rgb', `${r}, ${g}, ${b}`);
+            }
+
+            // Store theme in a global variable
+            selectedTheme = { primaryColor, secondaryColor, pulseColor };
+
+            // Hide the color palette
+            const colorPalette = document.getElementById('colorPalette');
+            if (colorPalette) {
+                colorPalette.classList.remove('show');
+            }
+        }
 </script>
 {% endblock %}

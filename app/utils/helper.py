@@ -112,6 +112,7 @@ def generate_twiml(agent, url):
             <Pause length="40"/>
         </Response>
     """
+    os.makedirs(f"media/xml_files", exist_ok=True)
 
     file_path = f"media/xml_files/streams_{agent.id}.xml"
     with open(file_path, "w") as file:

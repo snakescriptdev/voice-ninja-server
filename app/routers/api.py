@@ -6,7 +6,7 @@ from .schemas.format import (
 from app.core import logger
 from app.services import AudioStorage
 from starlette.responses import JSONResponse, RedirectResponse
-from app.databases.models import AudioRecordModel, UserModel, AgentModel, ResetPasswordModel, AgentConnectionModel
+from app.databases.models import AudioRecordModel, UserModel, AgentModel, ResetPasswordModel, AgentConnectionModel, AudioRecordings
 from app.databases.schema import  AudioRecordListSchema
 import json
 import bcrypt
@@ -983,3 +983,15 @@ async def get_agent_connection(request: Request, agent_id: str):
             status_code=500,
             content={"status": "error", "message": "Something went wrong!", "error": str(e)}
         )
+
+
+@router.delete("/delete_audio_recording", name="delete_audio_recording")
+async def delete_audio_recording(request: Request):
+    try:
+        audio_recording_id = request.query_params.get("audio_recording_id")
+        if not audio_recording_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Audio recording ID is required"})
+        AudioRecordings.delete(audio_recording_id)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Audio recording deleted successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})

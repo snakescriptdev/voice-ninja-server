@@ -19,7 +19,7 @@ from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveL
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from app.utils.helper import save_audio
 # from app.services.bot_tools import end_call_tool
-import asyncio
+import asyncio, uuid
 from fastapi.websockets import WebSocketState
 
 tools = [
@@ -93,21 +93,19 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             dict: Response containing status and message
         """
         try:
-            # Create a background task for sleeping and closing
             async def delayed_close():
                 try:
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(5) 
                     logger.info(f"Websocket client state: {websocket_client.client_state}")
+                    
                     if websocket_client.client_state != WebSocketState.DISCONNECTED:
                         await websocket_client.close(code=1000, reason="Call ended normally")
                         logger.info("Websocket closed successfully after delay")
                 except Exception as e:
                     logger.error(f"Error in delayed close: {str(e)}")
 
-            # Schedule the delayed close in the background
             asyncio.create_task(delayed_close())
-            
-            # Return immediately while close happens in background
+
             return {"status": "success", "message": "Call end initiated"}
             
         except Exception as e:
@@ -141,18 +139,20 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
         if stream_sid:
             await save_audio(audio, sample_rate, num_channels, stream_sid, voice, int(agent_id))
+        else:
+            uid = uuid.uuid4()
+            await save_audio(audio, sample_rate, num_channels, str(uid), voice, int(agent_id))
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
-        if stream_sid:
-            await audiobuffer.start_recording()
+
+        await audiobuffer.start_recording()
         a = await task.queue_frames([context_aggregator.user().get_context_frame()])
         print("Client connected:--",a)
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        if stream_sid:
-            await audiobuffer.stop_recording()
+        await audiobuffer.stop_recording()
         await task.cancel()
         await runner.cancel()
 

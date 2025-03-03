@@ -251,16 +251,15 @@ async def verify_account(request: Request, token: str):
 @router.get("/call_history")
 @check_session_expiry_redirect
 async def call_history(request: Request, page: int = 1):
-    user_id = request.session.get("user", {}).get("user_id")
-    agents = AgentModel.get_all_by_user(user_id)
     from app.databases.models import AudioRecordings
-    audio_recordings = AudioRecordings.get_all_by_agent(agents)
-
+    agent_id = request.query_params.get("agent_id")
+    audio_recordings = AudioRecordings.get_all_by_agent(agent_id)
     items_per_page = 10
     start = (page - 1) * items_per_page
     end = start + items_per_page
     
     paginator = Paginator(audio_recordings, page, items_per_page, start, end)
+    print(len(audio_recordings))
     final_response = []
     for audio_rec in audio_recordings:
         agent = AgentModel.get_by_id(audio_rec.agent_id)
@@ -309,10 +308,10 @@ def chatbot_script(request: Request, agent_id: str):
             const container = document.createElement('div');
             container.innerHTML = `
                 <link rel="stylesheet" type="text/css" href="/static/Web/css/bot_style.css">
-                <div class="voice_icon" onclick="toggleRecorder()">
+                <div class="voice_icon" onclick="toggleRecorder()" id="start-btn" style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});">
                     <img src="{appearances.icon_url}" alt="voice_icon">
                 </div>
-                <div id="recorderControls" class="recorder-controls hidden">
+                <div id="recorderControls" class="recorder-controls hidden" style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});">
                     <div class="settings">
                         <div id="colorPalette" class="color-palette">
                             <div class="color-option" style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});"></div>
@@ -322,7 +321,7 @@ def chatbot_script(request: Request, agent_id: str):
                     <div class="status-indicator">
                         <img src="static/Web/images/wave.gif" alt="voice_icon">
                     </div>
-                    <button onclick="stopRecorder()">Stop Recording</button>
+                    <button onclick="stopRecorder()" id="stop-btn" style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});">Stop Recording</button>
                 </div>
             `;
             document.body.appendChild(container);

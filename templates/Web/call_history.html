@@ -183,7 +183,7 @@ document.addEventListener('DOMContentLoaded', function() {
 document.getElementById('confirm-delete').addEventListener('click', function() {
     const audioRecordingId = this.getAttribute('data-audio-recording-id');
     const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
-    fetch(`/delete_audio_recording/?audio_recording_id=${audioRecordingId}`, {
+    fetch(`/api/delete_audio_recording/?audio_recording_id=${audioRecordingId}`, {
         method: 'DELETE',
         headers: { "X-CSRFToken": '{{ csrf_token }}' }, 
     })
