@@ -1,6 +1,17 @@
 /* font kit start here */
 
 
+:root {
+    --primary-color: #00b4d8;
+    --secondary-color: #181919;
+    --card-bg: rgba(255, 255, 255, 0.05);
+    --text-color: #ffffff;
+    --border-color: rgba(255, 255, 255, 0.1);
+    --shadow-color: rgba(0, 0, 0, 0.1);
+    --pulse-shadow: rgba(0, 180, 216, 0.3);
+    --body-bg-color: #ffffff; /* Set body background color to white */
+}
+
 @font-face {
     font-family: 'Poppins';
     src: url('../fonts/Poppins-Medium.woff2') format('woff2'),
@@ -793,15 +804,15 @@ table .max-content {
 }
 
 .agent_select_box {
-    width: 100%;
-    max-width: 150px;
+    /* width: 100%;
+    max-width: 150px; */
 }
 
 .agent_type_dropdown select {
     background-color: #F3F3F3;
     border: 1px solid #0000001A;
     border-radius: 8px;
-    padding: 10px 25px 10px 40px;
+    padding: 10px 35px 10px 40px;
     color: #848484;
     font-weight: 400;
     font-size: 14px;
@@ -1326,5 +1337,212 @@ table .max-content {
     text-align: center;
     box-shadow: 0px 2px 4px 0px #00000026;
 }
+.w-max-content{
+    width: max-content;
+}
+.view-call-history-btn, .customize-bot-btn{
+    background-color: #0C7FDA;
+    color: #fff;
+    font-weight: 500;
+    font-size: 16px;
+    line-height: 24px;
+    padding: 10px 20px;
+    border-radius: 5px;
+    border: none;
+}
 
+
+.recorder-controls img {
+    height: 60px;
+    filter: drop-shadow(0 4px 8px var(--pulse-shadow));
+    width: 160px;
+}
+
+.recorder-controls button {
+    padding: 12px 30px;
+    background: linear-gradient(45deg, var(--primary-color), var(--secondary-color));
+    color: white;
+    border: none;
+    border-radius: 25px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+    position: relative;
+    overflow: hidden;
+}
+
+.recorder-controls button::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        120deg,
+        transparent,
+        rgba(255, 255, 255, 0.3),
+        transparent
+    );
+    transition: 0.5s;
+}
+
+.recorder-controls button:hover::before {
+    left: 100%;
+}
+
+.recorder-controls button:hover {
+    box-shadow: 0 8px 24px rgba(var(--primary-color-rgb), 0.4);
+    transform: translateY(-2px);
+}
+
+.status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-color);
+    font-size: 14px;
+    margin: 10px 0;
+}
+
+.pulse-dot {
+    width: 10px;
+    height: 10px;
+    background: var(--primary-color);
+    border-radius: 50%;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 var(--pulse-shadow); }
+    70% { box-shadow: 0 0 0 15px rgba(0, 180, 216, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(0, 180, 216, 0); }
+}
+
+.hidden {
+    display: none;
+}
+
+.recorder-controls {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    bottom: 50px;
+    background: #fff;
+    box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+    padding: 40px 10px;
+    width: 100%;
+    border-radius: 20px;
+    height: 250px;
+    backdrop-filter: blur(12px);
+    border-radius: 20px;
+    box-shadow: 0 8px 32px var(--shadow-color);
+    background-color: var(--secondary-color);
+}
+.recorder-controls h1 {
+    color: #ffffff;
+    font-weight: 400;
+    font-size: 1.2rem;
+    margin-bottom: 10px;
+}
+
+.status-indicator span {
+    color: var(--text-color);
+    font-weight: 400;
+    font-size: 14px;
+    margin-left: 10px;
+}
+
+.customize-bot-modal .settings {
+    position: absolute;
+    top: 10px;
+    right: 8px;
+}
+
+.customize-bot-modal .settings .icon {
+    cursor: pointer;
+    font-size: 20px;
+    color: var(--primary-color);
+    transition: transform 0.3s ease;
+}
+
+.customize-bot-modal .settings .icon:hover {
+    transform: rotate(30deg);
+    color: var(--primary-color);
+}
+
+/* Color Palette */
+.customize-bot-modal .color-palette, .customize-bot-modal .icon-palette {
+    position: absolute;
+    top: 30px;
+    right: 0px;
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
+    padding: 10px;
+    width: 210px;
+    transform: scale(0);
+    transform-origin: top right;
+    transition: transform 0.3s ease;
+    z-index: 1001;
+}
+
+.color-palette.show, .icon-palette.show {
+    transform: scale(1);
+}
+
+.customize-bot-modal .color-option {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform 0.2s ease;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+}
+.customize-bot-modal h6{
+   font-size: 14px;
+   font-weight: 500;
+
+}
+
+.customize-bot-modal .color-option:hover {
+    transform: scale(1.1);
+    border: 2px solid rgba(255, 255, 255, 0.8);
+}
+.customize-bot-modal .save-btn{
+    background-color: #0C7FDA;
+    color: #fff;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 24px;
+    padding: 6px 20px;
+    border-radius: 5px;
+    border: none;
+}
+.customize-bot-modal .icons_change{
+    position: absolute;
+    right: 40px;
+    top: 15px;
+}
+.customize-bot-modal  .icon{
+    cursor: pointer;
+    text-align: end;
+}
+.customize-bot-modal .icon-option img{
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+}
+.icon-option.active{
+    border: 2px solid #0C7FDA;
+    height: 35px;
+    width: 35px;
+    border-radius: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
 /* COPY LINK STYLE END */

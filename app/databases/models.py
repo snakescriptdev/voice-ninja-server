@@ -215,6 +215,7 @@ class AgentModel(Base):
         back_populates="agents"
     )
     audio_recordings = relationship("AudioRecordings", back_populates="agent")
+
     
     def __repr__(self):
         return f"<Agent(id={self.id}, agent_name={self.agent_name})>"
@@ -544,4 +545,61 @@ class AudioRecordings(Base):
 #         with db():
 #             return db.session.query(cls).filter(cls.created_by_id == user_id).all()
 
+class AgentConnectionModel(Base):
+    """Model for tracking connections between agents"""
+    __tablename__ = "agent_connections"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, nullable=False)
+    icon_url = Column(String, default="http://localhost:8000/static/Web/images/gif-icon-3.gif")
+    primary_color = Column(String, default="#8338ec")
+    secondary_color = Column(String, default="#5e60ce") 
+    pulse_color = Column(String, default="rgba(131, 56, 236, 0.3)")
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+    def __repr__(self):
+        return f"<AgentConnection(id={self.id}, agent_id={self.agent_id})>"
+    
+    @classmethod
+    def create_connection(cls, agent_id: int, icon_url: str, primary_color: str, secondary_color: str, pulse_color: str) -> "AgentConnectionModel":
+        """Create a new agent connection"""
+        with db():
+            connection = cls(agent_id=agent_id, icon_url=icon_url, primary_color=primary_color, secondary_color=secondary_color, pulse_color=pulse_color)
+            db.session.add(connection)
+            db.session.commit()
+            return connection   
+    
+    @classmethod
+    def get_by_agent_id(cls, agent_id: int) -> Optional["AgentConnectionModel"]:
+        """Get connection by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).first()
+    
+    @classmethod
+    def update_connection(cls, agent_id: int, **kwargs) -> "AgentConnectionModel":  
+        """Update a connection by agent ID"""
+        with db():
+            connection = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if connection:
+                for key, value in kwargs.items():
+                    if hasattr(connection, key):
+                        setattr(connection, key, value)
+                db.session.commit()
+                db.session.refresh(connection)
+                return connection
+            return None
+        
+    @classmethod
+    def delete_connection(cls, agent_id: int) -> bool:
+        """Delete a connection by agent ID"""
+        with db():
+            connection = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if connection:
+                db.session.delete(connection)
+                db.session.commit()
+                return True
+            return False
+            
 Base.metadata.create_all(engine)

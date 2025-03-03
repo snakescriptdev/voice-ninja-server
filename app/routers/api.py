@@ -6,7 +6,7 @@ from .schemas.format import (
 from app.core import logger
 from app.services import AudioStorage
 from starlette.responses import JSONResponse, RedirectResponse
-from app.databases.models import AudioRecordModel, UserModel, AgentModel, ResetPasswordModel
+from app.databases.models import AudioRecordModel, UserModel, AgentModel, ResetPasswordModel, AgentConnectionModel
 from app.databases.schema import  AudioRecordListSchema
 import json
 import bcrypt
@@ -903,3 +903,83 @@ async def delete_knowledge_base(request: Request):
     knowledge_base_id = data.get("knowledge_base_id")
     KnowledgeBaseModel.delete(knowledge_base_id)
     return JSONResponse(status_code=200, content={"status": "success", "message": "Knowledge base deleted successfully"})
+
+
+
+@router.post("/save_changes", name="save_changes")
+async def save_changes(request: Request):
+    # try:
+    # Validate request has valid JSON body
+    data = await request.json()
+    print(data)
+    # Validate required fields
+    required_fields = ["agent_id", "icon_url", "primary_color", "secondary_color", "pulse_color"]
+    for field in required_fields:
+        if not data.get(field):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": f"Missing required field: {field}"}
+            )
+
+    agent_id = data.get("agent_id")
+    icon_url = data.get("icon_url")
+    primary_color = data.get("primary_color") 
+    secondary_color = data.get("secondary_color")
+    pulse_color = data.get("pulse_color")
+
+    connection = AgentConnectionModel.get_by_agent_id(agent_id)
+    if connection:
+        AgentConnectionModel.update_connection(
+            agent_id,
+            icon_url=icon_url,
+            primary_color=primary_color,
+            secondary_color=secondary_color,
+            pulse_color=pulse_color
+        )
+    else:
+        AgentConnectionModel.create_connection(
+            agent_id, 
+            icon_url,
+            primary_color,
+            secondary_color,
+            pulse_color
+        )
+    return JSONResponse(
+        status_code=200,
+        content={"status": "success", "message": "Agent connection created successfully"}
+    )
+    # except Exception as e:
+    #     return JSONResponse(
+    #         status_code=500,
+    #         content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+    #     )
+
+@router.get("/get_agent_connection", name="get_agent_connection")
+async def get_agent_connection(request: Request, agent_id: str):
+    try:
+        connection = AgentConnectionModel.get_by_agent_id(agent_id)
+        if connection:
+            connection_data = {
+                "icon_url": connection.icon_url,
+                "primary_color": connection.primary_color,
+                "secondary_color": connection.secondary_color,
+                "pulse_color": connection.pulse_color
+            }
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": "Agent connection fetched successfully",
+                    "data": connection_data
+                }
+            )
+        else:
+            return JSONResponse(    
+                status_code=200,
+                content={"status": "success", "message": "Agent connection not found", "data": {}}
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+        )

@@ -1,9 +1,7 @@
 {% extends 'Web/base.html' %}
 
-
 {% block content %}
     <div class="wrapper">
-        
         {% include 'Web/sidebar.html' %}
 
         <!-- Page Content  -->
@@ -32,89 +30,203 @@
                 </div>
             </div>
             <div class="agent_type_box">
-                <div class="agent_type_dropdown d-flex align-items-center">
-                    <div class="agent_select_box position-relative">
-                        <select class="form-select" id="selected-model">
-                            <option {% if agent and agent.selected_model == "Gemini" %}selected{% endif %}>Gemini</option>
-                        </select>
-                        <div class="agent_type_select_icon">
-                            <img src="{{ url_for('static', path='/Web/images/ai-icon.svg') }}" class="img-fluid">
-                        </div>
-                        <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
-                            <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
-                        </div>
-                    </div>
-                    <div class="agent_select_box position-relative">
-                        <select class="form-select" id="selected-voice">
-                            <option {% if agent and agent.selected_voice == "Aoede" %}selected{% endif %}>Aoede</option>
-                            <option {% if agent and agent.selected_voice == "Charon" %}selected{% endif %}>Charon</option>
-                            <option {% if agent and agent.selected_voice == "Fenrir" %}selected{% endif %}>Fenrir</option>
-                            <option {% if agent and agent.selected_voice == "Kore" %}selected{% endif %}>Kore</option>
-                            <option {% if agent and agent.selected_voice == "Puck" %}selected{% endif %}>Puck</option>
-                        </select>
-                        <div class="agent_type_select_icon">
-                            <img src="{{ url_for('static', path='/Web/images/jack-img.svg') }}" class="img-fluid">
-                        </div>
-                        <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
-                            <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
-                        </div>
-                    </div>
-                    <div class="agent_select_box position-relative">
-                        <select class="form-select" id = "selected-language">
-                            <option selected>English</option>
-                        </select>
-                        <div class="agent_type_select_icon">
-                            <img src="{{ url_for('static', path='/Web/images/lang-icon.svg') }}" class="img-fluid">
-                        </div>
-                        <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
-                            <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
-                        </div>
-                    </div>
-                    <div class="agent_select_box position-relative">
-                        <select name="knowledge_base"  id="selected-knowledge-base">
-                                <option value="" disabled {% if not selected_knowledge %}selected{% endif %}>
-                                    Select Knowledge Base
-                                </option>
-                                {% for knowledge_base in knowledge_bases %}
-                                    <option value="{{ knowledge_base.id }}"
-                                        {% if selected_knowledge and selected_knowledge.id == knowledge_base.id %}selected{% endif %}>
-                                        {{ knowledge_base.knowledge_base_name }}
-                                    </option>
-                                {% endfor %}
+                <div class="agent_type_dropdown d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="agent_select_box position-relative">
+                            <select class="form-select" id="selected-model">
+                                <option {% if agent and agent.selected_model == "Gemini" %}selected{% endif %}>Gemini</option>
                             </select>
-
-                        <div class="agent_type_select_icon">
-                            <img src="{{ url_for('static', path='/Web/images/jack-img.svg') }}" class="img-fluid">
+                            <div class="agent_type_select_icon">
+                                <img src="{{ url_for('static', path='/Web/images/ai-icon.svg') }}" class="img-fluid">
+                            </div>
+                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                                <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
+                            </div>
                         </div>
-                        <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
-                            <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
+                        <div class="agent_select_box position-relative">
+                            <select class="form-select" id="selected-voice">
+                                <option {% if agent and agent.selected_voice == "Aoede" %}selected{% endif %}>Aoede</option>
+                                <option {% if agent and agent.selected_voice == "Charon" %}selected{% endif %}>Charon</option>
+                                <option {% if agent and agent.selected_voice == "Fenrir" %}selected{% endif %}>Fenrir</option>
+                                <option {% if agent and agent.selected_voice == "Kore" %}selected{% endif %}>Kore</option>
+                                <option {% if agent and agent.selected_voice == "Puck" %}selected{% endif %}>Puck</option>
+                            </select>
+                            <div class="agent_type_select_icon">
+                                <img src="{{ url_for('static', path='/Web/images/jack-img.svg') }}" class="img-fluid">
+                            </div>
+                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                                <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
+                            </div>
+                        </div>
+                        <div class="agent_select_box position-relative">
+                            <select class="form-select" id = "selected-language">
+                                <option selected>English</option>
+                            </select>
+                            <div class="agent_type_select_icon">
+                                <img src="{{ url_for('static', path='/Web/images/lang-icon.svg') }}" class="img-fluid">
+                            </div>
+                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                                <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
+                            </div>
+                        </div>
+                        <div class="agent_select_box position-relative">
+                            <select name="knowledge_base"  id="selected-knowledge-base" class="form-select">
+                                    <option value="" disabled {% if not selected_knowledge %}selected{% endif %}>
+                                        Select Knowledge Base
+                                    </option>
+                                    {% for knowledge_base in knowledge_bases %}
+                                        <option value="{{ knowledge_base.id }}"
+                                            {% if selected_knowledge and selected_knowledge.id == knowledge_base.id %}selected{% endif %}>
+                                            {{ knowledge_base.knowledge_base_name }}
+                                        </option>
+                                    {% endfor %}
+                                </select>
+
+                            <div class="agent_type_select_icon">
+                                <img src="{{ url_for('static', path='/Web/images/jack-img.svg') }}" class="img-fluid">
+                            </div>
+                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                                <img src="{{ url_for('static', path='/Web/images/setting-icon.svg') }}" class="img-fluid">
+                            </div>
                         </div>
                     </div>
-                    
+                    <div class="agent_select_box position-relative">
+                        <a href="{{ url_for('call_history') }}">
+                            <button class="w-max-content view-call-history-btn" id="create-agent-btn">View Call History</button>
+                        </a>
+                    </div>
                 </div>
                 <div class="agent_type_box_inner">
                     <div class="agent_type_textarea">
                         <textarea class="form-control" id="agent-prompt" placeholder="Enter your prompt here....">{% if agent %}{{ agent.agent_prompt }}{% endif %}</textarea>
                     </div>
                     {% if agent %}
-                    <div class=" mt-4">
-                        <label class="form-label">Your Agent Script</label>
-                        <div class="copy_link_box d-flex align-items-center justify-content-between mx-auto">
-                            <textarea class="copy_link_text" id="agent-script" disabled readonly></textarea>
-                            <script>
-                                document.addEventListener("DOMContentLoaded", function() {
-                                    const agentId = {{ agent.id }};
-                                    const origin = window.location.origin;
-                                    const scriptTag = `<script src="${origin}/chatbot-script.js/${agentId}/"><\/script>`;
-                                    document.getElementById("agent-script").value = scriptTag;
-                                });
-                            </script>
-                            <button class="copy_link_btn border-0 bg-transparent position-relative" id="copy-link-btn" onclick="copyScript()">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-copy" viewBox="0 0 16 16">
-                                <path fill-rule="evenodd" d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1z"/>
-                            </svg>
-                            <div class="tooltip_text">Copy</div>
+                    <div class="row align-items-end">
+                        <div class="col-md-9 mt-4">
+                            <label class="form-label">Your Agent Script</label>
+                            <div class="copy_link_box d-flex align-items-center justify-content-between mx-auto">
+                                <textarea class="copy_link_text" id="agent-script" disabled readonly></textarea>
+                                <script>
+                                    document.addEventListener("DOMContentLoaded", function() {
+                                        const agentId = {{ agent.id }};
+                                        const origin = window.location.origin;
+                                        const scriptTag = `<script src="${origin}/chatbot-script.js/${agentId}/"><\/script>`;
+                                        document.getElementById("agent-script").value = scriptTag;
+                                    });
+                                </script>
+                                <button class="copy_link_btn border-0 bg-transparent position-relative" id="copy-link-btn" onclick="copyScript()">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-copy" viewBox="0 0 16 16">
+                                    <path fill-rule="evenodd" d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1z"/>
+                                </svg>
+                                <div class="tooltip_text">Copy</div>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-3 mt-4 position-relative">
+                            <button class="customize-bot-btn" id="customize-bot-btn" onclick="toggleCustomizeModal()">
+                                Customize Your Bot
                             </button>
+                            <div class="customize-bot-modal" id="customize-bot-modal" style="display: none;">
+                                <!-- <div class="customize-bot-modal-content">
+                                    <h3>Customize Your Bot</h3>
+                                    <div class="customize-bot-modal-content-inner">
+                                        <h6 class="border-top pt-3">Color</h6>
+                                        <div class="mb-3 color-box d-flex align-items-center gap-2 flex-wrap">
+                                             <div class="color-option" style="background: linear-gradient(45deg, #00b4d8, #0077b6);" 
+                                                onclick="changeTheme('#00b4d8', '#0077b6', 'rgba(0, 180, 216, 0.3)')"></div>
+                                            <div class="color-option" style="background: linear-gradient(45deg, #e63946, #9d0208);" 
+                                                onclick="changeTheme('#e63946', '#9d0208', 'rgba(230, 57, 70, 0.3)')"></div>
+                                            <div class="color-option" style="background: linear-gradient(45deg, #8338ec, #5e60ce);" 
+                                                onclick="changeTheme('#8338ec', '#5e60ce', 'rgba(131, 56, 236, 0.3)')"></div>
+                                            <div class="color-option" style="background: linear-gradient(45deg, #06d6a0, #118ab2);" 
+                                                onclick="changeTheme('#06d6a0', '#118ab2', 'rgba(6, 214, 160, 0.3)')"></div>
+                                            <div class="color-option" style="background: linear-gradient(45deg, #fb8500, #ffb703);" 
+                                                onclick="changeTheme('#fb8500', '#ffb703', 'rgba(251, 133, 0, 0.3)')"></div>
+                                            <div class="color-option" style="background: linear-gradient(45deg, #ff5a5f, #c1839f);" 
+                                                onclick="changeTheme('#ff5a5f', '#c1839f', 'rgba(255, 90, 95, 0.3)')"></div>
+                                            <div class="color-option" style="background: linear-gradient(45deg, #2ec4b6, #20a4f3);" 
+                                                onclick="changeTheme('#2ec4b6', '#20a4f3', 'rgba(46, 196, 182, 0.3)')"></div>
+                                            <div class="color-option" style="background: linear-gradient(45deg, #7209b7, #4361ee);" 
+                                                onclick="changeTheme('#7209b7', '#4361ee', 'rgba(114, 9, 183, 0.3)')"></div>
+                                        </div>
+                                        <h6 class="border-top pt-3">Icons</h6>
+                                        <div class="d-flex align-items-center gap-2 flex-wrap">
+                                             <div class="icon-option">
+                                                <img src="{{ url_for('static', path='/Web/images/gif-icon-1.gif') }}" class="img-fluid">
+                                             </div>
+                                             <div class="icon-option">
+                                                <img src="{{ url_for('static', path='/Web/images/gif-icon2.gif') }}" class="img-fluid">
+                                             </div>
+                                             <div class="icon-option">
+                                                <img src="{{ url_for('static', path='/Web/images/gif-icon-3.gif') }}" class="img-fluid">
+                                             </div>
+                                             <div class="icon-option">
+                                                <img src="{{ url_for('static', path='/Web/images/gif-icon-4.gif') }}" class="img-fluid">
+                                             </div>
+                                             <div class="icon-option">
+                                                <img src="{{ url_for('static', path='/Web/images/gif-icon-5.gif') }}" class="img-fluid">
+                                             </div>
+                                        </div>
+                                        <div class="save-btn-box mt-3 text-center border-top pt-3">
+                                            <button class="save-btn" id="save-btn">Save</button>
+                                        </div>
+                                    </div>
+                                </div> -->
+                                <div class="recorder-controls show">
+                                    <div class="settings">
+                                        <div class="icon" onclick="toggleColorPalette()">
+                                           <i class="fa-solid fa-gear"></i>
+                                        </div>
+                                        <div id="colorPalette" class="color-palette">
+                                            <div class="color-box d-flex align-items-center gap-2 flex-wrap">
+                                                <div class="color-option" style="background: linear-gradient(45deg, #00b4d8, #0077b6);" onclick="changeTheme('#00b4d8', '#0077b6', 'rgba(0, 180, 216, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #e63946, #9d0208);" onclick="changeTheme('#e63946', '#9d0208', 'rgba(230, 57, 70, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #8338ec, #5e60ce);" onclick="changeTheme('#8338ec', '#5e60ce', 'rgba(131, 56, 236, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #06d6a0, #118ab2);" onclick="changeTheme('#06d6a0', '#118ab2', 'rgba(6, 214, 160, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #fb8500, #ffb703);" onclick="changeTheme('#fb8500', '#ffb703', 'rgba(251, 133, 0, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #ff5a5f, #c1839f);" onclick="changeTheme('#ff5a5f', '#c1839f', 'rgba(255, 90, 95, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #2ec4b6, #20a4f3);" onclick="changeTheme('#2ec4b6', '#20a4f3', 'rgba(46, 196, 182, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #7209b7, #4361ee);" onclick="changeTheme('#7209b7', '#4361ee', 'rgba(114, 9, 183, 0.3)')"></div>
+                                            </div>
+                                            <div class="mt-3">
+                                                <h6>Choose Icons</h6>
+                                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                    <div class="icon-option active" onclick="changeIcon('{{ url_for('static', path="/Web/images/gif-icon-1.gif") }}', this)">
+                                                    <img src="{{ url_for('static', path='/Web/images/gif-icon-1.gif') }}" class="img-fluid">
+                                                    </div>
+                                                    <div class="icon-option" onclick="changeIcon('{{ url_for('static', path="/Web/images/gif-icon2.gif") }}', this)">
+                                                    <img src="{{ url_for('static', path='/Web/images/gif-icon2.gif') }}" class="img-fluid">
+                                                    </div>
+                                                    <div class="icon-option" onclick="changeIcon('{{ url_for('static', path="/Web/images/gif-icon-3.gif") }}', this)">
+                                                    <img src="{{ url_for('static', path='/Web/images/gif-icon-3.gif') }}" class="img-fluid">
+                                                    </div>
+                                                    <div class="icon-option" onclick="changeIcon('{{ url_for('static', path="/Web/images/gif-icon-4.gif") }}', this)">
+                                                    <img src="{{ url_for('static', path='/Web/images/gif-icon-4.gif') }}" class="img-fluid">
+                                                    </div>
+                                                    <div class="icon-option" onclick="changeIcon('{{ url_for('static', path="/Web/images/gif-icon-5.gif") }}', this)">
+                                                        <img src="{{ url_for('static', path='/Web/images/gif-icon-5.gif') }}" class="img-fluid">
+                                                    </div>
+                                                </div>
+                                                </div>
+                                            </div>
+                                        </div> 
+                                     <h1>connect with me</h1>
+                                    <div class="status-indicator">
+                                       <img src="{{ url_for('static', path='/Web/images/wave.gif') }}" alt="voice_icon">
+                                    </div>
+                                    <button onclick="savechanges()">Save Changes</button>
+                                </div>
+                            </div>
+                            <script>
+                                function toggleCustomizeModal() {
+                                    const modal = document.getElementById('customize-bot-modal');
+                                    if(modal.style.display === 'none') {
+                                        modal.style.display = 'block';
+                                    } else {
+                                        modal.style.display = 'none';
+                                    }
+                                }
+                            </script>
                         </div>
                     </div>
                     {% endif %}
@@ -142,41 +254,90 @@
     </div>
     
 
+<script>
+    function toggleRecorder() {
+        const customizeBotModal = document.getElementById('customize-bot-modal');
+        const voiceIcon = document.querySelector('.voice_icon');
+
+        if (customizeBotModal.classList.contains('show')) {
+            customizeBotModal.classList.remove('show');
+            setTimeout(() => {
+                customizeBotModal.classList.add('hidden');
+            }, 500);
+        } else {
+            customizeBotModal.classList.remove('hidden');
+            setTimeout(() => customizeBotModal.classList.add('show'), 10);
+            voiceIcon.style.display = 'none'; // Hide voice icon when opened
+        }
+    }
 
 
-    <script>
-        document.addEventListener("DOMContentLoaded", function() {
-            const selectBox = document.getElementById("welcome-msg");
-            const optionsContainer = document.querySelector(".options");
-            const options = document.querySelectorAll(".option");
-    
-            // Toggle dropdown
-            selectBox.addEventListener("click", function() {
-                optionsContainer.classList.toggle("active");
-            });
-    
-            // Change the selected option
-            options.forEach(option => {
-                option.addEventListener("click", function() {
-                    selectBox.textContent = this.textContent;
-                    optionsContainer.classList.remove("active");
-                });
-            });
-    
-            // Close dropdown when clicking outside
-            document.addEventListener("click", function(event) {
-                if (!selectBox.parentElement.contains(event.target)) {
-                    optionsContainer.classList.remove("active");
-                }
+    function toggleColorPalette() {
+        const colorPalette = document.getElementById('colorPalette');
+        colorPalette.classList.toggle('show');
+    }
+    function toggleIconPalette() {
+        const iconPalette = document.getElementById('iconPalette');
+        iconPalette.classList.toggle('show');
+    }
+
+    function changeTheme(primaryColor, secondaryColor, pulseColor) {
+        document.documentElement.style.setProperty('--primary-color', primaryColor);
+        document.documentElement.style.setProperty('--secondary-color', secondaryColor);
+        document.documentElement.style.setProperty('--pulse-shadow', pulseColor);
+        
+        const rgbMatch = primaryColor.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+        if (rgbMatch) {
+            const r = parseInt(rgbMatch[1], 16);
+            const g = parseInt(rgbMatch[2], 16);
+            const b = parseInt(rgbMatch[3], 16);
+            document.documentElement.style.setProperty('--primary-color-rgb', `${r}, ${g}, ${b}`);
+        }
+        
+        const theme = {
+            primaryColor,
+            secondaryColor,
+            pulseColor
+        };
+        localStorage.setItem('voiceAssistantTheme', JSON.stringify(theme));
+        
+        document.getElementById('colorPalette').classList.remove('show');
+    }
+</script>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function() {
+        const selectBox = document.getElementById("welcome-msg");
+        const optionsContainer = document.querySelector(".options");
+        const options = document.querySelectorAll(".option");
+
+        // Toggle dropdown
+        selectBox.addEventListener("click", function() {
+            optionsContainer.classList.toggle("active");
+        });
+
+        // Change the selected option
+        options.forEach(option => {
+            option.addEventListener("click", function() {
+                selectBox.textContent = this.textContent;
+                optionsContainer.classList.remove("active");
             });
         });
-        
-        function copyScript(){
-            let script = $("#agent-script").val();
-            navigator.clipboard.writeText(script);
-            toastr.success("Script copied to clipboard", {positionClass: "toast-top-right"});
-        }
-    </script>
+
+        // Close dropdown when clicking outside
+        document.addEventListener("click", function(event) {
+            if (!selectBox.parentElement.contains(event.target)) {
+                optionsContainer.classList.remove("active");
+            }
+        });
+    });
+    
+    function copyScript(){
+        let script = $("#agent-script").val();
+        navigator.clipboard.writeText(script);
+        toastr.success("Script copied to clipboard", {positionClass: "toast-top-right"});
+    }
+</script>
 
 <script>
     
@@ -256,5 +417,149 @@
         });
     });
 
+    function changeIcon(iconUrl, element) {
+        // Remove active class from previous icon
+        let previousActive = document.querySelector('.icon-option.active');
+        if (previousActive) {
+            previousActive.classList.remove('active');
+        }
+        
+        // Check if element exists and is valid
+        if (!element) {
+            console.error('Element is undefined');
+            return;
+        }
+        
+        // Find closest parent with icon-option class
+        let iconOption = element.closest('.icon-option');
+        if (!iconOption) {
+            console.error('Could not find parent .icon-option element');
+            return;
+        }
+        
+        // Add active class to icon option
+        iconOption.classList.add('active');
+        
+        // Find img within icon option
+        let icon = iconOption.querySelector('img');
+        if (!icon) {
+            console.error('Could not find img element');
+            return;
+        }
+        
+        // Update icon source
+        icon.src = iconUrl;
+        
+        // Save to localStorage
+        localStorage.setItem('voiceAssistantIcon', iconUrl);
+    }
+
+
+    document.addEventListener("DOMContentLoaded", function() {
+        let agentId = {{ agent.id }};
+        
+        $.ajax({
+            url: `${window.location.origin}/api/get_agent_connection/`,
+            type: 'GET',
+            data: {agent_id: agentId},
+            success: function(response){    
+                if(response.status == "success"){
+                    let connection = response.data || {};
+                    let iconUrl = connection.icon_url || "{{ url_for('static', path='/Web/images/gif-icon-1.gif') }}";
+                    let primaryColor = connection.primary_color || "#00b4d8";
+                    let secondaryColor = connection.secondary_color || "#0077b6"; 
+                    let pulseColor = connection.pulse_color || "rgba(0, 180, 216, 0.3)";
+                    
+                    // First apply theme
+                    changeTheme(primaryColor, secondaryColor, pulseColor);
+                    
+                    // Find icon option matching the saved icon URL
+                    let iconOptions = document.querySelectorAll('.icon-option');
+                    let matchingIcon = Array.from(iconOptions).find(option => {
+                        let img = option.querySelector('img');
+                        return img && img.src === iconUrl;
+                    });
+
+                    // If matching icon found, activate it, otherwise use first icon
+                    if (matchingIcon) {
+                        changeIcon(iconUrl, matchingIcon);
+                    } else {
+                        let firstIcon = document.querySelector('.icon-option');
+                        if (firstIcon) {
+                            let firstIconUrl = firstIcon.querySelector('img').src;
+                            changeIcon(firstIconUrl, firstIcon);
+                        }
+                    }
+                }
+            },
+            error: function(xhr, status, error){
+                console.log("Error:", xhr.responseText);
+            }
+        });
+    });
+
+    function savechanges() {
+        const customizeBotModal = document.getElementById('customize-bot-modal');
+        // Check if voice icon exists before accessing it
+        const voiceIcon = document.querySelector('.voice_icon');
+
+        customizeBotModal.classList.remove('show');
+        setTimeout(() => {
+            customizeBotModal.style.display = 'none'; // Change to 'none' instead of adding 'hidden'
+            if (voiceIcon) {
+                voiceIcon.style.display = 'block';
+            }
+        }, 500);
+        let agentId = {{ agent.id }};
+        let iconUrl = localStorage.getItem('voiceAssistantIcon') || "{{ url_for('static', path='/Web/images/gif-icon-1.gif') }}";
+        let voiceAssistantTheme = localStorage.getItem('voiceAssistantTheme');
+        let primaryColor = "#00b4d8";
+        let secondaryColor = "#0077b6";
+        let pulseColor = "rgba(0, 180, 216, 0.3)";
+        if(voiceAssistantTheme){
+            voiceAssistantTheme = JSON.parse(voiceAssistantTheme);
+            primaryColor = voiceAssistantTheme.primaryColor;
+            secondaryColor = voiceAssistantTheme.secondaryColor;
+            pulseColor = voiceAssistantTheme.pulseColor;
+        }
+
+        // Create a plain object instead of FormData
+        var data = {
+            agent_id: agentId,
+            icon_url: iconUrl,
+            primary_color: primaryColor,
+            secondary_color: secondaryColor,
+            pulse_color: pulseColor
+        };
+        
+        $.ajax({
+            url: `${window.location.origin}/api/save_changes/`,
+            type: 'POST',
+            data: JSON.stringify(data),
+            contentType: 'application/json',
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}',
+            },
+            success: function(response){
+                if(response.status == "success"){
+                    toastr.success("Changes saved successfully", {positionClass: "toast-top-right"});
+                }
+                else{
+                    toastr.error("Something went wrong!", {positionClass: "toast-top-right"});
+                }
+            },
+            error: function(xhr, status, error){
+                if(xhr.status == 400){  
+                    toastr.error(xhr.responseJSON.message, {positionClass: "toast-top-right"});
+                }
+                else if(xhr.status == 500){  
+                    toastr.error(xhr.responseJSON.message, {positionClass: "toast-top-right"});
+                }
+                else{
+                    toastr.error("Something went wrong!", {positionClass: "toast-top-right"});
+                }
+            }
+        });
+    }
 </script>
 {% endblock %}
