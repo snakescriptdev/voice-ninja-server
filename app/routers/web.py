@@ -257,27 +257,19 @@ async def call_history(request: Request, page: int = 1):
     items_per_page = 10
     start = (page - 1) * items_per_page
     end = start + items_per_page
-    
     paginator = Paginator(audio_recordings, page, items_per_page, start, end)
-    print(len(audio_recordings))
-    final_response = []
-    for audio_rec in audio_recordings:
-        agent = AgentModel.get_by_id(audio_rec.agent_id)
-        final_response.append({
-            "id": audio_rec.id,
-            "agent_name": agent.agent_name,
-            "selected_voice": agent.selected_voice,
-            "created_at": audio_rec.created_at,
-            "audio_file": audio_rec.audio_file
-        })
-        
+    agent = AgentModel.get_by_id(agent_id)
+    final_response = paginator.items
 
     return templates.TemplateResponse(
         "Web/call_history.html",
         {
             "request": request,
             "audio_recordings": final_response,  
-            "page_obj": paginator  
+            "page_obj": paginator,
+            "agent_name": agent.agent_name,
+            "selected_voice": agent.selected_voice,
+            "agent_id": agent_id
         }
     )
 
