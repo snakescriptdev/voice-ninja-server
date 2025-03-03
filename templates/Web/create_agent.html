@@ -113,7 +113,7 @@
                                     document.addEventListener("DOMContentLoaded", function() {
                                         const agentId = {{ agent.id }};
                                         const origin = window.location.origin;
-                                        const scriptTag = `<script src="${origin}/chatbot-script.js/${agentId}/"><\/script>`;
+                                        const scriptTag = `<script src="${origin}/chatbot-script.js/${agentId}"><\/script>`;
                                         document.getElementById("agent-script").value = scriptTag;
                                     });
                                 </script>
