@@ -119,6 +119,7 @@ async def create_agent(request: Request):
 
 
 @router.get("/update-agent")
+@check_session_expiry_redirect
 async def update_agent(request: Request):
     agent_id = request.query_params.get("agent_id")
     user_id = request.session.get("user", {}).get("user_id")
@@ -248,6 +249,7 @@ async def verify_account(request: Request, token: str):
     )
 
 @router.get("/call_history")
+@check_session_expiry_redirect
 async def call_history(request: Request, page: int = 1):
     user_id = request.session.get("user", {}).get("user_id")
     agents = AgentModel.get_all_by_user(user_id)
