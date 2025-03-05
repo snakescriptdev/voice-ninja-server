@@ -166,14 +166,32 @@ async def update_agent(request: Request):
 @router.get("/knowledge-base", name="knowledge_base")
 @check_session_expiry_redirect
 async def knowledge_base(request: Request, page: int = 1):
-    from app.databases.models import KnowledgeBaseModel
+    from app.databases.models import KnowledgeBaseModel, KnowledgeBaseFileModel
     knowledge_bases = KnowledgeBaseModel.get_all_by_user(request.session.get("user").get("user_id"))
     # Pagination
     items_per_page = 10
     start = (page - 1) * items_per_page
     end = start + items_per_page
+    formatted_knowledge_bases = []
+    for knowledge_base in knowledge_bases:
+        files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+        files_data = []
+        for file in files:
+            files_data.append(
+                {
+                    "name": file.file_name,
+                    "size": "",  # You can add file size if available   
+                    "url": f"/media/{file.file_path}"
+                }   
+            )
+
+        formatted_knowledge_bases.append({
+            "id": knowledge_base.id,
+            "knowledge_base_name": knowledge_base.knowledge_base_name,
+            "files": files_data
+        })
     
-    paginator = Paginator(knowledge_bases, page, items_per_page, start, end)
+    paginator = Paginator(formatted_knowledge_bases, page, items_per_page, start, end)
     return templates.TemplateResponse(
         "Web/knowledge-base.html", 
         {

@@ -1,4 +1,4 @@
-from fastapi import APIRouter,Request, Response
+from fastapi import APIRouter,Request, Response, Depends
 from .schemas.format import (
     ErrorResponse, 
     SuccessResponse, 
@@ -18,9 +18,11 @@ from pydantic import BaseModel
 from datetime import datetime
 import shutil
 import os
-from app.databases.models import KnowledgeBaseModel
+from app.databases.models import KnowledgeBaseModel, KnowledgeBaseFileModel
 from app.utils.helper import extract_text_from_file
 from config import MEDIA_DIR  # ✅ Import properly
+
+
 
 router = APIRouter(prefix="/api")
 
@@ -849,53 +851,87 @@ async def call_agent(request: Request):
             content={"status": "error", "error": f"Error calling agent: {str(e)}", "status_code": 500},
         )
 
+
+
 @router.post("/upload_knowledge_base", name="upload_knowledge_base")
 async def upload_knowledge_base(request: Request):
-    temp_file_path = None
+    uploaded_files = []
     try:
         data = await request.form()
-        # Validate file extension
-        attachment = data.get("attachment")
         name = data.get("name")
-        allowed_extensions = {".pdf", ".docx", ".txt"}
-        file_ext = os.path.splitext(attachment.filename)[1].lower()
-        if file_ext not in allowed_extensions:
+        attachments = data.getlist("attachments[]")  # Get multiple files
+        
+        if not attachments:
             return JSONResponse(
-                status_code=400, content={"status": "error", "message": "Unsupported file type."}
+                status_code=400, content={"status": "error", "message": "No files uploaded."}
             )
 
-        # Save file temporarily
-        temp_file_path = f"knowledge_base_files/{uuid.uuid4()}_{attachment.filename}"
-        file_path = os.path.join(MEDIA_DIR, temp_file_path)
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(attachment.file, buffer)
+        allowed_extensions = {".pdf", ".docx", ".txt"}
+        user = request.session.get("user")
 
-        # Extract text
-        text_content = extract_text_from_file(file_path)
-        if not text_content.strip():
-            os.remove(file_path)
+        if len(attachments) > 5:
             return JSONResponse(
                 status_code=400,
-                content={"status": "error", "message": "No readable text found in the uploaded file."},
+                content={"status": "error", "message": "You can upload a maximum of 5 files."}
             )
-        user = request.session.get("user")
-        # Save to database
-        new_knowledge_base = KnowledgeBaseModel.create(
-            created_by_id=user.get("user_id"),
-            knowledge_base_name=name,
-            attachment_path=temp_file_path,
-            text_content=text_content,
-            attachment_name=attachment.filename
-        )
-   
+
+        # Check if Knowledge Base already exists
+        knowledge_base = KnowledgeBaseModel.get_by_name(name, user.get("user_id"))
+
+        if not knowledge_base:
+            knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=name)
+
+        # Process and store each file
+        for attachment in attachments:
+            file_ext = os.path.splitext(attachment.filename)[1].lower()
+            if file_ext not in allowed_extensions:
+                return JSONResponse(
+                    status_code=400, content={"status": "error", "message": f"Unsupported file type: {attachment.filename}"}
+                )
+
+            # Save file temporarily
+            temp_file_path = f"knowledge_base_files/{uuid.uuid4()}_{attachment.filename}"
+            file_path = os.path.join(MEDIA_DIR, temp_file_path)
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(attachment.file, buffer)
+
+            # Extract text
+            text_content = extract_text_from_file(file_path)
+            if not text_content.strip():
+                os.remove(file_path)
+                return JSONResponse(
+                    status_code=400,
+                    content={"status": "error", "message": f"No readable text found in {attachment.filename}."}
+                )
+
+            # Save file details to database
+            KnowledgeBaseFileModel.create(
+                knowledge_base_id=knowledge_base.id,
+                file_name=attachment.filename,
+                file_path=temp_file_path,
+                text_content=text_content
+            )
+            uploaded_files.append(attachment.filename)
+
         return JSONResponse(
-            status_code=200, content={"status": "success", "message": "Knowledge base uploaded successfully"}
+            status_code=200,
+            content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "uploaded_files": uploaded_files}
         )
 
     except Exception as e:
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.remove(temp_file_path)  # Ensure cleanup on error
-        print("Error", str(e))
+        knowledge_base = KnowledgeBaseModel.get_by_name(name, user.get("user_id"))
+        if knowledge_base:
+            files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+            for file in files:
+                KnowledgeBaseFileModel.delete(file.id)
+            KnowledgeBaseModel.delete(knowledge_base.id)
+        # Cleanup any saved files on error
+        
+        for file_path in uploaded_files:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        print("Error:", str(e))
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
 
