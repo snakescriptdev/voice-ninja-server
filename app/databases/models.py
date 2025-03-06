@@ -728,6 +728,8 @@ class AdminTokenModel(Base):
 
     id = Column(Integer, primary_key=True)
     token_values = Column(Integer, nullable=True, default=0)
+    free_tokens = Column(Integer, nullable=True, default=0)
+
 
     @classmethod
     def ensure_default_exists(cls) -> "AdminTokenModel":
@@ -757,13 +759,25 @@ class AdminTokenModel(Base):
             return None
     
     @classmethod
+    def update_free_tokens(cls, id: int, free_tokens: int) -> Optional["AdminTokenModel"]:
+        """Update admin free tokens"""
+        with db():
+            admin_token = db.session.query(cls).filter(cls.id == id).first()
+            if admin_token:
+                admin_token.free_tokens = free_tokens
+                db.session.commit()
+                db.session.refresh(admin_token)
+                return admin_token
+            return None
+    
+    @classmethod
     def get_by_id(cls, id: int) -> Optional["AdminTokenModel"]:
         """Get admin token by ID"""
         with db():
             return db.session.query(cls).filter(cls.id == id).first()
         
     @classmethod
-    def create(cls, id: int = 1, token_values: int = 0) -> "AdminTokenModel":
+    def create(cls, id: int = 1, token_values: int = 0, free_tokens: int = 0) -> "AdminTokenModel":
         """Create a new admin token record with default id=1 and token_values=0"""
         with db():
             # Check if record exists first
@@ -772,7 +786,7 @@ class AdminTokenModel(Base):
                 return existing
             
             # Create new record if it doesn't exist
-            admin_token = cls(id=id, token_values=token_values)
+            admin_token = cls(id=id, token_values=token_values, free_tokens=free_tokens)
             db.session.add(admin_token)
             db.session.commit()
             return admin_token
