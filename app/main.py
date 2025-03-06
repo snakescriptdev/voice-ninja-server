@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic
 from fastapi.staticfiles import StaticFiles
-from .routers import APISRouter, WebRouter, WebSocketRouter
+from .routers import APISRouter, WebRouter, WebSocketRouter, AdminRouter
 from fastapi_sqlalchemy import DBSessionMiddleware,db
 from app.core import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
@@ -47,3 +47,6 @@ async def startup_event():
     # Ensure default models exists
     AdminTokenModel.ensure_default_exists()
     TokensToConsume.ensure_default_exists()
+
+    
+app.include_router(AdminRouter)

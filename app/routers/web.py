@@ -166,14 +166,32 @@ async def update_agent(request: Request):
 @router.get("/knowledge-base", name="knowledge_base")
 @check_session_expiry_redirect
 async def knowledge_base(request: Request, page: int = 1):
-    from app.databases.models import KnowledgeBaseModel
+    from app.databases.models import KnowledgeBaseModel, KnowledgeBaseFileModel
     knowledge_bases = KnowledgeBaseModel.get_all_by_user(request.session.get("user").get("user_id"))
     # Pagination
     items_per_page = 10
     start = (page - 1) * items_per_page
     end = start + items_per_page
+    formatted_knowledge_bases = []
+    for knowledge_base in knowledge_bases:
+        files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+        files_data = []
+        for file in files:
+            files_data.append(
+                {
+                    "name": file.file_name,
+                    "size": "",  # You can add file size if available   
+                    "url": f"/media/{file.file_path}"
+                }   
+            )
+
+        formatted_knowledge_bases.append({
+            "id": knowledge_base.id,
+            "knowledge_base_name": knowledge_base.knowledge_base_name,
+            "files": files_data
+        })
     
-    paginator = Paginator(knowledge_bases, page, items_per_page, start, end)
+    paginator = Paginator(formatted_knowledge_bases, page, items_per_page, start, end)
     return templates.TemplateResponse(
         "Web/knowledge-base.html", 
         {
@@ -251,34 +269,25 @@ async def verify_account(request: Request, token: str):
 @router.get("/call_history")
 @check_session_expiry_redirect
 async def call_history(request: Request, page: int = 1):
-    user_id = request.session.get("user", {}).get("user_id")
-    agents = AgentModel.get_all_by_user(user_id)
     from app.databases.models import AudioRecordings
-    audio_recordings = AudioRecordings.get_all_by_agent(agents)
-
+    agent_id = request.query_params.get("agent_id")
+    audio_recordings = AudioRecordings.get_all_by_agent(agent_id)
     items_per_page = 10
     start = (page - 1) * items_per_page
     end = start + items_per_page
-    
     paginator = Paginator(audio_recordings, page, items_per_page, start, end)
-    final_response = []
-    for audio_rec in audio_recordings:
-        agent = AgentModel.get_by_id(audio_rec.agent_id)
-        final_response.append({
-            "id": audio_rec.id,
-            "agent_name": agent.agent_name,
-            "selected_voice": agent.selected_voice,
-            "created_at": audio_rec.created_at,
-            "audio_file": audio_rec.audio_file
-        })
-        
+    agent = AgentModel.get_by_id(agent_id)
+    final_response = paginator.items
 
     return templates.TemplateResponse(
         "Web/call_history.html",
         {
             "request": request,
             "audio_recordings": final_response,  
-            "page_obj": paginator  
+            "page_obj": paginator,
+            "agent_name": agent.agent_name,
+            "selected_voice": agent.selected_voice,
+            "agent_id": agent_id
         }
     )
 
@@ -287,7 +296,6 @@ def serve_web_js():
     # Assuming web.js is in a 'static' directory
     js_file_path = os.path.join("static/js", "websocket.js")
     return FileResponse(js_file_path, media_type="application/javascript")
-
 
 
 @router.get("/chatbot-script.js/{agent_id}")
@@ -306,13 +314,31 @@ def chatbot_script(request: Request, agent_id: str):
     document.addEventListener('DOMContentLoaded', function() {{
         (function() {{
             // Inject HTML content
+            // Add protobuf script
+            const protobufScript = document.createElement('script');
+            protobufScript.src = "https://cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js";
+            document.head.appendChild(protobufScript);
+
+            // Include the WebSocket script
+            const webJsScript = document.createElement('script');
+            webJsScript.src = "/static/js/websocket.js";
+            document.head.appendChild(webJsScript);
+
+            webJsScript.onload = function() {{
+            if (typeof WebSocketClient === 'function') {{
+                const client = new WebSocketClient({agent_id});
+            }} else {{
+                console.error("WebSocketClient is not defined");
+            }}
+            }};
+
             const container = document.createElement('div');
             container.innerHTML = `
                 <link rel="stylesheet" type="text/css" href="/static/Web/css/bot_style.css">
-                <div class="voice_icon" onclick="toggleRecorder()">
+                <div class="voice_icon" onclick="toggleRecorder()" id="start-btn" style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});">
                     <img src="{appearances.icon_url}" alt="voice_icon">
                 </div>
-                <div id="recorderControls" class="recorder-controls hidden">
+                <div id="recorderControls" class="recorder-controls hidden" style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});">
                     <div class="settings">
                         <div id="colorPalette" class="color-palette">
                             <div class="color-option" style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});"></div>
@@ -322,30 +348,12 @@ def chatbot_script(request: Request, agent_id: str):
                     <div class="status-indicator">
                         <img src="static/Web/images/wave.gif" alt="voice_icon">
                     </div>
-                    <button onclick="stopRecorder()">Stop Recording</button>
+                    <button onclick="stopRecorder()" id="stop-btn" style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});">Stop Recording</button>
                 </div>
             `;
             document.body.appendChild(container);
         }})();
     }});
-
-    // Add protobuf script
-    const protobufScript = document.createElement('script');
-    protobufScript.src = "https://cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js";
-    document.head.appendChild(protobufScript);
-    
-    // Include the WebSocket script
-    const webJsScript = document.createElement('script');
-    webJsScript.src = "/static/js/websocket.js";
-    document.head.appendChild(webJsScript);
-    
-    webJsScript.onload = function() {{
-        if (typeof WebSocketClient === 'function') {{
-            const client = new WebSocketClient({agent_id});
-        }} else {{
-            console.error("WebSocketClient is not defined");
-        }}
-    }};
     '''
     
     headers = {
@@ -354,7 +362,6 @@ def chatbot_script(request: Request, agent_id: str):
     }
     
     return Response(content=script_content, media_type="application/javascript", headers=headers)
-
 
 @router.get("/testing")
 async def testing(request: Request):

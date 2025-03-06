@@ -28,6 +28,7 @@ class AudioRecordModel(Base):
     email = Column(String, nullable=True,default="")
     number = Column(String, nullable=True,default="")
 
+
     def get_file_url(self, request) -> str:
         """
         Get the complete URL for the audio file
@@ -124,6 +125,7 @@ class UserModel(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     tokens = Column(Integer, nullable=True,default=0)
+    is_admin = Column(Boolean,default=False)
 
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email})>"
@@ -152,6 +154,19 @@ class UserModel(Base):
         with db():
             hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
             user = cls(email=email, name=name, password=hashed_password.decode('utf-8'), is_verified=is_verified)
+            db.session.add(user)
+            db.session.commit()
+            db.session.refresh(user)
+            return user
+    
+    @classmethod
+    def create_admin(cls, email: str, password: str) -> "UserModel":
+        """
+        Create a new admin user with hashed password
+        """
+        with db():
+            hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+            user = cls(email=email, name="Admin", password=hashed_password.decode('utf-8'), is_verified=True, is_admin=True)
             db.session.add(user)
             db.session.commit()
             db.session.refresh(user)
@@ -356,7 +371,7 @@ class ResetPasswordModel(Base):
                 return True
         except Exception:
             return False
-        
+    
     @classmethod
     def update_by_id(cls, reset_password_id: int, **kwargs) -> "ResetPasswordModel":
         """
@@ -364,6 +379,22 @@ class ResetPasswordModel(Base):
         """
         with db():
             reset_password = db.session.query(cls).filter(cls.id == reset_password_id).first()
+            if reset_password:
+                for key, value in kwargs.items():
+                    if hasattr(reset_password, key):
+                        setattr(reset_password, key, value)
+                db.session.commit()
+                db.session.refresh(reset_password)
+                return reset_password
+            return None
+        
+    @classmethod
+    def update(cls, email: str, **kwargs) -> "ResetPasswordModel":
+        """
+        Update a reset password record by email
+        """
+        with db():
+            reset_password = db.session.query(cls).filter(cls.email == email).first()
             if reset_password:
                 for key, value in kwargs.items():
                     if hasattr(reset_password, key):
@@ -403,11 +434,9 @@ class KnowledgeBaseModel(Base):
     id = Column(Integer, primary_key=True)
     created_by_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     knowledge_base_name = Column(String(255), nullable=False)
-    attachment_name = Column(String, nullable=True, default="")
-    attachment_path = Column(String, nullable=True, default="")
-    text_content = Column(String, nullable=True, default="")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    files = relationship("KnowledgeBaseFileModel", back_populates="knowledge_base")
 
     agents = relationship(
         "AgentModel",
@@ -431,16 +460,23 @@ class KnowledgeBaseModel(Base):
             return db.session.query(cls).all()
 
     @classmethod
-    def create(cls, knowledge_base_name: str, created_by_id: int, 
-               attachment_path: str = None, text_content: str = None, attachment_name: str = None) -> "KnowledgeBaseModel":
+    def get_by_name(cls, knowledge_base_name: str, created_by_id: int) -> Optional["KnowledgeBaseModel"]:
+        """Get knowledge base by name"""
+        with db():
+            return db.session.query(cls).filter(cls.knowledge_base_name == knowledge_base_name, cls.created_by_id == created_by_id).first()
+
+    @classmethod
+    def create(cls, knowledge_base_name: str, created_by_id: int) -> "KnowledgeBaseModel":
         """Create a new knowledge base record"""
+        # Create knowledge_base_files directory if it doesn't exist
+        knowledge_base_dir = os.path.join(MEDIA_DIR, "knowledge_base_files")
+        if not os.path.exists(knowledge_base_dir):
+            os.makedirs(knowledge_base_dir)
+            
         with db():
             knowledge_base = cls(
                 knowledge_base_name=knowledge_base_name,
-                created_by_id=created_by_id,
-                attachment_path=attachment_path,
-                text_content=text_content,
-                attachment_name=attachment_name
+                created_by_id=created_by_id
             )
             db.session.add(knowledge_base)
             db.session.commit()
@@ -467,12 +503,7 @@ class KnowledgeBaseModel(Base):
         try:
             with db():
                 knowledge_base = db.session.query(cls).filter(cls.id == knowledge_base_id).first()
-                if knowledge_base and knowledge_base.attachment_path:
-                    # Delete the file from media directory
-                    file_path = os.path.join(MEDIA_DIR, knowledge_base.attachment_path)
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                    
+                if knowledge_base:
                     # Delete database record
                     db.session.delete(knowledge_base)
                     db.session.commit()
@@ -506,6 +537,7 @@ class AudioRecordings(Base):
     @classmethod
     def create(cls, agent_id: int, audio_file: str, audio_name: str, created_at: datetime) -> "AudioRecordings":
         """Create a new audio recording"""
+
         with db():
             recording = cls(
                 agent_id=agent_id,
@@ -525,11 +557,10 @@ class AudioRecordings(Base):
             return db.session.query(cls).filter(cls.id == recording_id).first()
     
     @classmethod
-    def get_all_by_agent(cls, agents: List["AgentModel"]) -> List["AudioRecordings"]:
+    def get_all_by_agent(cls, agent_id: int) -> List["AudioRecordings"]:
         """Get all audio recordings by agent ID"""
         with db():
-            agent_ids = [agent.id for agent in agents]  # Extract IDs
-            return db.session.query(cls).filter(cls.agent_id.in_(agent_ids)).all()
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
     
     @classmethod
     def get_all_by_user(cls, user_id: int) -> List["AudioRecordings"]:
@@ -592,7 +623,7 @@ class AgentConnectionModel(Base):
 
     id = Column(Integer, primary_key=True)
     agent_id = Column(Integer, nullable=False)
-    icon_url = Column(String, default="http://localhost:8000/static/Web/images/gif-icon-3.gif")
+    icon_url = Column(String, default="/static/Web/images/gif-icon-3.gif")
     primary_color = Column(String, default="#8338ec")
     secondary_color = Column(String, default="#5e60ce") 
     pulse_color = Column(String, default="rgba(131, 56, 236, 0.3)")
@@ -603,6 +634,15 @@ class AgentConnectionModel(Base):
     def __repr__(self):
         return f"<AgentConnection(id={self.id}, agent_id={self.agent_id})>"
     
+    @classmethod
+    def create(cls, agent_id: int) -> "AgentConnectionModel":
+        """Create a new agent connection"""
+        with db():
+            connection = cls(agent_id=agent_id)
+            db.session.add(connection)
+            db.session.commit()
+            return connection
+
     @classmethod
     def create_connection(cls, agent_id: int, icon_url: str, primary_color: str, secondary_color: str, pulse_color: str) -> "AgentConnectionModel":
         """Create a new agent connection"""
@@ -784,5 +824,55 @@ class TokensToConsume(Base):
                 db.session.refresh(tokens_to_consume)
                 return tokens_to_consume
             return None
+
+
+class KnowledgeBaseFileModel(Base):
+    __tablename__ = "knowledge_base_files"
+
+    id = Column(Integer, primary_key=True)
+    knowledge_base_id = Column(Integer, ForeignKey('knowledge_base.id', ondelete='CASCADE'))
+    file_name = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    text_content = Column(String, nullable=True)
+
+    knowledge_base = relationship("KnowledgeBaseModel", back_populates="files")
+
+    def __repr__(self):
+        return f"<KnowledgeBaseFile(id={self.id}, file_name={self.file_name})>"
+
+    @classmethod
+    def get_by_id(cls, file_id: int) -> Optional["KnowledgeBaseFileModel"]:
+        """Get file by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == file_id).first()  
+    
+    @classmethod
+    def get_all_by_knowledge_base(cls, knowledge_base_id: int) -> List["KnowledgeBaseFileModel"]:
+        """Get all files by knowledge base ID"""
+        with db():
+            return db.session.query(cls).filter(cls.knowledge_base_id == knowledge_base_id).all()
+
+    @classmethod
+    def create(cls, knowledge_base_id: int, file_name: str, file_path: str, text_content: str) -> "KnowledgeBaseFileModel":
+        """Create a new knowledge base file"""
+        with db():
+            file = cls(knowledge_base_id=knowledge_base_id, file_name=file_name, file_path=file_path, text_content=text_content)
+            db.session.add(file)
+            db.session.commit()
+            db.session.refresh(file)
+            return file
+
+    @classmethod
+    def delete(cls, file_id: int) -> bool:
+        """Delete a knowledge base file by ID"""
+        with db():
+            file = db.session.query(cls).filter(cls.id == file_id).first()
+            if file:
+                db.session.delete(file)
+                db.session.commit()
+                return True
+            return False
 
 Base.metadata.create_all(engine)

@@ -18,7 +18,8 @@ from pipecat.transports.network.fastapi_websocket import (
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from app.utils.helper import save_audio
-import asyncio
+# from app.services.bot_tools import end_call_tool
+import asyncio, uuid
 from fastapi.websockets import WebSocketState
 from app.databases.models import TokensToConsume, UserModel
 from app.databases.models import db
@@ -97,8 +98,9 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         try:
             async def delayed_close():
                 try:
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(5) 
                     logger.info(f"Websocket client state: {websocket_client.client_state}")
+                    
                     if websocket_client.client_state != WebSocketState.DISCONNECTED:
                         await websocket_client.close(code=1000, reason="Call ended normally")
                         logger.info("Websocket closed successfully after delay")
@@ -107,6 +109,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
 
             asyncio.create_task(delayed_close())
             
+
             return {"status": "success", "message": "Call end initiated"}
             
         except Exception as e:
@@ -176,6 +179,9 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
         if stream_sid:
             await save_audio(audio, sample_rate, num_channels, stream_sid, voice, int(agent_id))
+        else:
+            uid = uuid.uuid4()
+            await save_audio(audio, sample_rate, num_channels, str(uid), voice, int(agent_id))
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
@@ -183,20 +189,17 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         if tokens_to_consume <= 0:
             logger.error("Invalid token rate; setting to default (10 tokens per minute).")
             tokens_to_consume = 10
-
-        if stream_sid:
-            await audiobuffer.start_recording()
         
         global token_task
         token_task = asyncio.create_task(deduct_tokens_periodically(user_id, tokens_to_consume, websocket_client))
 
+        await audiobuffer.start_recording()
         a = await task.queue_frames([context_aggregator.user().get_context_frame()])
         print("Client connected:--", a)
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
-        if stream_sid:
-            await audiobuffer.stop_recording()
+        await audiobuffer.stop_recording()
         await task.cancel()
         await runner.cancel()
 
