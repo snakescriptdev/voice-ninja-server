@@ -90,11 +90,14 @@
                             </div>
                         </div>
                     </div>
+
+                    {% if request.url.path == '/update-agent' %}                    
                     <div class="agent_select_box position-relative">
                         <a href="{{ url_for('call_history') }}">
                             <button class="w-max-content view-call-history-btn" id="create-agent-btn">View Call History</button>
                         </a>
                     </div>
+                    {% endif %}
                 </div>
                 <div class="agent_type_box_inner">
                     <div class="agent_type_textarea">
@@ -122,6 +125,7 @@
                                 </button>
                             </div>
                         </div>
+                        {% if request.url.path == '/update-agent' %}    
                         <div class="col-md-3 mt-4 position-relative">
                             <button class="customize-bot-btn" id="customize-bot-btn" onclick="toggleCustomizeModal()">
                                 Customize Your Bot
@@ -217,6 +221,7 @@
                                     <button onclick="savechanges()">Save Changes</button>
                                 </div>
                             </div>
+                            {% endif %}
                             <script>
                                 function toggleCustomizeModal() {
                                     const modal = document.getElementById('customize-bot-modal');
@@ -454,48 +459,52 @@
         localStorage.setItem('voiceAssistantIcon', iconUrl);
     }
 
-
     document.addEventListener("DOMContentLoaded", function() {
-        let agentId = {{ agent.id }};
-        
-        $.ajax({
-            url: `${window.location.origin}/api/get_agent_connection/`,
-            type: 'GET',
-            data: {agent_id: agentId},
-            success: function(response){    
-                if(response.status == "success"){
-                    let connection = response.data || {};
-                    let iconUrl = connection.icon_url || "{{ url_for('static', path='/Web/images/gif-icon-1.gif') }}";
-                    let primaryColor = connection.primary_color || "#00b4d8";
-                    let secondaryColor = connection.secondary_color || "#0077b6"; 
-                    let pulseColor = connection.pulse_color || "rgba(0, 180, 216, 0.3)";
-                    
-                    // First apply theme
-                    changeTheme(primaryColor, secondaryColor, pulseColor);
-                    
-                    // Find icon option matching the saved icon URL
-                    let iconOptions = document.querySelectorAll('.icon-option');
-                    let matchingIcon = Array.from(iconOptions).find(option => {
-                        let img = option.querySelector('img');
-                        return img && img.src === iconUrl;
-                    });
+        try {
+            let agentId = "{{ agent.id if agent else '' }}";
+            if(agentId){
+                $.ajax({
+                    url: `${window.location.origin}/api/get_agent_connection/`,
+                    type: 'GET',
+                    data: {agent_id: agentId},
+                    success: function(response){    
+                        if(response.status == "success"){
+                            let connection = response.data || {};
+                            let iconUrl = connection.icon_url || "{{ url_for('static', path='/Web/images/gif-icon-1.gif') }}";
+                            let primaryColor = connection.primary_color || "#00b4d8";
+                            let secondaryColor = connection.secondary_color || "#0077b6"; 
+                            let pulseColor = connection.pulse_color || "rgba(0, 180, 216, 0.3)";
+                            
+                            // First apply theme
+                            changeTheme(primaryColor, secondaryColor, pulseColor);
+                            
+                            // Find icon option matching the saved icon URL
+                            let iconOptions = document.querySelectorAll('.icon-option');
+                            let matchingIcon = Array.from(iconOptions).find(option => {
+                                let img = option.querySelector('img');
+                                return img && img.src === iconUrl;
+                            });
 
-                    // If matching icon found, activate it, otherwise use first icon
-                    if (matchingIcon) {
-                        changeIcon(iconUrl, matchingIcon);
-                    } else {
-                        let firstIcon = document.querySelector('.icon-option');
-                        if (firstIcon) {
-                            let firstIconUrl = firstIcon.querySelector('img').src;
-                            changeIcon(firstIconUrl, firstIcon);
+                            // If matching icon found, activate it, otherwise use first icon
+                            if (matchingIcon) {
+                                changeIcon(iconUrl, matchingIcon);
+                            } else {
+                                let firstIcon = document.querySelector('.icon-option');
+                                if (firstIcon) {
+                                    let firstIconUrl = firstIcon.querySelector('img').src;
+                                    changeIcon(firstIconUrl, firstIcon);
+                                }
+                            }
                         }
+                    },
+                    error: function(xhr, status, error){
+                        console.log("Error:", xhr.responseText);
                     }
-                }
-            },
-            error: function(xhr, status, error){
-                console.log("Error:", xhr.responseText);
+                });
             }
-        });
+        } catch (error) {
+            console.error("Error in DOMContentLoaded:", error);
+        }
     });
 
     function savechanges() {
@@ -510,7 +519,7 @@
                 voiceIcon.style.display = 'block';
             }
         }, 500);
-        let agentId = {{ agent.id }};
+        let agentId = "{% if agent %}{{ agent.id }}{% endif %}";
         let iconUrl = localStorage.getItem('voiceAssistantIcon') || "{{ url_for('static', path='/Web/images/gif-icon-1.gif') }}";
         let voiceAssistantTheme = localStorage.getItem('voiceAssistantTheme');
         let primaryColor = "#00b4d8";

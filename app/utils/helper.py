@@ -18,6 +18,8 @@ from datetime import datetime
 from pathlib import Path
 from config import MEDIA_DIR
 from app.databases.models import AudioRecordings
+import hmac
+import hashlib
 
 logger = logging.getLogger(__name__)
 @dataclass
@@ -92,7 +94,7 @@ def check_session_expiry_redirect(func):
 
 
 
-def generate_twiml(agent, url):
+def generate_twiml(agent, url, user_id):
     # Convert URL object to string if needed
     url_str = str(url)
     
@@ -107,6 +109,7 @@ def generate_twiml(agent, url):
             <Connect>
                 <Stream url="{websocket_url}">
                 <Parameter name="agent_id" value="{agent.id}"/>
+                <Parameter name="user_id" value="{user_id}"/>
                 </Stream>
             </Connect>
             <Pause length="40"/>
@@ -126,7 +129,7 @@ def make_outbound_call(xml):
     client = Client(account_sid, auth_token)
 
 
-    TO_NUMBER = "+919779343012"  
+    TO_NUMBER = "+918629049332"  
 
     call = client.calls.create(
         twiml=open(xml).read(),
@@ -221,3 +224,17 @@ async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str
     except Exception as e:
         logger.error(f"Error saving audio: {e}")
         return None
+    
+
+
+def verify_razorpay_signature(order_id, payment_id, signature):
+    key_secret = os.getenv("RAZOR_KEY_SECRET")
+    
+    msg = f"{order_id}|{payment_id}"
+    generated_signature = hmac.new(
+        key_secret.encode(),
+        msg.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+    return generated_signature == signature

@@ -123,9 +123,18 @@ class UserModel(Base):
     last_login = Column(DateTime, nullable=True,default=func.now())
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    tokens = Column(Integer, nullable=True,default=0)
 
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email})>"
+    
+    @classmethod
+    def get_by_id(cls, user_id: int) -> Optional["UserModel"]:
+        """
+        Get user by ID
+        """
+        with db():
+            return db.session.query(cls).filter(cls.id == user_id).first()
 
     @classmethod
     def get_by_email(cls, email: str) -> Optional["UserModel"]:
@@ -186,6 +195,22 @@ class UserModel(Base):
                 db.session.refresh(user)
                 return user
             return None
+        
+    @classmethod
+    def update_tokens(cls, user_id: int, new_tokens: int) -> "UserModel":
+        """
+        Update user's tokens
+        """
+        with db():
+            user = db.session.query(cls).filter(cls.id == user_id).first()
+            if user:
+                user.tokens = new_tokens
+                db.session.commit()
+                db.session.refresh(user)
+                return user
+            return None
+        
+    
 
 agent_knowledge_association = Table(
     "agent_knowledge_association",
@@ -617,5 +642,147 @@ class AgentConnectionModel(Base):
                 db.session.commit()
                 return True
             return False
+        
+
+
+class PaymentModel(Base):
+    __tablename__ = "payments"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    order_id = Column(String, nullable=True,default="")
+    payment_id = Column(String, nullable=True,default="")
+    amount = Column(Integer, nullable=True,default=0)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<Payment(id={self.id}, for user_id={self.user_id}, amount={self.amount})>"
+    
+
+    @classmethod
+    def create(cls, user_id: int, order_id: str, payment_id: str, amount: int) -> "PaymentModel":
+        """Create a new payment record"""
+        with db():
+            payment = cls(user_id=user_id, order_id=order_id, payment_id=payment_id, amount=amount)
+            db.session.add(payment)
+            db.session.commit()
+            return payment
+    
+    @classmethod
+    def get_by_user_id(cls, user_id: int) -> List["PaymentModel"]:
+        """Get all payments by user ID"""
+        with db():
+            return db.session.query(cls).filter(cls.user_id == user_id).all()
+        
+    @classmethod
+    def get_by_order_id(cls, order_id: str) -> Optional["PaymentModel"]:
+        """Get payment by order ID"""
+        with db():
+            return db.session.query(cls).filter(cls.order_id == order_id).first()
+
+
+
+class AdminTokenModel(Base):
+    __tablename__ = "admin_tokens"
+
+    id = Column(Integer, primary_key=True)
+    token_values = Column(Integer, nullable=True, default=0)
+
+    @classmethod
+    def ensure_default_exists(cls) -> "AdminTokenModel":
+        """
+        Ensures that a default admin token record exists.
+        Returns the default record (either existing or newly created).
+        """
+        with db():
+            default_token = cls.get_by_id(1)
+            if not default_token:
+                default_token = cls.create()  # Uses default values (id=1, token_values=0)
+            return default_token
+
+    def __repr__(self):
+        return f"<AdminToken(id={self.id}, token_values={self.token_values})>"
+    
+    @classmethod
+    def update_token_values(cls, id: int, token_values: int) -> Optional["AdminTokenModel"]:
+        """Update admin token values"""
+        with db():
+            admin_token = db.session.query(cls).filter(cls.id == id).first()
+            if admin_token:
+                admin_token.token_values = token_values
+                db.session.commit()
+                db.session.refresh(admin_token)
+                return admin_token
+            return None
+    
+    @classmethod
+    def get_by_id(cls, id: int) -> Optional["AdminTokenModel"]:
+        """Get admin token by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id).first()
+        
+    @classmethod
+    def create(cls, id: int = 1, token_values: int = 0) -> "AdminTokenModel":
+        """Create a new admin token record with default id=1 and token_values=0"""
+        with db():
+            # Check if record exists first
+            existing = cls.get_by_id(id)
+            if existing:
+                return existing
             
+            # Create new record if it doesn't exist
+            admin_token = cls(id=id, token_values=token_values)
+            db.session.add(admin_token)
+            db.session.commit()
+            return admin_token
+
+class TokensToConsume(Base):
+    __tablename__ = "tokens_to_consume"
+
+    id = Column(Integer, primary_key=True)
+    token_values = Column(Integer, nullable=True, default=0)
+
+    def __repr__(self):
+        return f"<TokensToConsume(id={self.id}, token_values={self.token_values})>"
+    
+    @classmethod
+    def ensure_default_exists(cls) -> "TokensToConsume":
+        """
+        Ensures that a default tokens to consume record exists.
+        Returns the default record (either existing or newly created).
+        """
+        with db():
+            default_token = cls.get_by_id(1)
+            if not default_token:
+                default_token = cls.create() 
+            return default_token
+    
+    @classmethod
+    def get_by_id(cls, id: int) -> Optional["TokensToConsume"]:
+        """Get tokens to consume by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id).first()
+        
+    @classmethod
+    def create(cls, id: int = 1, token_values: int = 0) -> "TokensToConsume":
+        """Create a new tokens to consume record with default id=1 and token_values=0"""
+        with db():
+            tokens_to_consume = cls(id=id, token_values=token_values)
+            db.session.add(tokens_to_consume)
+            db.session.commit()
+            return tokens_to_consume
+        
+    @classmethod
+    def update_token_values(cls, id: int, token_values: int) -> Optional["TokensToConsume"]:
+        """Update tokens to consume values"""
+        with db():
+            tokens_to_consume = db.session.query(cls).filter(cls.id == id).first()
+            if tokens_to_consume:
+                tokens_to_consume.token_values = token_values
+                db.session.commit()
+                db.session.refresh(tokens_to_consume)
+                return tokens_to_consume
+            return None
+
 Base.metadata.create_all(engine)

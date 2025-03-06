@@ -1546,3 +1546,54 @@ table .max-content {
     justify-content: center;
 }
 /* COPY LINK STYLE END */
+
+
+/* kalyan css strat here  */
+
+.payment_enter_box {
+    background-color: #fff;
+    padding: 24px;
+    border-radius: 11px;
+}
+
+.payment_enter_box button {
+    background-color: #0C7FDA;
+    color: #fff;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 24px;
+    padding: 6px 20px;
+    border-radius: 5px;
+    border: none;
+    cursor: pointer;
+}
+
+.payment_enter_box p{
+    font-size: 14px;
+    font-weight: 500;
+    color: #000;
+    margin-top: 10px;
+    text-align: start;
+    
+}
+
+.bottom_total_token_box {
+    position: absolute;
+    bottom: 0px;
+    left: 0px;
+    width: 100%;
+    background-color: #F5F7FA;
+    padding: 20px;
+    border-radius: 11px;
+}
+.bottom_total_token_box p {
+    font-size: 16px;
+    font-weight: 500;
+    color: #000;
+    margin-bottom: 0px;
+    margin-left: 0px;
+    margin-right: 0px;
+    text-align: center;
+}
+/* kalyan css end here  */
+

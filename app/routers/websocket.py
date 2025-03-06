@@ -80,6 +80,7 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
         call_data = json.loads(await start_data.__anext__())
         stream_sid = call_data["start"]["streamSid"]
         agent_id = call_data.get("start", {}).get("customParameters", {}).get("agent_id")
+        user_id = call_data.get("start", {}).get("customParameters", {}).get("user_id")
         agent = AgentModel.get_by_id(agent_id)
         voice = agent.selected_voice
         welcome_msg = agent.welcome_msg
@@ -106,7 +107,7 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
         system_instruction = agent.agent_prompt
 
         print("WebSocket connection accepted")
-        await run_bot(websocket, voice, stream_sid, welcome_msg, system_instruction, knowledge_base_text, agent.id)
+        await run_bot(websocket, voice, stream_sid, welcome_msg, system_instruction, knowledge_base_text, agent.id, user_id)
 
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}", exc_info=True)
@@ -153,3 +154,7 @@ async def agent_websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}", exc_info=True)
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+
+
+
+

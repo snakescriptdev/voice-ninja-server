@@ -6,7 +6,7 @@ from .schemas.format import (
 from app.core import logger
 from app.services import AudioStorage
 from starlette.responses import JSONResponse, RedirectResponse
-from app.databases.models import AudioRecordModel, UserModel, AgentModel, ResetPasswordModel, AgentConnectionModel
+from app.databases.models import AudioRecordModel, UserModel, AgentModel, ResetPasswordModel, AgentConnectionModel, PaymentModel, AdminTokenModel
 from app.databases.schema import  AudioRecordListSchema
 import json
 import bcrypt
@@ -21,9 +21,13 @@ import os
 from app.databases.models import KnowledgeBaseModel
 from app.utils.helper import extract_text_from_file
 from config import MEDIA_DIR  # ✅ Import properly
+import razorpay
+from app.utils.helper import verify_razorpay_signature
+
 
 router = APIRouter(prefix="/api")
 
+razorpay_client = razorpay.Client(auth=(os.getenv("RAZOR_KEY_ID"), os.getenv("RAZOR_KEY_SECRET")))
 
 class EmailSettings(BaseModel):
     MAIL_USERNAME: str = os.getenv("MAIL_USERNAME")
@@ -280,8 +284,15 @@ async def user_register(request: Request):
                     content=error_response
                 )
             email_token = uuid.uuid4()
-            # Create user using SQLAlchemy
-            user = UserModel.create(email=email, name=name, password=password, is_verified=False)
+
+            token_values = AdminTokenModel.get_by_id(1)
+
+            if not token_values:
+                token_values = 20
+            else:
+                token_values = token_values.token_values
+
+            user = UserModel.create(email=email, name=name, password=password, is_verified=False,tokens=token_values)
             if not ResetPasswordModel.get_by_email(email):    
                 ResetPasswordModel.create(email=email, token=email_token)
             else:
@@ -834,7 +845,9 @@ async def call_agent(request: Request):
                 content={"status": "error", "error": "Agent not found", "status_code": 400},
             )
         url =  request.base_url
-        xml = generate_twiml(agent,url)
+        user = request.session.get("user")
+        user_id = user.get("user_id")
+        xml = generate_twiml(agent,url, user_id)
         call = make_outbound_call(xml)
         if call:
             os.remove(xml)
@@ -915,51 +928,50 @@ async def delete_knowledge_base(request: Request):
 
 @router.post("/save_changes", name="save_changes")
 async def save_changes(request: Request):
-    # try:
-    # Validate request has valid JSON body
-    data = await request.json()
-    print(data)
-    # Validate required fields
-    required_fields = ["agent_id", "icon_url", "primary_color", "secondary_color", "pulse_color"]
-    for field in required_fields:
-        if not data.get(field):
-            return JSONResponse(
-                status_code=400,
-                content={"status": "error", "message": f"Missing required field: {field}"}
+    try:
+
+        data = await request.json()
+
+        required_fields = ["agent_id", "icon_url", "primary_color", "secondary_color", "pulse_color"]
+        for field in required_fields:
+            if not data.get(field):
+                return JSONResponse(
+                    status_code=400,
+                    content={"status": "error", "message": f"Missing required field: {field}"}
+                )
+
+        agent_id = data.get("agent_id")
+        icon_url = data.get("icon_url")
+        primary_color = data.get("primary_color") 
+        secondary_color = data.get("secondary_color")
+        pulse_color = data.get("pulse_color")
+
+        connection = AgentConnectionModel.get_by_agent_id(agent_id)
+        if connection:
+            AgentConnectionModel.update_connection(
+                agent_id,
+                icon_url=icon_url,
+                primary_color=primary_color,
+                secondary_color=secondary_color,
+                pulse_color=pulse_color
             )
-
-    agent_id = data.get("agent_id")
-    icon_url = data.get("icon_url")
-    primary_color = data.get("primary_color") 
-    secondary_color = data.get("secondary_color")
-    pulse_color = data.get("pulse_color")
-
-    connection = AgentConnectionModel.get_by_agent_id(agent_id)
-    if connection:
-        AgentConnectionModel.update_connection(
-            agent_id,
-            icon_url=icon_url,
-            primary_color=primary_color,
-            secondary_color=secondary_color,
-            pulse_color=pulse_color
+        else:
+            AgentConnectionModel.create_connection(
+                agent_id, 
+                icon_url,
+                primary_color,
+                secondary_color,
+                pulse_color
+            )
+        return JSONResponse(
+            status_code=200,
+            content={"status": "success", "message": "Agent connection created successfully"}
         )
-    else:
-        AgentConnectionModel.create_connection(
-            agent_id, 
-            icon_url,
-            primary_color,
-            secondary_color,
-            pulse_color
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
         )
-    return JSONResponse(
-        status_code=200,
-        content={"status": "success", "message": "Agent connection created successfully"}
-    )
-    # except Exception as e:
-    #     return JSONResponse(
-    #         status_code=500,
-    #         content={"status": "error", "message": "Something went wrong!", "error": str(e)}
-    #     )
 
 @router.get("/get_agent_connection", name="get_agent_connection")
 async def get_agent_connection(request: Request, agent_id: str):
@@ -990,3 +1002,116 @@ async def get_agent_connection(request: Request, agent_id: str):
             status_code=500,
             content={"status": "error", "message": "Something went wrong!", "error": str(e)}
         )
+
+
+@router.post("/razorpay_payment", name="razorpay_payment")
+async def razorpay_payment(request: Request):
+    try:
+        
+        data = await request.json()
+        amount = data.get("amount")
+        
+        if not amount or int(amount) < 0:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Invalid amount. Minimum amount is INR 1"}
+            )
+            
+        currency = "INR"
+        email = request.session.get("user", {}).get("email","")
+        
+        amount_in_paise = int(float(amount)) * 100
+        
+        order_data = {
+            "amount": amount_in_paise,
+            "currency": currency,
+            "receipt": f"receipt_{amount}_{email}",
+            "payment_capture": 1,  
+        }
+        
+        order = razorpay_client.order.create(order_data)
+        order_id = order.get("id")
+        
+
+        coins = int(amount_in_paise / 100)
+        
+        response_data = {
+            "razorpay_order_id": order_id,
+            "razorpay_key_id": razorpay_client.auth[0],
+            "amount": amount_in_paise,
+            "currency": currency,
+            "description": f"Purchase of {coins} tokens",
+            "email": email,
+            "prefill": {
+                "email": email,
+            },
+            "coins": coins
+        }
+        
+        return JSONResponse(
+            status_code=200,
+            content={"status": "success", "message": "Order created successfully", "data": response_data}
+        )
+
+    except Exception as e:
+        print(f"Razorpay error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+        )
+    
+
+@router.get("/razorpay_callback", name="razorpay_callback")
+async def razorpay_callback(request: Request):
+    try:
+        payment_data = request.query_params
+        razorpay_payment_id = payment_data.get("razorpay_payment_id", "")
+        razorpay_order_id = payment_data.get("razorpay_order_id", "")
+        razorpay_signature = payment_data.get("razorpay_signature", "")
+        
+        is_valid = verify_razorpay_signature(
+            razorpay_order_id, 
+            razorpay_payment_id, 
+            razorpay_signature
+        )
+        
+        if is_valid:
+            payment = razorpay_client.payment.fetch(razorpay_payment_id)
+            
+            amount = int(payment["amount"]) / 100 
+            email = payment.get("email", request.session.get("user", {}).get("email", ""))
+            
+            user = UserModel.get_by_email(email)
+            if user:
+                previous_tokens = user.tokens
+                if previous_tokens is None:
+                    previous_tokens = 0
+                new_tokens = int(previous_tokens) + int(amount)
+                UserModel.update_tokens(user.id, new_tokens)
+
+                PaymentModel.create(
+                    user_id=user.id,
+                    order_id=razorpay_order_id,
+                    payment_id=razorpay_payment_id,
+                    amount=int(amount)
+                )
+            
+            return RedirectResponse(
+                url=f"/payment_success?order_id={razorpay_order_id}&amount={int(amount)}&coins={int(amount)}",
+                status_code=303
+            )
+        else:
+            return RedirectResponse(
+                url="/payment_failed?message=verification_failed",
+                status_code=303
+            )
+    
+    except Exception as e:
+        print(f"Razorpay callback error: {str(e)}")
+        return RedirectResponse(
+            url=f"/payment_failed?message=error&error={str(e)}",
+            status_code=303
+        )
+
+
+
