@@ -8,6 +8,7 @@ from app.core import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 import os
 from config import MEDIA_DIR 
+from app.databases.models import AdminTokenModel, TokensToConsume
 
 app = FastAPI()
 
@@ -40,3 +41,9 @@ security = HTTPBasic()
 app.include_router(APISRouter)
 app.include_router(WebRouter)
 app.include_router(WebSocketRouter)
+
+@app.on_event("startup")
+async def startup_event():
+    # Ensure default models exists
+    AdminTokenModel.ensure_default_exists()
+    TokensToConsume.ensure_default_exists()

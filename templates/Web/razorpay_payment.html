@@ -1,0 +1,191 @@
+{% extends 'Web/base.html' %}
+
+{% block title %}
+    <title>Payment</title>
+{% endblock %}
+
+{% block content %}
+
+<div class="wrapper">
+    {% include 'Web/sidebar.html' %}
+
+     <div id="content" class="page_content">
+        <div class="agent_page_header d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-2">
+                <button type="button"
+                    class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
+                    <img src="{{ url_for('static', path='/Web/images/hamburger-icon.svg') }}" class="img-fluid">
+                </button>
+            </div>
+            <div class="dropdown">
+                <button class="bg-transparent border-0 dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                    aria-expanded="false">
+                    <img src="{{ url_for('static', path='/Web/images/person-img.svg') }}" class="img-fluid">
+                </button>
+                <ul class="dropdown-menu">
+                    <li>
+                        <a class="dropdown-item d-flex align-items-center gap-2" href="{{ url_for('logout') }}">
+                            <span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
+                                    class="bi bi-box-arrow-right" viewBox="0 0 16 16">
+                                    <path fill-rule="evenodd"
+                                        d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z" />
+                                    <path fill-rule="evenodd"
+                                        d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z" />
+                                </svg>
+                            </span>Log Out
+                        </a>
+                    </li>
+                    <li>
+                            <a class="dropdown-item d-flex align-items-center gap-2" href="{{ url_for('change_password') }}">
+                            <span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
+                                    class="bi bi-box-arrow-right" viewBox="0 0 16 16">
+                                    <path fill-rule="evenodd"
+                                        d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z" />
+                                    <path fill-rule="evenodd"
+                                        d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z" />
+                                </svg>
+                            </span>
+                            Change Password
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        <div class="col-md-6 mx-auto">
+            <form id="payment-form" class="payment_enter_box mb-4">
+                <div class="mb-2">
+                <label class="form-label">Amount (INR)</label>
+                <input 
+                    type="number" 
+                    class="form-control" 
+                    id="amount-input" 
+                    name="amount" 
+                    placeholder="Amount (Minimum INR 1)"
+                    min="1" 
+                    step="1"
+                    onkeydown="return event.key !== 'e' && event.key !== '.'" 
+                    required>                    
+            </div>
+            
+            <div class="mb-3 received_coins">
+                <p>You will receive <span id="coins-received">0</span> coins</p>
+            </div>
+            <div class="pay_now_btn text-center">
+                <button type="submit" id="rzp-button">Pay with Razorpay</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script>
+    const amountInput = document.getElementById('amount-input');
+    const coinsReceived = document.getElementById('coins-received');
+    
+    amountInput.addEventListener('input', function() {
+
+        let amount = parseInt(amountInput.value, 10);
+    
+        if (!isNaN(amount) && amount >= 1) {
+            coinsReceived.textContent = amount;
+        } else {
+
+            coinsReceived.textContent = '0';
+        }
+    });
+    
+    amountInput.addEventListener('keypress', function(event) {
+        const invalidChars = ['e', 'E', '+', '-', '.'];
+        if (invalidChars.includes(event.key)) {
+            event.preventDefault();
+        }
+    });
+    
+    // Razorpay integration
+    document.getElementById('payment-form').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const amount = document.getElementById('amount-input').value;
+        
+        if (!amount || parseInt(amount) < 1) {
+            toastr.error('Please enter a valid amount (minimum INR 1)', "Error", {
+                "positionClass": "toast-top-right"
+            });
+            return;
+        }
+        
+        try {
+            const response = await fetch('/api/razorpay_payment', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ amount: amount })
+            });
+            
+            const data = await response.json();
+            
+            if (data.status !== 'success') {
+                throw new Error(data.message || 'Failed to create order');
+                toastr.error(data.message || 'Failed to create order', "Error", {
+                    "positionClass": "toast-top-right"
+                });
+                return;
+            }
+            
+            const orderData = data.data;
+            
+            const options = {
+                key: orderData.razorpay_key_id,
+                amount: orderData.amount,
+                currency: orderData.currency,
+                name: orderData.name,
+                description: orderData.description,
+                order_id: orderData.razorpay_order_id,
+                handler: function (response) {
+                    document.location.href = `/api/razorpay_callback?razorpay_payment_id=${response.razorpay_payment_id}&razorpay_order_id=${response.razorpay_order_id}&razorpay_signature=${response.razorpay_signature}`;
+                },
+                prefill: {
+                    email: orderData.email,
+                },
+                theme: {
+                    color: "#3399cc"
+                }
+            };
+            
+            const rzp = new Razorpay(options);
+            rzp.open();
+            
+        } catch (error) {
+            console.error('Payment error:', error);
+            toastr.error('Payment initialization failed: ' + error.message, "Error", {
+                "positionClass": "toast-top-right"
+            });
+        }
+    });
+</script>
+
+<script type="text/javascript">
+    {% if messages %}
+        {% for message in messages %}
+            {% if message.tags == "error" %}
+                toastr.error("{{ message }}", "Error", {
+                    "positionClass": "toast-top-right"
+                });
+            {% elif message.tags == "success" %}
+                toastr.success("{{ message }}", "Success", {
+                    "positionClass": "toast-top-right"
+                });
+            {% else %}
+                toastr.info("{{ message }}", "Info", {
+                    "positionClass": "toast-top-right"
+                });
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+</script>
+
+{% endblock %}

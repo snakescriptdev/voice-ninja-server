@@ -1,0 +1,82 @@
+{% extends "Web/base.html" %}
+
+{% block title %}
+    <title>Payment Failed</title>
+{% endblock %}
+
+{% block content %}
+<body>
+
+    <div class="wrapper">
+        <!-- Sidebar  -->
+       {% include 'Web/sidebar.html' %}
+
+       <div id="content" class="page_content">
+        <div class="agent_page_header d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-2">
+                <button type="button"
+                    class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
+                    <img src="{{ url_for('static', path='/Web/images/hamburger-icon.svg') }}" class="img-fluid">
+                </button>
+            </div>
+            <div class="dropdown">
+                <button class="bg-transparent border-0 dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                    aria-expanded="false">
+                    <img src="{{ url_for('static', path='/Web/images/person-img.svg') }}" class="img-fluid">
+                </button>
+                <ul class="dropdown-menu">
+                    <li>
+                        <a class="dropdown-item d-flex align-items-center gap-2" href="{{ url_for('logout') }}">
+                            <span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
+                                    class="bi bi-box-arrow-right" viewBox="0 0 16 16">
+                                    <path fill-rule="evenodd"
+                                        d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z" />
+                                    <path fill-rule="evenodd"
+                                        d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z" />
+                                </svg>
+                            </span>Log Out
+                        </a>
+                    </li>
+                    <li>
+                            <a class="dropdown-item d-flex align-items-center gap-2" href="{{ url_for('change_password') }}">
+                            <span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
+                                    class="bi bi-box-arrow-right" viewBox="0 0 16 16">
+                                    <path fill-rule="evenodd"
+                                        d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z" />
+                                    <path fill-rule="evenodd"
+                                        d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z" />
+                                </svg>
+                            </span>
+                            Change Password
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        <div class="pay_success_sec">
+            <div class="container">
+                <div class="row">
+               <div class="col-10 col-md-8 col-lg-5 m-auto">
+                  <div class="payment_msg">
+                     <div class="card text-center p-5">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="65px" height="100%" viewBox="0 0 256 256" fill="none" class="m-auto">
+                           <path d="M122.577 177.816C122.447 177.816 122.315 177.813 122.183 177.81C118.319 177.7 114.675 176.006 112.101 173.128L75.5232 132.201C70.3528 126.415 70.8501 117.533 76.6359 112.362C82.4217 107.186 91.3041 107.689 96.4745 113.475L123.147 143.32L211.232 55.2378C216.714 49.7526 225.616 49.7526 231.099 55.2378C236.587 60.7257 236.587 69.6222 231.099 75.1073L132.51 173.699C129.871 176.34 126.297 177.816 122.577 177.816Z" fill="#172259"/>
+                           <path d="M127.857 254.307C58.1321 254.307 1.4066 197.581 1.4066 127.857C1.4066 58.1321 58.1321 1.40659 127.857 1.40659C150.986 1.40659 173.62 7.71223 193.307 19.6463C199.944 23.6674 202.063 32.3054 198.045 38.9426C194.021 45.5798 185.383 47.7013 178.746 43.6774C163.448 34.4072 145.849 29.5066 127.857 29.5066C73.6264 29.5066 29.5066 73.6264 29.5066 127.857C29.5066 182.087 73.6264 226.207 127.857 226.207C182.087 226.207 226.207 182.087 226.207 127.857C226.207 123.678 225.94 119.463 225.42 115.33C224.442 107.63 229.893 100.6 237.593 99.6245C245.292 98.6438 252.32 104.101 253.295 111.797C253.967 117.1 254.307 122.501 254.307 127.857C254.307 197.581 197.581 254.307 127.857 254.307Z" fill="#172259"/>
+                           </svg>
+                           <h1>Payment Failed!</h1>
+                           <p>Unfortunately, Your payment request has failed, please try again later or contact support if the issue persists</p>
+                           <a href="/" class="btn success_page_btn">Back To Home</a>
+                     </div>
+                  </div>
+                
+               </div>
+            </div>
+         </div>
+      
+        </div>
+    </div>
+</div>
+
+{% endblock %}

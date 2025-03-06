@@ -119,6 +119,7 @@ async def create_agent(request: Request):
 
 
 @router.get("/update-agent")
+@check_session_expiry_redirect
 async def update_agent(request: Request):
     agent_id = request.query_params.get("agent_id")
     user_id = request.session.get("user", {}).get("user_id")
@@ -248,6 +249,7 @@ async def verify_account(request: Request, token: str):
     )
 
 @router.get("/call_history")
+@check_session_expiry_redirect
 async def call_history(request: Request, page: int = 1):
     user_id = request.session.get("user", {}).get("user_id")
     agents = AgentModel.get_all_by_user(user_id)
@@ -359,3 +361,53 @@ async def testing(request: Request):
     # Provide a context dictionary, even if it's empty
     context = {"request": request}
     return templates.TemplateResponse("testing.html", context)
+
+
+
+
+@router.get("/payment")
+@check_session_expiry_redirect
+async def payment(request: Request):
+    return templates.TemplateResponse(
+        "Web/razorpay_payment.html", 
+        {
+            "request": request
+        }
+    )
+
+
+@router.get("/payment_success")
+@check_session_expiry_redirect
+async def payment_success(request: Request):
+    from app.databases.models import PaymentModel
+    payment = PaymentModel.get_by_order_id(request.query_params.get("order_id"))
+    if not payment:
+        return RedirectResponse(url="/payment_failed?message=order_not_found")
+    return templates.TemplateResponse(
+        "Web/payment_success.html", 
+        {
+            "request": request,
+            "coins": request.query_params.get("coins"),
+            "amount": request.query_params.get("amount"),
+            "order_id": request.query_params.get("order_id")
+        }
+    )
+
+
+@router.get("/payment_failed")
+@check_session_expiry_redirect
+async def payment_failed(request: Request):
+    return templates.TemplateResponse(
+        "Web/payment_failed.html", 
+        {
+            "request": request,
+            "message": request.query_params.get("message")
+        }
+    )
+
+
+@router.get("/get_total_tokens")
+async def get_total_tokens(request: Request):
+    user_id = request.query_params.get("user_id")
+    user = UserModel.get_by_id(user_id)
+    return {"total_tokens": user.tokens}
