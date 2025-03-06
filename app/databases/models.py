@@ -5,7 +5,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List
 from fastapi_sqlalchemy import db
 import bcrypt
-import os
+import os, shutil
 from config import MEDIA_DIR
 from datetime import datetime
 
@@ -504,12 +504,21 @@ class KnowledgeBaseModel(Base):
             with db():
                 knowledge_base = db.session.query(cls).filter(cls.id == knowledge_base_id).first()
                 if knowledge_base:
-                    # Delete database record
+                    files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+                    for file in files:
+                        # Delete files from directory
+                        obj = KnowledgeBaseFileModel.get_by_id(file.id)
+                        file_dir = os.path.join(MEDIA_DIR, str(obj.file_path))
+                        if os.path.exists(file_dir):
+                            os.remove(file_dir)
+                        KnowledgeBaseFileModel.delete(file.id)
+                    # Delete the knowledge base record directly
                     db.session.delete(knowledge_base)
                     db.session.commit()
                     return True
                 return False
-        except Exception:
+        except Exception as e:
+            print(f"Error deleting knowledge base: {str(e)}")
             return False
     
     @classmethod
