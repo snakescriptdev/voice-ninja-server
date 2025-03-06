@@ -495,14 +495,15 @@ async def edit_agent(request: Request):
                 session.execute(delete_stmt)
                 session.commit()  # Ensure deletion is applied
 
-            # If no association exists, insert a new one
-            if not existing_association or existing_association.knowledge_base_id != selected_knowledge_base:
-                stmt = insert(agent_knowledge_association).values(
-                    agent_id=agent_id, 
-                    knowledge_base_id=selected_knowledge_base
-                )
-                session.execute(stmt)
-                session.commit()
+            if selected_knowledge_base:
+                # If no association exists, insert a new one
+                if not existing_association or existing_association.knowledge_base_id != selected_knowledge_base:
+                    stmt = insert(agent_knowledge_association).values(
+                        agent_id=agent_id, 
+                        knowledge_base_id=selected_knowledge_base
+                    )
+                    session.execute(stmt)
+                    session.commit()
 
             return JSONResponse(
                 status_code=200,
@@ -1033,3 +1034,44 @@ async def delete_audio_recording(request: Request):
         return JSONResponse(status_code=200, content={"status": "success", "message": "Audio recording deleted successfully"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/admin_login", name="admin_login")
+async def admin_login(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    password = data.get("password")
+    if not email or not password:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Email and password are required"})
+    user = UserModel.get_by_email(email)
+    if not user:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "User not found"})
+    if not bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid email or password"})
+    if user.is_admin == False:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "User is not an admin"})
+    
+    from datetime import datetime, timedelta
+    # Create session data for 24 hours
+    session = request.session
+    session["admin_email"] = email
+    session["is_admin"] = True
+    session["expiry"] = (datetime.now() + timedelta(hours=24)).timestamp()
+
+    return JSONResponse(status_code=200, content={"status": "success", "message": "Admin login successful"})
+
+@router.post("/admin_signup", name="admin_signup")
+async def admin_signup(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    password = data.get("password")
+    confirm_password = data.get("confirm_password")
+    if not email or not password or not confirm_password:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Email and password are required"})
+    user = UserModel.get_by_email(email)
+    if user:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "User already exists"})
+    if password != confirm_password:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Passwords do not match"})
+    UserModel.create_admin(email, password)
+    return JSONResponse(status_code=200, content={"status": "success", "message": "Admin signup successful"})

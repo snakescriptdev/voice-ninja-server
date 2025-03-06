@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic
 from fastapi.staticfiles import StaticFiles
-from .routers import APISRouter, WebRouter, WebSocketRouter
+from .routers import APISRouter, WebRouter, WebSocketRouter, AdminRouter
 from fastapi_sqlalchemy import DBSessionMiddleware,db
 from app.core import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
@@ -40,3 +40,4 @@ security = HTTPBasic()
 app.include_router(APISRouter)
 app.include_router(WebRouter)
 app.include_router(WebSocketRouter)
+app.include_router(AdminRouter)

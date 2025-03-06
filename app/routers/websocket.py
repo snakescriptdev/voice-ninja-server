@@ -87,7 +87,7 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
         from sqlalchemy.orm import sessionmaker
         from app.databases.models import engine
         from sqlalchemy import select
-        from app.databases.models import agent_knowledge_association, KnowledgeBaseModel
+        from app.databases.models import agent_knowledge_association, KnowledgeBaseModel, KnowledgeBaseFileModel
         Session = sessionmaker(bind=engine)
         session = Session()
         result = session.execute(
@@ -99,7 +99,9 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
             knowledge_base_id = knowledge_base_result.knowledge_base_id
             knowledge_base = KnowledgeBaseModel.get_by_id(knowledge_base_id)
             if knowledge_base:
-                knowledge_base_text = knowledge_base.text_content
+                each_file = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+                for file in each_file:
+                    knowledge_base_text += file.text_content
 
         voice = agent.selected_voice
         welcome_msg = agent.welcome_msg
@@ -124,7 +126,7 @@ async def agent_websocket_endpoint(websocket: WebSocket):
         from sqlalchemy.orm import sessionmaker
         from app.databases.models import engine
         from sqlalchemy import select
-        from app.databases.models import agent_knowledge_association, KnowledgeBaseModel
+        from app.databases.models import agent_knowledge_association, KnowledgeBaseModel, KnowledgeBaseFileModel
         Session = sessionmaker(bind=engine)
         session = Session()
         result = session.execute(
@@ -136,7 +138,9 @@ async def agent_websocket_endpoint(websocket: WebSocket):
             knowledge_base_id = knowledge_base_result.knowledge_base_id
             knowledge_base = KnowledgeBaseModel.get_by_id(knowledge_base_id)
             if knowledge_base:
-                knowledge_base_text = knowledge_base.text_content
+                each_file = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+                for file in each_file:
+                    knowledge_base_text += file.text_content
 
         voice = agent.selected_voice
         welcome_msg = agent.welcome_msg
