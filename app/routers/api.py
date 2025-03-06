@@ -6,7 +6,12 @@ from .schemas.format import (
 from app.core import logger
 from app.services import AudioStorage
 from starlette.responses import JSONResponse, RedirectResponse
-from app.databases.models import AudioRecordModel, UserModel, AgentModel, ResetPasswordModel, AgentConnectionModel, PaymentModel, AdminTokenModel, AudioRecordings
+from app.databases.models import (
+    AudioRecordModel, UserModel,
+    AgentModel, ResetPasswordModel, 
+    AgentConnectionModel, PaymentModel, 
+    AdminTokenModel, AudioRecordings, 
+    TokensToConsume)
 from app.databases.schema import  AudioRecordListSchema
 import json
 import bcrypt
@@ -292,9 +297,9 @@ async def user_register(request: Request):
             if not token_values:
                 token_values = 20
             else:
-                token_values = token_values.token_values
+                token_values = token_values.free_tokens
 
-            user = UserModel.create(email=email, name=name, password=password, is_verified=False,tokens=token_values)
+            user = UserModel.create(email=email, name=name, password=password, is_verified=False, tokens=token_values)
             if not ResetPasswordModel.get_by_email(email):    
                 ResetPasswordModel.create(email=email, token=email_token)
             else:
@@ -1205,3 +1210,30 @@ async def admin_signup(request: Request):
         return JSONResponse(status_code=400, content={"status": "error", "message": "Passwords do not match"})
     UserModel.create_admin(email, password)
     return JSONResponse(status_code=200, content={"status": "success", "message": "Admin signup successful"})
+
+
+@router.post("/update_tokens", name="update_tokens")
+async def update_tokens(request: Request):
+    try:    
+        data = await request.json()
+        tokens = data.get("tokens")
+        if not tokens:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Tokens are required"})
+        TokensToConsume.update_token_values(1, tokens)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Tokens updated successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/update_free_tokens", name="update_free_tokens")
+async def update_free_tokens(request: Request):
+    try:
+        data = await request.json()
+        tokens = int(data.get("tokens"))
+        type = data.get("type")
+        if type == "token_value":
+            AdminTokenModel.update_token_values(1, tokens)
+        elif type == "free_token":
+            AdminTokenModel.update_free_tokens(1, tokens)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Tokens updated successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})

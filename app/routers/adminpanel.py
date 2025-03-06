@@ -1,7 +1,7 @@
 from fastapi import APIRouter,Request
 from fastapi.templating import Jinja2Templates
 from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse    
-from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel
+from app.databases.models import TokensToConsume, AdminTokenModel
 from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
 import os
@@ -25,10 +25,12 @@ async def admin_login(request: Request):
 @router.get("/admin_dashboard", name="admin_dashboard")
 async def admin_dashboard(request: Request):
     if not request.session.get("is_admin"):
-        return RedirectResponse(url="/admin/admin_login")
+        return RedirectResponse(url="/admin/")
+    tokens_to_consume = TokensToConsume.get_by_id(1)
+    admin_token = AdminTokenModel.get_by_id(1)
     return templates.TemplateResponse(
         "Adminpanel/dashboard.html", 
-        {"request": request}
+        {"request": request, "tokens_to_consume": tokens_to_consume, "admin_token": admin_token}
     )
 
 
