@@ -10,6 +10,9 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick-theme.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
 </head>
 
 <body>
@@ -107,7 +110,7 @@
                                             </span>Log Out
                                         </a>
                                     </li>
-                                    <li>
+                                    <!-- <li>
                                             <a class="dropdown-item d-flex align-items-center gap-2" href="">
                                             <span>
                                                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
@@ -120,7 +123,7 @@
                                             </span>
                                             Change Password
                                         </a>
-                                    </li>
+                                    </li> -->
                                 </ul>
                             </div>
                         </div>
@@ -136,17 +139,42 @@
                                         <p>Enter the number of tokens for deduction.</p>
                                         <div class="d-flex align-items-center gap-3 w-100">
                                             <div class="pricing_card_input w-100 position-relative">
-                                                <input type="text" placeholder="Enter Number of tokens...">
+                                                <input type="text" placeholder="Enter Number of tokens..." id="token_value" value="{{ tokens_to_consume.token_values }}">
                                                 <div class="time_duration">
                                                     <span> <i class="fa-regular fa-clock"></i> 1 min</span>
                                                 </div>
                                                </div>
         
-                                                <button class="btn btn-primary">Submit</button>
+                                                <button class="btn btn-primary" onclick="update_tokens()">Save</button>
                                         </div>
                                        
                                     </div>
 
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="pricing_card">
+                                        <p>How many tokens should be given to the user in exchange for 1 INR?</p>
+                                        <div class="d-flex align-items-center gap-3 w-100">
+                                            <div class="pricing_card_input w-100 position-relative">
+                                                <input type="text" placeholder="Enter Number of tokens..." id="admin_token_value" value="{{ admin_token.token_values }}">
+                                               </div>
+        
+                                                <button class="btn btn-primary" onclick="update_free_tokens('admin_token_value', 'token_value')">Save</button>
+                                        </div>
+                                       
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="pricing_card">
+                                        <p>How many tokens should be given to the user for free at the time of registration?</p>
+                                        <div class="d-flex align-items-center gap-3 w-100">
+                                            <div class="pricing_card_input w-100 position-relative">
+                                                <input type="text" placeholder="Enter Number of tokens..." id="free_token" value="{{ admin_token.free_tokens }}">
+                                               </div>
+                                                <button class="btn btn-primary" onclick="update_free_tokens('free_token', 'free_token')">Save</button>
+                                        </div>
+                                       
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -158,7 +186,6 @@
     </section>
    
 </body>
-<script src="/static/Adminpanel/js/jquery.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="/static/Adminpanel/js/bootstrap.bundle.min.js"></script>
@@ -185,6 +212,96 @@
             $('.logout_option').fadeOut(300);
         }
     });
+
+    // Initialize toastr
+    toastr.options = {
+        "closeButton": true,
+        "debug": false,
+        "newestOnTop": false,
+        "progressBar": true,
+        "positionClass": "toast-top-right",
+        "preventDuplicates": false,
+        "onclick": null,
+        "showDuration": "300",
+        "hideDuration": "1000",
+        "timeOut": "5000",
+        "extendedTimeOut": "1000",
+        "showEasing": "swing",
+        "hideEasing": "linear",
+        "showMethod": "fadeIn",
+        "hideMethod": "fadeOut"
+    };
 });
+
+    function update_tokens(){
+        var tokens = $('.pricing_card_input input').val().trim();
+        if(tokens == ""){
+            toastr.error("Please enter a valid number of tokens");
+            return;
+        }
+        if(isNaN(tokens)){
+            toastr.error("Please enter a valid number of tokens");
+            return;
+        }
+        // Check if input contains decimal point
+        if(tokens.toString().includes('.')) {
+            toastr.error("Decimals are not allowed. Please enter a integer number.");
+            return;
+        }
+        $.ajax({    
+            url: '/api/update_tokens',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                tokens: tokens
+            }),
+            success: function(response){
+                toastr.success(response.message);
+            },
+            error: function(response){
+                if(response.status == 400){
+                    toastr.error(response.responseJSON.message);
+                }else{
+                    toastr.error("Something went wrong!");
+                }
+            }
+        });
+    }
+    function update_free_tokens(id, type){
+        var tokens = $('#'+id).val().trim();
+        if(tokens == ""){
+            toastr.error("Please enter a valid number of tokens");
+            return;
+        }
+        if(isNaN(tokens)){
+            toastr.error("Please enter a valid number of tokens");
+            return;
+        }
+        // Check if input contains decimal point
+        if(tokens.toString().includes('.')) {
+            toastr.error("Decimals are not allowed. Please enter a integer number.");
+            return;
+        }
+        $.ajax({    
+            url: '/api/update_free_tokens',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                tokens: tokens,
+                type: type
+            }),
+            success: function(response){
+                toastr.success(response.message);
+            },
+            error: function(response){
+                if(response.status == 400){
+                    toastr.error(response.responseJSON.message);
+                }else{
+                    toastr.error("Something went wrong!");
+                }
+            }
+        });
+    }
+
 </script>
 </html>
