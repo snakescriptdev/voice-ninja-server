@@ -122,8 +122,10 @@ async def agent_websocket_endpoint(websocket: WebSocket):
         # auth_header = websocket.query_params['authorization']
         agent_id = websocket.query_params.get('agent_id')
         
+        
         await websocket.accept()
         agent = AgentModel.get_by_id(agent_id)
+        user = agent.created_by
         from sqlalchemy.orm import sessionmaker
         from app.databases.models import engine
         from sqlalchemy import select
@@ -152,7 +154,7 @@ async def agent_websocket_endpoint(websocket: WebSocket):
             "uid": str(uid)
         }
         await websocket.send_json(json_data)
-        await run_bot(websocket, voice, None, welcome_msg, system_instruction, knowledge_base_text, agent.id)
+        await run_bot(websocket, voice, None, welcome_msg, system_instruction, knowledge_base_text, agent.id, user)
 
         
     except Exception as e:
