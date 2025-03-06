@@ -27,7 +27,7 @@ class AudioRecordModel(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     email = Column(String, nullable=True,default="")
     number = Column(String, nullable=True,default="")
-    
+
 
     def get_file_url(self, request) -> str:
         """
@@ -124,6 +124,7 @@ class UserModel(Base):
     last_login = Column(DateTime, nullable=True,default=func.now())
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    is_admin = Column(Boolean,default=False)
 
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email})>"
@@ -144,6 +145,19 @@ class UserModel(Base):
         with db():
             hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
             user = cls(email=email, name=name, password=hashed_password.decode('utf-8'), is_verified=is_verified)
+            db.session.add(user)
+            db.session.commit()
+            db.session.refresh(user)
+            return user
+    
+    @classmethod
+    def create_admin(cls, email: str, password: str) -> "UserModel":
+        """
+        Create a new admin user with hashed password
+        """
+        with db():
+            hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+            user = cls(email=email, name="Admin", password=hashed_password.decode('utf-8'), is_verified=True, is_admin=True)
             db.session.add(user)
             db.session.commit()
             db.session.refresh(user)
