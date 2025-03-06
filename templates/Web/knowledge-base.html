@@ -139,8 +139,8 @@
             <div class="modal-content">
                 <div class="modal-body">
                     <div class="text-center">
-                        <h3>Are you sure?</h3>
-                        <p>You want to delete this knowledge base?</p>
+                        <h3 id="delete-title">Are you sure?</h3>
+                        <p id="delete-description">You want to delete this knowledge base?</p>
                         <input type="hidden" id="knowledge-base-id">
                         <div class="d-flex justify-content-center align-items-center gap-2">
                             <button type="button" class="btn btn-danger" id="confirm-delete">
@@ -380,7 +380,8 @@ document.addEventListener("DOMContentLoaded", function () {
     const deleteModal = document.getElementById("deleteModal");
     const confirmDeleteBtn = document.getElementById("confirm-delete");
     const cancelDeleteBtn = document.getElementById("cancel-delete");
-
+    const deleteTitle = document.getElementById("delete-title");
+    const deleteDescription = document.getElementById("delete-description");
     // Ensure the delete button is hidden initially
     deleteButton.style.display = "none";
 
@@ -400,6 +401,9 @@ document.addEventListener("DOMContentLoaded", function () {
         confirmDeleteBtn.disabled = true;
         cancelDeleteBtn.style.display = "none";
         confirmDeleteBtn.textContent = "Please wait...";
+        deleteTitle.style.display = "none";
+        deleteDescription.style.display = "none";
+
         if (knowledgeBaseId) {
             fetch(`/api/delete_knowledge_base`, {
                 method: "DELETE",
@@ -416,6 +420,8 @@ document.addEventListener("DOMContentLoaded", function () {
                 confirmDeleteBtn.disabled = false;
                 confirmDeleteBtn.textContent = "Delete";
                 cancelDeleteBtn.style.display = "block";
+                deleteTitle.style.display = "block";
+                deleteDescription.style.display = "block";
                 if (data.status == "success") {
                     toastr.success(data.message, "Success", {
                         positionClass: "toast-top-right"
@@ -439,6 +445,8 @@ document.addEventListener("DOMContentLoaded", function () {
                 confirmDeleteBtn.disabled = false;
                 confirmDeleteBtn.textContent = "Delete";
                 cancelDeleteBtn.style.display = "block";
+                deleteTitle.style.display = "block";
+                deleteDescription.style.display = "block";
                 console.error("Error:", error);
             });
         }
