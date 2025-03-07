@@ -179,9 +179,11 @@ async def knowledge_base(request: Request, page: int = 1):
         for file in files:
             files_data.append(
                 {
+                    "id": file.id,
                     "name": file.file_name,
                     "size": "",  # You can add file size if available   
-                    "url": f"/media/{file.file_path}"
+                    "url": f"/media/{file.file_path}",
+                    "knowledge_base_id": knowledge_base.id
                 }   
             )
 

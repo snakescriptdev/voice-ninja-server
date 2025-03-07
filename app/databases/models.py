@@ -521,11 +521,23 @@ class KnowledgeBaseModel(Base):
             print(f"Error deleting knowledge base: {str(e)}")
             return False
     
-    @classmethod
+    @classmethod    
     def get_all_by_user(cls, user_id: int) -> List["KnowledgeBaseModel"]:
         """Get all knowledge base records by user ID"""
         with db():
             return db.session.query(cls).filter(cls.created_by_id == user_id).all()
+        
+    @classmethod
+    def update_name(cls, knowledge_base_id: int, new_name: str) -> Optional["KnowledgeBaseModel"]:
+        """Update the name of a knowledge base record"""
+        with db():
+            knowledge_base = db.session.query(cls).filter(cls.id == knowledge_base_id).first()
+            if knowledge_base:
+                knowledge_base.knowledge_base_name = new_name
+                db.session.commit()
+                db.session.refresh(knowledge_base)
+                return knowledge_base
+            return None
 
 
 class AudioRecordings(Base):
