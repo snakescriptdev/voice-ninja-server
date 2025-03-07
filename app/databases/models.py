@@ -147,13 +147,13 @@ class UserModel(Base):
             return db.session.query(cls).filter(cls.email == email).first()
 
     @classmethod
-    def create(cls, email: str, name: str, password: str, is_verified: bool = False) -> "UserModel":
+    def create(cls, email: str, name: str, password: str, is_verified: bool = False, tokens: int = 0) -> "UserModel":
         """
         Create a new user with hashed password
         """
         with db():
             hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-            user = cls(email=email, name=name, password=hashed_password.decode('utf-8'), is_verified=is_verified)
+            user = cls(email=email, name=name, password=hashed_password.decode('utf-8'), is_verified=is_verified, tokens=tokens)
             db.session.add(user)
             db.session.commit()
             db.session.refresh(user)
