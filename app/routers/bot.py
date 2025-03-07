@@ -119,7 +119,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
 
 
     llm.register_function("end_call",end_call)
-    context = OpenAILLMContext([{"role": "user", "content":"Say Hello and introduce yourself"}],tools=tools)
+    context = OpenAILLMContext([{"role": "user", "content":" "}],tools=tools)
 
     context_aggregator = llm.create_context_aggregator(context)
     audiobuffer = AudioBufferProcessor()

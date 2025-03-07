@@ -75,8 +75,8 @@ class WebSocketClient {
             // this.statusIndicator = document.querySelector('.status-indicator');
             // this.statusText = document.getElementById('connection-status');
             // this.logContainer = document.getElementById('log-container');
-            this.connectBtn = document.getElementById('start-btn');
-            this.disconnectBtn = document.getElementById('stop-btn');
+            this.connectBtn = document.getElementById('startCall');
+            this.disconnectBtn = document.getElementById('endCallPopup');
             // this.languageSelect = document.getElementById('language-select');
             // this.audioListBtn = document.getElementById('audio-list-btn');
 
@@ -131,7 +131,6 @@ class WebSocketClient {
             hour12: true
         });
         entry.textContent = `${timestamp}: ${message}`;
-        console.log(message, "===========message===========")
         // this.logContainer.appendChild(entry);
         // this.logContainer.scrollTop = this.logContainer.scrollHeight;
     }
@@ -198,13 +197,13 @@ class WebSocketClient {
             // If already connected, disconnect instead
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.disconnect();
-                this.connectBtn.innerHTML = '<img src="/static/Web/images/no-microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
+                // this.connectBtn.innerHTML = '<img src="/static/Web/images/no-microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
                 return;
             }
 
             this.updateStatus('connecting', 'Connecting...');
             this.log('Attempting to connect...');
-            this.connectBtn.innerHTML = '<img src="/static/Web/images/microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
+            // this.connectBtn.innerHTML = '<img src="/static/Web/images/microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
             
             // Use dynamic WebSocket URL
             // const authHeader = this.getAuthHeader();
@@ -462,44 +461,44 @@ class WebSocketClient {
 
 
 
-function toggleRecorder() {{
-    const recorderControls = document.getElementById('recorderControls');
-    const voiceIcon = document.querySelector('.voice_icon');
+// function toggleRecorder() {{
+//     const recorderControls = document.getElementById('recorderControls');
+//     const voiceIcon = document.querySelector('.whatsapp_outer_mobile');
 
-    if (!recorderControls || !voiceIcon) {{
-        console.error('Required elements not found');
-        return;
-    }}
+//     if (!recorderControls || !voiceIcon) {{
+//         console.error('Required elements not found');
+//         return;
+//     }}
 
-    if (window.recorderTimeout) {{
-        clearTimeout(window.recorderTimeout);
-    }}
+//     if (window.recorderTimeout) {{
+//         clearTimeout(window.recorderTimeout);
+//     }}
 
-    if (recorderControls.classList.contains('show')) {{
-        recorderControls.classList.remove('show');
-        window.recorderTimeout = setTimeout(() => {{
-            recorderControls.classList.add('hidden');
-            voiceIcon.style.display = 'flex';
-            voiceIcon.style.opacity = '1';
-        }}, 300);
-    }} else {{
-        recorderControls.classList.remove('hidden');
-        voiceIcon.style.opacity = '0';
-        window.recorderTimeout = setTimeout(() => {{
-            recorderControls.classList.add('show');
-            voiceIcon.style.display = 'none';
-        }}, 10);
-    }}
-}}
+//     if (recorderControls.classList.contains('show')) {{
+//         recorderControls.classList.remove('show');
+//         window.recorderTimeout = setTimeout(() => {{
+//             recorderControls.classList.add('hidden');
+//             voiceIcon.style.display = 'flex';
+//             voiceIcon.style.opacity = '1';
+//         }}, 300);
+//     }} else {{
+//         recorderControls.classList.remove('hidden');
+//         voiceIcon.style.opacity = '0';
+//         window.recorderTimeout = setTimeout(() => {{
+//             recorderControls.classList.add('show');
+//             voiceIcon.style.display = 'none';
+//         }}, 10);
+//     }}
+// }}
 
-function stopRecorder() {
-    const recorderControls = document.getElementById('recorderControls');
-    const voiceIcon = document.querySelector('.voice_icon');
+// function stopRecorder() {
+//     const recorderControls = document.getElementById('recorderControls');
+//     const voiceIcon = document.querySelector('.whatsapp_outer_mobile');
 
-    recorderControls.classList.remove('show');
-    setTimeout(() => {
-        recorderControls.classList.add('hidden');
-        voiceIcon.style.display = 'flex'; 
-        voiceIcon.style.opacity = '1';
-    }, 500);
-}
+//     recorderControls.classList.remove('show');
+//     setTimeout(() => {
+//         recorderControls.classList.add('hidden');
+//         voiceIcon.style.display = 'flex'; 
+//         voiceIcon.style.opacity = '1';
+//     }, 500);
+// }
