@@ -1237,3 +1237,102 @@ async def update_free_tokens(request: Request):
         return JSONResponse(status_code=200, content={"status": "success", "message": "Tokens updated successfully"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.delete("/delete_file", name="delete_file")
+async def delete_file(request: Request):
+    try:
+        data = await request.json()
+        file_id = int(data.get("file_id"))
+        knowledge_base_id = int(data.get("knowledge_base_id"))
+        file = KnowledgeBaseFileModel.get_by_id(file_id)
+        if file:
+            if file.knowledge_base_id == knowledge_base_id:
+                # Get all files for this knowledge base
+                files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base_id)
+                
+                # Delete the requested file
+                KnowledgeBaseFileModel.delete(file_id)
+                
+                # If this was the last file, delete the knowledge base too
+                if len(files) == 1:  # Only had 1 file which we just deleted
+                    KnowledgeBaseModel.delete(knowledge_base_id)
+                    return JSONResponse(status_code=200, content={
+                        "status": "success", 
+                        "message": "File and knowledge base deleted successfully"
+                    })
+                
+                return JSONResponse(status_code=200, content={
+                    "status": "success", 
+                    "message": "File deleted successfully"
+                })
+            else:
+                return JSONResponse(status_code=400, content={
+                    "status": "error", 
+                    "message": "File not found"
+                })
+        else:
+            return JSONResponse(status_code=400, content={
+                "status": "error", 
+                "message": "File not found"
+            })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={
+            "status": "error", 
+            "message": "Something went wrong!", 
+            "error": str(e)
+        })
+
+@router.post("/update_knowledge_base", name="update_knowledge_base")
+async def update_knowledge_base(request: Request):
+    try:
+        data = await request.json()
+        knowledge_base_id = data.get("knowledge_base_id")
+        new_name = data.get("new_name")
+        KnowledgeBaseModel.update_name(knowledge_base_id, new_name)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Knowledge base name updated successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/upload_file", name="upload_more_files")
+async def upload_more_files(request: Request):
+    try:
+        data = await request.form()
+        file = data.get("file")
+        knowledge_base_id = data.get("knowledge_base_id")
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        allowed_extensions = {".pdf", ".docx", ".txt"}
+
+        if file_ext not in allowed_extensions:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Unsupported file type"})
+        
+        # Check if knowledge base already has 5 files
+        existing_files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base_id)
+        if len(existing_files) >= 5:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Maximum limit of 5 files reached for this knowledge base."}
+            )
+        # Save file temporarily
+        temp_file_path = f"knowledge_base_files/{uuid.uuid4()}_{file.filename}"
+        file_path = os.path.join(MEDIA_DIR, temp_file_path)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Extract text
+        text_content = extract_text_from_file(file_path)
+        if not text_content.strip():
+            os.remove(file_path)
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": f"No readable text found in {file.filename}."}
+            )
+        KnowledgeBaseFileModel.create(
+            knowledge_base_id=knowledge_base_id,
+            file_path=temp_file_path,
+            file_name=file.filename,
+            text_content=text_content
+        )
+        return JSONResponse(status_code=200, content={"status": "success", "message": "File uploaded successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
