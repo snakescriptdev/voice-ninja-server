@@ -24,7 +24,7 @@ from datetime import datetime
 import shutil
 import os
 from app.databases.models import KnowledgeBaseModel, KnowledgeBaseFileModel
-from app.utils.helper import extract_text_from_file
+from app.utils.helper import extract_text_from_file, generate_agent_prompt
 from config import MEDIA_DIR  # ✅ Import properly
 import razorpay
 from app.utils.helper import verify_razorpay_signature
@@ -1334,5 +1334,28 @@ async def upload_more_files(request: Request):
             text_content=text_content
         )
         return JSONResponse(status_code=200, content={"status": "success", "message": "File uploaded successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+
+
+
+@router.post("/agent_prompt_suggestion")
+async def agent_prompt_suggestion(request: Request):
+    try:
+        data = await request.json()
+        print(data)
+        agent_function = data.get("agent_function")
+        agent_tone = data.get("agent_tone")
+        level_of_detail = data.get("level_of_detail")
+        industry = data.get("industry")
+        agent_name = data.get("agent_name", "")
+
+        prompt = generate_agent_prompt(agent_function, agent_tone, level_of_detail, industry, agent_name)
+        if prompt:
+            return JSONResponse(status_code=200, content={"status": "success", "message": "Prompt generated successfully", "prompt": prompt})
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Some error occured while generating prompt, please try again later!"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})

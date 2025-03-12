@@ -10,24 +10,25 @@
                         class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0 position-absolute ms-2">
                         <img src="{{ url_for('static', path='/Web/images/hamburger-icon.svg') }}" class="img-fluid">
                     </button>
-            <div class="agent_data_outer d-flex align-items-center gap-3">
-                <a href="{{ url_for('dashboard') }}" class="page_back_arrow d-flex align-items-center justify-content-center"><img
-                        src="{{ url_for('static', path='/Web/images/left-arrow.svg') }}" class="img-fluid"></a>
-                <div class="">
-                    <h3 id="agent-name" class="mb-0">{% if agent %}{{ agent.agent_name }}{% else %}Agent{% endif %}<span onclick="editHeading()">
-                            <img src="{{ url_for('static', path='/Web/images/pencil-icon.svg') }}" style="cursor: pointer;">
-                        </span>
-                    </h3>
-                    <p class="mb-0">Single Prompt Agent ID: agen..82c <span class="copy_icon cursor-pointer"><img
-                                src="{{ url_for('static', path='/Web/images/copy_icon.svg') }}" class="img-fluid"></span>
-                        . Retell llm ID: llm_...3aa <span class="copy_icon cursor-pointer"><img
-                                src="{{ url_for('static', path='/Web/images/copy_icon.svg') }}" class="img-fluid"></span> . 0.12/min
-                        <span class="pie_chart_icon cursor-pointer"><img src="{{ url_for('static', path='/Web/images/pie-chart-icon.svg') }}"
-                                class="img-fluid"></span> . 0.12/Estimated Latency: 1100-1250msmin
-                        <span class="pie_chart_icon cursor-pointer"><img src="{{ url_for('static', path='/Web/images/pie-chart-icon.svg') }}"
-                                class="img-fluid"></span>
-                    </p>
+            <div class="agent_data_outer d-flex align-items-center gap-3 justify-content-between">
+                <div class="d-flex align-items-center gap-3 w-100">
+                    <a href="{{ url_for('dashboard') }}" class="page_back_arrow d-flex align-items-center justify-content-center"><img
+                            src="{{ url_for('static', path='/Web/images/left-arrow.svg') }}" class="img-fluid"></a>
+                    <div class="">
+                        <h3 id="agent-name" class="mb-0 d-flex gap-1">{% if agent %}{{ agent.agent_name }}{% else %}Agent{% endif %}
+                            <span onclick="editHeading()" class="edit-heading-icon">
+                                <img src="{{ url_for('static', path='/Web/images/pencil-icon.svg') }}" style="cursor: pointer;">
+                            </span>
+                        </h3>
+                    </div>
                 </div>
+                {% if not agent %}
+                <div>
+                    <button type="button" class="help-ai-btn" data-bs-toggle="modal" data-bs-target="#helpAiModal">
+                       <span><img src="{{ url_for('static', path='/Web/images/btn-star-icon.svg') }}" class="img-fluid"> Help from AI</span>
+                    </button>
+                </div>
+                {% endif %}
             </div>
             <div class="agent_type_box">
                 <div class="agent_type_dropdown d-flex align-items-center justify-content-between">
@@ -258,6 +259,152 @@
         </div>
     </div>
 
+    <!-- Modal -->
+<div class="modal fade help-ai-modal" id="helpAiModal" data-bs-backdrop="static" tabindex="-1" aria-labelledby="helpAiModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 class="d-flex align-items-center gap-3 mb-0"><span><img src="{{ url_for('static', path='/Web/images/eos-icons_ai.svg') }}" class="img-fluid"></span> Prompt Generator</h3>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" id="close-help-ai-modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-0">
+          <div class="help_ai_modal_slider">
+            <div class="help_ai_modal_slider_item">
+                <h4>What is the primary function of your AI agent?</h4>
+                <div>
+                    <select class="form-select" id="agent-function">
+                        <option value="Answering questions" selected>Answering questions</option>
+                        <option value="Providing information">Providing information</option>
+                        <option value="Assisting with tasks">Assisting with tasks</option>
+                        <option value="Engaging in conversations">Engaging in conversations</option>
+                    </select>
+                </div>
+            </div>
+            <div class="help_ai_modal_slider_item">
+                <h4>What tone should the AI agent use?</h4>
+                <div>
+                    <select class="form-select" id="agent-tone">
+                        <option value="Formal" selected>Formal</option>
+                        <option value="Friendly">Friendly</option>
+                        <option value="Professional">Professional</option>
+                        <option value="Neutral">Neutral</option>
+                        <option value="Humorous">Humorous</option>
+                    </select>
+                </div>
+            </div>
+            <div class="help_ai_modal_slider_item">
+                <h4>What level of detail should the responses have?</h4>
+                <div>
+                    <select class="form-select" id='level-of-detail'>
+                        <option value="Brief and concise"  selected>Brief and concise</option>
+                        <option value="Moderate detail">Moderate detail</option>
+                        <option value="In-depth and explanatory">In-depth and explanatory</option>
+                        <option value="Step-by-step guidance">Step-by-step guidance</option>
+                    </select>
+                </div>
+            </div>
+            <div class="help_ai_modal_slider_item">
+                <h4>Which industry does your AI agent serve?</h4>
+                <div>
+                    <select class="form-select" id='industry'>
+                        <option value="Retail"  selected>Retail</option>
+                        <option value="Healthcare">Healthcare</option>
+                        <option value="Finance">Finance</option>
+                        <option value="Technology">Technology</option>
+                        <option value="Education">Education</option>
+                        <option value="Customer Support">Customer Support</option>
+                        <option value="Marketing">Marketing</option>
+                    </select>
+                </div>
+            </div>
+            <div class="help_ai_modal_slider_item">
+                <h4>What would you like to call your agent? (Optional)</h4>
+                <div>
+                   <input type="text" class="form-control" placeholder="(Optional)" id='agent-name-new'>
+                </div>
+            </div>
+          </div>
+          <!-- Navigation Buttons -->
+            <div class="slider-nav d-flex align-items-center justify-content-between">
+                <button class="prev-btn align-items-center justify-content-center prev_btn" disabled><img src="{{ url_for('static', path='/Web/images/slider-prev-icon.svg') }}" class="img-fluid">Previous</button>
+                <button class="next-btn align-items-center justify-content-center"> Next <img src="{{ url_for('static', path='/Web/images/slider-next-icon.svg') }}" class="img-fluid"></button>
+                <button class="submit-btn align-items-center justify-content-center" style="display: none;" id="generate-prompt-btn">Submit</button>
+            </div>
+        </div>
+      </div>
+    </div>
+  </div>
+<script>
+    $(document).ready(function () {
+        var $slider = $('.help_ai_modal_slider');
+    
+        function initSlider() {
+            if (!$slider.hasClass('slick-initialized')) {
+                $slider.slick({
+                    infinite: false,
+                    slidesToShow: 1,
+                    slidesToScroll: 1,
+                    arrows: false, // Hide default arrows
+                    dots: false,
+                    adaptiveHeight: true, // Adjust height dynamically
+                });
+    
+                // Reveal the slider after initialization
+                $slider.css("display", "block");
+            }
+        }
+    
+        $('.modal').on('shown.bs.modal', function () {
+            initSlider();
+            setTimeout(() => {
+                $slider.slick('setPosition'); // Ensure correct rendering
+            }, 100); // Small delay to prevent width glitch
+        });
+    
+        $('.prev-btn').click(function () {
+            if (!$(this).prop('disabled')) {
+                $slider.slick('slickPrev');
+            }
+        });
+    
+        $('.next-btn').click(function () {
+            $slider.slick('slickNext');
+        });
+    
+        $slider.on('afterChange', function (event, slick, currentSlide) {
+            $('.prev-btn').prop('disabled', currentSlide === 0);
+            $('.next-btn').toggle(currentSlide !== slick.slideCount - 1);
+            $('.submit-btn').toggle(currentSlide === slick.slideCount - 1);
+        });
+    
+        function resetModal() {
+            $("#agent-function").val("Answering questions");
+            $("#agent-tone").val("Formal");
+            $("#level-of-detail").val("Brief and concise");
+            $("#industry").val("Retail");
+            $("#agent-name-new").val("");
+    
+            // Reset slider to the first slide
+            $slider.slick('slickGoTo', 0);
+            $('.prev-btn').prop('disabled', true);
+            $('.next-btn').show();
+            $('.submit-btn').hide();
+        }
+    
+        $('.modal').on('hidden.bs.modal', function () {
+            resetModal();
+    
+            // Manually trigger a width update on close to prevent glitch
+            setTimeout(() => {
+                $slider.slick('setPosition');
+            }, 100);
+        });
+    });
+    
+    
+    
+    
+</script>
 <script>
     let selectedIconUrl = null; // Store selected icon in memory
     let selectedTheme = {
@@ -568,5 +715,61 @@ function saveChanges() {
                 colorPalette.classList.remove('show');
             }
         }
+</script>
+
+
+
+<script>
+
+    $("#generate-prompt-btn").click(function () {
+        let agentFunction = $("#agent-function").val();
+        let agentTone = $("#agent-tone").val();
+        let levelOfDetail = $("#level-of-detail").val();
+        let industry = $("#industry").val();
+        let agentName = $("#agent-name-new").val();
+    
+        if (agentFunction == "" || agentTone == "" || levelOfDetail == "" || industry == "") {
+            toastr.error("Please select all the fields", { positionClass: "toast-top-right" });
+            return;
+        }
+    
+        $("#generate-prompt-btn").prop("disabled", true);
+        $("#close-help-ai-modal").prop("disabled", true);
+    
+        $.ajax({
+            url: `${window.location.origin}/api/agent_prompt_suggestion/`,
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ agent_function: agentFunction, agent_tone: agentTone, level_of_detail: levelOfDetail, industry: industry, agent_name: agentName }),
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            success: function (response) {
+                if (response.status == "success") {
+                    toastr.success("Prompt generated successfully", { positionClass: "toast-top-right" });
+                    $("#agent-prompt").val(response.prompt);
+                } else {
+                    toastr.error(response.message, { positionClass: "toast-top-right" });
+                }
+    
+                $("#generate-prompt-btn").prop("disabled", false);
+                $("#close-help-ai-modal").prop("disabled", false);
+                $("#agent-name-new").val("");
+
+                $("#helpAiModal").modal("hide");
+            },
+            error: function (xhr, status, error) {
+                console.log("Error:", xhr.responseText);
+                toastr.error("Something went wrong!", { positionClass: "toast-top-right" });
+    
+                $("#generate-prompt-btn").prop("disabled", false);
+                $("#close-help-ai-modal").prop("disabled", false);
+                $("#helpAiModal").modal("hide");
+                $("#agent-name-new").val("");
+            }
+        });
+    });
+    
+    
 </script>
 {% endblock %}

@@ -770,3 +770,6 @@ async def get_total_tokens(request: Request):
     user_id = request.query_params.get("user_id")
     user = UserModel.get_by_id(user_id)
     return {"total_tokens": user.tokens}
+
+
+
