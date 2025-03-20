@@ -5,10 +5,10 @@ from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List
 from fastapi_sqlalchemy import db
 import bcrypt
-import os
+import os, shutil
 from config import MEDIA_DIR
 from datetime import datetime
-
+from sqlalchemy.dialects.postgresql import JSONB
 
 DB_URL="postgresql://postgres:1234@localhost/audio_assistant"
 engine = create_engine(DB_URL, echo=False)
@@ -27,6 +27,7 @@ class AudioRecordModel(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     email = Column(String, nullable=True,default="")
     number = Column(String, nullable=True,default="")
+
 
     def get_file_url(self, request) -> str:
         """
@@ -123,9 +124,20 @@ class UserModel(Base):
     last_login = Column(DateTime, nullable=True,default=func.now())
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    tokens = Column(Integer, nullable=True,default=0)
+    is_admin = Column(Boolean,default=False)
+    approved_domains = relationship("ApprovedDomainModel", back_populates="creator")
 
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email})>"
+    
+    @classmethod
+    def get_by_id(cls, user_id: int) -> Optional["UserModel"]:
+        """
+        Get user by ID
+        """
+        with db():
+            return db.session.query(cls).filter(cls.id == user_id).first()
 
     @classmethod
     def get_by_email(cls, email: str) -> Optional["UserModel"]:
@@ -136,13 +148,26 @@ class UserModel(Base):
             return db.session.query(cls).filter(cls.email == email).first()
 
     @classmethod
-    def create(cls, email: str, name: str, password: str, is_verified: bool = False) -> "UserModel":
+    def create(cls, email: str, name: str, password: str, is_verified: bool = False, tokens: int = 0) -> "UserModel":
         """
         Create a new user with hashed password
         """
         with db():
             hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
-            user = cls(email=email, name=name, password=hashed_password.decode('utf-8'), is_verified=is_verified)
+            user = cls(email=email, name=name, password=hashed_password.decode('utf-8'), is_verified=is_verified, tokens=tokens)
+            db.session.add(user)
+            db.session.commit()
+            db.session.refresh(user)
+            return user
+    
+    @classmethod
+    def create_admin(cls, email: str, password: str) -> "UserModel":
+        """
+        Create a new admin user with hashed password
+        """
+        with db():
+            hashed_password = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+            user = cls(email=email, name="Admin", password=hashed_password.decode('utf-8'), is_verified=True, is_admin=True)
             db.session.add(user)
             db.session.commit()
             db.session.refresh(user)
@@ -186,6 +211,22 @@ class UserModel(Base):
                 db.session.refresh(user)
                 return user
             return None
+        
+    @classmethod
+    def update_tokens(cls, user_id: int, new_tokens: int) -> "UserModel":
+        """
+        Update user's tokens
+        """
+        with db():
+            user = db.session.query(cls).filter(cls.id == user_id).first()
+            if user:
+                user.tokens = new_tokens
+                db.session.commit()
+                db.session.refresh(user)
+                return user
+            return None
+        
+    
 
 agent_knowledge_association = Table(
     "agent_knowledge_association",
@@ -209,13 +250,18 @@ class AgentModel(Base):
     welcome_msg = Column(String, nullable=True,default="")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    is_design_enabled = Column(Boolean,default=False)
+    dynamic_variable = Column(JSONB, nullable=True , default={})
     knowledge_base = relationship(
         "KnowledgeBaseModel",
         secondary=agent_knowledge_association,
         back_populates="agents"
     )
     audio_recordings = relationship("AudioRecordings", back_populates="agent")
-    
+
+    calls = relationship("CallModel", back_populates="agent", cascade="all, delete")
+    custom_functions = relationship("CustomFunctionModel", back_populates="agent", cascade="all, delete-orphan")
+
     def __repr__(self):
         return f"<Agent(id={self.id}, agent_name={self.agent_name})>"
     
@@ -285,7 +331,78 @@ class AgentModel(Base):
                 return True
         except Exception:
             return False
+    
 
+    @classmethod
+    def update_prompt(cls, agent_id: int, agent_prompt: str) -> "AgentModel":
+        """
+        Update an agent's prompt by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.agent_prompt = agent_prompt
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+    
+    @classmethod
+    def update_welcome_message(cls, agent_id: int, welcome_message: str) -> "AgentModel":
+        """
+        Update an agent's welcome message by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.welcome_msg = welcome_message
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+    
+    @classmethod
+    def update_voice(cls, agent_id: int, selected_voice: str) -> "AgentModel":
+        """
+        Update an agent's voice by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.selected_voice = selected_voice
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+
+    @classmethod
+    def update_design(cls, agent_id: int, is_enabled: bool) -> "AgentModel":
+        """
+        Update an agent's design by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.is_design_enabled = is_enabled
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+
+    @classmethod
+    def update_dynamic_variables(cls, agent_id: int, dynamic_variables: dict) -> "AgentModel":
+        """
+        Update dynamic variables for an agent by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.dynamic_variable = dynamic_variables
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+    
 class ResetPasswordModel(Base):
     __tablename__ = "reset_password"
     
@@ -330,14 +447,46 @@ class ResetPasswordModel(Base):
                 return True
         except Exception:
             return False
-        
+    
     @classmethod
-    def update(cls, reset_password_id: int, **kwargs) -> "ResetPasswordModel":
+    def update_by_id(cls, reset_password_id: int, **kwargs) -> "ResetPasswordModel":
         """
         Update a reset password record by ID
         """
         with db():
             reset_password = db.session.query(cls).filter(cls.id == reset_password_id).first()
+            if reset_password:
+                for key, value in kwargs.items():
+                    if hasattr(reset_password, key):
+                        setattr(reset_password, key, value)
+                db.session.commit()
+                db.session.refresh(reset_password)
+                return reset_password
+            return None
+        
+    @classmethod
+    def update(cls, email: str, **kwargs) -> "ResetPasswordModel":
+        """
+        Update a reset password record by email
+        """
+        with db():
+            reset_password = db.session.query(cls).filter(cls.email == email).first()
+            if reset_password:
+                for key, value in kwargs.items():
+                    if hasattr(reset_password, key):
+                        setattr(reset_password, key, value)
+                db.session.commit()
+                db.session.refresh(reset_password)
+                return reset_password
+            return None
+    
+    @classmethod
+    def update(cls, email: str, **kwargs) -> "ResetPasswordModel":
+        """
+        Update a reset password record by email
+        """
+        with db():
+            reset_password = db.session.query(cls).filter(cls.email == email).first()
             if reset_password:
                 for key, value in kwargs.items():
                     if hasattr(reset_password, key):
@@ -354,6 +503,14 @@ class ResetPasswordModel(Base):
         """
         with db():
             return db.session.query(cls).filter(cls.token == token).first()
+    
+    @classmethod
+    def update_prompt(cls, agent_id: int, agent_prompt: str) -> "AgentModel":
+        """
+        Update an agent's prompt by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
 
 class KnowledgeBaseModel(Base):
     __tablename__ = "knowledge_base"
@@ -361,11 +518,9 @@ class KnowledgeBaseModel(Base):
     id = Column(Integer, primary_key=True)
     created_by_id = Column(Integer, ForeignKey('users.id'), nullable=False)
     knowledge_base_name = Column(String(255), nullable=False)
-    attachment_name = Column(String, nullable=True, default="")
-    attachment_path = Column(String, nullable=True, default="")
-    text_content = Column(String, nullable=True, default="")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    files = relationship("KnowledgeBaseFileModel", back_populates="knowledge_base")
 
     agents = relationship(
         "AgentModel",
@@ -389,16 +544,23 @@ class KnowledgeBaseModel(Base):
             return db.session.query(cls).all()
 
     @classmethod
-    def create(cls, knowledge_base_name: str, created_by_id: int, 
-               attachment_path: str = None, text_content: str = None, attachment_name: str = None) -> "KnowledgeBaseModel":
+    def get_by_name(cls, knowledge_base_name: str, created_by_id: int) -> Optional["KnowledgeBaseModel"]:
+        """Get knowledge base by name"""
+        with db():
+            return db.session.query(cls).filter(cls.knowledge_base_name == knowledge_base_name, cls.created_by_id == created_by_id).first()
+
+    @classmethod
+    def create(cls, knowledge_base_name: str, created_by_id: int) -> "KnowledgeBaseModel":
         """Create a new knowledge base record"""
+        # Create knowledge_base_files directory if it doesn't exist
+        knowledge_base_dir = os.path.join(MEDIA_DIR, "knowledge_base_files")
+        if not os.path.exists(knowledge_base_dir):
+            os.makedirs(knowledge_base_dir)
+            
         with db():
             knowledge_base = cls(
                 knowledge_base_name=knowledge_base_name,
-                created_by_id=created_by_id,
-                attachment_path=attachment_path,
-                text_content=text_content,
-                attachment_name=attachment_name
+                created_by_id=created_by_id
             )
             db.session.add(knowledge_base)
             db.session.commit()
@@ -425,25 +587,41 @@ class KnowledgeBaseModel(Base):
         try:
             with db():
                 knowledge_base = db.session.query(cls).filter(cls.id == knowledge_base_id).first()
-                if knowledge_base and knowledge_base.attachment_path:
-                    # Delete the file from media directory
-                    file_path = os.path.join(MEDIA_DIR, knowledge_base.attachment_path)
-                    if os.path.exists(file_path):
-                        os.remove(file_path)
-                    
-                    # Delete database record
+                if knowledge_base:
+                    files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+                    for file in files:
+                        # Delete files from directory
+                        obj = KnowledgeBaseFileModel.get_by_id(file.id)
+                        file_dir = os.path.join(MEDIA_DIR, str(obj.file_path))
+                        if os.path.exists(file_dir):
+                            os.remove(file_dir)
+                        KnowledgeBaseFileModel.delete(file.id)
+                    # Delete the knowledge base record directly
                     db.session.delete(knowledge_base)
                     db.session.commit()
                     return True
                 return False
-        except Exception:
+        except Exception as e:
+            print(f"Error deleting knowledge base: {str(e)}")
             return False
     
-    @classmethod
+    @classmethod    
     def get_all_by_user(cls, user_id: int) -> List["KnowledgeBaseModel"]:
         """Get all knowledge base records by user ID"""
         with db():
             return db.session.query(cls).filter(cls.created_by_id == user_id).all()
+        
+    @classmethod
+    def update_name(cls, knowledge_base_id: int, new_name: str) -> Optional["KnowledgeBaseModel"]:
+        """Update the name of a knowledge base record"""
+        with db():
+            knowledge_base = db.session.query(cls).filter(cls.id == knowledge_base_id).first()
+            if knowledge_base:
+                knowledge_base.knowledge_base_name = new_name
+                db.session.commit()
+                db.session.refresh(knowledge_base)
+                return knowledge_base
+            return None
 
 
 class AudioRecordings(Base):
@@ -464,6 +642,7 @@ class AudioRecordings(Base):
     @classmethod
     def create(cls, agent_id: int, audio_file: str, audio_name: str, created_at: datetime) -> "AudioRecordings":
         """Create a new audio recording"""
+
         with db():
             recording = cls(
                 agent_id=agent_id,
@@ -483,11 +662,10 @@ class AudioRecordings(Base):
             return db.session.query(cls).filter(cls.id == recording_id).first()
     
     @classmethod
-    def get_all_by_agent(cls, agents: List["AgentModel"]) -> List["AudioRecordings"]:
+    def get_all_by_agent(cls, agent_id: int) -> List["AudioRecordings"]:
         """Get all audio recordings by agent ID"""
         with db():
-            agent_ids = [agent.id for agent in agents]  # Extract IDs
-            return db.session.query(cls).filter(cls.agent_id.in_(agent_ids)).all()
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
     
     @classmethod
     def get_all_by_user(cls, user_id: int) -> List["AudioRecordings"]:
@@ -544,4 +722,558 @@ class AudioRecordings(Base):
 #         with db():
 #             return db.session.query(cls).filter(cls.created_by_id == user_id).all()
 
+class AgentConnectionModel(Base):
+    """Model for tracking connections between agents"""
+    __tablename__ = "agent_connections"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, nullable=False)
+    icon_url = Column(String, default="/static/Web/images/gif-icon-3.gif")
+    primary_color = Column(String, default="#8338ec")
+    secondary_color = Column(String, default="#5e60ce") 
+    pulse_color = Column(String, default="rgba(131, 56, 236, 0.3)")
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+
+    def __repr__(self):
+        return f"<AgentConnection(id={self.id}, agent_id={self.agent_id})>"
+    
+    @classmethod
+    def create(cls, agent_id: int) -> "AgentConnectionModel":
+        """Create a new agent connection"""
+        with db():
+            connection = cls(agent_id=agent_id)
+            db.session.add(connection)
+            db.session.commit()
+            return connection
+
+    @classmethod
+    def create_connection(cls, agent_id: int, icon_url: str, primary_color: str, secondary_color: str, pulse_color: str) -> "AgentConnectionModel":
+        """Create a new agent connection"""
+        with db():
+            connection = cls(agent_id=agent_id, icon_url=icon_url, primary_color=primary_color, secondary_color=secondary_color, pulse_color=pulse_color)
+            db.session.add(connection)
+            db.session.commit()
+            return connection   
+    
+    @classmethod
+    def get_by_agent_id(cls, agent_id: int) -> Optional["AgentConnectionModel"]:
+        """Get connection by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).first()
+    
+    @classmethod
+    def update_connection(cls, agent_id: int, **kwargs) -> "AgentConnectionModel":  
+        """Update a connection by agent ID"""
+        with db():
+            connection = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if connection:
+                for key, value in kwargs.items():
+                    if hasattr(connection, key):
+                        setattr(connection, key, value)
+                db.session.commit()
+                db.session.refresh(connection)
+                return connection
+            return None
+        
+    @classmethod
+    def delete_connection(cls, agent_id: int) -> bool:
+        """Delete a connection by agent ID"""
+        with db():
+            connection = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if connection:
+                db.session.delete(connection)
+                db.session.commit()
+                return True
+            return False
+        
+
+
+class PaymentModel(Base):
+    __tablename__ = "payments"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey('users.id'), nullable=False)
+    order_id = Column(String, nullable=True,default="")
+    payment_id = Column(String, nullable=True,default="")
+    amount = Column(Integer, nullable=True,default=0)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<Payment(id={self.id}, for user_id={self.user_id}, amount={self.amount})>"
+    
+
+    @classmethod
+    def create(cls, user_id: int, order_id: str, payment_id: str, amount: int) -> "PaymentModel":
+        """Create a new payment record"""
+        with db():
+            payment = cls(user_id=user_id, order_id=order_id, payment_id=payment_id, amount=amount)
+            db.session.add(payment)
+            db.session.commit()
+            return payment
+    
+    @classmethod
+    def get_by_user_id(cls, user_id: int) -> List["PaymentModel"]:
+        """Get all payments by user ID"""
+        with db():
+            return db.session.query(cls).filter(cls.user_id == user_id).all()
+        
+    @classmethod
+    def get_by_order_id(cls, order_id: str) -> Optional["PaymentModel"]:
+        """Get payment by order ID"""
+        with db():
+            return db.session.query(cls).filter(cls.order_id == order_id).first()
+
+
+
+class AdminTokenModel(Base):
+    __tablename__ = "admin_tokens"
+
+    id = Column(Integer, primary_key=True)
+    token_values = Column(Integer, nullable=True, default=0)
+    free_tokens = Column(Integer, nullable=True, default=0)
+
+
+    @classmethod
+    def ensure_default_exists(cls) -> "AdminTokenModel":
+        """
+        Ensures that a default admin token record exists.
+        Returns the default record (either existing or newly created).
+        """
+        with db():
+            default_token = cls.get_by_id(1)
+            if not default_token:
+                default_token = cls.create()  # Uses default values (id=1, token_values=0)
+            return default_token
+
+    def __repr__(self):
+        return f"<AdminToken(id={self.id}, token_values={self.token_values})>"
+    
+    @classmethod
+    def update_token_values(cls, id: int, token_values: int) -> Optional["AdminTokenModel"]:
+        """Update admin token values"""
+        with db():
+            admin_token = db.session.query(cls).filter(cls.id == id).first()
+            if admin_token:
+                admin_token.token_values = token_values
+                db.session.commit()
+                db.session.refresh(admin_token)
+                return admin_token
+            return None
+    
+    @classmethod
+    def update_free_tokens(cls, id: int, free_tokens: int) -> Optional["AdminTokenModel"]:
+        """Update admin free tokens"""
+        with db():
+            admin_token = db.session.query(cls).filter(cls.id == id).first()
+            if admin_token:
+                admin_token.free_tokens = free_tokens
+                db.session.commit()
+                db.session.refresh(admin_token)
+                return admin_token
+            return None
+    
+    @classmethod
+    def get_by_id(cls, id: int) -> Optional["AdminTokenModel"]:
+        """Get admin token by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id).first()
+        
+    @classmethod
+    def create(cls, id: int = 1, token_values: int = 0, free_tokens: int = 0) -> "AdminTokenModel":
+        """Create a new admin token record with default id=1 and token_values=0"""
+        with db():
+            # Check if record exists first
+            existing = cls.get_by_id(id)
+            if existing:
+                return existing
+            
+            # Create new record if it doesn't exist
+            admin_token = cls(id=id, token_values=token_values, free_tokens=free_tokens)
+            db.session.add(admin_token)
+            db.session.commit()
+            return admin_token
+
+class TokensToConsume(Base):
+    __tablename__ = "tokens_to_consume"
+
+    id = Column(Integer, primary_key=True)
+    token_values = Column(Integer, nullable=True, default=0)
+
+    def __repr__(self):
+        return f"<TokensToConsume(id={self.id}, token_values={self.token_values})>"
+    
+    @classmethod
+    def ensure_default_exists(cls) -> "TokensToConsume":
+        """
+        Ensures that a default tokens to consume record exists.
+        Returns the default record (either existing or newly created).
+        """
+        with db():
+            default_token = cls.get_by_id(1)
+            if not default_token:
+                default_token = cls.create() 
+            return default_token
+    
+    @classmethod
+    def get_by_id(cls, id: int) -> Optional["TokensToConsume"]:
+        """Get tokens to consume by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id).first()
+        
+    @classmethod
+    def create(cls, id: int = 1, token_values: int = 0) -> "TokensToConsume":
+        """Create a new tokens to consume record with default id=1 and token_values=0"""
+        with db():
+            tokens_to_consume = cls(id=id, token_values=token_values)
+            db.session.add(tokens_to_consume)
+            db.session.commit()
+            return tokens_to_consume
+        
+    @classmethod
+    def update_token_values(cls, id: int, token_values: int) -> Optional["TokensToConsume"]:
+        """Update tokens to consume values"""
+        with db():
+            tokens_to_consume = db.session.query(cls).filter(cls.id == id).first()
+            if tokens_to_consume:
+                tokens_to_consume.token_values = token_values
+                db.session.commit()
+                db.session.refresh(tokens_to_consume)
+                return tokens_to_consume
+            return None
+
+
+class KnowledgeBaseFileModel(Base):
+    __tablename__ = "knowledge_base_files"
+
+    id = Column(Integer, primary_key=True)
+    knowledge_base_id = Column(Integer, ForeignKey('knowledge_base.id', ondelete='CASCADE'))
+    file_name = Column(String, nullable=False)
+    file_path = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    text_content = Column(String, nullable=True)
+
+    knowledge_base = relationship("KnowledgeBaseModel", back_populates="files")
+
+    def __repr__(self):
+        return f"<KnowledgeBaseFile(id={self.id}, file_name={self.file_name})>"
+
+    @classmethod
+    def get_by_id(cls, file_id: int) -> Optional["KnowledgeBaseFileModel"]:
+        """Get file by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == file_id).first()  
+    
+    @classmethod
+    def get_all_by_knowledge_base(cls, knowledge_base_id: int) -> List["KnowledgeBaseFileModel"]:
+        """Get all files by knowledge base ID"""
+        with db():
+            return db.session.query(cls).filter(cls.knowledge_base_id == knowledge_base_id).all()
+
+    @classmethod
+    def create(cls, knowledge_base_id: int, file_name: str, file_path: str, text_content: str) -> "KnowledgeBaseFileModel":
+        """Create a new knowledge base file"""
+        with db():
+            file = cls(knowledge_base_id=knowledge_base_id, file_name=file_name, file_path=file_path, text_content=text_content)
+            db.session.add(file)
+            db.session.commit()
+            db.session.refresh(file)
+            return file
+
+    @classmethod
+    def delete(cls, file_id: int) -> bool:
+        """Delete a knowledge base file by ID"""
+        with db():
+            file = db.session.query(cls).filter(cls.id == file_id).first()
+            if file:
+                db.session.delete(file)
+                db.session.commit()
+                return True
+            return False
+
+class CallModel(Base):
+    __tablename__ = "calls"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("agents.id", ondelete="CASCADE"))
+    call_id = Column(String, unique=True, nullable=False)  # Unique identifier for each call
+    variables = Column(JSONB, nullable=True, default={})  # Store variables as JSON
+    created_at = Column(DateTime, default=func.now())
+
+    # Relationship with AgentModel
+    agent = relationship("AgentModel", back_populates="calls")
+
+    @classmethod
+    def get_by_id(cls, call_id: int) -> Optional["CallModel"]:
+        """Get call by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == call_id).first()
+
+    @classmethod
+    def get_by_agent_id(cls, agent_id: int) -> Optional["CallModel"]:
+        """Get call by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).first()
+
+    @classmethod
+    def create(cls, agent_id: int, call_id: str, variables: dict) -> "CallModel":
+        """Create a new call"""
+        with db():
+            call = cls(agent_id=agent_id, call_id=call_id, variables=variables)
+            db.session.add(call)
+            db.session.commit()
+            db.session.refresh(call)
+            return call
+
+    @classmethod
+    def update(cls, call_id: int, variables: dict) -> Optional["CallModel"]:
+        """Update a call"""
+        with db():
+            call = db.session.query(cls).filter(cls.id == call_id).first()
+            if call:
+                call.variables = variables
+                db.session.commit()
+                db.session.refresh(call)
+                return call
+            return None
+
+    @classmethod
+    def delete(cls, call_id: int) -> bool:
+        """Delete a call"""
+        with db():
+            call = db.session.query(cls).filter(cls.id == call_id).first()
+            if call:
+                db.session.delete(call)
+                db.session.commit()
+                return True
+            return False
+
+
+class WebhookModel(Base):
+    __tablename__ = "webhooks"
+
+    id = Column(Integer, primary_key=True)
+    webhook_url = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    is_active = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_by = Column(Integer, ForeignKey('users.id'), nullable=False)
+
+    def __repr__(self):
+        return f"<Webhook(id={self.id}, webhook_url={self.webhook_url})>"
+    
+    @classmethod
+    def get_by_id(cls, id: int) -> Optional["WebhookModel"]:
+        """Get webhook by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id).first()
+    
+    @classmethod
+    def get_all_by_user(cls, user_id: int) -> List["WebhookModel"]:
+        """Get all webhooks by user ID"""
+        with db():
+            return db.session.query(cls).filter(cls.created_by == user_id).all()
+    
+
+    @classmethod
+    def get_by_user(cls, user_id: int) -> Optional["WebhookModel"]:
+        """Get webhook by user ID"""
+        with db():
+            return db.session.query(cls).filter(cls.created_by == user_id).order_by(cls.created_at.desc()).first()
+    
+    @classmethod
+    def create(cls, webhook_url: str, created_by: int) -> "WebhookModel":
+        """Create a new webhook"""
+        with db():
+            webhook = cls(webhook_url=webhook_url, created_by=created_by)
+            db.session.add(webhook)
+            db.session.commit()
+            return webhook
+
+    @classmethod
+    def get_is_active_by_id(cls, id: int) -> Optional["WebhookModel"]:
+        """Get webhook by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id, cls.is_active == True).first()
+
+    @classmethod
+    def get_all(cls) -> List["WebhookModel"]:
+        """Get all webhooks"""
+        with db():
+            return db.session.query(cls).all()
+    
+    @classmethod
+    def check_webhook_exists(cls, webhook_url: str, user_id: int) -> bool:
+        """Check if webhook URL already exists for the user"""
+        with db():
+            webhook = db.session.query(cls).filter(
+                cls.webhook_url == webhook_url,
+                cls.created_by == user_id
+            ).first()
+            return bool(webhook)
+        
+    @classmethod
+    def delete(cls, id: int) -> bool:
+        """Delete a webhook"""
+        with db():
+            webhook = db.session.query(cls).filter(cls.id == id).first()
+            if webhook:
+                db.session.delete(webhook)
+                db.session.commit()
+                return True
+            return False
+    
+    @classmethod
+    def update_webhook_url(cls, id: int, webhook_url: str) -> Optional["WebhookModel"]:
+        """Update a webhook URL"""
+        with db():
+            webhook = db.session.query(cls).filter(cls.id == id).first()
+            if webhook:
+                webhook.webhook_url = webhook_url
+                db.session.commit()
+                db.session.refresh(webhook)
+                return webhook
+            return None
+    
+
+class CustomFunctionModel(Base):
+    __tablename__ = "custom_functions"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey('agents.id', ondelete='CASCADE'))
+    function_name = Column(String, nullable=False)
+    function_description = Column(String, nullable=False)
+    function_url = Column(String, nullable=False)
+    function_timeout = Column(Integer, nullable=True)
+    function_parameters = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    agent = relationship("AgentModel", back_populates="custom_functions")
+
+    def __repr__(self):
+        return f"<CustomFunction(id={self.id}, function_name={self.function_name})>"
+    
+    @classmethod
+    def get_by_id(cls, id: int) -> Optional["CustomFunctionModel"]:
+        """Get custom function by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id).first()
+    
+    @classmethod
+    def get_all_by_agent(cls, agent_id: int) -> List["CustomFunctionModel"]:
+        """Get all custom functions by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
+        
+    @classmethod
+    def create(
+        cls, 
+        agent_id: int, 
+        function_name: str, 
+        function_description: str, 
+        function_url: str, 
+        function_timeout: Optional[int] = None,  # Optional with default None
+        function_parameters: Optional[dict] = None  # Optional with default None
+    ) -> "CustomFunctionModel":
+        """Create a new custom function with optional fields"""
+
+        # Ensure function_parameters is a valid JSONB format
+        if function_parameters is None:
+            function_parameters = {}
+
+        with db():
+            function = cls(
+                agent_id=agent_id, 
+                function_name=function_name, 
+                function_description=function_description, 
+                function_url=function_url, 
+                function_timeout=function_timeout, 
+                function_parameters=function_parameters
+            )
+            db.session.add(function)
+            db.session.commit()
+            db.session.refresh(function)
+            return function
+        
+    @classmethod
+    def delete(cls, id: int) -> bool:
+        """Delete a custom function"""
+        with db():
+            function = db.session.query(cls).filter(cls.id == id).first()
+            if function:
+                db.session.delete(function)
+                db.session.commit()
+                return True
+            return False
+
+    @classmethod
+    def get_all_by_agent_id(cls, agent_id: int) -> List["CustomFunctionModel"]:
+        """Get all custom functions by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all() 
+        
+    @classmethod
+    def get_by_name(cls, function_name: str, agent_id: int) -> Optional["CustomFunctionModel"]:
+        """Get custom function by name"""
+        with db():
+            return db.session.query(cls).filter(cls.function_name == function_name, cls.agent_id == agent_id).first()
+
+
+class ApprovedDomainModel(Base):
+    __tablename__ = "approved_domains"
+
+    id = Column(Integer, primary_key=True)
+    domain = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # ✅ Ensure ForeignKey exists
+    creator = relationship("UserModel", back_populates="approved_domains")  # Must match
+
+    def __repr__(self):
+        return f"<ApprovedDomain(id={self.id}, domain={self.domain})>"
+    
+    @classmethod
+    def get_all(cls) -> List["ApprovedDomainModel"]:
+        """Get all approved domains"""
+        with db():
+            return db.session.query(cls).all()
+        
+    @classmethod
+    def create(cls, domain: str, created_by: int) -> "ApprovedDomainModel":
+        """Create a new approved domain"""
+        with db():
+            domain = cls(domain=domain, created_by=created_by)
+            db.session.add(domain)
+            db.session.commit()
+            db.session.refresh(domain)
+            return domain
+    
+    @classmethod
+    def get_all_by_user(cls, user_id: int) -> List["ApprovedDomainModel"]:
+        """Get all approved domains by user ID"""
+        with db():
+            return db.session.query(cls).filter(cls.created_by == user_id).order_by(cls.created_at.desc()).all()
+    
+    @classmethod
+    def check_domain_exists(cls, domain: str, user_id: int) -> bool:
+        """Check if a domain exists for a user"""
+        with db():
+            return db.session.query(cls).filter(cls.domain == domain, cls.created_by == user_id).first() is not None
+    
+    @classmethod
+    def delete(cls, id: int) -> bool:
+        """Delete an approved domain"""
+        with db():
+            domain = db.session.query(cls).filter(cls.id == id).first()
+            if domain:
+                db.session.delete(domain)
+                db.session.commit()
+                return True
+            return False
+
 Base.metadata.create_all(engine)
+

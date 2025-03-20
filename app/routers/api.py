@@ -6,9 +6,14 @@ from .schemas.format import (
 from app.core import logger
 from app.services import AudioStorage
 from starlette.responses import JSONResponse, RedirectResponse
-from app.databases.models import AudioRecordModel, UserModel, AgentModel, ResetPasswordModel
+from app.databases.models import (
+    AudioRecordModel, UserModel,
+    AgentModel, ResetPasswordModel, 
+    AgentConnectionModel, PaymentModel, 
+    AdminTokenModel, AudioRecordings, 
+    TokensToConsume, ApprovedDomainModel)
 from app.databases.schema import  AudioRecordListSchema
-import json
+import json, re
 import bcrypt
 from app.utils.helper import make_outbound_call, generate_twiml
 from fastapi_mail import FastMail, MessageSchema,ConnectionConfig
@@ -17,13 +22,19 @@ import uuid
 from pydantic import BaseModel
 from datetime import datetime
 import shutil
-import os
-from app.databases.models import KnowledgeBaseModel
-from app.utils.helper import extract_text_from_file
+import json
+from app.databases.models import KnowledgeBaseModel, KnowledgeBaseFileModel, WebhookModel, CustomFunctionModel
+from app.utils.helper import extract_text_from_file, generate_agent_prompt
 from config import MEDIA_DIR  # ✅ Import properly
+import razorpay
+from app.utils.helper import verify_razorpay_signature
+from jinja2 import Environment, meta
+
+
 
 router = APIRouter(prefix="/api")
 
+razorpay_client = razorpay.Client(auth=(os.getenv("RAZOR_KEY_ID"), os.getenv("RAZOR_KEY_SECRET")))
 
 class EmailSettings(BaseModel):
     MAIL_USERNAME: str = os.getenv("MAIL_USERNAME")
@@ -254,73 +265,87 @@ async def user_register(request: Request):
         name = data.get("name") 
         password = data.get("password")
 
-        # Validate email format
-        if not email or "@" not in email:
-            error_response = {
-                "status": "error", 
-                "error": "Invalid email format",
-                "status_code": 400
+        try:
+            # Validate email format
+            if not email or "@" not in email:
+                error_response = {
+                    "status": "error", 
+                    "error": "Invalid email format",
+                    "status_code": 400
+                }
+                return JSONResponse(
+                    status_code=400,
+                    content=error_response
+                )
+
+            # Use filter method instead of get_by_email
+            user = UserModel.get_by_email(email)
+            if user:
+                error_response = {
+                    "status": "error", 
+                    "error": "User already exists",
+                    "status_code": 400
+                }
+                return JSONResponse(
+                    status_code=400,
+                    content=error_response
+                )
+            email_token = uuid.uuid4()
+
+            token_values = AdminTokenModel.get_by_id(1)
+
+            if not token_values:
+                token_values = 20
+            else:
+                token_values = token_values.free_tokens
+
+            user = UserModel.create(email=email, name=name, password=password, is_verified=False, tokens=token_values)
+            if not ResetPasswordModel.get_by_email(email):    
+                ResetPasswordModel.create(email=email, token=email_token)
+            else:
+                ResetPasswordModel.update(email=email, token=email_token)
+
+            template = f"""
+                        <html>
+                        <body>                    
+
+                        <p>Hi {user.name} !!!
+                                <br>Please click on the link below to verify your account
+                                <br>
+                                <a href="http://localhost:8000/verify-account/{email_token}">Verify Account</a>
+                                <br>
+                                <br>
+                                <br>
+                                <br>
+                                </p>
+                        </body>
+                        </html>
+                        """
+
+            message = MessageSchema(
+                subject="Verify Account",
+                recipients=[email],
+                body=template,
+                subtype="html"
+                )
+
+            fm = FastMail(conf)
+            await fm.send_message(message)
+            response_data = {
+                "status": "success",
+                "message": "User registered successfully",
+                "status_code": 200
             }
             return JSONResponse(
-                status_code=400,
-                content=error_response
+                status_code=200,
+                content=response_data
             )
-
-        # Use filter method instead of get_by_email
-        user = UserModel.get_by_email(email)
-        if user:
-            error_response = {
-                "status": "error", 
-                "error": "User already exists",
-                "status_code": 400
-            }
-            return JSONResponse(
-                status_code=400,
-                content=error_response
-            )
-        email_token = uuid.uuid4()
-        # Create user using SQLAlchemy
-        user = UserModel.create(email=email, name=name, password=password, is_verified=False)
-        if not ResetPasswordModel.get_by_email(email):    
-            ResetPasswordModel.create(email=email, token=email_token)
-        else:
-            ResetPasswordModel.update(email=email, token=email_token)
-
-        template = f"""
-                    <html>
-                    <body>                    
-
-                    <p>Hi {user.name} !!!
-                            <br>Please click on the link below to verify your account
-                            <br>
-                            <a href="http://localhost:8000/verify-account/{email_token}">Verify Account</a>
-                            <br>
-                            <br>
-                            <br>
-                            <br>
-                            </p>
-                    </body>
-                    </html>
-                    """
-
-        message = MessageSchema(
-            subject="Verify Account",
-            recipients=[email],
-            body=template,
-            subtype="html"
-            )
-
-        fm = FastMail(conf)
-        await fm.send_message(message)
-        response_data = {
-            "status": "success",
-            "message": "User registered successfully",
-            "status_code": 200
-        }
-        return JSONResponse(
-            status_code=200,
-            content=response_data
-        )
+    
+        except Exception as e:
+            if user:
+                UserModel.delete(user.id)
+                raise e
+        
     except json.JSONDecodeError:
         error_response = {
             "status": "error", 
@@ -382,6 +407,8 @@ async def create_new_agent(request: Request):
             selected_language=selected_language,
             phone_number=phone_number
         )
+
+        agent_connection = AgentConnectionModel.create(agent_id=agent.id)
         if selected_knowledge_base:
             from sqlalchemy.orm import sessionmaker
             from app.databases.models import engine
@@ -491,14 +518,15 @@ async def edit_agent(request: Request):
                 session.execute(delete_stmt)
                 session.commit()  # Ensure deletion is applied
 
-            # If no association exists, insert a new one
-            if not existing_association or existing_association.knowledge_base_id != selected_knowledge_base:
-                stmt = insert(agent_knowledge_association).values(
-                    agent_id=agent_id, 
-                    knowledge_base_id=selected_knowledge_base
-                )
-                session.execute(stmt)
-                session.commit()
+            if selected_knowledge_base:
+                # If no association exists, insert a new one
+                if not existing_association or existing_association.knowledge_base_id != selected_knowledge_base:
+                    stmt = insert(agent_knowledge_association).values(
+                        agent_id=agent_id, 
+                        knowledge_base_id=selected_knowledge_base
+                    )
+                    session.execute(stmt)
+                    session.commit()
 
             return JSONResponse(
                 status_code=200,
@@ -717,7 +745,7 @@ async def send_mail(request: Request):
 
         fm = FastMail(conf)
         await fm.send_message(message)
-        return JSONResponse(status_code=200, content={"message": "email has been sent"})
+        return JSONResponse(status_code=200, content={"message": "email has been sent","status": "success", "status_code": 200})
     except Exception as e:
         error_response = {
             "status": "error", 
@@ -827,7 +855,9 @@ async def call_agent(request: Request):
                 content={"status": "error", "error": "Agent not found", "status_code": 400},
             )
         url =  request.base_url
-        xml = generate_twiml(agent,url)
+        user = request.session.get("user")
+        user_id = user.get("user_id")
+        xml = generate_twiml(agent,url, user_id)
         call = make_outbound_call(xml)
         if call:
             os.remove(xml)
@@ -847,53 +877,87 @@ async def call_agent(request: Request):
             content={"status": "error", "error": f"Error calling agent: {str(e)}", "status_code": 500},
         )
 
+
+
 @router.post("/upload_knowledge_base", name="upload_knowledge_base")
 async def upload_knowledge_base(request: Request):
-    temp_file_path = None
+    uploaded_files = []
     try:
         data = await request.form()
-        # Validate file extension
-        attachment = data.get("attachment")
         name = data.get("name")
-        allowed_extensions = {".pdf", ".docx", ".txt"}
-        file_ext = os.path.splitext(attachment.filename)[1].lower()
-        if file_ext not in allowed_extensions:
+        attachments = data.getlist("attachments[]")  # Get multiple files
+        
+        if not attachments:
             return JSONResponse(
-                status_code=400, content={"status": "error", "message": "Unsupported file type."}
+                status_code=400, content={"status": "error", "message": "No files uploaded."}
             )
 
-        # Save file temporarily
-        temp_file_path = f"knowledge_base_files/{uuid.uuid4()}_{attachment.filename}"
-        file_path = os.path.join(MEDIA_DIR, temp_file_path)
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(attachment.file, buffer)
+        allowed_extensions = {".pdf", ".docx", ".txt"}
+        user = request.session.get("user")
 
-        # Extract text
-        text_content = extract_text_from_file(file_path)
-        if not text_content.strip():
-            os.remove(file_path)
+        if len(attachments) > 5:
             return JSONResponse(
                 status_code=400,
-                content={"status": "error", "message": "No readable text found in the uploaded file."},
+                content={"status": "error", "message": "You can upload a maximum of 5 files."}
             )
-        user = request.session.get("user")
-        # Save to database
-        new_knowledge_base = KnowledgeBaseModel.create(
-            created_by_id=user.get("user_id"),
-            knowledge_base_name=name,
-            attachment_path=temp_file_path,
-            text_content=text_content,
-            attachment_name=attachment.filename
-        )
-   
+
+        # Check if Knowledge Base already exists
+        knowledge_base = KnowledgeBaseModel.get_by_name(name, user.get("user_id"))
+
+        if not knowledge_base:
+            knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=name)
+
+        # Process and store each file
+        for attachment in attachments:
+            file_ext = os.path.splitext(attachment.filename)[1].lower()
+            if file_ext not in allowed_extensions:
+                return JSONResponse(
+                    status_code=400, content={"status": "error", "message": f"Unsupported file type: {attachment.filename}"}
+                )
+
+            # Save file temporarily
+            temp_file_path = f"knowledge_base_files/{uuid.uuid4()}_{attachment.filename}"
+            file_path = os.path.join(MEDIA_DIR, temp_file_path)
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(attachment.file, buffer)
+
+            # Extract text
+            text_content = extract_text_from_file(file_path)
+            if not text_content.strip():
+                os.remove(file_path)
+                return JSONResponse(
+                    status_code=400,
+                    content={"status": "error", "message": f"No readable text found in {attachment.filename}."}
+                )
+
+            # Save file details to database
+            KnowledgeBaseFileModel.create(
+                knowledge_base_id=knowledge_base.id,
+                file_name=attachment.filename,
+                file_path=temp_file_path,
+                text_content=text_content
+            )
+            uploaded_files.append(attachment.filename)
+
         return JSONResponse(
-            status_code=200, content={"status": "success", "message": "Knowledge base uploaded successfully"}
+            status_code=200,
+            content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "uploaded_files": uploaded_files}
         )
 
     except Exception as e:
-        if temp_file_path and os.path.exists(temp_file_path):
-            os.remove(temp_file_path)  # Ensure cleanup on error
-        print("Error", str(e))
+        knowledge_base = KnowledgeBaseModel.get_by_name(name, user.get("user_id"))
+        if knowledge_base:
+            files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+            for file in files:
+                KnowledgeBaseFileModel.delete(file.id)
+            KnowledgeBaseModel.delete(knowledge_base.id)
+        # Cleanup any saved files on error
+        
+        for file_path in uploaded_files:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+
+        print("Error:", str(e))
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
 
@@ -903,3 +967,767 @@ async def delete_knowledge_base(request: Request):
     knowledge_base_id = data.get("knowledge_base_id")
     KnowledgeBaseModel.delete(knowledge_base_id)
     return JSONResponse(status_code=200, content={"status": "success", "message": "Knowledge base deleted successfully"})
+
+
+
+@router.post("/save_changes", name="save_changes")
+async def save_changes(request: Request):
+    try:
+
+        data = await request.json()
+
+        required_fields = ["agent_id", "icon_url", "primary_color", "secondary_color", "pulse_color"]
+        for field in required_fields:
+            if not data.get(field):
+                return JSONResponse(
+                    status_code=400,
+                    content={"status": "error", "message": f"Missing required field: {field}"}
+                )
+
+        agent_id = data.get("agent_id")
+        icon_url = data.get("icon_url")
+        primary_color = data.get("primary_color") 
+        secondary_color = data.get("secondary_color")
+        pulse_color = data.get("pulse_color")
+
+        connection = AgentConnectionModel.get_by_agent_id(agent_id)
+        if connection:
+            AgentConnectionModel.update_connection(
+                agent_id,
+                icon_url=icon_url,
+                primary_color=primary_color,
+                secondary_color=secondary_color,
+                pulse_color=pulse_color
+            )
+        else:
+            AgentConnectionModel.create_connection(
+                agent_id, 
+                icon_url,
+                primary_color,
+                secondary_color,
+                pulse_color
+            )
+        return JSONResponse(
+            status_code=200,
+            content={"status": "success", "message": "Agent connection created successfully"}
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+        )
+
+@router.get("/get_agent_connection", name="get_agent_connection")
+async def get_agent_connection(request: Request, agent_id: str):
+    try:
+        connection = AgentConnectionModel.get_by_agent_id(agent_id)
+        if connection:
+            connection_data = {
+                "icon_url": connection.icon_url,
+                "primary_color": connection.primary_color,
+                "secondary_color": connection.secondary_color,
+                "pulse_color": connection.pulse_color
+            }
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": "Agent connection fetched successfully",
+                    "data": connection_data
+                }
+            )
+        else:
+            return JSONResponse(    
+                status_code=200,
+                content={"status": "success", "message": "Agent connection not found", "data": {}}
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+        )
+
+
+@router.post("/razorpay_payment", name="razorpay_payment")
+async def razorpay_payment(request: Request):
+    try:
+        
+        data = await request.json()
+        amount = data.get("amount")
+        
+        if not amount or int(amount) < 0:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Invalid amount. Minimum amount is INR 1"}
+            )
+            
+        currency = "INR"
+        email = request.session.get("user", {}).get("email","")
+        
+        amount_in_paise = int(float(amount)) * 100
+        
+        order_data = {
+            "amount": amount_in_paise,
+            "currency": currency,
+            "receipt": f"receipt_{amount}_{email}",
+            "payment_capture": 1,  
+        }
+        
+        order = razorpay_client.order.create(order_data)
+        order_id = order.get("id")
+        
+
+        coins = int(amount_in_paise / 100)
+        
+        response_data = {
+            "razorpay_order_id": order_id,
+            "razorpay_key_id": razorpay_client.auth[0],
+            "amount": amount_in_paise,
+            "currency": currency,
+            "description": f"Purchase of {coins} tokens",
+            "email": email,
+            "prefill": {
+                "email": email,
+            },
+            "coins": coins
+        }
+        
+        return JSONResponse(
+            status_code=200,
+            content={"status": "success", "message": "Order created successfully", "data": response_data}
+        )
+
+    except Exception as e:
+        print(f"Razorpay error: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+        )
+    
+
+@router.get("/razorpay_callback", name="razorpay_callback")
+async def razorpay_callback(request: Request):
+    try:
+        payment_data = request.query_params
+        razorpay_payment_id = payment_data.get("razorpay_payment_id", "")
+        razorpay_order_id = payment_data.get("razorpay_order_id", "")
+        razorpay_signature = payment_data.get("razorpay_signature", "")
+        
+        is_valid = verify_razorpay_signature(
+            razorpay_order_id, 
+            razorpay_payment_id, 
+            razorpay_signature
+        )
+        
+        if is_valid:
+            payment = razorpay_client.payment.fetch(razorpay_payment_id)
+            
+            amount = int(payment["amount"]) / 100 
+            email = payment.get("email", request.session.get("user", {}).get("email", ""))
+            
+            user = UserModel.get_by_email(email)
+            if user:
+                previous_tokens = user.tokens
+                if previous_tokens is None:
+                    previous_tokens = 0
+                new_tokens = int(previous_tokens) + int(amount)
+                UserModel.update_tokens(user.id, new_tokens)
+
+                PaymentModel.create(
+                    user_id=user.id,
+                    order_id=razorpay_order_id,
+                    payment_id=razorpay_payment_id,
+                    amount=int(amount)
+                )
+            
+            return RedirectResponse(
+                url=f"/payment_success?order_id={razorpay_order_id}&amount={int(amount)}&coins={int(amount)}",
+                status_code=303
+            )
+        else:
+            return RedirectResponse(
+                url="/payment_failed?message=verification_failed",
+                status_code=303
+            )
+    
+    except Exception as e:
+        print(f"Razorpay callback error: {str(e)}")
+        return RedirectResponse(
+            url=f"/payment_failed?message=error&error={str(e)}",
+            status_code=303
+        )
+
+
+
+@router.delete("/delete_audio_recording", name="delete_audio_recording")
+async def delete_audio_recording(request: Request):
+    try:
+        audio_recording_id = request.query_params.get("audio_recording_id")
+        if not audio_recording_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Audio recording ID is required"})
+        AudioRecordings.delete(audio_recording_id)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Audio recording deleted successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/admin_login", name="admin_login")
+async def admin_login(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    password = data.get("password")
+    if not email or not password:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Email and password are required"})
+    user = UserModel.get_by_email(email)
+    if not user:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "User not found"})
+    if not bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid email or password"})
+    if user.is_admin == False:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "User is not an admin"})
+    
+    from datetime import datetime, timedelta
+    # Create session data for 24 hours
+    session = request.session
+    session["admin_email"] = email
+    session["is_admin"] = True
+    session["expiry"] = (datetime.now() + timedelta(hours=24)).timestamp()
+
+    return JSONResponse(status_code=200, content={"status": "success", "message": "Admin login successful"})
+
+@router.post("/admin_signup", name="admin_signup")
+async def admin_signup(request: Request):
+    data = await request.json()
+    email = data.get("email")
+    password = data.get("password")
+    confirm_password = data.get("confirm_password")
+    if not email or not password or not confirm_password:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Email and password are required"})
+    user = UserModel.get_by_email(email)
+    if user:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "User already exists"})
+    if password != confirm_password:
+        return JSONResponse(status_code=400, content={"status": "error", "message": "Passwords do not match"})
+    UserModel.create_admin(email, password)
+    return JSONResponse(status_code=200, content={"status": "success", "message": "Admin signup successful"})
+
+
+@router.post("/update_tokens", name="update_tokens")
+async def update_tokens(request: Request):
+    try:    
+        data = await request.json()
+        tokens = data.get("tokens")
+        if not tokens:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Tokens are required"})
+        TokensToConsume.update_token_values(1, tokens)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Tokens updated successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/update_free_tokens", name="update_free_tokens")
+async def update_free_tokens(request: Request):
+    try:
+        data = await request.json()
+        tokens = int(data.get("tokens"))
+        type = data.get("type")
+        if type == "token_value":
+            AdminTokenModel.update_token_values(1, tokens)
+        elif type == "free_token":
+            AdminTokenModel.update_free_tokens(1, tokens)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Tokens updated successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.delete("/delete_file", name="delete_file")
+async def delete_file(request: Request):
+    try:
+        data = await request.json()
+        file_id = int(data.get("file_id"))
+        knowledge_base_id = int(data.get("knowledge_base_id"))
+        file = KnowledgeBaseFileModel.get_by_id(file_id)
+        if file:
+            if file.knowledge_base_id == knowledge_base_id:
+                # Get all files for this knowledge base
+                files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base_id)
+                
+                # Delete the requested file
+                KnowledgeBaseFileModel.delete(file_id)
+                
+                # If this was the last file, delete the knowledge base too
+                if len(files) == 1:  # Only had 1 file which we just deleted
+                    KnowledgeBaseModel.delete(knowledge_base_id)
+                    return JSONResponse(status_code=200, content={
+                        "status": "success", 
+                        "message": "File and knowledge base deleted successfully"
+                    })
+                
+                return JSONResponse(status_code=200, content={
+                    "status": "success", 
+                    "message": "File deleted successfully"
+                })
+            else:
+                return JSONResponse(status_code=400, content={
+                    "status": "error", 
+                    "message": "File not found"
+                })
+        else:
+            return JSONResponse(status_code=400, content={
+                "status": "error", 
+                "message": "File not found"
+            })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={
+            "status": "error", 
+            "message": "Something went wrong!", 
+            "error": str(e)
+        })
+
+@router.post("/update_knowledge_base", name="update_knowledge_base")
+async def update_knowledge_base(request: Request):
+    try:
+        data = await request.json()
+        knowledge_base_id = data.get("knowledge_base_id")
+        new_name = data.get("new_name")
+        KnowledgeBaseModel.update_name(knowledge_base_id, new_name)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Knowledge base name updated successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/upload_file", name="upload_file")
+async def upload_file(request: Request):
+    try:
+        data = await request.form()
+        file = data.get("file")
+        knowledge_base_id = data.get("knowledge_base_id")
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        allowed_extensions = {".pdf", ".docx", ".txt"}
+
+        if file_ext not in allowed_extensions:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Unsupported file type"})
+        
+        # Check if knowledge base already has 5 files
+        existing_files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base_id)
+        if len(existing_files) >= 5:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Maximum limit of 5 files reached for this knowledge base."}
+            )
+        # Save file temporarily
+        temp_file_path = f"knowledge_base_files/{uuid.uuid4()}_{file.filename}"
+        file_path = os.path.join(MEDIA_DIR, temp_file_path)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Extract text
+        text_content = extract_text_from_file(file_path)
+        if not text_content.strip():
+            os.remove(file_path)
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": f"No readable text found in {file.filename}."}
+            )
+        KnowledgeBaseFileModel.create(
+            knowledge_base_id=knowledge_base_id,
+            file_path=temp_file_path,
+            file_name=file.filename,
+            text_content=text_content
+        )
+        return JSONResponse(status_code=200, content={"status": "success", "message": "File uploaded successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+
+
+
+@router.post("/agent_prompt_suggestion", name="agent_prompt_suggestion")
+async def agent_prompt_suggestion(request: Request):
+    try:
+        data = await request.json()
+        print(data)
+        agent_function = data.get("agent_function")
+        agent_tone = data.get("agent_tone")
+        level_of_detail = data.get("level_of_detail")
+        industry = data.get("industry")
+        agent_name = data.get("agent_name", "")
+
+        prompt = generate_agent_prompt(agent_function, agent_tone, level_of_detail, industry, agent_name)
+        if prompt:
+            return JSONResponse(status_code=200, content={"status": "success", "message": "Prompt generated successfully", "prompt": prompt})
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Some error occured while generating prompt, please try again later!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/save-agent-prompt", name="save-agent-prompt")
+async def save_agent_prompt(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        agent_prompt = data.get("agent_prompt")
+
+        # Create Jinja2 environment
+        env = Environment()
+        # Parse the template
+        parsed_template = env.parse(agent_prompt)
+        # Get all variables used in the template
+        variables = meta.find_undeclared_variables(parsed_template)
+        
+        # Get existing dynamic variables if any
+        agent = AgentModel.get_by_id(agent_id) if agent_id else None
+        existing_variables = agent.dynamic_variables if agent and hasattr(agent, 'dynamic_variables') else {}
+        
+        # Preserve existing values or use empty string for new variables
+        dynamic_variables = {
+            var: existing_variables.get(var, "") for var in variables
+        }
+        
+        # Save dynamic variables to agent model
+        if agent_id and dynamic_variables:
+            AgentModel.update_dynamic_variables(agent_id, dynamic_variables)
+        if agent_id:
+            if agent:
+                AgentModel.update_prompt(agent_id, agent_prompt)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Prompt saved successfully", "dynamic_variables": dynamic_variables})
+            else:
+                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/save-welcome-message", name="save-welcome-message")
+async def save_agent_welcome_message(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        welcome_message = data.get("welcome_msg")
+        if agent_id:
+            agent = AgentModel.get_by_id(agent_id)
+            if agent:
+                AgentModel.update_welcome_message(agent_id, welcome_message)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Welcome message saved successfully"})
+            else:
+                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/update-agent", name="update-agent")
+async def update_agent(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        selected_voice = data.get("selected_voice")
+        if agent_id:
+            agent = AgentModel.get_by_id(agent_id)
+            if agent:
+                AgentModel.update_voice(agent_id, selected_voice)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Voice updated successfully"})
+            else:
+                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/attach-knowledge-base", name="attach-knowledge-base")
+async def attach_knowledge_base(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        knowledge_base_id = data.get("knowledge_base_id")
+        if agent_id:
+            agent = AgentModel.get_by_id(agent_id)
+            if agent:
+                from sqlalchemy.orm import sessionmaker
+                from app.databases.models import engine
+                from sqlalchemy import insert, select, delete
+                from app.databases.models import agent_knowledge_association
+                Session = sessionmaker(bind=engine)
+                session = Session() 
+            
+                # Check if the association already exists
+                query = select(agent_knowledge_association).where(
+                    agent_knowledge_association.c.agent_id == agent_id
+                )
+                result = session.execute(query)
+                existing_association = result.fetchone()
+
+                # If the agent has a different knowledge base, delete the old one
+                if existing_association and existing_association.knowledge_base_id != knowledge_base_id:
+                    delete_stmt = delete(agent_knowledge_association).where(
+                        agent_knowledge_association.c.agent_id == agent_id
+                    )
+                    session.execute(delete_stmt)
+                    session.commit()  # Ensure deletion is applied
+
+                if knowledge_base_id:
+                    # If no association exists, insert a new one
+                    if not existing_association or existing_association.knowledge_base_id != knowledge_base_id:
+                        stmt = insert(agent_knowledge_association).values(
+                            agent_id=agent_id, 
+                            knowledge_base_id=knowledge_base_id
+                        )
+                        session.execute(stmt)
+                        session.commit()
+
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "success", "message": "Agent updated successfully", "status_code": 200}
+                )
+            else:
+                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/toggle-design", name="toggle-design")
+async def toggle_design(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        is_enabled = data.get("is_enabled")
+        if agent_id:
+            agent = AgentModel.get_by_id(agent_id)
+            if agent:
+                AgentModel.update_design(agent_id, is_enabled)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Design toggle updated successfully"})
+            else:
+                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/save-webhook", name="save-webhook")
+async def save_webhook(request: Request):
+    try:
+        data = await request.json()
+        webhook_url = data.get("webhook_url")
+        user = request.session.get("user")
+        user = UserModel.get_by_email(user.get("email"))
+        if not user:
+            error_response = {
+                "status": "error", 
+                "error": "User not found",
+                "status_code": 400
+            }
+            return JSONResponse(
+                status_code=400,
+                content=error_response)
+        if WebhookModel.check_webhook_exists(webhook_url, user.id):
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook URL already exists"})
+        if webhook_url:
+            webhook = WebhookModel.create(webhook_url, user.id)
+            return JSONResponse(status_code=200, content={"status": "success", "message": "Webhook saved successfully"})
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook URL is required"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/update-webhook", name="update-webhook")
+async def update_webhook(request: Request):
+    try:
+        data = await request.json()
+        webhook_id = data.get("webhook_id")
+        webhook_url = data.get("webhook_url")
+        if webhook_id:
+            webhook = WebhookModel.get_by_id(webhook_id)
+            if webhook:
+                WebhookModel.update_webhook_url(webhook_id, webhook_url)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Webhook updated successfully"})
+            else:
+                return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook not found"})
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook ID is required"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/custom-functions", name="custom-functions")
+async def custom_functions(request: Request):
+    try:
+        data = await request.json()
+        
+        function_name = data.get("function_name")
+        function_description = data.get("function_description")
+        function_url = data.get("function_url")
+        function_timeout = data.get("function_timeout")
+        function_parameters = data.get("function_parameters", {})
+        function_timeout = data.get('function_timeout')
+        if not function_timeout:
+            function_timeout = None  # or set a default integer like 0
+
+
+        # Ensure function_parameters is a valid JSON string
+        if isinstance(function_parameters, str):
+            function_parameters = json.loads(function_parameters)
+
+        agent_id = data.get("agent_id")
+
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+
+        # Ensure correct parameter order when calling create()
+        obj = CustomFunctionModel.create(
+            agent_id=agent_id, 
+            function_name=function_name, 
+            function_description=function_description, 
+            function_url=function_url, 
+            function_timeout=function_timeout, 
+            function_parameters=function_parameters
+        )
+        response_data = {
+            "id": obj.id,
+            "function_name": obj.function_name,
+            "function_description": obj.function_description,
+            "function_url": obj.function_url,
+            "function_timeout": obj.function_timeout,
+            "function_parameters": obj.function_parameters
+        }
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Custom function saved successfully", "data": response_data})
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+    
+@router.get("/get-custom-functions", name="get-custom-functions")
+async def get_custom_functions(request: Request):
+    try:
+        function_id =request.query_params.get('function_id')
+        function = CustomFunctionModel.get_by_id(function_id)
+        if function:
+            function_data = {
+                "id": function.id,
+                "function_name": function.function_name,
+                "function_description": function.function_description,
+                "function_url": function.function_url,
+                "function_timeout": function.function_timeout,
+                "function_parameters": function.function_parameters
+            }
+            response = {
+                "status": "success",
+                "message": "Custom functions fetched successfully",
+                "data": function_data
+            }
+            return JSONResponse(status_code=200, content=response)
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Custom function not found"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.delete("/delete-custom-functions", name="delete-custom-functions")
+async def delete_custom_functions(request: Request):
+    try:
+        data = await request.json()
+        function_id = data.get("function_id")
+        CustomFunctionModel.delete(function_id)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Custom function deleted successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/save-variables", name="save-variables")
+async def save_variables(request: Request):
+    try:
+        data = await request.json()
+        variables = data.get("variables", {})
+        agent_id = data.get("agent_id")
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+        
+        # Update dynamic variables in the agent model
+        AgentModel.update_dynamic_variables(agent_id, variables)
+        
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Variables saved successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.delete("/remove-variable", name="remove-variable")
+async def remove_variable(request: Request):
+    try:
+        data = await request.json()
+        variable_id = data.get("variable_id")
+        agent_id = data.get("agent_id")
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+        dynamic_variables = agent.dynamic_variable
+        if variable_id in dynamic_variables:
+            del dynamic_variables[variable_id] 
+        AgentModel.update_dynamic_variables(agent_id, dynamic_variables)
+        
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Variable removed successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/add-approved-domain", name="add-approved-domain")
+async def add_approved_domain(request: Request):
+    try:
+        data = await request.json()
+        domain = data.get("domain")
+        user = request.session.get("user")
+        user = UserModel.get_by_email(user.get("email"))
+        if not user:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "User not found"})
+        if ApprovedDomainModel.check_domain_exists(domain, user.id):
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Domain already exists"})
+        domain = ApprovedDomainModel.create(domain, user.id)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Domain added successfully", "domain_id": domain.id})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.delete("/delete-approved-domain", name="delete-approved-domain")
+async def delete_approved_domain(request: Request):
+    try:
+        data = await request.json()
+        domain_id = data.get("domain_id")
+        if not domain_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Domain ID is required"})
+        ApprovedDomainModel.delete(domain_id)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Domain deleted successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+
+@router.post("/check-payload", name="check-payload")
+async def check_payload(request: Request):
+    try:
+        data = await request.json()
+        print(data, "-------------check payload-----------")    
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Custom functions fetched successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/toggle-webhook", name="toggle-webhook")
+async def toggle_webhook(request: Request):
+    try:
+        data = await request.json()
+        print(data, "-------------toggle-webhook-----------")    
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Custom functions fetched successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})

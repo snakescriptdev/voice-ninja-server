@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Agent India</title>
+    <link rel="stylesheet" href="/static/Adminpanel/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/static/Adminpanel/css/style.css">
+    <link rel="stylesheet" href="/static/Adminpanel/css/responsive.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick-theme.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+        <!-- Fix: Load jQuery before toastr -->
+        <script src="/static/Adminpanel/js/jquery.min.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css">
+</head>
+
+<body>
+
+    <section class="login_page">
+        <div class="container">
+            <div class="login-container">
+                <form>
+                    <div class="mb-3">
+                        <label for="emailInput" class="form-label">Email Address</label>
+                        <input type="email" class="form-control" id="emailInput" placeholder="Enter your email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="passwordInput" class="form-label">Password</label>
+                        <input type="text" class="form-control" id="passwordInput" placeholder="Enter your password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="confirmPasswordInput" class="form-label">Confirm Password</label>
+                        <input type="password" class="form-control" id="confirmPasswordInput" placeholder="Confirm your password" required>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary mt-3">Sign Up</button>
+                     <a href="/admin/" class="btn btn-secondary mt-3">Log In</a>
+                </form>
+            </div>
+        </div>
+    </section>
+        
+</body>
+<script src="/static/Adminpanel/js/jquery.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="/static/Adminpanel/js/bootstrap.bundle.min.js"></script>
+<script>
+    $(document).ready(function() {
+        $('form').submit(function(e) {
+            e.preventDefault();
+            var email = $('#emailInput').val();
+            var password = $('#passwordInput').val();   
+            var confirm_password = $('#confirmPasswordInput').val();
+            if (password != confirm_password) {
+                toastr.error('Passwords do not match');
+                return;
+            }
+            $.ajax({
+                url: '/api/admin_signup',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    email: email,
+                    password: password, 
+                    confirm_password: confirm_password
+                }),
+                success: function(response) {
+                    toastr.success('Admin signup successful');
+                    setTimeout(function() {
+                        window.location.href = '/admin/';
+                    }, 1000);
+                },
+                error: function(response) {
+                    toastr.error('Admin signup failed');
+                }
+            });
+        });
+    });
+</script>
+</html>

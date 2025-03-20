@@ -62,8 +62,15 @@ function editHeading() {
     input.type = "text";
     input.className = "form-control"; // Changed from input.class to input.className
     input.value = currentText;
+    
     input.onblur = function () { // Save the new text when input loses focus
         heading.innerHTML = input.value + ' <span onclick="editHeading()"><img src="/static/Web/images/pencil-icon.svg" style="cursor: pointer;"></span>';
+    };
+
+    input.onkeydown = function(event) { // Handle enter key press
+        if (event.key === "Enter") {
+            heading.innerHTML = input.value + ' <span onclick="editHeading()"><img src="/static/Web/images/pencil-icon.svg" style="cursor: pointer;"></span>';
+        }
     };
 
     heading.innerHTML = ""; // Clear heading content
