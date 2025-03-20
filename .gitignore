@@ -7,3 +7,6 @@ audio_storage/
 .DS_Store
 alembic/versions/*.py
 media/
+env/
+/Users/snake/Desktop/SAGE-AI/requirements.txt
+/Users/snake/Desktop/SAGE-AI/.gitignore
