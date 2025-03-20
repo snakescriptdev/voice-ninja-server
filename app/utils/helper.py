@@ -21,7 +21,7 @@ from app.databases.models import AudioRecordings
 import hmac
 import hashlib
 import google.generativeai as genai
-
+import aiohttp
 
 logger = logging.getLogger(__name__)
 @dataclass
@@ -301,3 +301,14 @@ def generate_agent_prompt(agent_function, agent_tone, level_of_detail, industry,
         If you don't know something, acknowledge it rather than providing incorrect information.
         """
         return fallback_prompt
+    
+async def send_request(url, data):
+        """Sends an async HTTP request."""
+        headers = {"Content-Type": "application/json"}
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.post(url, json=data, headers=headers) as response:
+                    return await response.json()
+            except Exception as e:
+                logger.exception(f"Error sending request: {e}")
+                return {"status": "error", "message": f"Request failed: {str(e)}"}
