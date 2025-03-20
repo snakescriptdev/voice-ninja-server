@@ -11,9 +11,9 @@ from app.databases.models import (
     AgentModel, ResetPasswordModel, 
     AgentConnectionModel, PaymentModel, 
     AdminTokenModel, AudioRecordings, 
-    TokensToConsume)
+    TokensToConsume, ApprovedDomainModel)
 from app.databases.schema import  AudioRecordListSchema
-import json
+import json, re
 import bcrypt
 from app.utils.helper import make_outbound_call, generate_twiml
 from fastapi_mail import FastMail, MessageSchema,ConnectionConfig
@@ -22,13 +22,13 @@ import uuid
 from pydantic import BaseModel
 from datetime import datetime
 import shutil
-import os
-from app.databases.models import KnowledgeBaseModel, KnowledgeBaseFileModel
+import json
+from app.databases.models import KnowledgeBaseModel, KnowledgeBaseFileModel, WebhookModel, CustomFunctionModel
 from app.utils.helper import extract_text_from_file, generate_agent_prompt
 from config import MEDIA_DIR  # ✅ Import properly
 import razorpay
 from app.utils.helper import verify_razorpay_signature
-
+from jinja2 import Environment, meta
 
 
 
@@ -1294,8 +1294,8 @@ async def update_knowledge_base(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
-@router.post("/upload_file", name="upload_more_files")
-async def upload_more_files(request: Request):
+@router.post("/upload_file", name="upload_file")
+async def upload_file(request: Request):
     try:
         data = await request.form()
         file = data.get("file")
@@ -1341,7 +1341,7 @@ async def upload_more_files(request: Request):
 
 
 
-@router.post("/agent_prompt_suggestion")
+@router.post("/agent_prompt_suggestion", name="agent_prompt_suggestion")
 async def agent_prompt_suggestion(request: Request):
     try:
         data = await request.json()
@@ -1357,5 +1357,377 @@ async def agent_prompt_suggestion(request: Request):
             return JSONResponse(status_code=200, content={"status": "success", "message": "Prompt generated successfully", "prompt": prompt})
         else:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Some error occured while generating prompt, please try again later!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/save-agent-prompt", name="save-agent-prompt")
+async def save_agent_prompt(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        agent_prompt = data.get("agent_prompt")
+
+        # Create Jinja2 environment
+        env = Environment()
+        # Parse the template
+        parsed_template = env.parse(agent_prompt)
+        # Get all variables used in the template
+        variables = meta.find_undeclared_variables(parsed_template)
+        
+        # Get existing dynamic variables if any
+        agent = AgentModel.get_by_id(agent_id) if agent_id else None
+        existing_variables = agent.dynamic_variables if agent and hasattr(agent, 'dynamic_variables') else {}
+        
+        # Preserve existing values or use empty string for new variables
+        dynamic_variables = {
+            var: existing_variables.get(var, "") for var in variables
+        }
+        
+        # Save dynamic variables to agent model
+        if agent_id and dynamic_variables:
+            AgentModel.update_dynamic_variables(agent_id, dynamic_variables)
+        if agent_id:
+            if agent:
+                AgentModel.update_prompt(agent_id, agent_prompt)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Prompt saved successfully", "dynamic_variables": dynamic_variables})
+            else:
+                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/save-welcome-message", name="save-welcome-message")
+async def save_agent_welcome_message(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        welcome_message = data.get("welcome_msg")
+        if agent_id:
+            agent = AgentModel.get_by_id(agent_id)
+            if agent:
+                AgentModel.update_welcome_message(agent_id, welcome_message)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Welcome message saved successfully"})
+            else:
+                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/update-agent", name="update-agent")
+async def update_agent(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        selected_voice = data.get("selected_voice")
+        if agent_id:
+            agent = AgentModel.get_by_id(agent_id)
+            if agent:
+                AgentModel.update_voice(agent_id, selected_voice)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Voice updated successfully"})
+            else:
+                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/attach-knowledge-base", name="attach-knowledge-base")
+async def attach_knowledge_base(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        knowledge_base_id = data.get("knowledge_base_id")
+        if agent_id:
+            agent = AgentModel.get_by_id(agent_id)
+            if agent:
+                from sqlalchemy.orm import sessionmaker
+                from app.databases.models import engine
+                from sqlalchemy import insert, select, delete
+                from app.databases.models import agent_knowledge_association
+                Session = sessionmaker(bind=engine)
+                session = Session() 
+            
+                # Check if the association already exists
+                query = select(agent_knowledge_association).where(
+                    agent_knowledge_association.c.agent_id == agent_id
+                )
+                result = session.execute(query)
+                existing_association = result.fetchone()
+
+                # If the agent has a different knowledge base, delete the old one
+                if existing_association and existing_association.knowledge_base_id != knowledge_base_id:
+                    delete_stmt = delete(agent_knowledge_association).where(
+                        agent_knowledge_association.c.agent_id == agent_id
+                    )
+                    session.execute(delete_stmt)
+                    session.commit()  # Ensure deletion is applied
+
+                if knowledge_base_id:
+                    # If no association exists, insert a new one
+                    if not existing_association or existing_association.knowledge_base_id != knowledge_base_id:
+                        stmt = insert(agent_knowledge_association).values(
+                            agent_id=agent_id, 
+                            knowledge_base_id=knowledge_base_id
+                        )
+                        session.execute(stmt)
+                        session.commit()
+
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "success", "message": "Agent updated successfully", "status_code": 200}
+                )
+            else:
+                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/toggle-design", name="toggle-design")
+async def toggle_design(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        is_enabled = data.get("is_enabled")
+        if agent_id:
+            agent = AgentModel.get_by_id(agent_id)
+            if agent:
+                AgentModel.update_design(agent_id, is_enabled)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Design toggle updated successfully"})
+            else:
+                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+        else:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/save-webhook", name="save-webhook")
+async def save_webhook(request: Request):
+    try:
+        data = await request.json()
+        webhook_url = data.get("webhook_url")
+        user = request.session.get("user")
+        user = UserModel.get_by_email(user.get("email"))
+        if not user:
+            error_response = {
+                "status": "error", 
+                "error": "User not found",
+                "status_code": 400
+            }
+            return JSONResponse(
+                status_code=400,
+                content=error_response)
+        if WebhookModel.check_webhook_exists(webhook_url, user.id):
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook URL already exists"})
+        if webhook_url:
+            webhook = WebhookModel.create(webhook_url, user.id)
+            return JSONResponse(status_code=200, content={"status": "success", "message": "Webhook saved successfully"})
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook URL is required"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/update-webhook", name="update-webhook")
+async def update_webhook(request: Request):
+    try:
+        data = await request.json()
+        webhook_id = data.get("webhook_id")
+        webhook_url = data.get("webhook_url")
+        if webhook_id:
+            webhook = WebhookModel.get_by_id(webhook_id)
+            if webhook:
+                WebhookModel.update_webhook_url(webhook_id, webhook_url)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Webhook updated successfully"})
+            else:
+                return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook not found"})
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook ID is required"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/custom-functions", name="custom-functions")
+async def custom_functions(request: Request):
+    try:
+        data = await request.json()
+        
+        function_name = data.get("function_name")
+        function_description = data.get("function_description")
+        function_url = data.get("function_url")
+        function_timeout = data.get("function_timeout")
+        function_parameters = data.get("function_parameters", {})
+        function_timeout = data.get('function_timeout')
+        if not function_timeout:
+            function_timeout = None  # or set a default integer like 0
+
+
+        # Ensure function_parameters is a valid JSON string
+        if isinstance(function_parameters, str):
+            function_parameters = json.loads(function_parameters)
+
+        agent_id = data.get("agent_id")
+
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+
+        # Ensure correct parameter order when calling create()
+        obj = CustomFunctionModel.create(
+            agent_id=agent_id, 
+            function_name=function_name, 
+            function_description=function_description, 
+            function_url=function_url, 
+            function_timeout=function_timeout, 
+            function_parameters=function_parameters
+        )
+        response_data = {
+            "id": obj.id,
+            "function_name": obj.function_name,
+            "function_description": obj.function_description,
+            "function_url": obj.function_url,
+            "function_timeout": obj.function_timeout,
+            "function_parameters": obj.function_parameters
+        }
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Custom function saved successfully", "data": response_data})
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+    
+@router.get("/get-custom-functions", name="get-custom-functions")
+async def get_custom_functions(request: Request):
+    try:
+        function_id =request.query_params.get('function_id')
+        function = CustomFunctionModel.get_by_id(function_id)
+        if function:
+            function_data = {
+                "id": function.id,
+                "function_name": function.function_name,
+                "function_description": function.function_description,
+                "function_url": function.function_url,
+                "function_timeout": function.function_timeout,
+                "function_parameters": function.function_parameters
+            }
+            response = {
+                "status": "success",
+                "message": "Custom functions fetched successfully",
+                "data": function_data
+            }
+            return JSONResponse(status_code=200, content=response)
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Custom function not found"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.delete("/delete-custom-functions", name="delete-custom-functions")
+async def delete_custom_functions(request: Request):
+    try:
+        data = await request.json()
+        function_id = data.get("function_id")
+        CustomFunctionModel.delete(function_id)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Custom function deleted successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/save-variables", name="save-variables")
+async def save_variables(request: Request):
+    try:
+        data = await request.json()
+        variables = data.get("variables", {})
+        agent_id = data.get("agent_id")
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+        
+        # Update dynamic variables in the agent model
+        AgentModel.update_dynamic_variables(agent_id, variables)
+        
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Variables saved successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.delete("/remove-variable", name="remove-variable")
+async def remove_variable(request: Request):
+    try:
+        data = await request.json()
+        variable_id = data.get("variable_id")
+        agent_id = data.get("agent_id")
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+        dynamic_variables = agent.dynamic_variable
+        if variable_id in dynamic_variables:
+            del dynamic_variables[variable_id] 
+        AgentModel.update_dynamic_variables(agent_id, dynamic_variables)
+        
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Variable removed successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/add-approved-domain", name="add-approved-domain")
+async def add_approved_domain(request: Request):
+    try:
+        data = await request.json()
+        domain = data.get("domain")
+        user = request.session.get("user")
+        user = UserModel.get_by_email(user.get("email"))
+        if not user:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "User not found"})
+        if ApprovedDomainModel.check_domain_exists(domain, user.id):
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Domain already exists"})
+        domain = ApprovedDomainModel.create(domain, user.id)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Domain added successfully", "domain_id": domain.id})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.delete("/delete-approved-domain", name="delete-approved-domain")
+async def delete_approved_domain(request: Request):
+    try:
+        data = await request.json()
+        domain_id = data.get("domain_id")
+        if not domain_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Domain ID is required"})
+        ApprovedDomainModel.delete(domain_id)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Domain deleted successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+
+@router.post("/check-payload", name="check-payload")
+async def check_payload(request: Request):
+    try:
+        data = await request.json()
+        print(data, "-------------check payload-----------")    
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Custom functions fetched successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/toggle-webhook", name="toggle-webhook")
+async def toggle_webhook(request: Request):
+    try:
+        data = await request.json()
+        print(data, "-------------toggle-webhook-----------")    
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Custom functions fetched successfully"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})

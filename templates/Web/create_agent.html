@@ -91,14 +91,6 @@
                             </div>
                         </div>
                     </div>
-
-                    {% if request.url.path == '/update-agent' %}                    
-                    <div class="agent_select_box position-relative">
-                        <a href="{{ url_for('call_history') }}?agent_id={{ agent.id }}">
-                            <button class="w-max-content view-call-history-btn" id="create-agent-btn">View Call History</button>
-                        </a>
-                    </div>
-                    {% endif %}
                 </div>
                 <div class="agent_type_box_inner">
                     <div class="agent_type_textarea">
@@ -132,51 +124,6 @@
                                 Customize Your Bot
                             </button>
                             <div class="customize-bot-modal" id="customize-bot-modal" style="display: none;">
-                                <!-- <div class="customize-bot-modal-content">
-                                    <h3>Customize Your Bot</h3>
-                                    <div class="customize-bot-modal-content-inner">
-                                        <h6 class="border-top pt-3">Color</h6>
-                                        <div class="mb-3 color-box d-flex align-items-center gap-2 flex-wrap">
-                                             <div class="color-option" style="background: linear-gradient(45deg, #00b4d8, #0077b6);" 
-                                                onclick="changeTheme('#00b4d8', '#0077b6', 'rgba(0, 180, 216, 0.3)')"></div>
-                                            <div class="color-option" style="background: linear-gradient(45deg, #e63946, #9d0208);" 
-                                                onclick="changeTheme('#e63946', '#9d0208', 'rgba(230, 57, 70, 0.3)')"></div>
-                                            <div class="color-option" style="background: linear-gradient(45deg, #8338ec, #5e60ce);" 
-                                                onclick="changeTheme('#8338ec', '#5e60ce', 'rgba(131, 56, 236, 0.3)')"></div>
-                                            <div class="color-option" style="background: linear-gradient(45deg, #06d6a0, #118ab2);" 
-                                                onclick="changeTheme('#06d6a0', '#118ab2', 'rgba(6, 214, 160, 0.3)')"></div>
-                                            <div class="color-option" style="background: linear-gradient(45deg, #fb8500, #ffb703);" 
-                                                onclick="changeTheme('#fb8500', '#ffb703', 'rgba(251, 133, 0, 0.3)')"></div>
-                                            <div class="color-option" style="background: linear-gradient(45deg, #ff5a5f, #c1839f);" 
-                                                onclick="changeTheme('#ff5a5f', '#c1839f', 'rgba(255, 90, 95, 0.3)')"></div>
-                                            <div class="color-option" style="background: linear-gradient(45deg, #2ec4b6, #20a4f3);" 
-                                                onclick="changeTheme('#2ec4b6', '#20a4f3', 'rgba(46, 196, 182, 0.3)')"></div>
-                                            <div class="color-option" style="background: linear-gradient(45deg, #7209b7, #4361ee);" 
-                                                onclick="changeTheme('#7209b7', '#4361ee', 'rgba(114, 9, 183, 0.3)')"></div>
-                                        </div>
-                                        <h6 class="border-top pt-3">Icons</h6>
-                                        <div class="d-flex align-items-center gap-2 flex-wrap">
-                                             <div class="icon-option">
-                                                <img src="{{ url_for('static', path='/Web/images/gif-icon-1.gif') }}" class="img-fluid">
-                                             </div>
-                                             <div class="icon-option">
-                                                <img src="{{ url_for('static', path='/Web/images/gif-icon2.gif') }}" class="img-fluid">
-                                             </div>
-                                             <div class="icon-option">
-                                                <img src="{{ url_for('static', path='/Web/images/gif-icon-3.gif') }}" class="img-fluid">
-                                             </div>
-                                             <div class="icon-option">
-                                                <img src="{{ url_for('static', path='/Web/images/gif-icon-4.gif') }}" class="img-fluid">
-                                             </div>
-                                             <div class="icon-option">
-                                                <img src="{{ url_for('static', path='/Web/images/gif-icon-5.gif') }}" class="img-fluid">
-                                             </div>
-                                        </div>
-                                        <div class="save-btn-box mt-3 text-center border-top pt-3">
-                                            <button class="save-btn" id="save-btn">Save</button>
-                                        </div>
-                                    </div>
-                                </div> -->
                                 <div class="recorder-controls show">
                                     <div class="settings">
                                         <div class="icon" onclick="toggleColorPalette()">
@@ -241,7 +188,7 @@
                         <div class="custom-select">
                             <div class="select-box position-relative" id="welcome-msg">
                                 {% if agent %}{{ agent.welcome_msg }}{% else %}Hi, how are you?{% endif %}
-                            </div>                            
+                            </div>
                             <div class="options">
                                 <div class="option" data-value="1">Hi  i am SAGE, how can i help you?</div>
                                 <div class="option" data-value="2">Hey there captain? How can i help you?</div>
@@ -568,7 +515,7 @@
             let agentId = "{{ agent.id if agent else '' }}";
             if(agentId){
                 $.ajax({
-                    url: `${window.location.origin}/api/get_agent_connection/`,
+                    url: `${window.location.origin}/api/get_agent_connection`,
                     type: 'GET',
                     data: {agent_id: agentId},
                     success: function(response){    

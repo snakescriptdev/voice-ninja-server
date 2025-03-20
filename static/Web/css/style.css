@@ -588,7 +588,7 @@ span {
 
 /* agent page css start */
 .agent_page_header {
-    padding: 40px 20px 25px;
+    padding: 20px 20px 25px;
 }
 
 .agent_page_header .dropdown-toggle::after {
@@ -822,6 +822,16 @@ table .max-content {
     font-size: 14px;
     line-height: 21px;
     position: relative;
+}
+.variable-btn{
+    background-color: #F3F3F3;
+    border: 1px solid #0000001A;
+    border-radius: 8px;
+    height: 32px;
+    width: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .agent_type_dropdown select:focus {
@@ -1376,7 +1386,39 @@ table .max-content {
     border-radius: 5px;
     border: none;
 }
-
+.customize-bot-btn {
+    padding: 0;
+    height: 45px;
+    width: 45px;
+    background-color: #f5f7fa;
+}
+.customize-bot-btn-tooltip{
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: #555;
+    color: #fff;
+    padding: 5px 10px;
+    opacity: 0;
+    transition: opacity .6s;
+    font-size: 12px;
+    bottom: 54px;
+    border-radius: 6px;
+    width: max-content;
+}
+.customize-bot-btn:hover .customize-bot-btn-tooltip{
+    opacity: 1;
+}
+.customize-bot-btn-tooltip::after{
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    margin-left: -5px;
+    border-width: 5px;
+    border-style: solid;
+    border-color: #555 transparent transparent transparent;
+}
 
 .recorder-controls img {
     height: 60px;
@@ -1466,13 +1508,15 @@ table .max-content {
     background: #fff;
     box-shadow: rgba(0, 0, 0, 0.24) 0px 3px 8px;
     padding: 40px 10px;
-    width: 100%;
+    width: 300px;
     border-radius: 20px;
     height: 250px;
     backdrop-filter: blur(12px);
     border-radius: 20px;
     box-shadow: 0 8px 32px var(--shadow-color);
     background-color: var(--secondary-color);
+    left: 50%;
+    transform: translateX(-50%);
 }
 
 .recorder-controls h1 {
@@ -1801,4 +1845,222 @@ table .max-content {
     opacity: 10%;
 }
 
+.agent_type_box_inner .form-switch .form-check-input:not(:checked){
+    background-color: #d1d1d1;
+}
+.variable-modal{
+    position: absolute;
+    z-index: 1001;
+    background: #fff;
+    box-shadow: rgba(0, 0, 0, 0.16) 0px 1px 4px;
+    border-radius: 5px;
+    padding: 10px 15px;
+    width: 450px;
+    right: -10px;
+    margin-top: 8px;
+}
+.variable-modal small{
+    font-size: 12px;
+    font-weight: 400;
+    color: #000000;
+}
+.variable-modal-content-item h5{
+    background-color: #F5F7FA;
+    padding: 12px 15px;
+    border-radius: 5px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #656565;
+}
+
+.variable-modal-content-item{
+    display: grid;
+    grid-template-columns: 42% 42% 6%;
+    gap: 10px;
+}
+.variable-modal-content-item input{
+    font-size: 12px;
+    font-weight: 400;
+    color: #000000;
+    padding: 10px 10px;
+}
+.add-variable-btn{
+    background-color: #0C7FDA;
+    color: #fff;
+    font-weight: 500;
+    font-size: 12px;
+    line-height: 24px;
+    padding: 5px 15px;
+    border-radius: 5px;
+    border: none;
+}
+.variable-modal-footer button{
+    font-size: 14px;
+    font-weight: 500;
+    color: #000000;
+    border: none;
+    background-color: transparent;
+    padding: 8px 15px;
+    border-radius: 5px;
+    border: 1px solid #0000001A;
+}
+.variable-modal-footer button.save-btn{
+    background-color: #0C7FDA;
+    color: #fff;
+}
+.variable-modal-content-item-outer{
+    max-height: 300px;
+    overflow: auto;
+}
+
+.table_action_btn button{
+    height: 35px;
+    width: 35px;
+    border-radius:100%;
+    border: none;
+    padding: 0px;
+    display: flex;
+}
+.vertical-align-middle{
+    vertical-align: middle;
+}
+.webhook_table table th{
+    padding: 10px 15px;
+    font-size: 16px;
+    font-weight: 500;
+    color: #000000;
+}
+.webhook_table table td{
+    padding: 8px 15px;
+    font-size: 14px;
+    font-weight: 400;
+    color: #000000;
+}
+.save_webhook_btn{
+    background-color: #0C7FDA;
+    color: #fff;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 24px;
+    padding: 8px 24px;
+    border-radius: 5px;
+    border: none;
+}
+.functions_dropdown .dropdown{
+    background-color: #F3F3F3;
+    border: 1px solid #0000001A;
+    border-radius: 8px;
+    padding: 8px 15px;
+    color: #848484;
+    font-weight: 400;
+    font-size: 14px;
+    line-height: 21px;
+}
+.functions_dropdown .dropdown-toggle::after{
+    margin-left: 15px;
+}
+
+.functions_dropdown .dropbottom .dropdown-toggle::after{
+    display: none;
+}
+
+.functions_dropdown .dropdown-menu{
+    min-width: max-content;
+    right: -17px !important;
+    width: 100%;
+}
+.functions_dropdown .dropdown-item{
+    padding: 3px 25px;
+    font-size: 14px;
+    font-weight: 400;
+    color: #000000;
+    text-align: center;
+}
+.functions_dropdown .dropbottom .dropdown-menu{
+    left: 0px!important;
+    width: max-content;
+}
+.functions_dropdown .dropbottom .dropdown-item{
+    padding: 3px 15px;
+}
+.custom_function_modal .modal-header h1{
+    font-size: 16px;
+    font-weight: 500;
+    color: #000000;
+}
+.custom_function_modal label{
+    font-size: 12px;
+    margin-bottom: 5px;
+    font-weight: 500;
+}
+.custom_function_modal form input, .custom_function_modal form textarea{
+    font-size: 12px;
+    font-weight: 400;
+    color: #000000;
+    padding: 7px 10px;
+}
+.custom_function_modal form textarea{
+    height: 100px;
+}
+.custom_function_modal form .parameters_field textarea{
+    height: 200px;
+    background-color: #222530;
+    color: #fff;
+}
+.custom_function_modal form small{
+    font-size: 10px;
+    font-weight: 400;
+    color: #000000;
+    display: block;
+}
+.custom_function_modal form .parameters_field .btn{
+    font-size: 10px;
+    font-weight: 400;
+    color: #ffffff;
+    padding: 2px 8px;
+    border-radius: 30px;
+    border: none;
+    background-color: #171717;
+}
+.format_json_btn_box button{
+    font-size: 12px;
+    font-weight: 400;
+    color: #fcfcfc;
+    padding: 8px 10px;
+    border-radius: 5px;
+    background-color: #8b8b8b;
+    border: none;
+}
+.custom_function_modal .modal-dialog{
+    max-width: 600px;
+}
+.custom_function_modal .modal-footer button{
+    font-size: 12px;
+    font-weight: 400;
+    color: #000000;
+    padding: 7px 17px;
+    border-radius: 5px;
+    border: 1px solid #0000001A;
+}
+.custom_function_modal .modal-footer button.save_btn{
+    background-color: #0C7FDA;
+    color: #fff;
+    border: none;
+    padding: 5px 17px;
+}
 /* kalyan css end here  */
+
+
+.user-avatar{
+    width: 35px;
+    height: 35px;
+    border-radius: 50%;
+    background-color: #0C7FDA;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 500;
+    border: 2px solid #0000001A;
+}

@@ -8,7 +8,7 @@ import bcrypt
 import os, shutil
 from config import MEDIA_DIR
 from datetime import datetime
-
+from sqlalchemy.dialects.postgresql import JSONB
 
 DB_URL="postgresql://postgres:1234@localhost/audio_assistant"
 engine = create_engine(DB_URL, echo=False)
@@ -126,6 +126,7 @@ class UserModel(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     tokens = Column(Integer, nullable=True,default=0)
     is_admin = Column(Boolean,default=False)
+    approved_domains = relationship("ApprovedDomainModel", back_populates="creator")
 
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email})>"
@@ -249,6 +250,8 @@ class AgentModel(Base):
     welcome_msg = Column(String, nullable=True,default="")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    is_design_enabled = Column(Boolean,default=False)
+    dynamic_variable = Column(JSONB, nullable=True , default={})
     knowledge_base = relationship(
         "KnowledgeBaseModel",
         secondary=agent_knowledge_association,
@@ -256,7 +259,9 @@ class AgentModel(Base):
     )
     audio_recordings = relationship("AudioRecordings", back_populates="agent")
 
-    
+    calls = relationship("CallModel", back_populates="agent", cascade="all, delete")
+    custom_functions = relationship("CustomFunctionModel", back_populates="agent", cascade="all, delete-orphan")
+
     def __repr__(self):
         return f"<Agent(id={self.id}, agent_name={self.agent_name})>"
     
@@ -326,7 +331,78 @@ class AgentModel(Base):
                 return True
         except Exception:
             return False
+    
 
+    @classmethod
+    def update_prompt(cls, agent_id: int, agent_prompt: str) -> "AgentModel":
+        """
+        Update an agent's prompt by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.agent_prompt = agent_prompt
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+    
+    @classmethod
+    def update_welcome_message(cls, agent_id: int, welcome_message: str) -> "AgentModel":
+        """
+        Update an agent's welcome message by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.welcome_msg = welcome_message
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+    
+    @classmethod
+    def update_voice(cls, agent_id: int, selected_voice: str) -> "AgentModel":
+        """
+        Update an agent's voice by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.selected_voice = selected_voice
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+
+    @classmethod
+    def update_design(cls, agent_id: int, is_enabled: bool) -> "AgentModel":
+        """
+        Update an agent's design by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.is_design_enabled = is_enabled
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+
+    @classmethod
+    def update_dynamic_variables(cls, agent_id: int, dynamic_variables: dict) -> "AgentModel":
+        """
+        Update dynamic variables for an agent by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.dynamic_variable = dynamic_variables
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+    
 class ResetPasswordModel(Base):
     __tablename__ = "reset_password"
     
@@ -427,6 +503,14 @@ class ResetPasswordModel(Base):
         """
         with db():
             return db.session.query(cls).filter(cls.token == token).first()
+    
+    @classmethod
+    def update_prompt(cls, agent_id: int, agent_prompt: str) -> "AgentModel":
+        """
+        Update an agent's prompt by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
 
 class KnowledgeBaseModel(Base):
     __tablename__ = "knowledge_base"
@@ -910,4 +994,286 @@ class KnowledgeBaseFileModel(Base):
                 return True
             return False
 
+class CallModel(Base):
+    __tablename__ = "calls"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("agents.id", ondelete="CASCADE"))
+    call_id = Column(String, unique=True, nullable=False)  # Unique identifier for each call
+    variables = Column(JSONB, nullable=True, default={})  # Store variables as JSON
+    created_at = Column(DateTime, default=func.now())
+
+    # Relationship with AgentModel
+    agent = relationship("AgentModel", back_populates="calls")
+
+    @classmethod
+    def get_by_id(cls, call_id: int) -> Optional["CallModel"]:
+        """Get call by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == call_id).first()
+
+    @classmethod
+    def get_by_agent_id(cls, agent_id: int) -> Optional["CallModel"]:
+        """Get call by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).first()
+
+    @classmethod
+    def create(cls, agent_id: int, call_id: str, variables: dict) -> "CallModel":
+        """Create a new call"""
+        with db():
+            call = cls(agent_id=agent_id, call_id=call_id, variables=variables)
+            db.session.add(call)
+            db.session.commit()
+            db.session.refresh(call)
+            return call
+
+    @classmethod
+    def update(cls, call_id: int, variables: dict) -> Optional["CallModel"]:
+        """Update a call"""
+        with db():
+            call = db.session.query(cls).filter(cls.id == call_id).first()
+            if call:
+                call.variables = variables
+                db.session.commit()
+                db.session.refresh(call)
+                return call
+            return None
+
+    @classmethod
+    def delete(cls, call_id: int) -> bool:
+        """Delete a call"""
+        with db():
+            call = db.session.query(cls).filter(cls.id == call_id).first()
+            if call:
+                db.session.delete(call)
+                db.session.commit()
+                return True
+            return False
+
+
+class WebhookModel(Base):
+    __tablename__ = "webhooks"
+
+    id = Column(Integer, primary_key=True)
+    webhook_url = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    is_active = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_by = Column(Integer, ForeignKey('users.id'), nullable=False)
+
+    def __repr__(self):
+        return f"<Webhook(id={self.id}, webhook_url={self.webhook_url})>"
+    
+    @classmethod
+    def get_by_id(cls, id: int) -> Optional["WebhookModel"]:
+        """Get webhook by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id).first()
+    
+    @classmethod
+    def get_all_by_user(cls, user_id: int) -> List["WebhookModel"]:
+        """Get all webhooks by user ID"""
+        with db():
+            return db.session.query(cls).filter(cls.created_by == user_id).all()
+    
+
+    @classmethod
+    def get_by_user(cls, user_id: int) -> Optional["WebhookModel"]:
+        """Get webhook by user ID"""
+        with db():
+            return db.session.query(cls).filter(cls.created_by == user_id).order_by(cls.created_at.desc()).first()
+    
+    @classmethod
+    def create(cls, webhook_url: str, created_by: int) -> "WebhookModel":
+        """Create a new webhook"""
+        with db():
+            webhook = cls(webhook_url=webhook_url, created_by=created_by)
+            db.session.add(webhook)
+            db.session.commit()
+            return webhook
+
+    @classmethod
+    def get_is_active_by_id(cls, id: int) -> Optional["WebhookModel"]:
+        """Get webhook by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id, cls.is_active == True).first()
+
+    @classmethod
+    def get_all(cls) -> List["WebhookModel"]:
+        """Get all webhooks"""
+        with db():
+            return db.session.query(cls).all()
+    
+    @classmethod
+    def check_webhook_exists(cls, webhook_url: str, user_id: int) -> bool:
+        """Check if webhook URL already exists for the user"""
+        with db():
+            webhook = db.session.query(cls).filter(
+                cls.webhook_url == webhook_url,
+                cls.created_by == user_id
+            ).first()
+            return bool(webhook)
+        
+    @classmethod
+    def delete(cls, id: int) -> bool:
+        """Delete a webhook"""
+        with db():
+            webhook = db.session.query(cls).filter(cls.id == id).first()
+            if webhook:
+                db.session.delete(webhook)
+                db.session.commit()
+                return True
+            return False
+    
+    @classmethod
+    def update_webhook_url(cls, id: int, webhook_url: str) -> Optional["WebhookModel"]:
+        """Update a webhook URL"""
+        with db():
+            webhook = db.session.query(cls).filter(cls.id == id).first()
+            if webhook:
+                webhook.webhook_url = webhook_url
+                db.session.commit()
+                db.session.refresh(webhook)
+                return webhook
+            return None
+    
+
+class CustomFunctionModel(Base):
+    __tablename__ = "custom_functions"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey('agents.id', ondelete='CASCADE'))
+    function_name = Column(String, nullable=False)
+    function_description = Column(String, nullable=False)
+    function_url = Column(String, nullable=False)
+    function_timeout = Column(Integer, nullable=True)
+    function_parameters = Column(JSONB, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    agent = relationship("AgentModel", back_populates="custom_functions")
+
+    def __repr__(self):
+        return f"<CustomFunction(id={self.id}, function_name={self.function_name})>"
+    
+    @classmethod
+    def get_by_id(cls, id: int) -> Optional["CustomFunctionModel"]:
+        """Get custom function by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id).first()
+    
+    @classmethod
+    def get_all_by_agent(cls, agent_id: int) -> List["CustomFunctionModel"]:
+        """Get all custom functions by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
+        
+    @classmethod
+    def create(
+        cls, 
+        agent_id: int, 
+        function_name: str, 
+        function_description: str, 
+        function_url: str, 
+        function_timeout: Optional[int] = None,  # Optional with default None
+        function_parameters: Optional[dict] = None  # Optional with default None
+    ) -> "CustomFunctionModel":
+        """Create a new custom function with optional fields"""
+
+        # Ensure function_parameters is a valid JSONB format
+        if function_parameters is None:
+            function_parameters = {}
+
+        with db():
+            function = cls(
+                agent_id=agent_id, 
+                function_name=function_name, 
+                function_description=function_description, 
+                function_url=function_url, 
+                function_timeout=function_timeout, 
+                function_parameters=function_parameters
+            )
+            db.session.add(function)
+            db.session.commit()
+            db.session.refresh(function)
+            return function
+        
+    @classmethod
+    def delete(cls, id: int) -> bool:
+        """Delete a custom function"""
+        with db():
+            function = db.session.query(cls).filter(cls.id == id).first()
+            if function:
+                db.session.delete(function)
+                db.session.commit()
+                return True
+            return False
+
+    @classmethod
+    def get_all_by_agent_id(cls, agent_id: int) -> List["CustomFunctionModel"]:
+        """Get all custom functions by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all() 
+        
+    @classmethod
+    def get_by_name(cls, function_name: str, agent_id: int) -> Optional["CustomFunctionModel"]:
+        """Get custom function by name"""
+        with db():
+            return db.session.query(cls).filter(cls.function_name == function_name, cls.agent_id == agent_id).first()
+
+
+class ApprovedDomainModel(Base):
+    __tablename__ = "approved_domains"
+
+    id = Column(Integer, primary_key=True)
+    domain = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)  # ✅ Ensure ForeignKey exists
+    creator = relationship("UserModel", back_populates="approved_domains")  # Must match
+
+    def __repr__(self):
+        return f"<ApprovedDomain(id={self.id}, domain={self.domain})>"
+    
+    @classmethod
+    def get_all(cls) -> List["ApprovedDomainModel"]:
+        """Get all approved domains"""
+        with db():
+            return db.session.query(cls).all()
+        
+    @classmethod
+    def create(cls, domain: str, created_by: int) -> "ApprovedDomainModel":
+        """Create a new approved domain"""
+        with db():
+            domain = cls(domain=domain, created_by=created_by)
+            db.session.add(domain)
+            db.session.commit()
+            db.session.refresh(domain)
+            return domain
+    
+    @classmethod
+    def get_all_by_user(cls, user_id: int) -> List["ApprovedDomainModel"]:
+        """Get all approved domains by user ID"""
+        with db():
+            return db.session.query(cls).filter(cls.created_by == user_id).order_by(cls.created_at.desc()).all()
+    
+    @classmethod
+    def check_domain_exists(cls, domain: str, user_id: int) -> bool:
+        """Check if a domain exists for a user"""
+        with db():
+            return db.session.query(cls).filter(cls.domain == domain, cls.created_by == user_id).first() is not None
+    
+    @classmethod
+    def delete(cls, id: int) -> bool:
+        """Delete an approved domain"""
+        with db():
+            domain = db.session.query(cls).filter(cls.id == id).first()
+            if domain:
+                db.session.delete(domain)
+                db.session.commit()
+                return True
+            return False
+
 Base.metadata.create_all(engine)
+

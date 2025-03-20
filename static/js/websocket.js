@@ -457,48 +457,30 @@ class WebSocketClient {
 // Initialize the WebSocket client
 // const client = new WebSocketClient();
 
+function toggleRecorder() {
+    const recorderControls = document.getElementById("recorderControls");
+    const startCall = document.getElementById("startCall");
+
+    if (recorderControls.classList.contains("hidden")) {
+        recorderControls.classList.remove("hidden");
+        recorderControls.classList.add("show");
+        startCall.style.display = "none"; // Hide the voice icon button
+    } else {
+        recorderControls.classList.remove("show");
+        recorderControls.classList.add("hidden");
+        startCall.style.display = "block"; // Show the voice icon button again
+    }
+}
 
 
+function stopRecorder() {
+    const recorderControls = document.getElementById('recorderControls');
+    const voiceIcon = document.querySelector('.whatsapp_outer_mobile');
 
-
-// function toggleRecorder() {{
-//     const recorderControls = document.getElementById('recorderControls');
-//     const voiceIcon = document.querySelector('.whatsapp_outer_mobile');
-
-//     if (!recorderControls || !voiceIcon) {{
-//         console.error('Required elements not found');
-//         return;
-//     }}
-
-//     if (window.recorderTimeout) {{
-//         clearTimeout(window.recorderTimeout);
-//     }}
-
-//     if (recorderControls.classList.contains('show')) {{
-//         recorderControls.classList.remove('show');
-//         window.recorderTimeout = setTimeout(() => {{
-//             recorderControls.classList.add('hidden');
-//             voiceIcon.style.display = 'flex';
-//             voiceIcon.style.opacity = '1';
-//         }}, 300);
-//     }} else {{
-//         recorderControls.classList.remove('hidden');
-//         voiceIcon.style.opacity = '0';
-//         window.recorderTimeout = setTimeout(() => {{
-//             recorderControls.classList.add('show');
-//             voiceIcon.style.display = 'none';
-//         }}, 10);
-//     }}
-// }}
-
-// function stopRecorder() {
-//     const recorderControls = document.getElementById('recorderControls');
-//     const voiceIcon = document.querySelector('.whatsapp_outer_mobile');
-
-//     recorderControls.classList.remove('show');
-//     setTimeout(() => {
-//         recorderControls.classList.add('hidden');
-//         voiceIcon.style.display = 'flex'; 
-//         voiceIcon.style.opacity = '1';
-//     }, 500);
-// }
+    recorderControls.classList.remove('show');
+    setTimeout(() => {
+        recorderControls.classList.add('hidden');
+        voiceIcon.style.display = 'flex'; 
+        voiceIcon.style.opacity = '1';
+    }, 500);
+}
