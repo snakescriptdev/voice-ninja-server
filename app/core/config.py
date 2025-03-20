@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str
     TWILIO_PHONE_NUMBER: str
     NGROK_BASE_URL: str 
+    RAZOR_KEY_ID: str
+    RAZOR_KEY_SECRET: str
+    DOMAIN_NAME: str
     class Config:
         env_file = ".env"
 

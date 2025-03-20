@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Agent India</title>
+    <link rel="stylesheet" href="/static/Adminpanel/css/bootstrap.min.css">
+    <link rel="stylesheet" href="/static/Adminpanel/css/style.css">
+    <link rel="stylesheet" href="/static/Adminpanel/css/responsive.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick-theme.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+</head>
+
+<body>
+    <section class="admin_dashboard">
+        <!-- left side menu-->
+        <div class="left_side_menu">
+            <div class="close-btn d-flex d-lg-none">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
+                    stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                    class="feather feather-x">
+                    <line x1="18" y1="6" x2="6" y2="18"></line>
+                    <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+            </div>
+
+            <div class="logo_section">
+                <img src="/static/Adminpanel/images/Logo.svg" alt="logo">
+            </div>
+
+            <div class="select_super_admin position-relative">
+                <select name="" id="" disabled>  
+                    <option value="">Select Super Admin</option>
+                    <option value="">Select Super Admin</option>
+                    <option value="">Select Super Admin</option>
+                    <option value="">Select Super Admin</option>
+                    <option value="">Select Super Admin</option>
+                    <option value="">Select Super Admin</option>
+                    
+                </select>
+                <div class="workspase_icon">
+                    <img src="/static/Adminpanel/images/Workspace.svg" alt="workspace">
+                </div>
+            </div>
+
+
+            <div class="dashboard_sidebar_links">
+                <ul class="list-unstyled links_list">
+                    <li class="my-2">
+                        <a href="/admin/admin_dashboard" class=""><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> Pricing</a>
+                     </li>
+
+                     <li class="my-2">
+                        <a href="/admin/admin_dashboard" class=""><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
+                     </li>
+
+                     <li class="my-2">
+                        <a href="/admin/admin_dashboard" class=""><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
+                     </li>
+
+                     <li class="my-2">
+                        <a href="/admin/admin_dashboard" class=""><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
+                     </li>
+
+                     <li class="my-2">
+                        <a href="/admin/admin_dashboard" class=""><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
+                     </li>
+
+                    
+                </ul>
+            </div>
+        </div>
+        <!-- right side content info -->
+        <div class="content-page ">
+            <div class="container-fluid px-0">
+                <div class="dashboard_content">
+                    <div class="dashboard_content_header border-bottom d-flex align-items-center gap-3 justify-content-between p-4">
+                        <button class="d-block d-lg-none toggle-btn">
+                            <span></span>
+                            <span></span>
+                            <span></span>
+                        </button>
+
+
+                        <div class="email_logout_notification d-flex align-items-center gap-3">
+                           <h2><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> Pricing </h2>
+                        </div>
+
+                        <div class="email_logout_notification d-flex align-items-center gap-3">
+                            <div class="dropdown">
+                                <button class="bg-transparent border-0 dropdown-toggle" type="button" data-bs-toggle="dropdown"
+                                    aria-expanded="false">
+                                   <div class="user-avatar">
+                                        {{ request.session.get("user").get('name')[0].upper() }}
+                                    </div>
+                                </button>
+                                <ul class="dropdown-menu">
+                                    <li>
+                                        <a class="dropdown-item d-flex align-items-center gap-2" href="{{ url_for('admin_logout') }}">
+                                            <span>
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
+                                                    class="bi bi-box-arrow-right" viewBox="0 0 16 16">
+                                                    <path fill-rule="evenodd"
+                                                        d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z" />
+                                                    <path fill-rule="evenodd"
+                                                        d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z" />
+                                                </svg>
+                                            </span>Log Out
+                                        </a>
+                                    </li>
+                                    <!-- <li>
+                                            <a class="dropdown-item d-flex align-items-center gap-2" href="">
+                                            <span>
+                                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
+                                                    class="bi bi-box-arrow-right" viewBox="0 0 16 16">
+                                                    <path fill-rule="evenodd"
+                                                        d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z" />
+                                                    <path fill-rule="evenodd"
+                                                        d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z" />
+                                                </svg>
+                                            </span>
+                                            Change Password
+                                        </a>
+                                    </li> -->
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                   
+            
+                    <div class="dashboard_content_inner logs_email_table_outer position-relative">
+
+                        <div class="inner_pricing_sec">
+                            <div class="row">
+                                <div class="col-md-12">
+                                    <div class="pricing_card">
+                                        <p>Enter the number of tokens for deduction.</p>
+                                        <div class="d-flex align-items-center gap-3 w-100">
+                                            <div class="pricing_card_input w-100 position-relative">
+                                                <input type="text" placeholder="Enter Number of tokens..." id="token_value" value="{{ tokens_to_consume.token_values }}">
+                                                <div class="time_duration">
+                                                    <span> <i class="fa-regular fa-clock"></i> 1 min</span>
+                                                </div>
+                                               </div>
+        
+                                                <button class="btn btn-primary" onclick="update_tokens()">Save</button>
+                                        </div>
+                                       
+                                    </div>
+
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="pricing_card">
+                                        <p>How many tokens should be given to the user in exchange for 1 INR?</p>
+                                        <div class="d-flex align-items-center gap-3 w-100">
+                                            <div class="pricing_card_input w-100 position-relative">
+                                                <input type="text" placeholder="Enter Number of tokens..." id="admin_token_value" value="{{ admin_token.token_values }}">
+                                               </div>
+        
+                                                <button class="btn btn-primary" onclick="update_free_tokens('admin_token_value', 'token_value')">Save</button>
+                                        </div>
+                                       
+                                    </div>
+                                </div>
+                                <div class="col-md-12">
+                                    <div class="pricing_card">
+                                        <p>How many tokens should be given to the user for free at the time of registration?</p>
+                                        <div class="d-flex align-items-center gap-3 w-100">
+                                            <div class="pricing_card_input w-100 position-relative">
+                                                <input type="text" placeholder="Enter Number of tokens..." id="free_token" value="{{ admin_token.free_tokens }}">
+                                               </div>
+                                                <button class="btn btn-primary" onclick="update_free_tokens('free_token', 'free_token')">Save</button>
+                                        </div>
+                                       
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                </div>
+            </div>
+        </div>
+    </section>
+   
+</body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="/static/Adminpanel/js/bootstrap.bundle.min.js"></script>
+
+<script>
+    jQuery(document).ready(function () {
+        jQuery('.toggle-btn').click(function () {
+            jQuery('body').addClass('menu-open')
+        });
+        jQuery('.close-btn').click(function () {
+            jQuery('body').removeClass('menu-open')
+        });
+    });
+
+
+    $(document).ready(function() {
+    $('.user-img-link').on('click', function(e) {
+        e.preventDefault();
+        $('.logout_option').fadeToggle(300); 
+    });
+
+    $(document).on('click', function(e) {
+        if (!$(e.target).closest('.user-img').length) {
+            $('.logout_option').fadeOut(300);
+        }
+    });
+
+    // Initialize toastr
+    toastr.options = {
+        "closeButton": true,
+        "debug": false,
+        "newestOnTop": false,
+        "progressBar": true,
+        "positionClass": "toast-top-right",
+        "preventDuplicates": false,
+        "onclick": null,
+        "showDuration": "300",
+        "hideDuration": "1000",
+        "timeOut": "5000",
+        "extendedTimeOut": "1000",
+        "showEasing": "swing",
+        "hideEasing": "linear",
+        "showMethod": "fadeIn",
+        "hideMethod": "fadeOut"
+    };
+});
+
+    function update_tokens(){
+        var tokens = $('.pricing_card_input input').val().trim();
+        if(tokens == ""){
+            toastr.error("Please enter a valid number of tokens");
+            return;
+        }
+        if(isNaN(tokens)){
+            toastr.error("Please enter a valid number of tokens");
+            return;
+        }
+        // Check if input contains decimal point
+        if(tokens.toString().includes('.')) {
+            toastr.error("Decimals are not allowed. Please enter a integer number.");
+            return;
+        }
+        $.ajax({    
+            url: '/api/update_tokens',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                tokens: tokens
+            }),
+            success: function(response){
+                toastr.success(response.message);
+            },
+            error: function(response){
+                if(response.status == 400){
+                    toastr.error(response.responseJSON.message);
+                }else{
+                    toastr.error("Something went wrong!");
+                }
+            }
+        });
+    }
+    function update_free_tokens(id, type){
+        var tokens = $('#'+id).val().trim();
+        if(tokens == ""){
+            toastr.error("Please enter a valid number of tokens");
+            return;
+        }
+        if(isNaN(tokens)){
+            toastr.error("Please enter a valid number of tokens");
+            return;
+        }
+        // Check if input contains decimal point
+        if(tokens.toString().includes('.')) {
+            toastr.error("Decimals are not allowed. Please enter a integer number.");
+            return;
+        }
+        $.ajax({    
+            url: '/api/update_free_tokens',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                tokens: tokens,
+                type: type
+            }),
+            success: function(response){
+                toastr.success(response.message);
+            },
+            error: function(response){
+                if(response.status == 400){
+                    toastr.error(response.responseJSON.message);
+                }else{
+                    toastr.error("Something went wrong!");
+                }
+            }
+        });
+    }
+
+</script>
+</html>

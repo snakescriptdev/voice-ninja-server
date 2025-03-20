@@ -1,0 +1,263 @@
+@media(min-width:1500px) {
+    .signUp_sec .login-left {
+        right: 0px;
+    }
+}
+
+@media(max-width:991.98px) {
+    .login-left {
+        display: none;
+    }
+
+    .login_inner,
+    .signUp_sec .login_inner {
+        padding: 140px 0px 50px;
+    }
+
+    .login_inner.forgot_pass_inner {
+        padding: 180px 0px 50px;
+    }
+
+    .admin_dashboard .left_side_menu {
+        transform: translateX(-100%);
+        transition: all 0.4s ease-in-out;
+        right: 0;
+        padding: 20px 0px 0px;
+    }
+
+    body.menu-open {
+        overflow: hidden;
+    }
+
+    .menu-open .admin_dashboard .left_side_menu {
+        transform: translateX(0%);
+        z-index: 99;
+    }
+
+    .menu-open::after {
+        content: '';
+        background-color: #00000038;
+        height: 100%;
+        width: 100%;
+        position: absolute;
+        top: 0px;
+        left: 0px;
+        z-index: 9;
+    }
+
+    section.admin_dashboard .content-page {
+        width: -webkit-fill-available;
+    }
+
+    .toggle-btn {
+        width: 44px;
+        border: 0;
+        background: transparent;
+    }
+
+    .toggle-btn span {
+        height: 4px;
+        background-color: #000000;
+        border-radius: 4px;
+        display: block;
+        width: 26px;
+        margin-bottom: 3px;
+        margin-left: auto;
+    }
+
+    .toggle-btn span:nth-child(2) {
+        width: 20px;
+    }
+
+    .toggle-btn span:last-child {
+        width: 15px;
+    }
+
+    .left_side_menu .close-btn {
+        height: 30px;
+        width: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: fixed;
+        left: -100%;
+        transform: translateX(14px);
+        z-index: 99;
+        top: 12px;
+        opacity: 0;
+        visibility: hidden;
+        transition: all 0.4s ease-in-out;
+        border: 1px solid #3E7258;
+        border-radius: 100%;
+        background: #fff;
+    }
+
+    .menu-open .left_side_menu .close-btn {
+        right: 30px;
+        opacity: 1;
+        visibility: visible;
+        left: unset;
+    }
+
+    .admin_dashboard .sidebar_logo {
+        text-align: start;
+    }
+
+    .admin_dashboard_form form {
+        padding: 25px 20px 80px;
+    }
+
+    section.login_sec.forgot_pass_sec .col-lg-3 {
+        display: none;
+    }
+
+    .forgot_pass_sec::after {
+        height: 163px;
+        width: 352px;
+        background-size: contain;
+    }
+
+    .forgot_pass_sec::before {
+        height: 163px;
+        width: 312px;
+        background-size: contain;
+    }
+    .support_center_tabs {
+        flex-wrap: wrap;
+    }
+}
+
+@media(max-width:767.98px) {
+    .certificates_table_header {
+        flex-wrap: wrap;
+    }
+
+    .completion_certificates_table thead th {
+        font-size: 16px;
+    }
+
+    .completion_certificates_table thead th:first-child {
+        padding: 15px 30px;
+    }
+
+    .completion_certificates_table table td:first-child {
+        padding: 12px 30px;
+    }
+
+    .all_done_heading {
+        padding-bottom: 0px;
+    }
+
+    .calendar-container .calendar {
+        min-width: 600px;
+    }
+
+    .support_center_data {
+        flex-wrap: wrap;
+        gap: 30px;
+    }
+}
+
+@media(max-width:575.98px) {
+    .login_header_inner {
+        flex-wrap: wrap;
+    }
+
+    .signUp_sec::before {
+        width: 317px;
+    }
+
+    .dashboard_content_header h3 {
+        font-size: 20px;
+    }
+
+    .dashboard_content_header {
+        padding: 10px 5px;
+        gap: 5px !important;
+    }
+
+    .dashboard_content_inner {
+        padding: 15px 15px 50px;
+    }
+
+    .admin_dashboard_form form {
+        padding: 15px 20px 20px;
+    }
+
+    .admin_dashboard_table thead th,
+    .admin_dashboard_table td {
+        padding: 12px 12px;
+    }
+
+    .certificates_table_header_btns button {
+        padding: 9px 9px;
+    }
+
+    .create_payment_btn button {
+        padding: 9px 29px;
+    }
+
+    .upload_modal h6 {
+        font-size: 18px;
+    }
+
+    .upload_modal .modal-header {
+        padding: 15px 20px;
+    }
+
+    .upload_modal form {
+        padding: 0px;
+    }
+
+    .user_permission_content {
+        padding: 20px 15px;
+    }
+    .support_center_filters, .support_center_header {
+        flex-wrap: wrap;
+        gap: 15px;
+    }
+}
+
+@media(max-width:419.98px) {
+    .login-right h2 {
+        font-size: 26px;
+    }
+
+    .login-right form input {
+        border-radius: 7px;
+        padding: 10px 14px;
+    }
+
+    .login_header_inner .logo img {
+        width: 180px;
+    }
+
+    .admin_dashboard_form h5 {
+        font-size: 16px;
+        padding: 10px 15px;
+    }
+
+    .certificates_table_header_btns {
+        flex-wrap: wrap;
+        justify-content: start !important;
+    }
+
+    .upload_modal .btn_close {
+        right: 3px;
+    }
+}
+
+@media(max-width:374.98px) {
+    .admin_dashboard .left_side_menu {
+        width: 305px;
+    }
+
+    .dashboard_content_header h3 {
+        font-size: 18px;
+        line-height: 22px;
+    }
+
+    .admin_dashboard_form form {
+        padding: 10px 10px 20px;
+    }
+}
