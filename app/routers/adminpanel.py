@@ -20,7 +20,7 @@ async def admin_login(request: Request):
         "Adminpanel/login.html", 
         {
             "request": request,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -33,7 +33,7 @@ async def admin_dashboard(request: Request):
     admin_token = AdminTokenModel.get_by_id(1)
     return templates.TemplateResponse(
         "Adminpanel/dashboard.html", 
-        {"request": request, "tokens_to_consume": tokens_to_consume, "admin_token": admin_token, "host": "http://dev.voiceninja.ai"}
+        {"request": request, "tokens_to_consume": tokens_to_consume, "admin_token": admin_token, "host": os.getenv("HOST")}
     )
 
 
@@ -48,5 +48,5 @@ async def admin_signup(request: Request):
     if request.session.get("is_admin"):
         return RedirectResponse(url="/admin/admin_dashboard")
     return templates.TemplateResponse(      
-        "Adminpanel/signup.html", {"request": request, "host": "http://dev.voiceninja.ai"}
+        "Adminpanel/signup.html", {"request": request, "host": os.getenv("HOST")}
     )   
