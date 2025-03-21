@@ -65,7 +65,7 @@ ws.onerror = (error) => {
 ## Python Version Requirements
 
 ### Recommended Python Version
-- Python 3.9.11 is recommended for optimal performance and compatibility
+- Python 3.12.7 is recommended for optimal performance and compatibility
 
 To check your Python version:
 ```bash
