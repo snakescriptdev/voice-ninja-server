@@ -55,7 +55,7 @@ class WebSocketClient {
         try{
             // debugger;
             await loadProtobufLibrary();
-            protobuf.load('/static/frame.proto', (err, root) => {
+            protobuf.load('http://dev.voiceninja.ai/static/frame.proto', (err, root) => {
                 if (err) {
                     console.error("Error loading protobuf schema", err);
                     throw err;
@@ -197,13 +197,13 @@ class WebSocketClient {
             // If already connected, disconnect instead
             if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 this.disconnect();
-                // this.connectBtn.innerHTML = '<img src="/static/Web/images/no-microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
+                // this.connectBtn.innerHTML = '<img src="http://dev.voiceninja.ai/static/Web/images/no-microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
                 return;
             }
 
             this.updateStatus('connecting', 'Connecting...');
             this.log('Attempting to connect...');
-            // this.connectBtn.innerHTML = '<img src="/static/Web/images/microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
+            // this.connectBtn.innerHTML = '<img src="http://dev.voiceninja.ai/static/Web/images/microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
             
             // Use dynamic WebSocket URL
             // const authHeader = this.getAuthHeader();
