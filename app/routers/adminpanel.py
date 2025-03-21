@@ -5,7 +5,9 @@ from app.databases.models import TokensToConsume, AdminTokenModel
 from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
 import os
+from dotenv import load_dotenv
 
+load_dotenv()
 router = APIRouter(prefix="/admin")
 
 templates = Jinja2Templates(directory="templates")

@@ -7,7 +7,9 @@ from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge
 from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
 import os
+from dotenv import load_dotenv
 
+load_dotenv()
 router = APIRouter()
 
 templates = Jinja2Templates(directory="templates")
