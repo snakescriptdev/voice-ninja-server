@@ -13,10 +13,10 @@
                 <div class="d-flex align-items-center gap-2">
                     <button type="button"
                         class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
-                        <img src="{{ host }}/static/Web/images/hamburger-icon.svg" class="img-fluid">
+                        <img src="https://dev.voiceninja.ai/static/Web/images/hamburger-icon.svg" class="img-fluid">
                     </button>
                     <div class="d-flex align-items-center gap-2">
-                        <img src="{{ host }}/static/Web/images/phone-icon.svg" class="img-fluid">
+                        <img src="https://dev.voiceninja.ai/static/Web/images/phone-icon.svg" class="img-fluid">
                         <h6 class="mb-0">Phone Number</h6>
                     </div>
                 </div>
@@ -29,7 +29,7 @@
                     </button>
                     <ul class="dropdown-menu">
                         <li>
-                            <a class="dropdown-item d-flex align-items-center gap-2" href="{{ host }}/logout">
+                            <a class="dropdown-item d-flex align-items-center gap-2" href="https://dev.voiceninja.ai/logout">
                                 <span>
                                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
                                         class="bi bi-box-arrow-right" viewBox="0 0 16 16">
@@ -52,11 +52,11 @@
                                 <div
                                     class="add_knowledge_base_heading d-flex justify-content-between align-items-center">
                                     <h6 class="d-flex align-items-center gap-2 mb-0"><span><img
-                                                src="{{ host }}/static/Web/images/book-icon.svg" class="img-fluid"></span> Phone Number
+                                                src="https://dev.voiceninja.ai/static/Web/images/book-icon.svg" class="img-fluid"></span> Phone Number
                                     </h6>
                                     <div class="position-relative">
                                         <button type="button" class="d-flex gap-3 border-0 add_phone_number_btn" onclick="toggleBuyButton()"><img
-                                                src="{{ host }}/static/Web/images/white-plus-icon.svg" class="img-fluid">
+                                                src="https://dev.voiceninja.ai/static/Web/images/white-plus-icon.svg" class="img-fluid">
                                         <!-- <span>Add</span> -->
                                         </button>
                                         <button type="button" class="gap-3 justify-content-center border-0 buy_new_number_btn" data-bs-toggle="modal" data-bs-target="#addPhoneNumberModal">
@@ -67,7 +67,7 @@
                                 <div class="knowledge_base_list">
                                     <div class="list_data">
                                         <a href="#" class="d-flex align-items-center gap-2 active_knowldege_base">
-                                            <img src="{{ host }}/static/Web/images/light-phone-icon.svg" class="img-fluid"> My Number
+                                            <img src="https://dev.voiceninja.ai/static/Web/images/light-phone-icon.svg" class="img-fluid"> My Number
                                         </a>
                                     </div>
                                 </div>
@@ -77,12 +77,12 @@
                             <div class="add_knowledge_base">
                                 <div class="add_knowledge_base_heading add_knowledge_base_right_heading d-flex align-items-center justify-content-between">
                                     <div>
-                                        <h6 class="mb-0 d-flex align-items-start gap-1">My Number <span class="d-flex cursor-pointer"><img src="{{ host }}/static/Web/images/square-edit-icon.svg" class="img-fluid"></span></h6>
+                                        <h6 class="mb-0 d-flex align-items-start gap-1">My Number <span class="d-flex cursor-pointer"><img src="https://dev.voiceninja.ai/static/Web/images/square-edit-icon.svg" class="img-fluid"></span></h6>
                                         <p class="mb-0">ID: +17752648387</p>
                                     </div>
                                     <div class="d-flex align-items-center justify-content-end gap-2">
                                         <button type="button" class="inbound-call-btn d-flex gap-2 dlt_btn align-items-center justify-content-center" data-bs-toggle="modal" data-bs-target="#makeInboundCallModal"><img
-                                            src="{{ host }}/static/Web/images/inbound-call-icon.svg" class="img-fluid">
+                                            src="https://dev.voiceninja.ai/static/Web/images/inbound-call-icon.svg" class="img-fluid">
                                             Make an Outbound Call</button>
                                     </div>
                                 </div>
@@ -125,10 +125,10 @@
             <div class="form_input">
                 <div class="input_label mb-3 d-flex justify-content-between align-items-center gap-1">
                     <label class="form-label mb-0">Upload Recipients</label>
-                    <a href="#" download="" class="d-flex align-items-center gap-2"><img src="{{ host }}/static/Web/images/download-blue-icon.svg" class="img-fluid"> Download the format</a>
+                    <a href="#" download="" class="d-flex align-items-center gap-2"><img src="https://dev.voiceninja.ai/static/Web/images/download-blue-icon.svg" class="img-fluid"> Download the format</a>
                 </div>
                 <div class="upload_area">
-                    <label for="uploadFile" class="d-flex justify-content-center flex-column align-items-center gap-1" id="uploadLabel"><span><img src="{{ host }}/static/Web/images/upload-file-icon.svg" class="img-fluid"></span>Choose a csv pr drag& drop it here.<span class="file_size_text">Up to 50 MB</span></label>
+                    <label for="uploadFile" class="d-flex justify-content-center flex-column align-items-center gap-1" id="uploadLabel"><span><img src="https://dev.voiceninja.ai/static/Web/images/upload-file-icon.svg" class="img-fluid"></span>Choose a csv pr drag& drop it here.<span class="file_size_text">Up to 50 MB</span></label>
                     <p id="fileName" class="d-none mb-0 text-center"></p>
                     <input type="file" class="form-control d-none" id="uploadFile">
                 </div>
@@ -180,7 +180,7 @@
 </script>
 
 <script>
-    let host = "{{ host }}";
+    let host = "https://dev.voiceninja.ai";
     document.getElementById("call_btn").addEventListener("click", function(e) {
         e.preventDefault();
         var agent_id = document.getElementById("agent_id").value;
@@ -189,7 +189,7 @@
             return;
         }
         $.ajax({
-            url: host + "/api/call_agent",
+            url: "https://dev.voiceninja.ai" "/api/call_agent",
             method: "POST",
             data: JSON.stringify({
                 agent_id: agent_id

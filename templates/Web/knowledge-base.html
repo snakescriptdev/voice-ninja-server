@@ -13,10 +13,10 @@
                 <div class="d-flex align-items-center gap-2">
                     <button type="button"
                         class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
-                        <img src="{{ host }}/static/Web/images/hamburger-icon.svg" class="img-fluid">
+                        <img src="https://dev.voiceninja.ai/static/Web/images/hamburger-icon.svg" class="img-fluid">
                     </button>
                     <div class="d-flex align-items-center gap-2">
-                        <img src="{{ host }}/static/Web/images/book-icon.svg" class="img-fluid">
+                        <img src="https://dev.voiceninja.ai/static/Web/images/book-icon.svg" class="img-fluid">
                         <h6 class="mb-0">Knowledge Base</h6>
                     </div>
                 </div>
@@ -53,10 +53,10 @@
                                 <div
                                     class="add_knowledge_base_heading d-flex justify-content-between align-items-center">
                                     <h6 class="d-flex align-items-center gap-2 mb-0"><span><img
-                                                src="{{ host }}/static/Web/images/book-icon.svg" class="img-fluid"></span> Knowledge Base
+                                                src="https://dev.voiceninja.ai/static/Web/images/book-icon.svg" class="img-fluid"></span> Knowledge Base
                                     </h6>
                                     <button type="button" class="d-flex gap-3 border-0" data-bs-toggle="modal" data-bs-target="#addKnowledgeBaseModal"><img
-                                            src="{{ host }}/static/Web/images/white-plus-icon.svg" class="img-fluid">
+                                            src="https://dev.voiceninja.ai/static/Web/images/white-plus-icon.svg" class="img-fluid">
                                         <span>Add</span></button>
                                 </div>
                                 <div class="knowledge_base_list" id="knowledge-base-list">
@@ -68,7 +68,7 @@
                                             data-id="{{ knowledge_base.id }}" 
                                             data-name="{{ knowledge_base.knowledge_base_name }}" 
                                             data-files='{{ knowledge_base.files | tojson | safe }}'>
-                                                <img src="{{ host }}/static/Web/images/lines-icon.svg" class="img-fluid"> 
+                                                <img src="https://dev.voiceninja.ai/static/Web/images/lines-icon.svg" class="img-fluid"> 
                                                 {{ knowledge_base.knowledge_base_name }}
                                             </a>
                                     
@@ -111,14 +111,14 @@
                                         <button type="button" class="gap-2 edit_btn align-items-center justify-content-center" 
                                                 style="display: none;" id="edit-btn" data-id="" data-bs-toggle="modal" 
                                                 data-bs-target="#AddFilesModel" >
-                                            <img src="{{ host }}/static/Web/images/edit-button.svg" class="img-fluid edit-icon">
+                                            <img src="https://dev.voiceninja.ai/static/Web/images/edit-button.svg" class="img-fluid edit-icon">
                                             Add files
                                         </button>
                                         <!-- Delete button (Initially hidden) -->
                                         <button type="button" class="gap-2 dlt_btn align-items-center justify-content-center" 
                                                 style="display: none;" id="delete-btn" data-id="" data-bs-toggle="modal" 
                                                 data-bs-target="#deleteModal" >
-                                            <img src="{{ host }}/static/Web/images/dlt-icon.svg" class="img-fluid delete-icon">
+                                            <img src="https://dev.voiceninja.ai/static/Web/images/dlt-icon.svg" class="img-fluid delete-icon">
                                             Delete
                                         </button>
                                     </div>
@@ -200,7 +200,7 @@
                 <label class="form-label mb-0">Upload Files</label>
                 <div class="upload_area">
                     <label for="uploadFile" class="" id="uploadLabel">
-                        <span class="label-text d-flex justify-content-center flex-column align-items-center gap-1"><span><img src="{{ host }}/static/Web/images/upload-file-icon.svg" class="img-fluid"></span>
+                        <span class="label-text d-flex justify-content-center flex-column align-items-center gap-1"><span><img src="https://dev.voiceninja.ai/static/Web/images/upload-file-icon.svg" class="img-fluid"></span>
                         Choose multiple docx, txt or pdf file or drag & drop it here.<span class="file_size_text">Up to 5 MB</span></span>
                         <p id="fileName" class="d-none mb-0 text-center"></p>
                     </label>
@@ -233,7 +233,7 @@
                 <label class="form-label mb-0">Upload Files</label>
                 <div class="upload_area">
                     <label for="uploadMoreFiles" class="" id="uploadMoreLabel">
-                        <span class="label-text d-flex justify-content-center flex-column align-items-center gap-1"><span><img src="{{ host }}/static/Web/images/upload-file-icon.svg" class="img-fluid"></span>
+                        <span class="label-text d-flex justify-content-center flex-column align-items-center gap-1"><span><img src="https://dev.voiceninja.ai/static/Web/images/upload-file-icon.svg" class="img-fluid"></span>
                         Choose a docx, txt or pdf file or drag & drop it here.<span class="file_size_text">Up to 5 MB</span></span>
                         <p id="moreFileName" class="d-none mb-0 text-center"></p>
                     </label>
@@ -262,7 +262,7 @@ document.getElementById("uploadFile").addEventListener("change", function () {
 </script>
 
 <script>
-let host = "{{ host }}"; 
+let host = "https://dev.voiceninja.ai"; 
   document.getElementById('uploadFile').addEventListener('change', function(e) {
     var fileName = e.target.files[0].name; // Get the uploaded file name
     var fileNameElement = document.getElementById('fileName'); // File name display element
@@ -357,7 +357,7 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
             // Create edit icon only if it doesn't exist
             if (!container.querySelector('.edit-icon')) {
                 const editIcon = document.createElement('img');
-                editIcon.src = host + "/static/Web/images/edit-icon.svg";
+                editIcon.src = "https://dev.voiceninja.ai" "/static/Web/images/edit-icon.svg";
                 editIcon.className = "edit-icon";
                 editIcon.style.width = "16px";
                 editIcon.style.cursor = "pointer";
@@ -402,7 +402,7 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
                         }
                         
                         
-                        fetch(host + '/api/update_knowledge_base', {
+                        fetch("https://dev.voiceninja.ai" '/api/update_knowledge_base', {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -463,7 +463,7 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
 
     if (fileData.length > 0) {
         fileData.forEach(file => {
-            let iconPath = host + "/static/Web/images/upload-file-icon.svg";
+            let iconPath = "https://dev.voiceninja.ai" "/static/Web/images/upload-file-icon.svg";
             const formattedSize = file.size ? formatFileSize(file.size) : "Unknown Size";
 
             const fileElement = document.createElement("div");
@@ -479,10 +479,10 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
                 </div>
                 <div class="d-flex align-items-center gap-2 delete_download_btns">
                     <a href="${file.url}" class="d-flex" download>
-                        <img src="${host}/static/Web/images/download-icon.svg" class="img-fluid">
+                        <img src="https://dev.voiceninja.ai/static/Web/images/download-icon.svg" class="img-fluid">
                     </a>
                     <a class="d-flex" onclick="deleteFile(${file.id}, ${file.knowledge_base_id})">
-                        <img src="${host}/static/Web/images/dlt-icon.svg" class="img-fluid">
+                        <img src="https://dev.voiceninja.ai/static/Web/images/dlt-icon.svg" class="img-fluid">
                     </a>
                 </div>
             `;
@@ -519,7 +519,7 @@ function loadMoreKnowledgeBases() {
     loading = true;
     document.getElementById("loader").style.display = "block";
 
-    fetch(host + '/knowledge_base/?page=${page}', {
+    fetch("https://dev.voiceninja.ai" '/knowledge_base/?page=${page}', {
         headers: { "X-Requested-With": "XMLHttpRequest" }
     })
     .then(response => response.json())
@@ -534,7 +534,7 @@ function loadMoreKnowledgeBases() {
                        data-id="${kb.id}" 
                        data-name="${kb.name}" 
                        data-files='${JSON.stringify(kb.files)}'>
-                        <img src="{{ host }}/static/Web/images/lines-icon.svg" class="img-fluid"> 
+                        <img src="https://dev.voiceninja.ai/static/Web/images/lines-icon.svg" class="img-fluid"> 
                         ${kb.name}
                     </a>
                     `;
@@ -592,7 +592,7 @@ document.addEventListener("DOMContentLoaded", function () {
         deleteDescription.style.display = "none";
 
         if (knowledgeBaseId) {
-            fetch(host + '/api/delete_knowledge_base', {
+            fetch("https://dev.voiceninja.ai" '/api/delete_knowledge_base', {
                 method: "DELETE",
                 headers: {
                     "X-CSRFToken": "{{ csrf_token }}",
@@ -686,7 +686,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         // Send AJAX request to backend
-        fetch(host + "/api/upload_knowledge_base", {
+        fetch("https://dev.voiceninja.ai" "/api/upload_knowledge_base", {
             method: "POST",
             body: formData,
             headers: {
@@ -744,7 +744,7 @@ function confirmDeleteFile() {
     const fileId = document.getElementById("deleteFileModal").getAttribute("data-id");
     const knowledgeBaseId = document.getElementById("deleteFileModal").getAttribute("data-knowledge_base_id");
 
-    fetch(host + "/api/delete_file", {
+    fetch("https://dev.voiceninja.ai" "/api/delete_file", {
         method: 'DELETE',
         headers: {
             'Content-Type': 'application/json',
@@ -832,7 +832,7 @@ function saveMoreFiles(e) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("knowledge_base_id", knowledgeBaseId);
-    fetch(host + "/api/upload_file", {
+    fetch("https://dev.voiceninja.ai" "/api/upload_file", {
         method: "POST",
         body: formData,
         headers: {
