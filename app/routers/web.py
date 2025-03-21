@@ -402,14 +402,14 @@ def chatbot_script(request: Request, agent_id: str):
 
                         // Include the WebSocket script
                         const webJsScript = document.createElement('script');
-                        webJsScript.src = "http://dev.voiceninja.ai/static/js/websocket.js";
+                        webJsScript.src = "https://dev.voiceninja.ai/static/js/websocket.js";
                         document.head.appendChild(webJsScript);
 
                         // Include Bot Styles
                         const botStyle = document.createElement('link');
                         botStyle.rel = 'stylesheet';
                         botStyle.type = 'text/css';
-                        botStyle.href = 'http://dev.voiceninja.ai/static/Web/css/bot_style.css';
+                        botStyle.href = 'https://dev.voiceninja.ai/static/Web/css/bot_style.css';
                         document.head.appendChild(botStyle);
 
                         webJsScript.onload = function() {{
@@ -437,7 +437,7 @@ def chatbot_script(request: Request, agent_id: str):
                                 </div>
                                 <h1>Connect with me</h1>
                                 <div class="status-indicator">
-                                    <img src="http://dev.voiceninja.ai/static/Web/images/wave.gif" alt="voice_icon">
+                                    <img src="https://dev.voiceninja.ai/static/Web/images/wave.gif" alt="voice_icon">
                                 </div>
                                 <button onclick="stopRecorder()" id="endCallPopup" 
                                         style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});">
@@ -461,7 +461,7 @@ def chatbot_script(request: Request, agent_id: str):
 
                     // Include the WebSocket script
                     const webJsScript = document.createElement('script');
-                    webJsScript.src = "http://dev.voiceninja.ai/static/js/websocket.js";
+                    webJsScript.src = "https://dev.voiceninja.ai/static/js/websocket.js";
                     document.head.appendChild(webJsScript);
 
                     webJsScript.onload = function() {{
