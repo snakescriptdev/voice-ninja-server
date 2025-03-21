@@ -4,14 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voice Agent India</title>
-    <link rel="stylesheet" href="/static/Adminpanel/css/bootstrap.min.css">
-    <link rel="stylesheet" href="/static/Adminpanel/css/style.css">
-    <link rel="stylesheet" href="/static/Adminpanel/css/responsive.css">
+    <link rel="stylesheet" href="{{ host }}/static/Adminpanel/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ host }}/static/Adminpanel/css/style.css">
+    <link rel="stylesheet" href="{{ host }}/static/Adminpanel/css/responsive.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick-theme.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
     <!-- Fix: Load jQuery before toastr -->
-    <script src="/static/Adminpanel/js/jquery.min.js"></script>
+    <script src="{{ host }}/static/Adminpanel/js/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css">
 </head>
@@ -53,8 +53,9 @@
 </body>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="/static/Adminpanel/js/bootstrap.bundle.min.js"></script>
+<script src="{{ host }}/static/Adminpanel/js/bootstrap.bundle.min.js"></script>
 <script>
+    let host = "{{ host }}";
     $(document).ready(function() {
         // Initialize toastr
         toastr.options = {
@@ -80,7 +81,7 @@
             var email = $('#emailInput').val();
             var password = $('#passwordInput').val();
             $.ajax({
-                url: '/api/admin_login',
+                url: host + '/api/admin_login',
                 type: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify({
@@ -90,7 +91,7 @@
                 success: function(response) {
                     toastr.success('Admin login successful');
                     setTimeout(function() {
-                        window.location.href = '/admin/admin_dashboard';
+                        window.location.href = host + '/admin/admin_dashboard';
                     }, 1000);
                 },
                 error: function(response) {
