@@ -9,12 +9,12 @@
     </div>
     <div class="d-flex justify-content-between align-items-center mb-4 px-4">
         <div class="sidebar_logo d-flex align-items-center gap-1">
-            <img src="{{ url_for('static', path='/Web/images/star-icon.svg') }}" class="img-fluid">
+            <img src="{{ host }}/static/Web/images/star-icon.svg" class="img-fluid">
             <h5 class="mb-0">Logo here</h5>
         </div>
         <div class="sidebar_collapse_icon">
             <button type="button" class="sidebarCollapse hamburger_btn bg-transparent border-0 sidebar_arrow_icon">
-                <img src="{{ url_for('static', path='/Web/images/left-arrow.svg') }}" class="img-fluid">
+                <img src="{{ host }}/static/Web/images/left-arrow.svg" class="img-fluid">
             </button>
         </div>
     </div>
@@ -130,9 +130,9 @@
 
     function get_total_tokens() {
         const user_id = {{ request.session.get("user").get('user_id') }};
-        
+        let host = "{{ host }}";
         $.ajax({
-            url: '/get_total_tokens',
+            url: host + '/get_total_tokens',
             type: 'GET',
             data: {
                 user_id: user_id

@@ -23,7 +23,25 @@ import asyncio, uuid
 from fastapi.websockets import WebSocketState
 from app.databases.models import TokensToConsume, UserModel, AgentModel, CallModel, CustomFunctionModel, WebhookModel   
 from app.databases.models import db
+from pydantic import BaseModel, Field
+from typing import Optional, Dict, Any
+from enum import Enum
 
+class GeminiMultimodalModalities(Enum):
+    TEXT = "TEXT"
+    AUDIO = "AUDIO"
+
+class InputParams(BaseModel):
+    frequency_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(default=4096, ge=1)
+    presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    top_k: Optional[int] = Field(default=None, ge=0)
+    top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    modalities: Optional[GeminiMultimodalModalities] = Field(
+        default=GeminiMultimodalModalities.AUDIO
+    )
+    extra: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 def generate_json_schema(dynamic_fields):
@@ -124,7 +142,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         """,
         api_key=os.getenv("GOOGLE_API_KEY"),
         voice_id=voice,    
-        tools=tools                
+        tools=tools,
+        params=InputParams(temperature=0.7, max_tokens=4096)          
     )
 
 

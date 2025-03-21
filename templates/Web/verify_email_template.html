@@ -72,7 +72,7 @@
 
             // Make API request to verify account
             $.ajax({
-                url: '/api/verify',
+                url: host + '/api/verify',
                 type: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify({ 'token': token }),
