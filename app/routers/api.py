@@ -1345,7 +1345,6 @@ async def upload_file(request: Request):
 async def agent_prompt_suggestion(request: Request):
     try:
         data = await request.json()
-        print(data)
         agent_function = data.get("agent_function")
         agent_tone = data.get("agent_tone")
         level_of_detail = data.get("level_of_detail")
