@@ -262,7 +262,6 @@ document.getElementById("uploadFile").addEventListener("change", function () {
 </script>
 
 <script>
-let host = "https://dev.voiceninja.ai"; 
   document.getElementById('uploadFile').addEventListener('change', function(e) {
     var fileName = e.target.files[0].name; // Get the uploaded file name
     var fileNameElement = document.getElementById('fileName'); // File name display element
@@ -357,7 +356,7 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
             // Create edit icon only if it doesn't exist
             if (!container.querySelector('.edit-icon')) {
                 const editIcon = document.createElement('img');
-                editIcon.src = "https://dev.voiceninja.ai" "/static/Web/images/edit-icon.svg";
+                editIcon.src = "https://dev.voiceninja.ai/static/Web/images/edit-icon.svg";
                 editIcon.className = "edit-icon";
                 editIcon.style.width = "16px";
                 editIcon.style.cursor = "pointer";
@@ -402,7 +401,7 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
                         }
                         
                         
-                        fetch("https://dev.voiceninja.ai" '/api/update_knowledge_base', {
+                        fetch("https://dev.voiceninja.ai/api/update_knowledge_base", {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
@@ -463,7 +462,7 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
 
     if (fileData.length > 0) {
         fileData.forEach(file => {
-            let iconPath = "https://dev.voiceninja.ai" "/static/Web/images/upload-file-icon.svg";
+            let iconPath = "https://dev.voiceninja.ai/static/Web/images/upload-file-icon.svg";
             const formattedSize = file.size ? formatFileSize(file.size) : "Unknown Size";
 
             const fileElement = document.createElement("div");
@@ -519,7 +518,7 @@ function loadMoreKnowledgeBases() {
     loading = true;
     document.getElementById("loader").style.display = "block";
 
-    fetch("https://dev.voiceninja.ai" '/knowledge_base/?page=${page}', {
+    fetch("https://dev.voiceninja.ai/knowledge_base/?page=${page}", {
         headers: { "X-Requested-With": "XMLHttpRequest" }
     })
     .then(response => response.json())
@@ -592,7 +591,7 @@ document.addEventListener("DOMContentLoaded", function () {
         deleteDescription.style.display = "none";
 
         if (knowledgeBaseId) {
-            fetch("https://dev.voiceninja.ai" '/api/delete_knowledge_base', {
+            fetch("https://dev.voiceninja.ai/api/delete_knowledge_base", {
                 method: "DELETE",
                 headers: {
                     "X-CSRFToken": "{{ csrf_token }}",
@@ -686,7 +685,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         // Send AJAX request to backend
-        fetch("https://dev.voiceninja.ai" "/api/upload_knowledge_base", {
+        fetch("https://dev.voiceninja.ai/api/upload_knowledge_base", {
             method: "POST",
             body: formData,
             headers: {
@@ -744,7 +743,7 @@ function confirmDeleteFile() {
     const fileId = document.getElementById("deleteFileModal").getAttribute("data-id");
     const knowledgeBaseId = document.getElementById("deleteFileModal").getAttribute("data-knowledge_base_id");
 
-    fetch("https://dev.voiceninja.ai" "/api/delete_file", {
+    fetch("https://dev.voiceninja.ai/api/delete_file", {
         method: 'DELETE',
         headers: {
             'Content-Type': 'application/json',
@@ -832,7 +831,7 @@ function saveMoreFiles(e) {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("knowledge_base_id", knowledgeBaseId);
-    fetch("https://dev.voiceninja.ai" "/api/upload_file", {
+    fetch("https://dev.voiceninja.ai/api/upload_file", {
         method: "POST",
         body: formData,
         headers: {

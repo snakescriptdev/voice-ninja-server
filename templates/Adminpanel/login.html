@@ -81,7 +81,7 @@
             var email = $('#emailInput').val();
             var password = $('#passwordInput').val();
             $.ajax({
-                url: "https://dev.voiceninja.ai" '/api/admin_login',
+                url: "https://dev.voiceninja.ai/api/admin_login",
                 type: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify({
@@ -91,7 +91,7 @@
                 success: function(response) {
                     toastr.success('Admin login successful');
                     setTimeout(function() {
-                        window.location.href = "https://dev.voiceninja.ai" '/admin/admin_dashboard';
+                        window.location.href = "https://dev.voiceninja.ai/admin/admin_dashboard";
                     }, 1000);
                 },
                 error: function(response) {
