@@ -728,7 +728,7 @@ class AgentConnectionModel(Base):
 
     id = Column(Integer, primary_key=True)
     agent_id = Column(Integer, nullable=False)
-    icon_url = Column(String, default="/static/Web/images/gif-icon-3.gif")
+    icon_url = Column(String, default="http://dev.voiceninja.ai/static/Web/images/gif-icon-3.gif")
     primary_color = Column(String, default="#8338ec")
     secondary_color = Column(String, default="#5e60ce") 
     pulse_color = Column(String, default="rgba(131, 56, 236, 0.3)")
