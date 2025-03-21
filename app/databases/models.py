@@ -10,7 +10,7 @@ from config import MEDIA_DIR
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 
-DB_URL= os.getenv("DB_URL")
+DB_URL="postgresql://postgres:Snak3sCr1pT@localhost/voice_ninja"
 engine = create_engine(DB_URL, echo=False)
 Base = declarative_base()
 
@@ -728,7 +728,7 @@ class AgentConnectionModel(Base):
 
     id = Column(Integer, primary_key=True)
     agent_id = Column(Integer, nullable=False)
-    icon_url = Column(String, default="http://dev.voiceninja.ai/static/Web/images/gif-icon-3.gif")
+    icon_url = Column(String, default="https://dev.voiceninja.ai/static/Web/images/gif-icon-3.gif")
     primary_color = Column(String, default="#8338ec")
     secondary_color = Column(String, default="#5e60ce") 
     pulse_color = Column(String, default="rgba(131, 56, 236, 0.3)")
