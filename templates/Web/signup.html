@@ -83,7 +83,7 @@
             };
 
             $.ajax({
-                url: "https://dev.voiceninja.ai" "/api/user-register/",
+                url: "https://dev.voiceninja.ai/api/user-register/",
                 type: "POST",
                 data: JSON.stringify(formData),
                 contentType: "application/json",
@@ -94,7 +94,7 @@
                     if (response.status === 'success') {
                         toastr.success(response.message, { positionClass: 'toast-top-right' });
                         setTimeout(function() {
-                            window.location.href = "https://dev.voiceninja.ai" "/login";
+                            window.location.href = "https://dev.voiceninja.ai/login";
                         }, 2000);
                     } else if (response.status === 'error') {
                         toastr.error(response.error, { positionClass: 'toast-top-right' });
