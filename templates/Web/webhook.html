@@ -10,7 +10,7 @@
             <div class="agent_page_header d-flex align-items-center justify-content-between">
                 <div class="d-flex align-items-center gap-2">
                     <button type="button" class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
-                        <img src="{{ host }}/static/Web/images/hamburger-icon.svg" class="img-fluid">
+                        <img src="https://dev.voiceninja.ai/static/Web/images/hamburger-icon.svg" class="img-fluid">
                     </button>
                     <h4 class="mb-0">Webhook Settings</h4>
                 </div>
@@ -92,10 +92,10 @@
                                                 </svg>
                                             </button>
                                             <button class="btn btn-primary align-items-center justify-content-center" onclick="editWebhook('{{ webhook.id }}')" id="edit-btn-{{ webhook.id }}">
-                                                <img src="{{ host }}/static/Web/images/table-edit-icon.svg" class="img-fluid">
+                                                <img src="https://dev.voiceninja.ai/static/Web/images/table-edit-icon.svg" class="img-fluid">
                                             </button>
                                             <button class="btn btn-danger align-items-center justify-content-center" onclick="deleteWebhook('{{ webhook.id }}')" id="delete-btn-{{ webhook.id }}">
-                                                <img src="{{ host }}/static/Web/images/delete-icon.svg" class="img-fluid">
+                                                <img src="https://dev.voiceninja.ai/static/Web/images/delete-icon.svg" class="img-fluid">
                                             </button>
                                         </div>
                                     </td>
@@ -114,14 +114,14 @@
         </div>
     </div>
     <script>
-        let host = "{{ host }}";
+        let host = "https://dev.voiceninja.ai";
         $(document).ready(function() {
             $('#webhookForm').submit(function(e) {
                 e.preventDefault();
                 const webhookUrl = $('#webhookUrl').val();
                 if (webhookUrl) {
                     $.ajax({
-                        url: host + '/api/save-webhook',
+                        url: "https://dev.voiceninja.ai" '/api/save-webhook',
                         type: 'POST',
                         contentType: 'application/json',
                         headers: {
@@ -177,7 +177,7 @@
                 const newUrl = inputField.val();
                 
                 $.ajax({
-                    url: host + '/api/update-webhook',
+                    url: "https://dev.voiceninja.ai" '/api/update-webhook',
                     type: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({

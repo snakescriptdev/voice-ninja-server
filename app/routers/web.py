@@ -354,13 +354,13 @@ def chatbot_script(request: Request, agent_id: str):
                         document.head.appendChild(protobufScript);
                         
                         const webJsScript = document.createElement('script');
-                        webJsScript.src = "{host}/static/js/websocket.js";
+                        webJsScript.src = "https://dev.voiceninja.ai/static/js/websocket.js";
                         document.head.appendChild(webJsScript);
                         
                         const botStyle = document.createElement('link');
                         botStyle.rel = 'stylesheet';
                         botStyle.type = 'text/css';
-                        botStyle.href = '{host}/static/Web/css/bot_style.css';
+                        botStyle.href = 'https://dev.voiceninja.ai/static/Web/css/bot_style.css';
                         document.head.appendChild(botStyle);
                         
                         // Create and style popup dynamically
@@ -384,7 +384,7 @@ def chatbot_script(request: Request, agent_id: str):
                         popup.innerHTML = `
                             <h2 style="font-size: 24px; margin-bottom: 10px;">Need More Tokens?</h2>
                             <p style="font-size: 18px; margin-bottom: 20px;">Get extra tokens now and keep enjoying premium features!</p>
-                            <a href="{host}/payment" class='buy-button' style="
+                            <a href="https://dev.voiceninja.ai/payment" class='buy-button' style="
                                 background: #fff;
                                 color: #0C7FDA;
                                 padding: 10px 20px;
@@ -417,14 +417,14 @@ def chatbot_script(request: Request, agent_id: str):
 
                         // Include the WebSocket script
                         const webJsScript = document.createElement('script');
-                        webJsScript.src = "{host}/static/js/websocket.js";
+                        webJsScript.src = "https://dev.voiceninja.ai/static/js/websocket.js";
                         document.head.appendChild(webJsScript);
 
                         // Include Bot Styles
                         const botStyle = document.createElement('link');
                         botStyle.rel = 'stylesheet';
                         botStyle.type = 'text/css';
-                        botStyle.href = '{host}/static/Web/css/bot_style.css';
+                        botStyle.href = 'https://dev.voiceninja.ai/static/Web/css/bot_style.css';
                         document.head.appendChild(botStyle);
 
                         webJsScript.onload = function() {{
@@ -452,7 +452,7 @@ def chatbot_script(request: Request, agent_id: str):
                                 </div>
                                 <h1>Connect with me</h1>
                                 <div class="status-indicator">
-                                    <img src="{host}/static/Web/images/wave.gif" alt="voice_icon">
+                                    <img src="https://dev.voiceninja.ai/static/Web/images/wave.gif" alt="voice_icon">
                                 </div>
                                 <button onclick="stopRecorder()" id="endCallPopup" 
                                         style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});">
@@ -476,7 +476,7 @@ def chatbot_script(request: Request, agent_id: str):
 
                     // Include the WebSocket script
                     const webJsScript = document.createElement('script');
-                    webJsScript.src = "{host}/static/js/websocket.js";
+                    webJsScript.src = "https://dev.voiceninja.ai/static/js/websocket.js";
                     document.head.appendChild(webJsScript);
 
                     webJsScript.onload = function() {{
