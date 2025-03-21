@@ -326,7 +326,71 @@ def chatbot_script(request: Request, agent_id: str):
     appearances = AgentConnectionModel.get_by_agent_id(agent_id)
     approved_domain = ApprovedDomainModel.check_domain_exists(domain, created_by)
     if approved_domain or domain in domains:
-        if agent.is_design_enabled:
+
+        user = UserModel.get_by_id(created_by)
+        if int(user.tokens) == 0:
+            script_content = f'''document.addEventListener('DOMContentLoaded', function() {{
+                    (function() {{
+                        console.log("Script is running...");
+                        
+                        // Inject external scripts dynamically
+                        const protobufScript = document.createElement('script');
+                        protobufScript.src = "https://cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js";
+                        document.head.appendChild(protobufScript);
+                        
+                        const webJsScript = document.createElement('script');
+                        webJsScript.src = "/static/js/websocket.js";
+                        document.head.appendChild(webJsScript);
+                        
+                        const botStyle = document.createElement('link');
+                        botStyle.rel = 'stylesheet';
+                        botStyle.type = 'text/css';
+                        botStyle.href = '/static/Web/css/bot_style.css';
+                        document.head.appendChild(botStyle);
+                        
+                        // Create and style popup dynamically
+                        const popup = document.createElement('div');
+                        popup.className = 'popup';
+                        popup.style.cssText = `
+                            background: linear-gradient(135deg, #0C7FDA, #99d2ff);
+                            color: white;
+                            padding: 20px;
+                            border-radius: 12px;
+                            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+                            text-align: center;
+                            max-width: 350px;
+                            position: fixed;
+                            top: 50%;
+                            left: 50%;
+                            transform: translate(-50%, -50%);
+                            display: none;
+                        `;
+                        
+                        popup.innerHTML = `
+                            <h2 style="font-size: 24px; margin-bottom: 10px;">Need More Tokens?</h2>
+                            <p style="font-size: 18px; margin-bottom: 20px;">Get extra tokens now and keep enjoying premium features!</p>
+                            <a href="/payment" class='buy-button' style="
+                                background: #fff;
+                                color: #0C7FDA;
+                                padding: 10px 20px;
+                                font-size: 18px;
+                                font-weight: bold;
+                                border: none;
+                                border-radius: 6px;
+                                cursor: pointer;
+                                text-decoration: none;
+                                transition: background 0.3s;">
+                                Buy Now
+                            </a>
+                        `;
+                        
+                        document.body.appendChild(popup);
+                        setTimeout(() => {{ popup.style.display = 'block'; }}, 1000);
+                    }})();
+                }});
+
+                        '''
+        elif agent.is_design_enabled:
             script_content = f'''
                 document.addEventListener('DOMContentLoaded', function() {{
                     (function() {{
