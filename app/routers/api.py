@@ -304,7 +304,7 @@ async def user_register(request: Request):
                 ResetPasswordModel.create(email=email, token=email_token)
             else:
                 ResetPasswordModel.update(email=email, token=email_token)
-
+            host = request.headers.get("host")
             template = f"""
                         <html>
                         <body>                    
@@ -312,7 +312,7 @@ async def user_register(request: Request):
                         <p>Hi {user.name} !!!
                                 <br>Please click on the link below to verify your account
                                 <br>
-                                <a href="http://localhost:8000/verify-account/{email_token}">Verify Account</a>
+                                <a href="https://{host}/verify-account/{email_token}">Verify Account</a>
                                 <br>
                                 <br>
                                 <br>
