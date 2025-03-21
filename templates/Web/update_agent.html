@@ -1515,6 +1515,10 @@ function saveVariable() {
         }),
         success: function(response) {
             toastr.success('Variables saved successfully');
+            const modal = document.getElementById('variable-modal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
         },
         error: function(xhr, status, error) {
             toastr.error('Error saving variables: ' + error);

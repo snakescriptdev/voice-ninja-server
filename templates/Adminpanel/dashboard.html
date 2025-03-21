@@ -94,9 +94,7 @@
                             <div class="dropdown">
                                 <button class="bg-transparent border-0 dropdown-toggle" type="button" data-bs-toggle="dropdown"
                                     aria-expanded="false">
-                                   <div class="user-avatar">
-                                        {{ request.session.get("user").get('name')[0].upper() }}
-                                    </div>
+                                   <img src="{{ url_for('static', path='Web/images/person-img.svg') }}" class="img-fluid">
                                 </button>
                                 <ul class="dropdown-menu">
                                     <li>
