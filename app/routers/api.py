@@ -1360,7 +1360,6 @@ async def agent_prompt_suggestion(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
-
 @router.post("/save-agent-prompt", name="save-agent-prompt")
 async def save_agent_prompt(request: Request):
     try:
@@ -1370,33 +1369,37 @@ async def save_agent_prompt(request: Request):
 
         # Create Jinja2 environment
         env = Environment()
-        # Parse the template
-        parsed_template = env.parse(agent_prompt)
-        # Get all variables used in the template
-        variables = meta.find_undeclared_variables(parsed_template)
-        
+
+        try:
+            # Parse the template
+            parsed_template = env.parse(agent_prompt)
+            # Get all variables used in the template
+            new_variables = meta.find_undeclared_variables(parsed_template)
+        except Exception as parse_error:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid template syntax! and Use {{_}} to add variables.", "error": str(parse_error)})
+
         # Get existing dynamic variables if any
         agent = AgentModel.get_by_id(agent_id) if agent_id else None
-        existing_variables = agent.dynamic_variables if agent and hasattr(agent, 'dynamic_variables') else {}
-        
-        # Preserve existing values or use empty string for new variables
-        dynamic_variables = {
-            var: existing_variables.get(var, "") for var in variables
-        }
+        existing_variables = agent.dynamic_variable if agent and hasattr(agent, 'dynamic_variable') else {}
+
+        # Merge existing and new variables
+        merged_variables = {**existing_variables, **{var: "" for var in new_variables if var not in existing_variables}}
         
         # Save dynamic variables to agent model
-        if agent_id and dynamic_variables:
-            AgentModel.update_dynamic_variables(agent_id, dynamic_variables)
+        if agent_id and merged_variables:
+            AgentModel.update_dynamic_variables(agent_id, merged_variables)
+        
         if agent_id:
             if agent:
                 AgentModel.update_prompt(agent_id, agent_prompt)
-                return JSONResponse(status_code=200, content={"status": "success", "message": "Prompt saved successfully", "dynamic_variables": dynamic_variables})
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Prompt saved successfully", "dynamic_variables": merged_variables})
             else:
                 return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
         else:
             return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
 
 
 @router.post("/save-welcome-message", name="save-welcome-message")

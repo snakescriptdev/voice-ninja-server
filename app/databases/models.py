@@ -10,7 +10,7 @@ from config import MEDIA_DIR
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 
-DB_URL="postgresql://postgres:1234@localhost/audio_assistant"
+DB_URL= os.getenv("DB_URL")
 engine = create_engine(DB_URL, echo=False)
 Base = declarative_base()
 
