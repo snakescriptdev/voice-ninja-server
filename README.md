@@ -61,4 +61,15 @@ ws.onerror = (error) => {
 - Username: `admin`
 - Password: `admin123`
 
+
+## Python Version Requirements
+
+### Recommended Python Version
+- Python 3.12.7 is recommended for optimal performance and compatibility
+
+To check your Python version:
+```bash
+python --version
+```
+
 **Note:** For production use, please change the default credentials and implement proper security measures.
