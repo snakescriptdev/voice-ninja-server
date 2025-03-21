@@ -114,14 +114,13 @@
         </div>
     </div>
     <script>
-        let host = "https://dev.voiceninja.ai";
         $(document).ready(function() {
             $('#webhookForm').submit(function(e) {
                 e.preventDefault();
                 const webhookUrl = $('#webhookUrl').val();
                 if (webhookUrl) {
                     $.ajax({
-                        url: "https://dev.voiceninja.ai" '/api/save-webhook',
+                        url: "https://dev.voiceninja.ai/api/save-webhook",
                         type: 'POST',
                         contentType: 'application/json',
                         headers: {
@@ -177,7 +176,7 @@
                 const newUrl = inputField.val();
                 
                 $.ajax({
-                    url: "https://dev.voiceninja.ai" '/api/update-webhook',
+                    url: "https://dev.voiceninja.ai/api/update-webhook",
                     type: 'POST',
                     contentType: 'application/json',
                     data: JSON.stringify({

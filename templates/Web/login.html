@@ -63,7 +63,7 @@
 
             let email = $('#email').val();
             let password = $('#password').val();
-            let url = "https://dev.voiceninja.ai" "/api/user-login/";
+            let url = "https://dev.voiceninja.ai/api/user-login/";
 
             $.ajax({
                 url: url,
@@ -80,7 +80,7 @@
                     if (response.status === 'success') {
                         toastr.success(response.message, { positionClass: 'toast-top-right' });
                         $('#login-button').text('Log in');
-                        setTimeout(() => { window.location.href = "https://dev.voiceninja.ai" "/dashboard"; }, 1000);
+                        setTimeout(() => { window.location.href = "https://dev.voiceninja.ai/dashboard"; }, 1000);
                     } else {
                         toastr.error(response.error, { positionClass: 'toast-top-right' });
                         $('#login-button').prop('disabled', false).text('Log in');
