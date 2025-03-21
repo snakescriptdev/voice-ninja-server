@@ -24,7 +24,7 @@ async def index(request: Request):
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -39,7 +39,7 @@ async def login(request: Request):
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -50,7 +50,7 @@ async def forget_password(request: Request):
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -85,7 +85,7 @@ async def dashboard(request: Request, page: int = 1):
             "voices": VoiceSettings.ALLOWED_VOICES,
             "page_obj": paginator,
             "user": user,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -98,7 +98,7 @@ async def index(request: Request):
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -110,7 +110,7 @@ async def audio_list(request: Request):
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
             "enable_filters": False,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -126,7 +126,7 @@ async def create_agent(request: Request):
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
             "knowledge_bases":knowledge_bases,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -178,7 +178,7 @@ async def update_agent(request: Request):
             "selected_knowledge": selected_knowledge,
             "dynamic_variables": dynamic_variables,
             "custom_functions": custom_functions,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         },
     )
 
@@ -219,7 +219,7 @@ async def knowledge_base(request: Request, page: int = 1):
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
             "page_obj": paginator,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -243,7 +243,7 @@ async def phone_number(request: Request):
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
             "agents": agents,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 @router.get("/change_password")
@@ -255,7 +255,7 @@ async def change_password(request: Request):
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -287,7 +287,7 @@ async def verify_account(request: Request, token: str):
         {
             "request": request,
             "token": token,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -314,7 +314,7 @@ async def call_history(request: Request, page: int = 1):
             "agent_name": agent.agent_name,
             "selected_voice": agent.selected_voice,
             "agent_id": agent_id,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -337,7 +337,7 @@ def chatbot_script(request: Request, agent_id: str):
     created_by = agent.created_by
     domain = request.base_url.hostname
     domains = os.getenv("DOMAIN_NAME").split(",")
-    host = "http://dev.voiceninja.ai"
+    host = os.getenv("HOST")
     appearances = AgentConnectionModel.get_by_agent_id(agent_id)
     approved_domain = ApprovedDomainModel.check_domain_exists(domain, created_by)
     if approved_domain or domain in domains:
@@ -896,7 +896,7 @@ async def payment(request: Request):
         "Web/razorpay_payment.html", 
         {
             "request": request,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -915,7 +915,7 @@ async def payment_success(request: Request):
             "coins": request.query_params.get("coins"),
             "amount": request.query_params.get("amount"),
             "order_id": request.query_params.get("order_id"),
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -928,7 +928,7 @@ async def payment_failed(request: Request):
         {
             "request": request,
             "message": request.query_params.get("message"),
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -953,7 +953,7 @@ async def webhook(request: Request):
             "request": request, 
             "webhooks": webhooks,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -976,7 +976,7 @@ async def approved_domains(request: Request):
             "approved_domains": approved_domains,
             "voices": VoiceSettings.ALLOWED_VOICES,
             "configured_domains": domains,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
 
@@ -987,6 +987,6 @@ async def error(request: Request):
         "Web/error.html", 
         {
             "request": request,
-            "host": "http://dev.voiceninja.ai"
+            "host": os.getenv("HOST")
         }
     )
