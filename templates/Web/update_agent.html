@@ -542,7 +542,8 @@
         <div>
             <strong>Max Output Tokens</strong>
             <p style="font-size: 12px; color: #666;">The maximum number of tokens to generate in the completion.</p>
-            <small class="text-muted">Default: 1000</small>
+            <small class="text-muted">Min: 100</small>
+            <small class="text-muted">Default: 4096</small>
             <small class="text-muted">Max: 8000</small>
             <div style="position: relative; width: 100%;">
                 <input id="maxOutputTokensSlider" type="text" class="form-control" placeholder="Enter max output tokens" value="{% if agent.max_output_tokens %}{{ agent.max_output_tokens }}{% else %}1000{% endif %}">
