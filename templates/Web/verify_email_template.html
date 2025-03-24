@@ -66,7 +66,7 @@
                 toastr.error('Verification token is missing', "Error", {
                     "positionClass": "toast-top-right"
                 });
-                setTimeout(() => window.location.href = '/login/', 2000);
+                setTimeout(() => window.location.href = '/login', 2000);
                 return;
             }
 
@@ -90,7 +90,7 @@
                             "positionClass": "toast-top-right"
                         });
                     }
-                    setTimeout(() => window.location.href = '/login/', 2000);
+                    setTimeout(() => window.location.href = '/login', 2000);
                 },
                 error: function(xhr, status, error) {
                     if (xhr.responseJSON?.error) {
@@ -102,7 +102,7 @@
                             "positionClass": "toast-top-right"
                         });
                     }
-                    setTimeout(() => window.location.href = '/login/', 2000);
+                    setTimeout(() => window.location.href = '/login', 2000);
                 },
                 complete: function() {
                     $('#loader').hide();
