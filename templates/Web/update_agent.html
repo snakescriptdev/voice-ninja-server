@@ -40,8 +40,8 @@
                             <div class="agent_type_select_icon">
                                 <img src="https://dev.voiceninja.ai/static/Web/images/ai-icon.svg" class="img-fluid">
                             </div>
-                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/setting-icon.svg" class="img-fluid">
+                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer" onclick="openDialog()">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
                             </div>
                         </div>
                         <div class="agent_select_box position-relative">
@@ -527,6 +527,34 @@
       </div>
     </div>
   </div>
+
+
+  <div id="dialog" style="position: absolute; width: 300px; background: #fff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 16px; left: 330px; top: 180px; border: 1px solid #ddd; z-index: 1000; display: none;">
+        <div>
+            <strong>LLM Temperature</strong>
+            <p style="font-size: 12px; color: #666;">Lower value yields better function call results.</p>
+            <small class="text-muted">Default: 1.0</small>
+            <div style="position: relative; width: 100%;">
+                <input id="temperatureSlider" type="range" min="0.0" max="2.0" step="0.1" value="{% if agent.temperature %}{{ agent.temperature }}{% else %}0.00{% endif %}" style="width: 100%;" >
+                <div id="sliderValue" style="position: absolute; top: -25px; left: 0%; transform: translateX(-50%); background: #0C7FDA; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 12px;">0.00</div>
+            </div>
+        </div>
+        <div>
+            <strong>Max Output Tokens</strong>
+            <p style="font-size: 12px; color: #666;">The maximum number of tokens to generate in the completion.</p>
+            <small class="text-muted">Min: 100</small>
+            <small class="text-muted">Default: 4096</small>
+            <small class="text-muted">Max: 8000</small>
+            <div style="position: relative; width: 100%;">
+                <input id="maxOutputTokensSlider" type="text" class="form-control" placeholder="Enter max output tokens" value="{% if agent.max_output_tokens %}{{ agent.max_output_tokens }}{% else %}1000{% endif %}">
+            </div>
+        </div>
+        <hr style="margin-top: 10px;">
+        <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
+            <button id="closeDialog" style="padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; background: #f0f0f0;" onclick="closeDialog()">Cancel</button>
+            <button style="padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; background: #0C7FDA; color: white; margin-left: 8px;" onclick="saveSettings()">Save</button>
+        </div>
+    </div>
   <script>
     function toggleVariableModal() {
         const modal = document.getElementById('variable-modal');
@@ -1527,4 +1555,68 @@ function saveVariable() {
     });
 }
 </script>
+
+ <script>
+        function openDialog() {
+            const dialog = document.getElementById("dialog");
+            if (dialog) {
+                dialog.style.display = dialog.style.display === "none" ? "block" : "none";
+            }
+        }
+        
+        function closeDialog() {
+            const dialog = document.getElementById("dialog");
+            if (dialog) {
+                dialog.style.display = "none";
+            }
+        }
+
+        const slider = document.getElementById("temperatureSlider");
+        const sliderValue = document.getElementById("sliderValue");
+
+        // Set initial value and position based on existing value
+        const initialValue = slider.value;
+        const initialPercentage = ((initialValue - slider.min) / (slider.max - slider.min)) * 100;
+        sliderValue.textContent = parseFloat(initialValue).toFixed(1);
+        sliderValue.style.left = initialPercentage + "%";
+
+        slider.addEventListener("input", function() {
+            let percentage = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
+            sliderValue.textContent = parseFloat(slider.value).toFixed(1);
+            sliderValue.style.left = percentage + "%";
+        });
+
+        function saveSettings(){
+            const temperature = document.getElementById("temperatureSlider").value;
+            const maxOutputTokens = document.getElementById("maxOutputTokensSlider").value;
+            const currentUrl = new URL(window.location.href);
+            const agentId = currentUrl.searchParams.get("agent_id");
+            $.ajax({
+                url: host + '/api/update-agent-settings',
+                type: 'POST',
+                contentType: 'application/json',    
+                data: JSON.stringify({ temperature: temperature, max_output_tokens: maxOutputTokens, agent_id: agentId }),
+                success: function(response) {
+                    if(response.status == "success"){
+                        toastr.success('Settings saved successfully');
+                        const dialog = document.getElementById("dialog");
+                        if (dialog) {
+                            dialog.style.display = "none";
+                        }
+                    }
+                    else{
+                        toastr.error(response.message);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    if(xhr.responseJSON.message){
+                        toastr.error(xhr.responseJSON.message);
+                    }
+                    else{
+                        toastr.error('Error saving settings: ' + error);
+                    }
+                }
+            });
+        }
+    </script>
 {% endblock %}

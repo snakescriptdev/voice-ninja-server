@@ -253,6 +253,9 @@ class AgentModel(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     is_design_enabled = Column(Boolean,default=False)
     dynamic_variable = Column(JSONB, nullable=True , default={})
+    max_output_tokens = Column(Integer, nullable=True,default=1000) 
+    temperature = Column(Float, nullable=True,default=0.0)
+
     knowledge_base = relationship(
         "KnowledgeBaseModel",
         secondary=agent_knowledge_association,
@@ -291,12 +294,12 @@ class AgentModel(Base):
             return db.session.query(cls).filter(cls.created_by == user_id).all()
 
     @classmethod
-    def create(cls, agent_name: str, selected_model: str, selected_voice: str, phone_number: str, agent_prompt: str, selected_language: str, welcome_msg: str, created_by: int) -> "AgentModel":
+    def create(cls, agent_name: str, selected_model: str, selected_voice: str, phone_number: str, agent_prompt: str, selected_language: str, welcome_msg: str, created_by: int, temperature: float = 0.0, max_output_tokens: int = 1000) -> "AgentModel":
         """
         Create a new agent
         """
         with db():  
-            agent = cls(agent_name=agent_name, selected_model=selected_model, selected_voice=selected_voice, phone_number=phone_number, agent_prompt=agent_prompt, selected_language=selected_language, welcome_msg=welcome_msg, created_by=created_by)
+            agent = cls(agent_name=agent_name, selected_model=selected_model, selected_voice=selected_voice, phone_number=phone_number, agent_prompt=agent_prompt, selected_language=selected_language, welcome_msg=welcome_msg, created_by=created_by, temperature=temperature, max_output_tokens=max_output_tokens)
             db.session.add(agent)
             db.session.commit()
             db.session.refresh(agent)
@@ -404,6 +407,21 @@ class AgentModel(Base):
                 return agent
             return None
     
+    @classmethod
+    def update_temperature_and_max_output_tokens(cls, agent_id: int, temperature: float, max_output_tokens: int) -> "AgentModel":
+        """
+        Update an agent's temperature and max output tokens by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.temperature = temperature
+                agent.max_output_tokens = max_output_tokens
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+    
 class ResetPasswordModel(Base):
     __tablename__ = "reset_password"
     
@@ -504,14 +522,7 @@ class ResetPasswordModel(Base):
         """
         with db():
             return db.session.query(cls).filter(cls.token == token).first()
-    
-    @classmethod
-    def update_prompt(cls, agent_id: int, agent_prompt: str) -> "AgentModel":
-        """
-        Update an agent's prompt by ID
-        """
-        with db():
-            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+
 
 class KnowledgeBaseModel(Base):
     __tablename__ = "knowledge_base"

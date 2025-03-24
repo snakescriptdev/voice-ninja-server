@@ -9,8 +9,8 @@
                 <div class="col-md-6">
                     <div class="login_left">
                         <div class="site_logo d-flex align-items-center gap-3">
-                            <img src="https://dev.voiceninja.ai/static/Web/images/logo-right.svg" class="img-fluid">
-                            <h3 class="mb-0"><span>Your </span><br>logo</h3>
+                            <img src="{{ host }}/static/Web/images/voice-ninja-logo.svg" class="img-fluid">
+                            <h3 class="mb-0"><span>Voice</span><br>Ninja</h3>
                         </div>
                         <div class="welcome_text">
                             <h1>Hello,<br> <span>Welcome!</span></h1>
@@ -83,7 +83,7 @@
             };
 
             $.ajax({
-                url: "https://dev.voiceninja.ai/api/user-register/",
+                url: host + "/api/user-register",
                 type: "POST",
                 data: JSON.stringify(formData),
                 contentType: "application/json",
