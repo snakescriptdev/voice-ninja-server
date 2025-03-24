@@ -50,8 +50,7 @@ class Settings(BaseSettings):
     DOMAIN_NAME: str
     HOST: str
     class Config:
-        env_file = os.path.join(os.path.dirname(__file__), ".env")  # Absolute path
-        env_file_encoding = "utf-8"  # Ensure proper encoding
+        env_file = ".env"
 
 @lru_cache()
 def get_settings() -> Settings:
