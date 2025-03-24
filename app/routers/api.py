@@ -1714,6 +1714,27 @@ async def delete_approved_domain(request: Request):
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
 
+@router.post("/update-agent-settings", name="update-agent-settings")
+async def update_agent_settings(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        temperature = data.get("temperature")
+        max_output_tokens = data.get("max_output_tokens")   
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+        if not temperature:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Temperature is required"})
+        if not max_output_tokens:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Max output tokens is required"})
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+        AgentModel.update_temperature_and_max_output_tokens(agent_id, temperature, max_output_tokens)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Agent settings updated successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
 
 @router.post("/check-payload", name="check-payload")
 async def check_payload(request: Request):

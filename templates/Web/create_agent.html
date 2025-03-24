@@ -358,6 +358,7 @@
         secondaryColor: null,
         pulseColor: null
     };
+    let host = "{{ host }}";
 
 
     document.addEventListener("DOMContentLoaded", function() {
@@ -434,7 +435,7 @@
         }
 
         // Use absolute URL to avoid redirect
-        let requestUrl = agentId ? `https://dev.voiceninja.ai/api/edit_agent` : `https://dev.voiceninja.ai/api/create_new_agent`;
+        let requestUrl = agentId ? `${host}/api/edit_agent` : `${host}/api/create_new_agent`;
 
         $.ajax({    
             url: requestUrl,
@@ -589,7 +590,7 @@ function saveChanges() {
         };
 
         // Send data using Fetch API instead of jQuery AJAX
-        fetch(`https://dev.voiceninja.ai/api/save_changes`, {
+        fetch(`${host}/api/save_changes`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -683,7 +684,7 @@ function saveChanges() {
         $("#close-help-ai-modal").prop("disabled", true);
     
         $.ajax({
-            url: `https://dev.voiceninja.ai/api/agent_prompt_suggestion/`,
+            url: `${host}/api/agent_prompt_suggestion`,
             type: 'POST',
             contentType: 'application/json',
             data: JSON.stringify({ agent_function: agentFunction, agent_tone: agentTone, level_of_detail: levelOfDetail, industry: industry, agent_name: agentName }),
