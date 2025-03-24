@@ -240,7 +240,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('confirm-delete').addEventListener('click', function() {
         const agentId = this.getAttribute('data-agent-id');
         
-        fetch(`https://dev.voiceninja.ai/api/delete_agent/?agent_id=${agentId}/`, {
+        fetch(`https://dev.voiceninja.ai/api/delete_agent/?agent_id=${agentId}`, {
             method: "DELETE",
             headers: {
                 'X-CSRFToken': '{{ csrf_token }}',
