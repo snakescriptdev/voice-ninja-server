@@ -15,7 +15,7 @@ from pipecat.transports.network.fastapi_websocket import (
     FastAPIWebsocketParams,
     FastAPIWebsocketTransport,
 )
-from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService
+from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService, InputParams
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from app.utils.helper import save_audio, send_request
 # from app.services.bot_tools import end_call_tool
@@ -27,21 +27,6 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from enum import Enum
 
-class GeminiMultimodalModalities(Enum):
-    TEXT = "TEXT"
-    AUDIO = "AUDIO"
-
-class InputParams(BaseModel):
-    frequency_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0)
-    max_tokens: Optional[int] = Field(default=4096, ge=1)
-    presence_penalty: Optional[float] = Field(default=None, ge=0.0, le=2.0)
-    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
-    top_k: Optional[int] = Field(default=None, ge=0)
-    top_p: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    modalities: Optional[GeminiMultimodalModalities] = Field(
-        default=GeminiMultimodalModalities.AUDIO
-    )
-    extra: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 
 def generate_json_schema(dynamic_fields):
@@ -72,7 +57,7 @@ tools = [
 
 SAMPLE_RATE = 8000
 load_dotenv(override=True)
-async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instruction='hello',knowledge_base=None, agent_id=None, user_id=None, dynamic_variables=None, uid=None, custom_functions_list=None):
+async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instruction='hello',knowledge_base=None, agent_id=None, user_id=None, dynamic_variables=None, uid=None, custom_functions_list=None, temperature=None, max_output_tokens=None):
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
         params=FastAPIWebsocketParams(
@@ -87,6 +72,14 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     )
 
     tokens_to_consume = TokensToConsume.get_by_id(1).token_values
+    if temperature:
+        temperature = float(temperature)
+    else:
+        temperature = 0.7
+    if max_output_tokens:
+        max_output_tokens = int(max_output_tokens)
+    else:
+        max_output_tokens = 4096
 
     if dynamic_variables:
         dynamic_fields = generate_json_schema(dynamic_variables)
@@ -105,7 +98,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
                     "parameters": function["parameters"]
                 })
 
-
+    print("temperature", temperature)
+    print("max_output_tokens", max_output_tokens)
 
     llm = GeminiMultimodalLiveLLMService(
         system_instruction=f"""
@@ -143,7 +137,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         api_key=os.getenv("GOOGLE_API_KEY"),
         voice_id=voice,    
         tools=tools,
-        params=InputParams(temperature=0.7, max_tokens=4096)          
+        params=InputParams(temperature=temperature, max_tokens=max_output_tokens)          
     )
 
 

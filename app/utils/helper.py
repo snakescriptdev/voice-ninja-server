@@ -22,6 +22,7 @@ import hmac
 import hashlib
 import google.generativeai as genai
 import aiohttp
+from aiohttp import ClientConnectorError
 
 logger = logging.getLogger(__name__)
 @dataclass
@@ -303,12 +304,27 @@ def generate_agent_prompt(agent_function, agent_tone, level_of_detail, industry,
         return fallback_prompt
     
 async def send_request(url, data):
-        """Sends an async HTTP request."""
-        headers = {"Content-Type": "application/json"}
-        async with aiohttp.ClientSession() as session:
-            try:
-                async with session.post(url, json=data, headers=headers) as response:
-                    return await response.json()
-            except Exception as e:
-                logger.exception(f"Error sending request: {e}")
-                return {"status": "error", "message": f"Request failed: {str(e)}"}
+    """Sends an async HTTP request with domain validation."""
+    if not url:
+        logger.error("Invalid URL: URL is None or empty")
+        return {"status": "error", "message": "Invalid URL"}
+    
+    headers = {"Content-Type": "application/json"}
+    async with aiohttp.ClientSession() as session:
+        try:
+            logger.info(f"Sending request to {url} with data: {data}")
+            async with session.post(url, json=data, headers=headers) as response:
+                if response.status == 404:
+                    return {"status": "error", "message": "Domain not found (404)"}
+                elif response.status >= 500:
+                    return {"status": "error", "message": "Server error, try again later"}
+                
+                return await response.json()
+        
+        except ClientConnectorError:
+            logger.error(f"Domain not found or unreachable: {url}")
+            return {"status": "error", "message": "Domain not found or unreachable"}
+        
+        except Exception as e:
+            logger.exception(f"Error sending request: {e}")
+            return {"status": "error", "message": f"Request failed: {str(e)}"}

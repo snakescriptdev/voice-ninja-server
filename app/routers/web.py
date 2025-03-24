@@ -14,7 +14,7 @@ router = APIRouter()
 
 templates = Jinja2Templates(directory="templates")
 
-@router.get("/")
+@router.get("/signup")
 async def index(request: Request):  
     user = request.session.get("user")
     if user and user.get("is_authenticated"):
@@ -79,7 +79,7 @@ async def dashboard(request: Request, page: int = 1):
     
     paginator = Paginator(agents, page, items_per_page, start, end)
     return templates.TemplateResponse(
-        "Web/home.html",
+        "Web/dashboard.html",
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
@@ -989,4 +989,12 @@ async def error(request: Request):
             "request": request,
             "host": os.getenv("HOST")
         }
+    )
+
+
+@router.get("/")
+async def home(request: Request):
+    return templates.TemplateResponse(
+        "Web/home.html",
+        {"request": request, "host": os.getenv("HOST")}
     )

@@ -1,278 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
 
-{% extends 'Web/base.html' %}
-
-{% block title %}
-    <title>Dashboard</title>
-{% endblock %}
-
-{% block content %}
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home</title>
+    <link rel="stylesheet" href="{{ host }}/static/Web/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ host }}/static/Web/css/home_style.css">
+    <link rel="stylesheet" href="{{ host }}/static/Web/css/home_responsive.css">
+</head>
 
 <body>
-
-    <div class="wrapper">
-        <!-- Sidebar  -->
-       {% include 'Web/sidebar.html' %}
-
-        <!-- Page Content  -->
-        <div id="content" class="page_content position-relative">
-            <div class="agent_page_header d-flex align-items-center justify-content-between">
-                <div class="d-flex align-items-center gap-2">
-                    <button type="button"
-                        class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
-                        <img src="https://dev.voiceninja.ai/static/Web/images/hamburger-icon.svg" class="img-fluid">
-                    </button>
-                    <div class="d-flex align-items-center gap-2">
-                        <img src="https://dev.voiceninja.ai/static/Web/images/agent-icon.svg" class="img-fluid">
-                        <h6 class="mb-0">Agents</h6>
-                    </div>
-                </div>
-                <div class="dropdown">
-                    <button class="bg-transparent border-0 dropdown-toggle" type="button" data-bs-toggle="dropdown"
-                        aria-expanded="false">
-                        <div class="user-avatar">
-                            {{ request.session.get("user").get('name')[0].upper() }}
-                        </div>
-                    </button>
-                    <ul class="dropdown-menu">
-                        <li>
-                            <a class="dropdown-item d-flex align-items-center gap-2" href="{{ url_for('logout') }}">
-                                <span>
-                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="black"
-                                        class="bi bi-box-arrow-right" viewBox="0 0 16 16">
-                                        <path fill-rule="evenodd"
-                                            d="M10 12.5a.5.5 0 0 1-.5.5h-8a.5.5 0 0 1-.5-.5v-9a.5.5 0 0 1 .5-.5h8a.5.5 0 0 1 .5.5v2a.5.5 0 0 0 1 0v-2A1.5 1.5 0 0 0 9.5 2h-8A1.5 1.5 0 0 0 0 3.5v9A1.5 1.5 0 0 0 1.5 14h8a1.5 1.5 0 0 0 1.5-1.5v-2a.5.5 0 0 0-1 0z" />
-                                        <path fill-rule="evenodd"
-                                            d="M15.854 8.354a.5.5 0 0 0 0-.708l-3-3a.5.5 0 0 0-.708.708L14.293 7.5H5.5a.5.5 0 0 0 0 1h8.793l-2.147 2.146a.5.5 0 0 0 .708.708z" />
-                                    </svg>
-                                </span>Log Out
-                            </a>
-                        </li>
-                        <li>
-                                <a class="dropdown-item d-flex align-items-center gap-2" href="{{ url_for('change_password') }}">
-                            <span>
-                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 20 20" version="1.1">
-
-                                    <g id="layer1">
-
-                                    <path d="M 10 0 C 4.4830748 0 0 4.4830748 0 10 C 0 15.516925 4.4830748 20 10 20 C 10.686108 20 11.353096 19.923761 12 19.791016 L 12 18.767578 C 11.357372 18.916361 10.689085 19 10 19 C 7.7805094 19 5.7554759 18.195439 4.1875 16.867188 L 4.2871094 16.835938 L 5.0878906 16.615234 L 5.9003906 16.427734 L 6.7167969 16.273438 L 6.9472656 16.216797 L 7.1699219 16.123047 L 7.3710938 15.996094 L 7.5507812 15.835938 L 7.7011719 15.652344 L 7.8222656 15.443359 L 7.9101562 15.220703 L 7.9570312 14.986328 L 7.9707031 14.748047 L 7.9433594 14.509766 L 7.8789062 14.279297 L 7.7792969 14.0625 L 7.6484375 13.865234 L 7.4902344 13.644531 L 7.3535156 13.416016 L 7.0742188 12.855469 L 6.8261719 12.279297 L 6.609375 11.693359 L 6.4238281 11.09375 L 6.2734375 10.486328 L 6.1542969 9.8710938 L 6.0683594 9.2519531 L 6.015625 8.6289062 L 6 8.0019531 L 6.0195312 7.609375 L 6.078125 7.2207031 L 6.171875 6.8398438 L 6.3046875 6.4707031 L 6.4726562 6.1152344 L 6.6738281 5.7792969 L 6.9082031 5.4628906 L 7.1699219 5.171875 L 7.4628906 4.9082031 L 7.7773438 4.6738281 L 8.1152344 4.4746094 L 8.4707031 4.3046875 L 8.8398438 4.1738281 L 9.21875 4.078125 L 9.6074219 4.0195312 L 10 4 L 10.392578 4.0195312 L 10.78125 4.078125 L 11.160156 4.1738281 L 11.529297 4.3046875 L 11.886719 4.4746094 L 12.222656 4.6738281 L 12.537109 4.9082031 L 12.830078 5.171875 L 13.091797 5.4628906 L 13.326172 5.7792969 L 13.527344 6.1152344 L 13.695312 6.4707031 L 13.828125 6.8398438 L 13.923828 7.2207031 L 13.982422 7.609375 L 14 8.0019531 L 13.984375 8.6289062 L 13.931641 9.2519531 L 13.845703 9.8710938 L 13.728516 10.486328 L 13.576172 11.09375 L 13.390625 11.693359 L 13.234375 12.117188 C 13.541423 11.400474 14.085761 10.814969 14.757812 10.429688 L 14.833984 10.035156 L 14.925781 9.359375 L 14.982422 8.6816406 L 15 8.0019531 L 14.982422 7.5664062 L 14.923828 7.1328125 L 14.830078 6.7070312 L 14.697266 6.2910156 L 14.53125 5.8886719 L 14.330078 5.5 L 14.097656 5.1328125 L 13.830078 4.7871094 L 13.537109 4.4648438 L 13.212891 4.171875 L 12.869141 3.90625 L 12.5 3.6699219 L 12.113281 3.46875 L 11.710938 3.3027344 L 11.294922 3.1699219 L 10.867188 3.0761719 L 10.435547 3.0195312 L 10 3 L 9.5644531 3.0195312 L 9.1328125 3.0761719 L 8.7050781 3.1699219 L 8.2890625 3.3027344 L 7.8867188 3.46875 L 7.5 3.6699219 L 7.1328125 3.90625 L 6.7871094 4.171875 L 6.4628906 4.4648438 L 6.1699219 4.7871094 L 5.9042969 5.1328125 L 5.6699219 5.5 L 5.46875 5.8886719 L 5.3027344 6.2910156 L 5.1699219 6.7070312 L 5.0761719 7.1328125 L 5.0195312 7.5664062 L 5 8.0019531 L 5.0175781 8.6816406 L 5.0742188 9.359375 L 5.1660156 10.035156 L 5.2949219 10.703125 L 5.4589844 11.361328 L 5.6601562 12.013672 L 5.8984375 12.652344 L 6.1660156 13.275391 L 6.4707031 13.884766 L 6.6523438 14.193359 L 6.8632812 14.484375 L 6.9296875 14.595703 L 6.9648438 14.720703 L 6.96875 14.847656 L 6.9375 14.974609 L 6.875 15.087891 L 6.7871094 15.181641 L 6.6777344 15.25 L 6.5527344 15.287109 L 5.6953125 15.449219 L 4.84375 15.646484 L 4.0019531 15.878906 L 3.375 16.080078 C 1.9045777 14.478558 1 12.349397 1 10 C 1 5.0235149 5.0235149 1 10 1 C 14.976485 1 19 5.0235149 19 10 C 19 10.320097 18.979986 10.634169 18.947266 10.945312 C 19.294443 11.278158 19.578734 11.675211 19.769531 12.123047 C 19.918106 11.438148 20 10.728954 20 10 C 20 4.4830748 15.516925 0 10 0 z M 16.5 11 C 15.12521 11 14 12.12521 14 13.5 L 14 15 L 13 15 L 13 20 L 20 20 L 20 15 L 19 15 L 19 13.5 C 19 12.12521 17.87479 11 16.5 11 z M 16.5 12 C 17.334349 12 18 12.665651 18 13.5 L 18 15 L 15 15 L 15 13.5 C 15 12.665651 15.665651 12 16.5 12 z M 14 16 L 19 16 L 19 19 L 14 19 L 14 16 z " style="fill:#222222; fill-opacity:1; stroke:none; stroke-width:0px;"/>
-
-                                    </g>
-
-                                </svg>
-                            </span>
-                                Change Password
-                            </a>
-                        </li>
-                    </ul>
-                </div>
-            </div>
-            <div class="table_filters pt-0 d-flex justify-content-between align-items-center gap-2">
-                <div class="table_search_box position-relative">
-                    <input type="search" class="form-control" placeholder="Search">
-                    <div class="search_icon">
-                        <img src="https://dev.voiceninja.ai/static/Web/images/search-icon.svg" class="img-fluid">
-                    </div>
-                </div>
-                <div class="dropdown filter_dropdown">
-                    <a href="https://dev.voiceninja.ai/create_agent" class="create_agent_btn"> 
-                        Create an Agent
+    <main class="home_main position-relative">
+        <!-- header sec start -->
+        <header class="home_header">
+            <nav class="navbar navbar-expand-md">
+                <div class="container-lg">
+                    <a class="navbar-brand site_logo d-flex align-items-center gap-2" href="{{ host }}">
+                        <img src="{{ host }}/static/Web/images/voice-ninja-logo.svg" class="img-fluid">
+                        <h3 class="mb-0">Voice Ninja</h3>
                     </a>
+                    <button class="navbar-toggler collapsed" type="button" data-bs-toggle="collapse"
+                        data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false"
+                        aria-label="Toggle navigation">
+                        <span></span>
+                        <span></span>
+                        <span></span>
+                    </button>
+                    <div class="collapse navbar-collapse justify-content-end" id="navbarNav">
+                        <ul class="navbar-nav align-items-md-center">
+                            <li class="nav-item">
+                                <a class="nav-link active" aria-current="page" href="{{ host }}">Home</a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" href="#">Pricing</a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" href="#featureSec">Features</a>
+                            </li>
+                            <li class="nav-item">
+                                <a class="nav-link" href="#faqSec">FAQ</a>
+                            </li>
+                        </ul>
+                        <div class="header_right_btns">
+                            <a href="{{ host }}/login">Log in</a>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+        </header>
+        <!-- header sec end -->
+
+        <!-- voice ninja home sec -->
+        <section class="try_ninja_sec position-relative z-2">
+            <div class="container-fluid">
+                <div class="try_ninja_content mx-auto text-center">
+                    <span class="d-inline-flex align-items-center justify-content-center gap-2"><img
+                    src="{{ host }}/static/Web/images/yellow-star-icon.svg" class="img-fluid"> Trusted by 5k people</span>
+                    <h1>Change the AI world with Voice Ninja</h1>
+                    <div class="try_ninja_content_btns d-flex align-items-center justify-content-center">
+                        <a href="{{ host }}/signup">Try for free</a>
+                        <a href="#" class="transparent_btn d-flex align-items-center gap-2">Learn More <img
+                                src="{{ host }}/static/Web/images/white-right-arrow.svg" class="img-fluid"></a>
+                    </div>
+                </div>
+                <div class="try_mic_container text-center">
+                    <div class="mic-container mx-auto">
+                        <img src="{{ host }}/static/Web/images/mic-icon.svg" class="img-fluid">
+                    </div>
                 </div>
             </div>
-            <div class="agent_table_outer">
-                <div class="agent_table">
-                    <div class="table-responsive">
-                        <table class="table mb-0">
-                            <thead>
-                                <tr>
-                                    <th>Agent Name</th>
-                                    <th>Model</th>
-                                    <th>Voice</th>
-                                    <th>Phone</th>
-                                    <th>Delete</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for agent in page_obj.items %}
-                                <tr onclick="window.location.href='{{ url_for('update_agent') }}?agent_id={{ agent.id }}'" style="cursor: pointer;">
-                                    <td>
-                                        <div class="d-flex align-items-center justify-content-center gap-2 agent_name_data">
-                                            <span>
-                                                {% if agent.agent_name %}
-                                                <img src="https://dev.voiceninja.ai/static/Web/images/lucide_bot.svg" class="img-fluid">
-                                                {% endif %}
-                                            </span>
-                                            {{ agent.agent_name }}
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="max-content">
-                                            {% if agent.selected_model %}
-                                                {{ agent.selected_model }}
-                                            {% else %}
-                                                -
-                                            {% endif %}
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="d-flex align-items-center justify-content-center gap-1 max-content">
-                                            <span>
-                                                {% if agent.selected_voice %}
-                                                <img src="https://dev.voiceninja.ai/static/Web/images/voice-icon.svg" class="img-fluid">
-                                                {% endif %}
-                                            </span>
-                                            {{ agent.selected_voice }}
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="max-content">
-                                            {% if agent.phone_number %}
-                                                {{ agent.phone_number }}
-                                            {% else %}
-                                                -
-                                            {% endif %}
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="max-content">
-                                            {% if agent.id %}
-                                            <button class="delete-btn btn btn-danger" 
-                                                    data-bs-toggle="modal" 
-                                                    data-bs-target="#deleteModal" 
-                                                    data-agent-id="{{ agent.id }}" 
-                                                    data-agent-name="{{ agent.agent_name }}"
-                                                    onclick="event.stopPropagation();">
-                                                <img src="https://dev.voiceninja.ai/static/Web/images/delete-icon.svg" alt="Delete" class="img-fluid">
-                                            </button>
-                                            {% endif %}
-                                        </div>
-                                    </td>                                    
-                                </tr>
-                                {% else %}
-                                <tr>
-                                    <td colspan="5" class="text-center">No agents found</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
+        </section>
+        <!-- voice ninja home end -->
+
+        <!-- about ninja home start -->
+        <section class="about_ninja_sec">
+            <div class="container-md">
+                <div class="about_ninja_container">
+                    <div class="row">
+                        <div class="col-lg-4">
+                            <div class="about_us_heading h-100 position-relative">
+                                <h3 class="gradient_heading">About Voice Ninja</h3>
+                                <div class="about_voice_logo">
+                                    <img src="{{ host }}/static/Web/images/white-ninja-logo.png" class="img-fluid z-3 position-relative">
+                                    <div class="rounded_box"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-8">
+                            <div class="about_us_content">
+                                <p>Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem
+                                    Ipsum has been the industry's standard dummy text ever since the 1500s, when an
+                                    unknown printer took a galley of type and scrambled it to make a type specimen book.
+                                    It has survived not only five centuries, but also the leap into electronic
+                                    typesetting, remaining essentially unchanged.<br><br> It is a long established fact
+                                    that a reader will be distracted by the readable content of a page when looking at
+                                    its layout. The point of using Lorem Ipsum is that it has a more-or-less normal
+                                    distribution of letters, </p>
+                                <a href="{{ host }}/signup" class="try_for_free_btn d-inline-block">Try for free</a>
+                            </div>
+                        </div>
                     </div>
-                    <div class="table_pagination">
-                        <nav aria-label="Page navigation">
-                            <ul class="pagination justify-content-end gap-2 mb-0">
-                                {%- if page_obj.has_previous -%}
-                                <li class="page-item">
-                                    <a class="page-link pagination_arrow" href="https://dev.voiceninja.ai/dashboard?page={{ page_obj.previous_page_number }}" tabindex="-1" aria-disabled="false">&lt;</a>
-                                </li>
-                                {%- endif -%}
-                                
-                                {%- for page in page_obj.page_range -%}
-                                <li class="page-item {{ 'active' if page == page_obj.page else '' }}">
-                                    <a class="page-link" href="https://dev.voiceninja.ai/dashboard?page={{ page }}" {% if page == page_obj.page %}aria-current="page"{% endif %}>{{ page }}</a>
-                                </li>
-                                {%- endfor -%}
-                                
-                                {%- if page_obj.has_next -%}
-                                <li class="page-item">
-                                    <a class="page-link pagination_arrow" href="https://dev.voiceninja.ai/dashboard?page={{ page_obj.next_page_number }}">&gt;</a>
-                                </li>
-                                {%- endif -%}
+                </div>
+            </div>
+        </section>
+        <!-- about ninja home end -->
+
+        <!-- why choose  sec start -->
+        <section class="why_choose_sec">
+            <div class="container-md">
+                <h3 class="gradient_heading mx-auto text-center">Why choose Voice Controlled Interactions AI</h3>
+                <div class="row gx-4">
+                    <div class="col-lg-7">
+                        <div class="why_choose_box hand_free_box">
+                            <h4 class="gradient_heading">Hands-Free Efficiency</h4>
+                            <p>Lorem Ipsum is simply dummy text of the printing and typesetting industry.</p>
+                            <div class="hand_free_efficiency">
+                                <div class="hand_free_inner position-relative z-2">
+                                    <div class="hand_free_inner_img_box ms-auto">
+                                        <img src="{{ host }}/static/Web/images/man-emoji.png" class="img-fluid">
+                                    </div>
+                                </div>
+                                <div class="hand_free_inner position-relative z-2">
+                                    <div class="music_line">
+                                        <img src="{{ host }}/static/Web/images/music-lines.svg" class="w-100 img-fluid">
+                                    </div>
+                                    <div class="mic_icon text-center">
+                                        <img src="{{ host }}/static/Web/images/white-mic-icon.svg" class="img-fluid position-relative z-2">
+                                    </div>
+                                </div>
+                                <div class="hand_free_inner position-relative z-2">
+                                    <div class="hand_free_inner_img_box double_star_box">
+                                        <img src="{{ host }}/static/Web/images/double-star-icon.svg" class="img-fluid">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="why_choose_box why_choose_box_outer">
+                            <div class="why_choose_box_grid">
+                                <div class="pulse_box_outer">
+                                    <div class="pulse_box position-relative z-2">
+                                        <img src="{{ host }}/static/Web/images/bulb-icon.svg" class="img-fluid">
+                                    </div>
+                                </div>
+                                <div class="why_choose_box_content">
+                                    <h4 class="gradient_heading">Future-Ready Technology</h4>
+                                    <p class="mb-0">Lorem Ipsum is simply dummy text of the printing and typesetting
+                                        industry. Lorem Ipsum has been the industry's standard dummy text ever since the
+                                        1500s</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-5">
+                        <div class="why_choose_box personalized_experience_box">
+                            <div class="why_choose_box_grid">
+                                <div class="pulse_box_outer">
+                                    <div class="pulse_box position-relative z-2">
+                                        <img src="{{ host }}/static/Web/images/bulb-icon.svg" class="img-fluid">
+                                    </div>
+                                </div>
+                                <div class="why_choose_box_content">
+                                    <h4 class="gradient_heading">Personalized Experiences</h4>
+                                    <p class="mb-0">Lorem Ipsum is simply dummy text of the printing and typesetting
+                                        industry. Lorem Ipsum has been the industry's standard dummy text ever since the
+                                        1500s</p>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="why_choose_box seamless_integration_box">
+                            <div class="why_choose_voice_logo_outer position-relative">
+                                <div class="why_choose_voice_logo mx-auto z-2">
+                                    <img src="{{ host }}/static/Web/images/white-ninja-logo.png" class="img-fluid" width="44px" height="14px">
+                                    <div class="rounded_box"></div>
+                                </div>
+                                <div class="mini_box bulb_star_icon">
+                                    <img src="{{ host }}/static/Web/images/bulb-star-icon.svg" class="img-fluid">
+                                </div>
+                                <div class="mini_box">
+                                    <img src="{{ host }}/static/Web/images/home-icon.svg" class="img-fluid">
+                                </div>
+                            </div>
+                            <h4 class="gradient_heading">Seamless Integration</h4>
+                            <p>Lorem Ipsum is simply dummy text of the printing and typesetting industry. Lorem Ipsum
+                                has been </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <!-- why choose  sec end -->
+
+        <!-- key Features sec start -->
+        <section class="key_features_sec" id="featureSec">
+            <div class="container-md">
+                <h3 class="gradient_heading text-center">Key Features of VoiceNinja</h3>
+                <div class="row">
+                    <div class="col-md-4">
+                        <div class="key_features_box">
+                            <span class="d-block">01</span>
+                            <div class="key_features_box_heading">
+                                <h4 class="gradient_heading">Advanced Speech of the Recognition</h4>
+                            </div>
+                            <p class="mb-0">Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="key_features_box">
+                            <span class="d-block">02</span>
+                            <div class="key_features_box_heading">
+                                <h4 class="gradient_heading">Uses case Natural Language Processing</h4>
+                            </div>
+                            <p class="mb-0">Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="key_features_box">
+                            <span class="d-block">03</span>
+                            <div class="key_features_box_heading">
+                                <h4 class="gradient_heading">The Most Cross-Platform Compatibility</h4>
+                            </div>
+                            <p class="mb-0">Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <!-- key Features sec end -->
+
+        <!-- FAQ sec start -->
+        <section class="faq_sec" id="faqSec">
+            <div class="container-md">
+                <div class="faq_heading text-center">
+                    <span class="d-inline-flex align-items-center gap-2"><img src="{{ host }}/static/Web/images/faq-icon.svg"
+                            class="img-fluid"> FAQ’S</span>
+                    <h3 class="gradient_heading">Frequently Asked Questions </h3>
+                </div>
+                <div class="faq_inner">
+                    <div class="row">
+                        <div class="col-lg-6">
+                            <div class="accordion" id="accordionExample">
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button" type="button" data-bs-toggle="collapse"
+                                            data-bs-target="#collapseOne" aria-expanded="true"
+                                            aria-controls="collapseOne">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.?
+                                        </button>
+                                    </h2>
+                                    <div id="collapseOne" class="accordion-collapse collapse show"
+                                        data-bs-parent="#accordionExample">
+                                        <div class="accordion-body">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                                            Lorem Ipsum has been the industry's standard dummy text ever since the 1500s
+                                            dummy text of the printing and typesetting industry. Lorem Ipsum has been
+                                            the industry's
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#collapseTwo"
+                                            aria-expanded="false" aria-controls="collapseTwo">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.?
+                                        </button>
+                                    </h2>
+                                    <div id="collapseTwo" class="accordion-collapse collapse"
+                                        data-bs-parent="#accordionExample">
+                                        <div class="accordion-body">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                                            Lorem Ipsum has been the industry's standard dummy text ever since the 1500s
+                                            dummy text of the printing and typesetting industry. Lorem Ipsum has been
+                                            the industry's
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#collapseThree"
+                                            aria-expanded="false" aria-controls="collapseThree">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.?
+                                        </button>
+                                    </h2>
+                                    <div id="collapseThree" class="accordion-collapse collapse"
+                                        data-bs-parent="#accordionExample">
+                                        <div class="accordion-body">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                                            Lorem Ipsum has been the industry's standard dummy text ever since the 1500s
+                                            dummy text of the printing and typesetting industry. Lorem Ipsum has been
+                                            the industry's
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#collapseFour"
+                                            aria-expanded="false" aria-controls="collapseFour">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.?
+                                        </button>
+                                    </h2>
+                                    <div id="collapseFour" class="accordion-collapse collapse"
+                                        data-bs-parent="#accordionExample">
+                                        <div class="accordion-body">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                                            Lorem Ipsum has been the industry's standard dummy text ever since the 1500s
+                                            dummy text of the printing and typesetting industry. Lorem Ipsum has been
+                                            the industry's
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-lg-6">
+                            <div class="accordion" id="accordion2">
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#collapseFive"
+                                            aria-expanded="false" aria-controls="collapseFive">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.?
+                                        </button>
+                                    </h2>
+                                    <div id="collapseFive" class="accordion-collapse collapse"
+                                        data-bs-parent="#accordion2">
+                                        <div class="accordion-body">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                                            Lorem Ipsum has been the industry's standard dummy text ever since the 1500s
+                                            dummy text of the printing and typesetting industry. Lorem Ipsum has been
+                                            the industry's
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#collapseSix"
+                                            aria-expanded="false" aria-controls="collapseSix">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.?
+                                        </button>
+                                    </h2>
+                                    <div id="collapseSix" class="accordion-collapse collapse"
+                                        data-bs-parent="#accordion2">
+                                        <div class="accordion-body">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                                            Lorem Ipsum has been the industry's standard dummy text ever since the 1500s
+                                            dummy text of the printing and typesetting industry. Lorem Ipsum has been
+                                            the industry's
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#collapseSeven"
+                                            aria-expanded="false" aria-controls="collapseSeven">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.?
+                                        </button>
+                                    </h2>
+                                    <div id="collapseSeven" class="accordion-collapse collapse"
+                                        data-bs-parent="#accordion2">
+                                        <div class="accordion-body">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                                            Lorem Ipsum has been the industry's standard dummy text ever since the 1500s
+                                            dummy text of the printing and typesetting industry. Lorem Ipsum has been
+                                            the industry's
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="accordion-item">
+                                    <h2 class="accordion-header">
+                                        <button class="accordion-button collapsed" type="button"
+                                            data-bs-toggle="collapse" data-bs-target="#collapseEight"
+                                            aria-expanded="false" aria-controls="collapseEight">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.?
+                                        </button>
+                                    </h2>
+                                    <div id="collapseEight" class="accordion-collapse collapse"
+                                        data-bs-parent="#accordion2">
+                                        <div class="accordion-body">
+                                            Lorem Ipsum is simply dummy text of the printing and typesetting industry.
+                                            Lorem Ipsum has been the industry's standard dummy text ever since the 1500s
+                                            dummy text of the printing and typesetting industry. Lorem Ipsum has been
+                                            the industry's
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <!-- FAQ sec end -->
+
+        <!-- get started sec start -->
+        <section class="get_started_sec">
+            <div class="container-md">
+                <div class="get_started_box text-center position-relative">
+                    <h4 class="position-relative z-2">Get Started Today</h4>
+                    <p class="position-relative z-2">Ready to Experience the the powe of thr voice-contoll AI?</p>
+                    <div
+                        class="get_started_box_btns position-relative z-2 d-flex align-items-center justify-content-center gap-3">
+                        <a href="#" class="d-inline-block"> Get Started Free</a>
+                        <a href="#" class="d-inline-block explore_feature_link"> Explore Features</a>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <!-- get started sec end -->
+
+        <!-- newsletter sec start -->
+        <section class="newsletter_sec">
+            <div class="container-md">
+                <div class="row align-items-center">
+                    <div class="col-md-6">
+                        <a class="site_logo d-flex align-items-center gap-2" href="#">
+                            <img src="{{ host }}/static/Web/images/voice-ninja-logo.svg" class="img-fluid">
+                            <h3 class="mb-0">Voice Ninja</h3>
+                        </a>
+                    </div>
+                    <div class="col-md-6">
+                        <div class="newsletter_form">
+                            <label class="form-label">Subscribe to the News lattar</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control" placeholder="Enter your email"
+                                    aria-label="Recipient's username">
+                                <button class="subscribe_btn" type="button">Subscribe</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+        <!-- newsletter sec end -->
+
+        <!-- footer sec start -->
+        <footer>
+            <div class="container-md">
+                <div class="footer_inner align-items-center">
+                    <div class="footer_inner_left">
+                        <div class="footer_links">
+                            <h5>Platform</h5>
+                            <ul class="list-unstyled">
+                                <li>Voice Commands</li>
+                                <li>Personalized Experiences</li>
+                                <li>Real-Time Processing</li>
+                                <li>Cross-Platform Compatibility</li>
                             </ul>
-                        </nav>
-
-                        </nav>
+                        </div>
+                        <div class="footer_links">
+                            <h5>Company</h5>
+                            <ul class="list-unstyled">
+                                <li><a href="#">About us</a></li>
+                                <li><a href="#">Blog</a></li>
+                                <li><a href="#">Customer</a></li>
+                                <li><a href="#">Testimonial</a></li>
+                            </ul>
+                        </div>
+                        <div class="footer_links">
+                            <h5>Get Started</h5>
+                            <ul class="list-unstyled">
+                                <li><a href="#">Contact us</a></li>
+                                <li><a href="#">Request Demo</a></li>
+                                <li><a href="#"></a>Support </li>
+                                <li><a href="#"></a>Testimonial</li>
+                            </ul>
+                        </div>
                     </div>
-                    
+                    <div class="footer_social_links">
+                        <div class="d-flex align-items-center gap-3 mb-3">
+                            <a href="#"><img src="{{ host }}/static/Web/images/fb-icon.svg" class="img-fluid"></a>
+                            <a href="#"><img src="{{ host }}/static/Web/images/twitter-icon.svg" class="img-fluid"></a>
+                            <a href="#"><img src="{{ host }}/static/Web/images/insta-icon.svg" class="img-fluid"></a>
+                            <a href="#"><img src="{{ host }}/static/Web/images/youtube-icon.svg" class="img-fluid"></a>
+                        </div>
+                        <p>Copyright ©2024 VoiceNinja</p>
+                    </div>
                 </div>
-                
+            </div>
+        </footer>
+        <div class="copyright_sec">
+            <div class="container-md">
+                <p class="mb-0 text-center">©2024 copyright VoiceNinja</p>
             </div>
         </div>
-    </div>
+        <!-- footer sec end -->
+    </main>
 </body>
+<script src="{{ host }}/static/Web/js/bootstrap.bundle.min.js"></script>
+<script src="{{ host }}/static/Web/js/jquery.min.js"></script>
 
-
-
-<!-- Modal -->
-<div class="modal fade delete_modal" id="deleteModal" data-bs-backdrop="static" tabindex="-1" aria-labelledby="exampleModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-body">
-                <div class="text-center">
-                    <h3>Are you sure?</h3>
-                    <p>You want to delete <strong id="modal-agent-name"></strong>?</p>
-                    <div class="d-flex justify-content-center align-items-center gap-2">
-                        <button type="button" class="btn btn-danger" id="confirm-delete">
-                            Delete
-                        </button>                      
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
-
-
-
-<script>
-// Add this JavaScript code to your file
-document.addEventListener('DOMContentLoaded', function() {
-    // Select all delete buttons
-    const deleteButtons = document.querySelectorAll('.delete-btn');
-    
-    // Add click event listener to each delete button
-    deleteButtons.forEach(button => {
-        button.addEventListener('click', function() {
-            // Get agent ID and name from data attributes
-            const agentId = this.getAttribute('data-agent-id');
-            const agentName = this.getAttribute('data-agent-name');
-            
-            // Set the agent name in the modal
-            document.getElementById('modal-agent-name').textContent = agentName;
-            
-            // Store the agent ID in the confirm delete button
-            document.getElementById('confirm-delete').setAttribute('data-agent-id', agentId);
-        });
-    });
-});
-    
-    
-
-    document.getElementById('confirm-delete').addEventListener('click', function() {
-        const agentId = this.getAttribute('data-agent-id');
-        
-        fetch(`https://dev.voiceninja.ai/api/delete_agent/?agent_id=${agentId}`, {
-            method: "DELETE",
-            headers: {
-                'X-CSRFToken': '{{ csrf_token }}',
-            },
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === "success") {
-                // Find and remove the specific row with the deleted agent
-                const rowToRemove = document.querySelector(`tr[onclick*="agent_id=${agentId}"]`);
-                if (rowToRemove) {
-                    rowToRemove.remove();
-                }
-                
-                // Close the modal
-                const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
-                deleteModal.hide();
-                
-                // Show success message
-                toastr.success(data.message, { positionClass: "toast-top-right" });
-            } else {
-                toastr.error(data.message || "Failed to delete agent", { positionClass: "toast-top-right" });
-            }
-        })
-        .catch(error => {
-            console.error("Error:", error);
-            toastr.error("An error occurred while deleting the agent", { positionClass: "toast-top-right" });
-        });
-    });
-</script>
-
-
-
-{% endblock %}  
-
+</html>
