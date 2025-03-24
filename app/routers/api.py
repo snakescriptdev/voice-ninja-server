@@ -115,7 +115,7 @@ async def delete_audio_file(id: int):
             status_code=500,
             content=ErrorResponse(error=f"Error deleting audio file: {str(e)}").dict()
         )
-@router.post("/user-login/",
+@router.post("/user-login",
     response_model=SuccessResponse,
     responses={
         401: {"model": ErrorResponse},
@@ -226,7 +226,7 @@ async def user_login(request: Request, response: Response):
             content=error_response
         )
 
-@router.post("/user-register/",
+@router.post("/user-register",
     response_model=SuccessResponse,
     responses={
         400: {"model": ErrorResponse},
@@ -312,7 +312,7 @@ async def user_register(request: Request):
                         <p>Hi {user.name} !!!
                                 <br>Please click on the link below to verify your account
                                 <br>
-                                <a href="https://{host}/verify-account/{email_token}">Verify Account</a>
+                                <a href="https://dev.voiceninja.ai/verify-account/{email_token}">Verify Account</a>
                                 <br>
                                 <br>
                                 <br>
@@ -790,7 +790,7 @@ async def verify_account(request: Request):
             "status_code": 500
         }
 
-@router.delete("/delete_agent/",
+@router.delete("/delete_agent",
     response_model=SuccessResponse,
     responses={
         400: {"model": ErrorResponse},

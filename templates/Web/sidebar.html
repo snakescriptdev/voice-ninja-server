@@ -130,9 +130,9 @@
 
     function get_total_tokens() {
         const user_id = {{ request.session.get("user").get('user_id') }};
-        let host = "{{ host }}";
+    
         $.ajax({
-            url: host + '/get_total_tokens',
+            url: "https://dev.voiceninja.ai/get_total_tokens",
             type: 'GET',
             data: {
                 user_id: user_id
