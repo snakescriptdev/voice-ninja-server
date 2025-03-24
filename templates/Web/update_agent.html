@@ -41,7 +41,7 @@
                                 <img src="https://dev.voiceninja.ai/static/Web/images/ai-icon.svg" class="img-fluid">
                             </div>
                             <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer" onclick="openDialog()">
-                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
+                                <img src="https://dev.voiceninja.ai/static/Web/images/setting-icon.svg" class="img-fluid">
                             </div>
                         </div>
                         <div class="agent_select_box position-relative">
@@ -57,7 +57,7 @@
                                 const currentUrl = new URL(window.location.href);
                                 const agentId = currentUrl.searchParams.get("agent_id");
                                 
-                                fetch("/api/update-agent", {
+                                fetch("https://dev.voiceninja.ai/api/update-agent", {
                                     method: "POST", 
                                     headers: {
                                         "Content-Type": "application/json",
@@ -117,7 +117,7 @@
                                 const currentUrl = new URL(window.location.href);
                                 const agentId = currentUrl.searchParams.get("agent_id");
                                 
-                                fetch("/api/attach-knowledge-base", {
+                                fetch("https://dev.voiceninja.ai/api/attach-knowledge-base", {
                                     method: "POST",
                                     headers: {
                                         "Content-Type": "application/json",
@@ -566,6 +566,7 @@
     }
 </script>
 <script>
+let host = "https://dev.voiceninja.ai";
 // Declare selectedIconUrl globally
 let selectedIconUrl = "https://dev.voiceninja.ai/static/Web/images/gif-icon-1.gif"; // Default icon
 
