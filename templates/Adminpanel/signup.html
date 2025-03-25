@@ -59,7 +59,7 @@
                 return;
             }
             $.ajax({
-                url: '/api/admin_signup',
+                url: "https://dev.voiceninja.ai" '/api/admin_signup',
                 type: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify({
@@ -70,7 +70,7 @@
                 success: function(response) {
                     toastr.success('Admin signup successful');
                     setTimeout(function() {
-                        window.location.href = '/admin/';
+                        window.location.href = "https://dev.voiceninja.ai" '/admin';
                     }, 1000);
                 },
                 error: function(response) {

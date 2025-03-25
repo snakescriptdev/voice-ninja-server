@@ -55,6 +55,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://dev.voiceninja.ai/static/Adminpanel/js/bootstrap.bundle.min.js"></script>
 <script>
+    let host = "https://dev.voiceninja.ai";
     $(document).ready(function() {
         // Initialize toastr
         toastr.options = {
@@ -80,7 +81,7 @@
             var email = $('#emailInput').val();
             var password = $('#passwordInput').val();
             $.ajax({
-                url: '/api/admin_login',
+                url: "https://dev.voiceninja.ai/api/admin_login",
                 type: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify({
@@ -90,7 +91,7 @@
                 success: function(response) {
                     toastr.success('Admin login successful');
                     setTimeout(function() {
-                        window.location.href = '/admin/admin_dashboard';
+                        window.location.href = "https://dev.voiceninja.ai/admin/admin_dashboard";
                     }, 1000);
                 },
                 error: function(response) {

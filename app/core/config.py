@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     RAZOR_KEY_ID: str
     RAZOR_KEY_SECRET: str
     DOMAIN_NAME: str
+    HOST: str
     class Config:
         env_file = ".env"
 
