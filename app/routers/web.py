@@ -7,12 +7,14 @@ from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge
 from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
 import os
+from dotenv import load_dotenv
 
+load_dotenv()
 router = APIRouter()
 
 templates = Jinja2Templates(directory="templates")
 
-@router.get("/")
+@router.get("/signup")
 async def index(request: Request):  
     user = request.session.get("user")
     if user and user.get("is_authenticated"):
@@ -21,7 +23,8 @@ async def index(request: Request):
         "Web/signup.html", 
         {
             "request": request,
-            "voices": VoiceSettings.ALLOWED_VOICES
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -35,7 +38,8 @@ async def login(request: Request):
         "Web/login.html", 
         {
             "request": request,
-            "voices": VoiceSettings.ALLOWED_VOICES
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -45,7 +49,8 @@ async def forget_password(request: Request):
         "Web/forget-password.html", 
         {
             "request": request,
-            "voices": VoiceSettings.ALLOWED_VOICES
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -56,7 +61,6 @@ async def dashboard(request: Request, page: int = 1):
     from app.databases.models import AgentModel
     from app.databases.models import ApprovedDomainModel
     user = request.session.get("user")
-
     if not user or not user.get("is_authenticated"):
         return RedirectResponse(url="/login")
     domains = os.getenv("DOMAIN_NAME").split(",")
@@ -75,12 +79,13 @@ async def dashboard(request: Request, page: int = 1):
     
     paginator = Paginator(agents, page, items_per_page, start, end)
     return templates.TemplateResponse(
-        "Web/home.html",
+        "Web/dashboard.html",
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
             "page_obj": paginator,
-            "user": user
+            "user": user,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -92,7 +97,8 @@ async def index(request: Request):
         "connect.html", 
         {
             "request": request,
-            "voices": VoiceSettings.ALLOWED_VOICES
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -103,7 +109,8 @@ async def audio_list(request: Request):
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "enable_filters": False
+            "enable_filters": False,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -118,7 +125,8 @@ async def create_agent(request: Request):
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "knowledge_bases":knowledge_bases
+            "knowledge_bases":knowledge_bases,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -169,7 +177,8 @@ async def update_agent(request: Request):
             "agent_knowledge_ids": agent_knowledge_ids,
             "selected_knowledge": selected_knowledge,
             "dynamic_variables": dynamic_variables,
-            "custom_functions": custom_functions
+            "custom_functions": custom_functions,
+            "host": os.getenv("HOST")
         },
     )
 
@@ -209,7 +218,8 @@ async def knowledge_base(request: Request, page: int = 1):
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "page_obj": paginator
+            "page_obj": paginator,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -233,6 +243,7 @@ async def phone_number(request: Request):
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
             "agents": agents,
+            "host": os.getenv("HOST")
         }
     )
 @router.get("/change_password")
@@ -243,7 +254,8 @@ async def change_password(request: Request):
         "Web/change-password.html", 
         {
             "request": request,
-            "voices": VoiceSettings.ALLOWED_VOICES
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -274,7 +286,8 @@ async def verify_account(request: Request, token: str):
         "Web/verify_email_template.html", 
         {
             "request": request,
-            "token": token
+            "token": token,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -300,7 +313,8 @@ async def call_history(request: Request, page: int = 1):
             "page_obj": paginator,
             "agent_name": agent.agent_name,
             "selected_voice": agent.selected_voice,
-            "agent_id": agent_id
+            "agent_id": agent_id,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -323,6 +337,7 @@ def chatbot_script(request: Request, agent_id: str):
     created_by = agent.created_by
     domain = request.base_url.hostname
     domains = os.getenv("DOMAIN_NAME").split(",")
+    host = os.getenv("HOST")
     appearances = AgentConnectionModel.get_by_agent_id(agent_id)
     approved_domain = ApprovedDomainModel.check_domain_exists(domain, created_by)
     if approved_domain or domain in domains:
@@ -339,13 +354,13 @@ def chatbot_script(request: Request, agent_id: str):
                         document.head.appendChild(protobufScript);
                         
                         const webJsScript = document.createElement('script');
-                        webJsScript.src = "/static/js/websocket.js";
+                        webJsScript.src = "https://dev.voiceninja.ai/static/js/websocket.js";
                         document.head.appendChild(webJsScript);
                         
                         const botStyle = document.createElement('link');
                         botStyle.rel = 'stylesheet';
                         botStyle.type = 'text/css';
-                        botStyle.href = '/static/Web/css/bot_style.css';
+                        botStyle.href = 'https://dev.voiceninja.ai/static/Web/css/bot_style.css';
                         document.head.appendChild(botStyle);
                         
                         // Create and style popup dynamically
@@ -369,7 +384,7 @@ def chatbot_script(request: Request, agent_id: str):
                         popup.innerHTML = `
                             <h2 style="font-size: 24px; margin-bottom: 10px;">Need More Tokens?</h2>
                             <p style="font-size: 18px; margin-bottom: 20px;">Get extra tokens now and keep enjoying premium features!</p>
-                            <a href="/payment" class='buy-button' style="
+                            <a href="https://dev.voiceninja.ai/payment" class='buy-button' style="
                                 background: #fff;
                                 color: #0C7FDA;
                                 padding: 10px 20px;
@@ -880,7 +895,8 @@ async def payment(request: Request):
     return templates.TemplateResponse(
         "Web/razorpay_payment.html", 
         {
-            "request": request
+            "request": request,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -898,7 +914,8 @@ async def payment_success(request: Request):
             "request": request,
             "coins": request.query_params.get("coins"),
             "amount": request.query_params.get("amount"),
-            "order_id": request.query_params.get("order_id")
+            "order_id": request.query_params.get("order_id"),
+            "host": os.getenv("HOST")
         }
     )
 
@@ -910,7 +927,8 @@ async def payment_failed(request: Request):
         "Web/payment_failed.html", 
         {
             "request": request,
-            "message": request.query_params.get("message")
+            "message": request.query_params.get("message"),
+            "host": os.getenv("HOST")
         }
     )
 
@@ -934,7 +952,8 @@ async def webhook(request: Request):
         {
             "request": request, 
             "webhooks": webhooks,
-            "voices": VoiceSettings.ALLOWED_VOICES
+            "voices": VoiceSettings.ALLOWED_VOICES,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -956,7 +975,8 @@ async def approved_domains(request: Request):
             "request": request, 
             "approved_domains": approved_domains,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "configured_domains": domains
+            "configured_domains": domains,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -965,4 +985,16 @@ async def approved_domains(request: Request):
 async def error(request: Request):
     return templates.TemplateResponse(
         "Web/error.html", 
-        {"request": request})
+        {
+            "request": request,
+            "host": os.getenv("HOST")
+        }
+    )
+
+
+@router.get("/")
+async def home(request: Request):
+    return templates.TemplateResponse(
+        "Web/home.html",
+        {"request": request, "host": os.getenv("HOST")}
+    )

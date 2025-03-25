@@ -15,6 +15,9 @@ app = FastAPI()
 # Ensure the media directory exists
 os.makedirs(MEDIA_DIR, exist_ok=True)
 
+from dotenv import load_dotenv
+load_dotenv()  # Force load before Settings
+
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
