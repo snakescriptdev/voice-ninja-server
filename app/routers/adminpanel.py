@@ -5,7 +5,9 @@ from app.databases.models import TokensToConsume, AdminTokenModel
 from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
 import os
+from dotenv import load_dotenv
 
+load_dotenv()
 router = APIRouter(prefix="/admin")
 
 templates = Jinja2Templates(directory="templates")
@@ -18,6 +20,7 @@ async def admin_login(request: Request):
         "Adminpanel/login.html", 
         {
             "request": request,
+            "host": os.getenv("HOST")
         }
     )
 
@@ -30,7 +33,7 @@ async def admin_dashboard(request: Request):
     admin_token = AdminTokenModel.get_by_id(1)
     return templates.TemplateResponse(
         "Adminpanel/dashboard.html", 
-        {"request": request, "tokens_to_consume": tokens_to_consume, "admin_token": admin_token}
+        {"request": request, "tokens_to_consume": tokens_to_consume, "admin_token": admin_token, "host": os.getenv("HOST")}
     )
 
 
@@ -45,5 +48,5 @@ async def admin_signup(request: Request):
     if request.session.get("is_admin"):
         return RedirectResponse(url="/admin/admin_dashboard")
     return templates.TemplateResponse(      
-        "Adminpanel/signup.html", {"request": request}
+        "Adminpanel/signup.html", {"request": request, "host": os.getenv("HOST")}
     )   

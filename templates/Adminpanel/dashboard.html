@@ -29,7 +29,7 @@
             </div>
 
             <div class="logo_section">
-                <img src="https://dev.voiceninja.ai/static/Adminpanel/images/Logo.svg" alt="logo">
+                <img src="/static/Adminpanel/images/Logo.svg" alt="logo">
             </div>
 
             <div class="select_super_admin position-relative">
@@ -43,7 +43,7 @@
                     
                 </select>
                 <div class="workspase_icon">
-                    <img src="https://dev.voiceninja.ai/static/Adminpanel/images/Workspace.svg" alt="workspace">
+                    <img src="/static/Adminpanel/images/Workspace.svg" alt="workspace">
                 </div>
             </div>
 
@@ -51,23 +51,23 @@
             <div class="dashboard_sidebar_links">
                 <ul class="list-unstyled links_list">
                     <li class="my-2">
-                        <a href="/admin/admin_dashboard" class=""><span><img src="https://dev.voiceninja.ai/static/Adminpanel/images/donate.svg" alt="donate"></span> Pricing</a>
+                        <a href="/admin/admin_dashboard" class=""><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> Pricing</a>
                      </li>
 
                      <li class="my-2">
-                        <a href="/admin/admin_dashboard" class=""><span><img src="https://dev.voiceninja.ai/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
+                        <a href="/admin/admin_dashboard" class=""><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
                      </li>
 
                      <li class="my-2">
-                        <a href="/admin/admin_dashboard" class=""><span><img src="https://dev.voiceninja.ai/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
+                        <a href="/admin/admin_dashboard" class=""><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
                      </li>
 
                      <li class="my-2">
-                        <a href="/admin/admin_dashboard" class=""><span><img src="https://dev.voiceninja.ai/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
+                        <a href="/admin/admin_dashboard" class=""><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
                      </li>
 
                      <li class="my-2">
-                        <a href="/admin/admin_dashboard" class=""><span><img src="https://dev.voiceninja.ai/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
+                        <a href="/admin/admin_dashboard" class=""><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> lorem..</a>
                      </li>
 
                     
@@ -87,7 +87,7 @@
 
 
                         <div class="email_logout_notification d-flex align-items-center gap-3">
-                           <h2><span><img src="https://dev.voiceninja.ai/static/Adminpanel/images/donate.svg" alt="donate"></span> Pricing </h2>
+                           <h2><span><img src="/static/Adminpanel/images/donate.svg" alt="donate"></span> Pricing </h2>
                         </div>
 
                         <div class="email_logout_notification d-flex align-items-center gap-3">
@@ -191,6 +191,7 @@
 <script src="https://dev.voiceninja.ai/static/Adminpanel/js/bootstrap.bundle.min.js"></script>
 
 <script>
+    let host = "https://dev.voiceninja.ai";
     jQuery(document).ready(function () {
         jQuery('.toggle-btn').click(function () {
             jQuery('body').addClass('menu-open')
@@ -249,7 +250,7 @@
             return;
         }
         $.ajax({    
-            url: '/api/update_tokens',
+            url: "https://dev.voiceninja.ai/api/update_tokens",
             type: 'POST',
             contentType: 'application/json',
             data: JSON.stringify({
@@ -283,7 +284,7 @@
             return;
         }
         $.ajax({    
-            url: '/api/update_free_tokens',
+            url: "https://dev.voiceninja.ai/api/update_free_tokens",
             type: 'POST',
             contentType: 'application/json',
             data: JSON.stringify({

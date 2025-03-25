@@ -14,11 +14,11 @@
                 <div class="d-flex align-items-center gap-2" style="flex:1;">
                     <button type="button"
                         class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
-                        <img src="{{ url_for('static', path='Web/images/hamburger-icon.svg') }}" class="img-fluid">
+                        <img src="https://dev.voiceninja.ai/static/Web/images/hamburger-icon.svg" class="img-fluid">
                     </button>
                     <div class="d-flex align-items-center gap-2 w-100">
                         <div class="page_back_arrow d-flex align-items-center justify-content-center">
-                            <a href="#" onclick="window.history.back()" class=""><img src="{{ url_for('static', path='Web/images/left-arrow.svg') }}" class="img-fluid"></a>
+                            <a href="#" onclick="window.history.back()" class=""><img src="https://dev.voiceninja.ai/static/Web/images/left-arrow.svg" class="img-fluid"></a>
                         </div>
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 13 13" fill="none">
                             <path d="M6.5 12.875C4.87083 12.875 3.45133 12.335 2.2415 11.255C1.03167 10.1751 0.337972 8.82617 0.160417 7.20833H1.6125C1.77778 8.43611 2.3239 9.45139 3.25087 10.2542C4.17785 11.0569 5.26089 11.4583 6.5 11.4583C7.88125 11.4583 9.05307 10.9774 10.0155 10.0155C10.9778 9.05354 11.4588 7.88172 11.4583 6.5C11.4579 5.11828 10.9769 3.94669 10.0155 2.98525C9.05401 2.02381 7.88219 1.54261 6.5 1.54167C5.68542 1.54167 4.92396 1.73056 4.21562 2.10833C3.50729 2.48611 2.91111 3.00556 2.42708 3.66667H4.375V5.08333H0.125V0.833333H1.54167V2.49792C2.14375 1.74236 2.87876 1.15799 3.74671 0.744792C4.61465 0.331597 5.53242 0.125 6.5 0.125C7.38542 0.125 8.21487 0.293347 8.98837 0.630042C9.76187 0.966736 10.4348 1.42101 11.0071 1.99287C11.5795 2.56474 12.034 3.23765 12.3707 4.01163C12.7074 4.7856 12.8755 5.61506 12.875 6.5C12.8745 7.38494 12.7064 8.2144 12.3707 8.98837C12.0349 9.76235 11.5804 10.4353 11.0071 11.0071C10.4338 11.579 9.76093 12.0335 8.98837 12.3707C8.21582 12.7078 7.38636 12.8759 6.5 12.875ZM8.48333 9.475L5.79167 6.78333V2.95833H7.20833V6.21667L9.475 8.48333L8.48333 9.475Z" fill="#000000"></path>
@@ -103,7 +103,7 @@
                                                         data-audio-recording-id="{{ audio_recording.id }}" 
                                                         aria-label="Delete audio recording {{ audio_recording.id }}" 
                                                         onclick="event.stopPropagation();">
-                                                    <img src="{{ url_for('static', path='Web/images/delete-icon.svg') }}" 
+                                                    <img src="https://dev.voiceninja.ai/static/Web/images/delete-icon.svg" 
                                                         alt="Delete" 
                                                         class="img-fluid">
                                                 </button>
@@ -125,19 +125,19 @@
                             <ul class="pagination justify-content-end gap-2 mb-0">
                                 {%- if page_obj.has_previous -%}
                                 <li class="page-item">
-                                    <a class="page-link pagination_arrow" href="{{ url_for('call_history') }}?agent_id={{ agent_id }}&page={{ page_obj.previous_page_number }}" tabindex="-1" aria-disabled="false">&lt;</a>
+                                    <a class="page-link pagination_arrow" href="https://dev.voiceninja.ai/call_history?agent_id={{ agent_id }}&page={{ page_obj.previous_page_number }}" tabindex="-1" aria-disabled="false">&lt;</a>
                                 </li>
                                 {%- endif -%}
                                 
                                 {%- for page in page_obj.page_range -%}
                                 <li class="page-item {{ 'active' if page == page_obj.page else '' }}">
-                                    <a class="page-link" href="{{ url_for('call_history') }}?agent_id={{ agent_id }}&page={{ page }}" {% if page == page_obj.page %}aria-current="page"{% endif %}>{{ page }}</a>
+                                    <a class="page-link" href="https://dev.voiceninja.ai/call_history?agent_id={{ agent_id }}&page={{ page }}" {% if page == page_obj.page %}aria-current="page"{% endif %}>{{ page }}</a>
                                 </li>
                                 {%- endfor -%}
                                 
                                 {%- if page_obj.has_next -%}
                                 <li class="page-item">
-                                    <a class="page-link pagination_arrow" href="{{ url_for('call_history') }}?agent_id={{ agent_id }}&page={{ page_obj.next_page_number }}">&gt;</a>
+                                    <a class="page-link pagination_arrow" href="https://dev.voiceninja.ai/call_history?agent_id={{ agent_id }}&page={{ page_obj.next_page_number }}">&gt;</a>
                                 </li>
                                 {%- endif -%}
                             </ul>
@@ -198,7 +198,7 @@ document.addEventListener('DOMContentLoaded', function() {
 document.getElementById('confirm-delete').addEventListener('click', function() {
     const audioRecordingId = this.getAttribute('data-audio-recording-id');
     const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
-    fetch(`/api/delete_audio_recording/?audio_recording_id=${audioRecordingId}`, {
+    fetch(`https://dev.voiceninja.ai/api/delete_audio_recording/?audio_recording_id=${audioRecordingId}`, {
         method: 'DELETE',
         headers: { "X-CSRFToken": '{{ csrf_token }}' }, 
     })

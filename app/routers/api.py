@@ -115,7 +115,7 @@ async def delete_audio_file(id: int):
             status_code=500,
             content=ErrorResponse(error=f"Error deleting audio file: {str(e)}").dict()
         )
-@router.post("/user-login/",
+@router.post("/user-login",
     response_model=SuccessResponse,
     responses={
         401: {"model": ErrorResponse},
@@ -226,7 +226,7 @@ async def user_login(request: Request, response: Response):
             content=error_response
         )
 
-@router.post("/user-register/",
+@router.post("/user-register",
     response_model=SuccessResponse,
     responses={
         400: {"model": ErrorResponse},
@@ -304,7 +304,7 @@ async def user_register(request: Request):
                 ResetPasswordModel.create(email=email, token=email_token)
             else:
                 ResetPasswordModel.update(email=email, token=email_token)
-
+            host = request.headers.get("host")
             template = f"""
                         <html>
                         <body>                    
@@ -312,7 +312,7 @@ async def user_register(request: Request):
                         <p>Hi {user.name} !!!
                                 <br>Please click on the link below to verify your account
                                 <br>
-                                <a href="http://localhost:8000/verify-account/{email_token}">Verify Account</a>
+                                <a href="https://dev.voiceninja.ai/verify-account/{email_token}">Verify Account</a>
                                 <br>
                                 <br>
                                 <br>
@@ -790,7 +790,7 @@ async def verify_account(request: Request):
             "status_code": 500
         }
 
-@router.delete("/delete_agent/",
+@router.delete("/delete_agent",
     response_model=SuccessResponse,
     responses={
         400: {"model": ErrorResponse},
@@ -1345,7 +1345,6 @@ async def upload_file(request: Request):
 async def agent_prompt_suggestion(request: Request):
     try:
         data = await request.json()
-        print(data)
         agent_function = data.get("agent_function")
         agent_tone = data.get("agent_tone")
         level_of_detail = data.get("level_of_detail")
@@ -1714,6 +1713,27 @@ async def delete_approved_domain(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
+
+@router.post("/update-agent-settings", name="update-agent-settings")
+async def update_agent_settings(request: Request):
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        temperature = data.get("temperature")
+        max_output_tokens = data.get("max_output_tokens")   
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+        if not temperature:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Temperature is required"})
+        if not max_output_tokens:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Max output tokens is required"})
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+        AgentModel.update_temperature_and_max_output_tokens(agent_id, temperature, max_output_tokens)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Agent settings updated successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
 
 @router.post("/check-payload", name="check-payload")
