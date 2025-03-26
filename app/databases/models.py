@@ -533,6 +533,8 @@ class KnowledgeBaseModel(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     files = relationship("KnowledgeBaseFileModel", back_populates="knowledge_base")
+    vector_path = Column(String, nullable=True,default="")
+    vector_id = Column(String, nullable=True,default="")
 
     agents = relationship(
         "AgentModel",
@@ -1103,6 +1105,7 @@ class WebhookModel(Base):
             webhook = cls(webhook_url=webhook_url, created_by=created_by)
             db.session.add(webhook)
             db.session.commit()
+            db.session.refresh(webhook)
             return webhook
 
     @classmethod
