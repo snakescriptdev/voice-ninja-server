@@ -994,6 +994,9 @@ async def error(request: Request):
 
 @router.get("/")
 async def home(request: Request):
+    user = request.session.get("user")
+    if user and user.get("is_authenticated"):
+        return RedirectResponse(url="/dashboard")
     return templates.TemplateResponse(
         "Web/home.html",
         {"request": request, "host": os.getenv("HOST")}
