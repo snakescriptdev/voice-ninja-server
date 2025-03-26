@@ -2064,3 +2064,6 @@ table .max-content {
     font-weight: 500;
     border: 2px solid #0000001A;
 }
+.offcanvas.call_history_offcanvas{
+    width: 50%;
+}

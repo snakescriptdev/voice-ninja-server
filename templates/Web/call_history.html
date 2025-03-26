@@ -29,7 +29,9 @@
                 <div class="dropdown">
                     <button class="bg-transparent border-0 dropdown-toggle" type="button" data-bs-toggle="dropdown"
                         aria-expanded="false">
-                        {{ request.session.get("user").get('name')[0].upper() }}
+                        <div class="user-avatar">
+                            {{ request.session.get("user").get('name')[0].upper() }}
+                        </div>
                     </button>
                     <ul class="dropdown-menu">
                         <li>
@@ -79,7 +81,7 @@
                             </thead>
                             <tbody>
                                 {% for audio_recording in page_obj.items %}
-                                    <tr data-id="{{ audio_recording.id }}">
+                                    <tr data-id="{{ audio_recording.id }}" onclick="openOffcanvas(this)" data-bs-toggle="offcanvas" data-bs-target="#offcanvasRight" aria-controls="offcanvasRight">
                                         <td>{{ agent_name }}</td>
                                         <td>{{ selected_voice }}</td>
                                         <td>{{ audio_recording.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td> 
@@ -152,7 +154,6 @@
 </body>
 
 
-
 <!-- Modal -->
 <div class="modal fade delete_modal" id="deleteModal" data-bs-backdrop="static" tabindex="-1" aria-labelledby="exampleModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered">
@@ -173,6 +174,62 @@
     </div>
 </div>
 
+
+<!-- offcanvas for call history detail -->
+<div class="offcanvas offcanvas-end call_history_offcanvas" tabindex="-1" id="offcanvasRight" aria-labelledby="offcanvasRightLabel">
+  <div class="offcanvas-header border-bottom">
+    <h5 class="offcanvas-title" id="offcanvasRightLabel">Call Details</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body">
+    <div class="call_details mb-4">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h6 class="text-muted">Overview</h6>
+          <audio controls class="w-100 mb-3" id="audioPlayer">
+            <source id="audioSource" src="" type="audio/wav">
+            Your browser does not support the audio element.
+          </audio>
+          <h6 class="text-muted">Call Summary</h6>
+          <p id="callSummary"></p>
+          
+          <div class="row mt-3">
+            <div class="col-6">
+              <p class="text-muted mb-1">Call Duration</p>
+              <p class="fw-medium" id="callDuration"></p>
+            </div>
+            <div class="col-6">
+              <p class="text-muted mb-1">Call Date</p>
+              <p class="fw-medium" id="callDate"></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="collected_variables mb-4">
+      <h6 class="mb-3">Client Data</h6>
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h6 class="text-muted">Language</h6>
+          <p class="fw-medium">🇺🇸 English</p>
+        </div>
+      </div>
+      
+      <h6 class="mt-3">Dynamic Variables</h6>
+      <div id="dynamicVariables">
+        <!-- Dynamic variables will be inserted here -->
+      </div>
+    </div>
+
+    <div class="conversation_history">
+      <h6 class="mb-3">Conversation Transcript</h6>
+      <div id="transcriptContainer">
+        <!-- Transcript messages will be inserted here -->
+      </div>
+    </div>
+  </div>
+</div>
 
 
 <script>
@@ -229,6 +286,132 @@ document.getElementById('confirm-delete').addEventListener('click', function() {
         deleteModal.hide();
     });
 });
+
+
+function openOffcanvas(element) {
+    const call_id = element.getAttribute('data-id');
+    
+    // Create and show full screen loader
+    const fullScreenLoader = document.createElement('div');
+    fullScreenLoader.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255,255,255,0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    `;
+    fullScreenLoader.innerHTML = `
+        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    `;
+    document.body.appendChild(fullScreenLoader);
+
+    fetch(`${host}/api/call_details`, {
+        method: 'POST',
+        headers: { 
+            "X-CSRFToken": '{{ csrf_token }}',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            call_id: call_id
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === "success") {
+            try {
+                // Format timestamp
+                const createdAt = new Date(data.call.created_at);
+                const formattedDate = createdAt.toLocaleString();
+
+                // Prepare content before showing offcanvas
+                const callDetailsSection = document.querySelector('.call_details');
+                const conversationSection = document.querySelector('.conversation_history');
+                const dynamicVariablesContainer = document.getElementById('dynamicVariables');
+
+                // Update call details section
+                callDetailsSection.innerHTML = `
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+                            <h6 class="text-muted">Overview</h6>
+                            <audio controls class="w-100 mb-3">
+                                <source src="${data.call.audio_file}" type="audio/wav">
+                                Your browser does not support the audio element.
+                            </audio>
+                            <h6 class="text-muted">Call Summary</h6>
+                            <p>${data.summary || 'No summary available'}</p>
+                            
+                            <div class="row mt-3">
+                                <div class="col-6">
+                                    <p class="text-muted mb-1">Call ID</p>
+                                    <p class="fw-medium">${data.call.id}</p>
+                                </div>
+                                <div class="col-6">
+                                    <p class="text-muted mb-1">Call Date</p>
+                                    <p class="fw-medium">${formattedDate}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                const dynamic_variable = data.dynamic_variable;
+                dynamicVariablesContainer.innerHTML = '';
+
+                for (const [key, value] of Object.entries(dynamic_variable)) {
+                    const variableItem = document.createElement('div');
+                    variableItem.classList.add('card', 'mb-2', 'shadow-sm');
+                    variableItem.innerHTML = `
+                        <div class="card-body">
+                            <p class="text-muted mb-1">${key}</p>
+                            <p class="fw-medium">${value}</p>
+                        </div>
+                    `;
+                    dynamicVariablesContainer.appendChild(variableItem);
+                }
+
+                // Update conversation history section
+                conversationSection.innerHTML = `
+                    <h6 class="mb-3">Conversation Transcript</h6>
+                    <div class="conversation_history_item mb-3 p-3 rounded bg-light">
+                        <p class="mb-0">${data.transcript || 'No transcript available'}</p>
+                    </div>
+                `;
+
+                // Remove loader and show offcanvas
+                fullScreenLoader.remove();
+                const offcanvas = new bootstrap.Offcanvas(document.getElementById('offcanvasRight'));
+                
+                // Add event listener for when offcanvas is hidden
+                document.getElementById('offcanvasRight').addEventListener('hidden.bs.offcanvas', function () {
+                    // Remove backdrop
+                    document.querySelector('.offcanvas-backdrop')?.remove();
+                });
+
+                offcanvas.show();
+
+            } catch (error) {
+                console.error('Error updating content:', error);
+                fullScreenLoader.remove();
+                toastr.error("Error displaying call details", { positionClass: "toast-top-right" });
+            }
+        } else {
+            fullScreenLoader.remove();
+            toastr.error("Failed to fetch call details", { positionClass: "toast-top-right" });
+        }
+    })
+    .catch(error => {
+        console.error('Error fetching call details:', error);
+        fullScreenLoader.remove();
+        toastr.error("Error fetching call details", { positionClass: "toast-top-right" });
+    });
+}
 </script>
 
 
