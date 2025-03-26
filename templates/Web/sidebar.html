@@ -124,15 +124,14 @@
 </nav>
 
 <script>
-
+    let sidebar_host = "{{ host }}";
 
     get_total_tokens();
-
     function get_total_tokens() {
         const user_id = {{ request.session.get("user").get('user_id') }};
     
         $.ajax({
-            url: "https://dev.voiceninja.ai/get_total_tokens",
+            url: `${sidebar_host}/get_total_tokens`,
             type: 'GET',
             data: {
                 user_id: user_id

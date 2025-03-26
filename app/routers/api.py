@@ -29,6 +29,7 @@ from config import MEDIA_DIR  # ✅ Import properly
 import razorpay
 from app.utils.helper import verify_razorpay_signature
 from jinja2 import Environment, meta
+from app.utils.langchain_integration import convert_to_vectorstore, get_splits
 
 
 
@@ -908,6 +909,8 @@ async def upload_knowledge_base(request: Request):
             knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=name)
 
         # Process and store each file
+        total_text_content = ""
+        content_list = []
         for attachment in attachments:
             file_ext = os.path.splitext(attachment.filename)[1].lower()
             if file_ext not in allowed_extensions:
@@ -937,8 +940,17 @@ async def upload_knowledge_base(request: Request):
                 file_path=temp_file_path,
                 text_content=text_content
             )
+            content_list.append({
+                "file_path": temp_file_path,
+                "text_content": text_content
+            })
             uploaded_files.append(attachment.filename)
 
+        splits = get_splits(content_list)
+        vector_id = str(uuid.uuid4())
+        if splits:
+            vector_path =convert_to_vectorstore(splits, vector_id)
+            KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
         return JSONResponse(
             status_code=200,
             content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "uploaded_files": uploaded_files}
@@ -1530,7 +1542,7 @@ async def save_webhook(request: Request):
             return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook URL already exists"})
         if webhook_url:
             webhook = WebhookModel.create(webhook_url, user.id)
-            return JSONResponse(status_code=200, content={"status": "success", "message": "Webhook saved successfully"})
+            return JSONResponse(status_code=200, content={"status": "success", "message": "Webhook saved successfully", "webhook_id": webhook.id})
         else:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook URL is required"})
     except Exception as e:
@@ -1735,6 +1747,18 @@ async def update_agent_settings(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
+
+@router.post("/delete-webhook", name="delete-webhook")
+async def delete_webhook(request: Request):
+    try:
+        data = await request.json()
+        webhook_id = data.get("webhook_id")
+        if not webhook_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook ID is required"})
+        WebhookModel.delete(webhook_id)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Webhook deleted successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
 @router.post("/check-payload", name="check-payload")
 async def check_payload(request: Request):
