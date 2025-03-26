@@ -249,7 +249,7 @@
                                 <textarea class="copy_link_text" id="agent-script" disabled readonly></textarea>
                                 <script>
                                     document.addEventListener("DOMContentLoaded", function() {
-                                        const agentId = "{{ agent.id }}";
+                                        const agentId = "{{ agent.dynamic_id }}";
                                         const origin = window.location.origin;
                                         const scriptTag = `<script src="${origin}/chatbot-script.js/${agentId}"><\/script>`;
                                         document.getElementById("agent-script").value = scriptTag;
@@ -269,7 +269,7 @@
                                     <img src="{{ host }}/static/Web/images/icon-bot-img.png" class="img-fluid" width="30" height="30">
                                     <div class="customize-bot-btn-tooltip">Customize Your Bot</div>
                                 </button>
-                                <a href="{{ url_for('preview_agent') }}?agent_id={{ agent.id }}" target="_blank">
+                                <a href="{{ url_for('preview_agent') }}?agent_id={{ agent.dynamic_id }}" target="_blank">
                                     <button class="customize-bot-btn position-relative">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="#0c7fda" class="bi bi-eye-fill" viewBox="0 0 16 16">
                                         <path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0"/>
@@ -378,6 +378,7 @@
                             </div>
                             <input type="text" id="welcome-message" class="form-control mt-2" placeholder="Enter custom welcome message..." style="display: none;">
                             <div class="options">
+                                <div class="option" data-value="custom">Add Custom Message</div>
                                 <div class="option" data-value="1">Hi, I am SAGE, how can I help you?</div>
                                 <div class="option" data-value="2">Hey there, Captain! How can I help you?</div>
                                 <div class="option" data-value="3">Hi there, I am Jack Sparrow, how can I help you?</div>
@@ -1128,12 +1129,14 @@ document.addEventListener("DOMContentLoaded", function () {
             saveTimeout = setTimeout(() => {
                 saveWelcomeMessage(value);
             }, 300);
+            welcomeMessageInput.style.display = "none";
+            selectBox.style.display = "block";
+            optionsContainer.style.display = "none";
         } else {
-            selectBox.innerText = "Enter custom welcome message...";
+            toastr.error("Please enter a welcome message", { positionClass: "toast-top-right" });
+            welcomeMessageInput.focus();
+            return;
         }
-        welcomeMessageInput.style.display = "none";
-        selectBox.style.display = "block";
-        optionsContainer.style.display = "none";
     }
 
     function saveWelcomeMessage(message) {

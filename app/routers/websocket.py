@@ -181,7 +181,6 @@ async def agent_websocket_endpoint(websocket: WebSocket):
         dynamic_variables = agent.dynamic_variable
         temperature = agent.temperature
         max_output_tokens = agent.max_output_tokens
-        print(temperature, max_output_tokens, '---------tokens--------')
         custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
         custom_functions_list = []
         for function in custom_functions:

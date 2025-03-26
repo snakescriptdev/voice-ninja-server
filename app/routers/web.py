@@ -328,7 +328,7 @@ def serve_web_js():
 @router.get("/chatbot-script.js/{agent_id}")
 def chatbot_script(request: Request, agent_id: str):
     ws_protocol = "wss" if request.url.scheme == "https" else "ws"
-    agent = AgentModel.get_by_id(int(agent_id))
+    agent = AgentModel.get_by_dynamic_id(agent_id)
 
     if not agent:
         response = HTMLResponse("Agent not found.", content_type="text/plain")
@@ -338,7 +338,7 @@ def chatbot_script(request: Request, agent_id: str):
     domain = request.base_url.hostname
     domains = os.getenv("DOMAIN_NAME").split(",")
     host = os.getenv("HOST")
-    appearances = AgentConnectionModel.get_by_agent_id(agent_id)
+    appearances = AgentConnectionModel.get_by_agent_id(agent.id)
     approved_domain = ApprovedDomainModel.check_domain_exists(domain, created_by)
     if approved_domain or domain in domains:
 
@@ -354,13 +354,13 @@ def chatbot_script(request: Request, agent_id: str):
                         document.head.appendChild(protobufScript);
                         
                         const webJsScript = document.createElement('script');
-                        webJsScript.src = "https://dev.voiceninja.ai/static/js/websocket.js";
+                        webJsScript.src = "{host}/static/js/websocket.js";
                         document.head.appendChild(webJsScript);
                         
                         const botStyle = document.createElement('link');
                         botStyle.rel = 'stylesheet';
                         botStyle.type = 'text/css';
-                        botStyle.href = 'https://dev.voiceninja.ai/static/Web/css/bot_style.css';
+                        botStyle.href = "{host}/static/Web/css/bot_style.css";
                         document.head.appendChild(botStyle);
                         
                         // Create and style popup dynamically
@@ -384,7 +384,7 @@ def chatbot_script(request: Request, agent_id: str):
                         popup.innerHTML = `
                             <h2 style="font-size: 24px; margin-bottom: 10px;">Need More Tokens?</h2>
                             <p style="font-size: 18px; margin-bottom: 20px;">Get extra tokens now and keep enjoying premium features!</p>
-                            <a href="https://dev.voiceninja.ai/payment" class='buy-button' style="
+                            <a href="{host}/payment" class='buy-button' style="
                                 background: #fff;
                                 color: #0C7FDA;
                                 padding: 10px 20px;
@@ -417,19 +417,19 @@ def chatbot_script(request: Request, agent_id: str):
 
                         // Include the WebSocket script
                         const webJsScript = document.createElement('script');
-                        webJsScript.src = "https://dev.voiceninja.ai/static/js/websocket.js";
+                        webJsScript.src = "{host}/static/js/websocket.js";
                         document.head.appendChild(webJsScript);
 
                         // Include Bot Styles
                         const botStyle = document.createElement('link');
                         botStyle.rel = 'stylesheet';
                         botStyle.type = 'text/css';
-                        botStyle.href = 'https://dev.voiceninja.ai/static/Web/css/bot_style.css';
+                        botStyle.href = "{host}/static/Web/css/bot_style.css";
                         document.head.appendChild(botStyle);
 
                         webJsScript.onload = function() {{
                             if (typeof WebSocketClient === 'function') {{
-                                const client = new WebSocketClient({agent_id});
+                                const client = new WebSocketClient({agent.id});
                             }} else {{
                                 console.error("WebSocketClient is not defined");
                             }}
@@ -450,9 +450,9 @@ def chatbot_script(request: Request, agent_id: str):
                                         </div>
                                     </div>
                                 </div>
-                                <h1>Connect with me</h1>
+                                <h1 id="status-text">Connect with me</h1>
                                 <div class="status-indicator">
-                                    <img src="https://dev.voiceninja.ai/static/Web/images/wave.gif" alt="voice_icon">
+                                    <img src="{host}/static/Web/images/wave.gif" alt="voice_icon">
                                 </div>
                                 <button onclick="stopRecorder()" id="endCallPopup" 
                                         style="background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color}, {appearances.pulse_color});">
@@ -476,12 +476,12 @@ def chatbot_script(request: Request, agent_id: str):
 
                     // Include the WebSocket script
                     const webJsScript = document.createElement('script');
-                    webJsScript.src = "https://dev.voiceninja.ai/static/js/websocket.js";
+                    webJsScript.src = "{host}/static/js/websocket.js";
                     document.head.appendChild(webJsScript);
 
                     webJsScript.onload = function() {{
                     if (typeof WebSocketClient === 'function') {{
-                        const client = new WebSocketClient({agent_id});
+                        const client = new WebSocketClient({agent.id});
                     }} else {{
                         console.error("WebSocketClient is not defined");
                     }}
@@ -617,7 +617,7 @@ def chatbot_script(request: Request, agent_id: str):
                         </div>
                         <div class="popup-body">
                         <div class="brain-container text-center">
-                            <h3>Say something..</h3>
+                            <h3 id="status-text">Say something..</h3>
                         </div>
                             <div class="whatsapp_outer_mobile">
                         <span class="micro" id="startCall">
@@ -879,6 +879,7 @@ async def preview_agent(request: Request):
     context = {"request": request, "agent_id": agent_id, "host": host}
     domain = request.base_url.hostname
     domains = os.getenv("DOMAIN_NAME").split(",")
+
 
     approved_domain = ApprovedDomainModel.check_domain_exists(domain, user_id)
     if approved_domain or domain in domains:

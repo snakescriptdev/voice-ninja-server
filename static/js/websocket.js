@@ -137,6 +137,10 @@ class WebSocketClient {
     
     updateStatus(status, message) {
         try {
+            const statusText = document.getElementById('status-text');
+            if (statusText) {
+                statusText.textContent = message;
+            }
             // const statusPanel = document.querySelector('.status-panel');
             // const statusText = document.getElementById('connection-status');
             
@@ -187,6 +191,7 @@ class WebSocketClient {
                 await this.setupAudioProcessing();
             }
         } catch (error) {
+
             this.log(`Audio initialization failed: ${error.message}`, 'error');
         }
     }
@@ -200,7 +205,7 @@ class WebSocketClient {
                 // this.connectBtn.innerHTML = '<img src="/static/Web/images/no-microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
                 return;
             }
-
+            
             this.updateStatus('connecting', 'Connecting...');
             this.log('Attempting to connect...');
             // this.connectBtn.innerHTML = '<img src="/static/Web/images/microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
@@ -213,7 +218,7 @@ class WebSocketClient {
             this.ws.binaryType = 'arraybuffer';
             
             this.ws.onopen = () => {
-                this.updateStatus('connected', 'Connected');
+                this.updateStatus('connected', 'Say something..');
                 this.log('Connected successfully!', 'info');
                 // this.log('Selected Voice: ' + voice, 'info');
                 // this.connectBtn.disabled = true;
