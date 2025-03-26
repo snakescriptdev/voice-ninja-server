@@ -9,6 +9,7 @@ import os, shutil
 from config import MEDIA_DIR
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
+import uuid
 
 # DB_URL="postgresql://postgres:Snak3sCr1pT@localhost/voice_ninja"
 DB_URL= os.getenv("DB_URL")
@@ -255,6 +256,7 @@ class AgentModel(Base):
     dynamic_variable = Column(JSONB, nullable=True , default={})
     max_output_tokens = Column(Integer, nullable=True,default=1000) 
     temperature = Column(Float, nullable=True,default=0.0)
+    dynamic_id = Column(String, nullable=True,default=str(uuid.uuid4()))
 
     knowledge_base = relationship(
         "KnowledgeBaseModel",
@@ -276,6 +278,14 @@ class AgentModel(Base):
         """
         with db():
             return db.session.query(cls).filter(cls.id == agent_id).first()
+    
+    @classmethod
+    def get_by_dynamic_id(cls, dynamic_id: str) -> Optional["AgentModel"]:
+        """
+        Get agent by ID
+        """
+        with db():
+            return db.session.query(cls).filter(cls.dynamic_id == dynamic_id).first()
         
     @classmethod
     def get_all(cls) -> List["AgentModel"]:
@@ -294,12 +304,12 @@ class AgentModel(Base):
             return db.session.query(cls).filter(cls.created_by == user_id).all()
 
     @classmethod
-    def create(cls, agent_name: str, selected_model: str, selected_voice: str, phone_number: str, agent_prompt: str, selected_language: str, welcome_msg: str, created_by: int, temperature: float = 0.0, max_output_tokens: int = 1000) -> "AgentModel":
+    def create(cls, agent_name: str, selected_model: str, selected_voice: str, phone_number: str, agent_prompt: str, selected_language: str, welcome_msg: str, created_by: int, temperature: float = 0.0, max_output_tokens: int = 1000, dynamic_id: str = str(uuid.uuid4())) -> "AgentModel":
         """
         Create a new agent
         """
         with db():  
-            agent = cls(agent_name=agent_name, selected_model=selected_model, selected_voice=selected_voice, phone_number=phone_number, agent_prompt=agent_prompt, selected_language=selected_language, welcome_msg=welcome_msg, created_by=created_by, temperature=temperature, max_output_tokens=max_output_tokens)
+            agent = cls(agent_name=agent_name, selected_model=selected_model, selected_voice=selected_voice, phone_number=phone_number, agent_prompt=agent_prompt, selected_language=selected_language, welcome_msg=welcome_msg, created_by=created_by, temperature=temperature, max_output_tokens=max_output_tokens, dynamic_id=dynamic_id)
             db.session.add(agent)
             db.session.commit()
             db.session.refresh(agent)
@@ -646,6 +656,8 @@ class AudioRecordings(Base):
     audio_name = Column(String, nullable=False)
     audio_file = Column(String, nullable=False)
     created_at = Column(DateTime, default=func.now())
+    transcript = Column(String, nullable=True)
+    summary = Column(String, nullable=True)
 
     # Relationship
     agent = relationship("AgentModel", back_populates="audio_recordings")
@@ -707,7 +719,31 @@ class AudioRecordings(Base):
         except Exception as e:
             print(f"Error deleting audio recording: {str(e)}")
             return False
-
+    
+    @classmethod
+    def update_transcript(cls, recording_id: int, transcript: str) -> Optional["AudioRecordings"]:
+        """Update the transcript of an audio recording"""
+        with db():
+            recording = db.session.query(cls).filter(cls.id == recording_id).first()
+            if recording:
+                recording.transcript = transcript
+                db.session.commit()
+                db.session.refresh(recording)
+                return recording
+            return None
+    
+    @classmethod
+    def update_summary(cls, recording_id: int, summary: str) -> Optional["AudioRecordings"]:
+        """Update the summary of an audio recording"""
+        with db():
+            recording = db.session.query(cls).filter(cls.id == recording_id).first()
+            if recording:
+                recording.summary = summary
+                db.session.commit()
+                db.session.refresh(recording)
+                return recording
+            return None
+    
 # class AgentPhoneNumberModel(Base):
 #     __tablename__ = "agent_phone_number"
 

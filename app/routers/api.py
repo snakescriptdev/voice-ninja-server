@@ -11,7 +11,9 @@ from app.databases.models import (
     AgentModel, ResetPasswordModel, 
     AgentConnectionModel, PaymentModel, 
     AdminTokenModel, AudioRecordings, 
-    TokensToConsume, ApprovedDomainModel)
+    TokensToConsume, ApprovedDomainModel, CallModel,
+    KnowledgeBaseModel, KnowledgeBaseFileModel, WebhookModel, CustomFunctionModel
+    )
 from app.databases.schema import  AudioRecordListSchema
 import json, re
 import bcrypt
@@ -23,14 +25,13 @@ from pydantic import BaseModel
 from datetime import datetime
 import shutil
 import json
-from app.databases.models import KnowledgeBaseModel, KnowledgeBaseFileModel, WebhookModel, CustomFunctionModel
 from app.utils.helper import extract_text_from_file, generate_agent_prompt
 from config import MEDIA_DIR  # ✅ Import properly
 import razorpay
 from app.utils.helper import verify_razorpay_signature
 from jinja2 import Environment, meta
 from app.utils.langchain_integration import convert_to_vectorstore, get_splits
-
+from app.utils.helper import generate_transcript, generate_summary
 
 
 router = APIRouter(prefix="/api")
@@ -946,11 +947,11 @@ async def upload_knowledge_base(request: Request):
             })
             uploaded_files.append(attachment.filename)
 
-        splits = get_splits(content_list)
-        vector_id = str(uuid.uuid4())
-        if splits:
-            vector_path =convert_to_vectorstore(splits, vector_id)
-            KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
+        # splits = get_splits(content_list)
+        # vector_id = str(uuid.uuid4())
+        # if splits:
+        #     vector_path =convert_to_vectorstore(splits, vector_id)
+        #     KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
         return JSONResponse(
             status_code=200,
             content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "uploaded_files": uploaded_files}
@@ -1757,6 +1758,46 @@ async def delete_webhook(request: Request):
             return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook ID is required"})
         WebhookModel.delete(webhook_id)
         return JSONResponse(status_code=200, content={"status": "success", "message": "Webhook deleted successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/call_details", name="call_details")
+async def call_details(request: Request):
+    try:
+        data = await request.json()
+        call_id = data.get("call_id")
+        call = AudioRecordings.get_by_id(call_id)
+        if call:
+            if call.transcript:
+                transcript = call.transcript
+            else:
+                transcript = generate_transcript(call.audio_file)
+                print(transcript, "-------------transcript-----------")
+                AudioRecordings.update_transcript(call_id, transcript)
+            if call.summary:
+                summary = call.summary
+            else:
+                summary = generate_summary(call.audio_file)
+                print(summary, "-------------summary-----------")
+                AudioRecordings.update_summary(call_id, summary)
+            
+            agent = AgentModel.get_by_id(call.agent_id)
+
+            return JSONResponse(status_code=200, content={
+                "status": "success", 
+                "message": "Call details fetched successfully",
+                "call": {
+                    "id": call.id,
+                    "audio_file": call.audio_file,
+                    "created_at": str(call.created_at) if hasattr(call, 'created_at') else None,
+                },
+                "transcript": transcript,
+                "summary": summary,
+                "dynamic_variable": agent.dynamic_variable
+            })
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Call not found"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
