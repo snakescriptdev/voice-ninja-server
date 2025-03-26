@@ -41,7 +41,7 @@
                                 <img src="{{ host }}/static/Web/images/ai-icon.svg" class="img-fluid">
                             </div>
                             <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer" onclick="openDialog()">
-                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
+                                <img src="https://dev.voiceninja.ai/static/Web/images/setting-icon.svg" class="img-fluid">
                             </div>
                         </div>
                         <div class="agent_select_box position-relative">
@@ -566,6 +566,7 @@
     }
 </script>
 <script>
+let host = "https://dev.voiceninja.ai";
 // Declare selectedIconUrl globally
 let host = "{{ host }}";
 let selectedIconUrl = "{{ host }}/static/Web/images/gif-icon-1.gif"; // Default icon
