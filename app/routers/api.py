@@ -314,7 +314,7 @@ async def user_register(request: Request):
                         <p>Hi {user.name} !!!
                                 <br>Please click on the link below to verify your account
                                 <br>
-                                <a href="https://dev.voiceninja.ai/verify-account/{email_token}">Verify Account</a>
+                                <a href="{ host }/verify-account/{email_token}">Verify Account</a>
                                 <br>
                                 <br>
                                 <br>

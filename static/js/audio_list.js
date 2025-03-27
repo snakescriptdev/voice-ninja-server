@@ -18,7 +18,7 @@ class AudioList {
 
     async loadRecordings() {
         try {
-            const response = await fetch('https://dev.voiceninja.ai/api/audio-files');
+            const response = await fetch('{{ host }}/api/audio-files');
             const data = await response.json();
             
             if (data.audio_records) {
@@ -146,7 +146,7 @@ class AudioList {
 
     async confirmDeleteRecording() {
         try {
-            const response = await fetch(`https://dev.voiceninja.ai/api/audio-delete/${this.pendingDeleteId}`, {
+            const response = await fetch(`{{ host }}/api/audio-delete/${this.pendingDeleteId}`, {
                 method: 'DELETE'
             });
 
