@@ -288,7 +288,8 @@ document.getElementById('confirm-delete').addEventListener('click', function() {
 });
 
 
-function openOffcanvas(element) {
+// Define openOffcanvas function in global scope
+window.openOffcanvas = function(element) {
     const call_id = element.getAttribute('data-id');
     
     // Create and show full screen loader
@@ -340,17 +341,18 @@ function openOffcanvas(element) {
                     <div class="card shadow-sm">
                         <div class="card-body">
                             <h6 class="text-muted">Overview</h6>
-                            <audio controls class="w-100 mb-3">
+                            <audio controls class="w-100 mb-3" id="audioPlayer">
                                 <source src="${data.call.audio_file}" type="audio/wav">
                                 Your browser does not support the audio element.
                             </audio>
+                            <div id="durationScript"></div>
                             <h6 class="text-muted">Call Summary</h6>
                             <p>${data.summary || 'No summary available'}</p>
                             
                             <div class="row mt-3">
                                 <div class="col-6">
-                                    <p class="text-muted mb-1">Call ID</p>
-                                    <p class="fw-medium">${data.call.id}</p>
+                                    <p class="text-muted mb-1">Duration:</p>
+                                    <p class="fw-medium"><span id="audioDuration">0:00</span></p>
                                 </div>
                                 <div class="col-6">
                                     <p class="text-muted mb-1">Call Date</p>
@@ -360,6 +362,19 @@ function openOffcanvas(element) {
                         </div>
                     </div>
                 `;
+
+                // Add duration script after HTML is set
+                const durationScript = document.createElement('script');
+                durationScript.textContent = `
+                    document.getElementById('audioPlayer').addEventListener('loadedmetadata', function() {
+                        const duration = this.duration;
+                        const minutes = Math.floor(duration / 60);
+                        const seconds = Math.floor(duration % 60);
+                        document.getElementById('audioDuration').textContent = 
+                            minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+                    });
+                `;
+                document.getElementById('durationScript').appendChild(durationScript);
 
                 const dynamic_variable = data.dynamic_variable;
                 dynamicVariablesContainer.innerHTML = '';
@@ -379,8 +394,15 @@ function openOffcanvas(element) {
                 // Update conversation history section
                 conversationSection.innerHTML = `
                     <h6 class="mb-3">Conversation Transcript</h6>
-                    <div class="conversation_history_item mb-3 p-3 rounded bg-light">
-                        <p class="mb-0">${data.transcript || 'No transcript available'}</p>
+                    <div class="conversation_history_item mb-3 p-3 rounded">
+                        ${data.transcript.map(msg => `
+                            <div class="d-flex mb-3 ${msg.role === 'assistant' ? 'justify-content-start' : 'justify-content-end'}">
+                                <div class="p-3 rounded ${msg.role === 'assistant' ? 'bg-light' : 'bg-primary text-white'}" style="max-width: 75%;">
+                                    <p class="mb-1 small ${msg.role === 'assistant' ? 'text-muted' : 'text-white'}">${msg.role === 'assistant' ? 'Assistant' : 'User'}</p>
+                                    <p class="mb-0">${msg.content}</p>
+                                </div>
+                            </div>
+                        `).join('') || 'No transcript available'}
                     </div>
                 `;
 
@@ -411,7 +433,7 @@ function openOffcanvas(element) {
         fullScreenLoader.remove();
         toastr.error("Error fetching call details", { positionClass: "toast-top-right" });
     });
-}
+};
 </script>
 
 

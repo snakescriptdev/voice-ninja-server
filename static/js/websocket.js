@@ -213,7 +213,8 @@ class WebSocketClient {
             // Use dynamic WebSocket URL
             // const authHeader = this.getAuthHeader();
             // const voice = this.get_voice();
-            this.ws = new WebSocket(`wss://dev.voiceninja.ai/ws/agent_ws/?agent_id=${this.agentId}`); 
+            const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/agent_ws/?agent_id=${this.agentId}`;
+            this.ws = new WebSocket(wsUrl); 
             this.ws.binaryType = 'arraybuffer';
             
             this.ws.onopen = () => {

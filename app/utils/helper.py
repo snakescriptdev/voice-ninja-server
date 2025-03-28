@@ -17,13 +17,15 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from config import MEDIA_DIR
-from app.databases.models import AudioRecordings
+from app.databases.models import AudioRecordings, ConversationModel
 import hmac
 import hashlib
 import google.generativeai as genai
 import aiohttp
 from aiohttp import ClientConnectorError
 import base64
+from typing import Optional
+from fastapi_sqlalchemy import db
 
 logger = logging.getLogger(__name__)
 @dataclass
@@ -221,7 +223,8 @@ async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str
             agent_id=agent_id,
             audio_file=str(full_file_path),
             audio_name=audio_name,
-            created_at=datetime.now()
+            created_at=datetime.now(),
+            call_id=SID
         )
 
         return relative_path
@@ -331,74 +334,8 @@ async def send_request(url, data):
             return {"status": "error", "message": f"Request failed: {str(e)}"}
 
 
-def generate_transcript(audio_file_path):
-    """
-    Generates transcript from an audio file using Google's Gemini Flash 2.0 model.
-    
-    Args:
-        audio_file_path (str): Path to the audio file
-        
-    Returns:
-        str: Transcribed text from the audio
-    """
-    audio_file_path = os.path.abspath(audio_file_path)
-    try:
-        # Initialize Gemini model
-        genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
-        model = genai.GenerativeModel('gemini-1.5-pro-latest')
-        
-        # Load audio file and convert to base64
-        with open(audio_file_path, 'rb') as audio:
-            audio_data = audio.read()
-            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-            
-        # Create content dict with audio data
-        response = model.generate_content(
-        contents=[
-                    {
-                        "parts": [
-                            {
-                                "inline_data": {
-                                    "mime_type": "audio/wav",
-                                    "data": audio_base64,  # Ensure the audio is Base64-encoded
-                                }
-                            }
-                        ]
-                    }
-                ]   
-            )
-        
-        # Extract raw transcript text
-        raw_transcript = response.text.strip()
 
-        # Request structured output
-        prompt = f"""
-        You are a transcription assistant. The following is a raw transcript of a conversation:
-        
-        {raw_transcript}
-        
-        Please format this conversation into a structured JSON list where:
-        - User messages are marked as "user".
-        - Bot messages are marked as "bot".
-        - Messages should alternate between user and bot.
-        
-        Output must be valid JSON format without any extra text.
-        """
-
-        
-        structured_response = model.generate_content(prompt,generation_config={"response_mime_type": "application/json"})
-
-        chat_transcript = json.loads(structured_response.text)
-        
-        return chat_transcript, raw_transcript
-        
-    except Exception as e:
-        logger.exception(f"Error generating transcript: {e}")
-        return f"Failed to generate transcript: {str(e)}", None
-
-
-
-def generate_summary(audio_file_path):
+def generate_summary(transcript):
     """
     Generates a summary from an audio file by first transcribing it and then summarizing the transcript.
     
@@ -409,8 +346,6 @@ def generate_summary(audio_file_path):
         dict: Dictionary containing status and either summary or error message
     """
     try:
-        # First generate transcript from audio
-        transcript, raw_transcript = generate_transcript(audio_file_path)
             
         # Initialize Gemini model for summarization
         genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
@@ -420,7 +355,7 @@ def generate_summary(audio_file_path):
         # Prompt for summarization
         prompt = f"""Please provide a concise summary of the following transcript:
         
-        {raw_transcript}
+        {transcript}
         
         Focus on the key points and main ideas. Keep the summary clear and brief."""
         
@@ -443,3 +378,32 @@ def generate_summary(audio_file_path):
             "status": "error", 
             "message": f"Failed to generate summary: {str(e)}"
         }
+
+
+async def save_conversation( transcript: list, summary: Optional[str], call_id: str):
+
+    logger.info(f"call_id: {call_id}")
+    try:
+        # Ensure audio_model is retrieved within a session
+        audio_model = AudioRecordings.get_by_call_id(call_id)
+
+        if not audio_model:
+            logger.error(f"No AudioRecordings found for call_id: {call_id}")
+            return None
+        
+        print(audio_model, "----audiomodl----------")
+
+
+        # Create ConversationModel using the retrieved audio_model
+        ConversationModel.create(
+            audio_recording_id=audio_model.id,
+            transcript=transcript
+        )
+        logger.info("Conversation saved")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error saving conversation: {e}")
+        return None
+
+    
