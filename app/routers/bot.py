@@ -17,7 +17,7 @@ from pipecat.transports.network.fastapi_websocket import (
 )
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService, InputParams
 from pipecat.serializers.twilio import TwilioFrameSerializer
-from app.utils.helper import save_audio, send_request
+from app.utils.helper import save_audio, send_request, save_conversation
 # from app.services.bot_tools import end_call_tool
 import asyncio, uuid
 from fastapi.websockets import WebSocketState
@@ -26,6 +26,8 @@ from app.databases.models import db
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from enum import Enum
+from pipecat.processors.transcript_processor import TranscriptProcessor
+from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalModalities
 
 
 
@@ -55,6 +57,7 @@ tools = [
         }
     ]
 
+
 SAMPLE_RATE = 8000
 load_dotenv(override=True)
 async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instruction='hello',knowledge_base=None, agent_id=None, user_id=None, dynamic_variables=None, uid=None, custom_functions_list=None, temperature=None, max_output_tokens=None):
@@ -70,7 +73,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             serializer=TwilioFrameSerializer(stream_sid) if stream_sid else ProtobufFrameSerializer(),
         )
     )
-
+    
+    conversation_list = []
     tokens_to_consume = TokensToConsume.get_by_id(1).token_values
     if temperature:
         temperature = float(temperature)
@@ -137,7 +141,9 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         api_key=os.getenv("GOOGLE_API_KEY"),
         voice_id=voice,    
         tools=tools,
-        params=InputParams(temperature=temperature, max_tokens=max_output_tokens)          
+        transcribe_user_audio=True,
+        transcribe_model_audio=True,
+        params=InputParams(temperature=temperature, max_tokens=max_output_tokens, modalities=GeminiMultimodalModalities.AUDIO)          
     )
 
 
@@ -229,26 +235,28 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     if custom_functions_list:
         for function in custom_functions_list:
             llm.register_function(function["name"], custom_function)
+
     llm.register_function("end_call",end_call)
     context = OpenAILLMContext([{"role": "user", "content":" "}],tools=tools)
-
     context_aggregator = llm.create_context_aggregator(context)
     audiobuffer = AudioBufferProcessor()
-
+    transcript = TranscriptProcessor()
     pipeline = Pipeline(
         [
-            transport.input(),
-            context_aggregator.user(),
-            llm,
-            audiobuffer,
-            transport.output(),
-            context_aggregator.assistant(),
+            transport.input(),                # Handles incoming user data
+            context_aggregator.user(),        # Manages user context
+            llm,                              # Processes input using the LLM service
+            audiobuffer,                      # Buffers audio for processing
+            transport.output(),               # Sends responses back to the user
+            transcript.user(),                # Logs user inputs
+            transcript.assistant(),           # Logs assistant responses
+            context_aggregator.assistant(),   # Manages assistant context
         ]
     )
 
-
     task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
     runner = PipelineRunner(handle_sigint=False)
+
 
     async def deduct_tokens_periodically(user_id, tokens_to_consume, websocket_client):
         """
@@ -293,6 +301,16 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         else:
             await save_audio(audio, sample_rate, num_channels, uid, voice, int(agent_id))
 
+
+    @transcript.event_handler("on_transcript_update")
+    async def handle_update(processor, frame):
+        try:
+            for msg in frame.messages:
+                conversation_list.append({"role": msg.role, "content": msg.content})
+        except Exception as e:
+            logger.error(f"Error processing user transcript: {e}")
+
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         tokens_to_consume = TokensToConsume.get_by_id(1).token_values
@@ -312,9 +330,13 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         await audiobuffer.stop_recording()
         await task.cancel()
         await runner.cancel()
-
+        if stream_sid:
+            await save_conversation(conversation_list, "", stream_sid)
+        else:
+            await save_conversation(conversation_list, "", uid)
         if token_task:
             token_task.cancel()
             logger.info("Stopped token deduction as client disconnected.")
+        conversation_list.clear()
 
     await runner.run(task)

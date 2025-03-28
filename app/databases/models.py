@@ -257,6 +257,7 @@ class AgentModel(Base):
     max_output_tokens = Column(Integer, nullable=True,default=1000) 
     temperature = Column(Float, nullable=True,default=0.0)
     dynamic_id = Column(String, nullable=True,default=str(uuid.uuid4()))
+    per_call_token_limit = Column(Integer, nullable=True,default=0)
 
     knowledge_base = relationship(
         "KnowledgeBaseModel",
@@ -267,6 +268,8 @@ class AgentModel(Base):
 
     calls = relationship("CallModel", back_populates="agent", cascade="all, delete")
     custom_functions = relationship("CustomFunctionModel", back_populates="agent", cascade="all, delete-orphan")
+    overall_token_limit = relationship("OverallTokenLimitModel", back_populates="agent", cascade="all, delete-orphan")
+    daily_call_limit = relationship("DailyCallLimitModel", back_populates="agent", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<Agent(id={self.id}, agent_name={self.agent_name})>"
@@ -432,6 +435,20 @@ class AgentModel(Base):
                 return agent
             return None
     
+    @classmethod
+    def update_name(cls, agent_id: int, agent_name: str) -> "AgentModel":
+        """
+        Update an agent's name by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()    
+            if agent:
+                agent.agent_name = agent_name
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+    
 class ResetPasswordModel(Base):
     __tablename__ = "reset_password"
     
@@ -545,6 +562,7 @@ class KnowledgeBaseModel(Base):
     files = relationship("KnowledgeBaseFileModel", back_populates="knowledge_base")
     vector_path = Column(String, nullable=True,default="")
     vector_id = Column(String, nullable=True,default="")
+    url = Column(String, nullable=True,default="")
 
     agents = relationship(
         "AgentModel",
@@ -574,7 +592,7 @@ class KnowledgeBaseModel(Base):
             return db.session.query(cls).filter(cls.knowledge_base_name == knowledge_base_name, cls.created_by_id == created_by_id).first()
 
     @classmethod
-    def create(cls, knowledge_base_name: str, created_by_id: int) -> "KnowledgeBaseModel":
+    def create(cls, knowledge_base_name: str, created_by_id: int, url: str = "") -> "KnowledgeBaseModel":
         """Create a new knowledge base record"""
         # Create knowledge_base_files directory if it doesn't exist
         knowledge_base_dir = os.path.join(MEDIA_DIR, "knowledge_base_files")
@@ -584,7 +602,8 @@ class KnowledgeBaseModel(Base):
         with db():
             knowledge_base = cls(
                 knowledge_base_name=knowledge_base_name,
-                created_by_id=created_by_id
+                created_by_id=created_by_id,
+                url=url
             )
             db.session.add(knowledge_base)
             db.session.commit()
@@ -656,8 +675,7 @@ class AudioRecordings(Base):
     audio_name = Column(String, nullable=False)
     audio_file = Column(String, nullable=False)
     created_at = Column(DateTime, default=func.now())
-    transcript = Column(String, nullable=True)
-    summary = Column(String, nullable=True)
+    call_id = Column(String, nullable=True)
 
     # Relationship
     agent = relationship("AgentModel", back_populates="audio_recordings")
@@ -666,7 +684,7 @@ class AudioRecordings(Base):
         return f"{self.agent.agent_name} audio recording"
 
     @classmethod
-    def create(cls, agent_id: int, audio_file: str, audio_name: str, created_at: datetime) -> "AudioRecordings":
+    def create(cls, agent_id: int, audio_file: str, audio_name: str, created_at: datetime, call_id: str = None) -> "AudioRecordings":
         """Create a new audio recording"""
 
         with db():
@@ -674,7 +692,8 @@ class AudioRecordings(Base):
                 agent_id=agent_id,
                 audio_file=audio_file,
                 audio_name=audio_name,
-                created_at=created_at
+                created_at=created_at,
+                call_id=call_id
             )
             db.session.add(recording)
             db.session.commit()
@@ -698,6 +717,13 @@ class AudioRecordings(Base):
         """Get all audio recordings by user ID"""
         with db():
             return db.session.query(cls).filter(cls.agent.created_by == user_id).all()
+
+    @classmethod
+    def get_by_call_id(cls, call_id: str) -> Optional["AudioRecordings"]:
+        """Get recording by call ID"""
+        with db():
+            audio_model = db.session.query(cls).filter(cls.call_id == call_id).first()
+            return audio_model
     
     @classmethod    
     def delete(cls, recording_id: int) -> bool:
@@ -719,30 +745,7 @@ class AudioRecordings(Base):
         except Exception as e:
             print(f"Error deleting audio recording: {str(e)}")
             return False
-    
-    @classmethod
-    def update_transcript(cls, recording_id: int, transcript: str) -> Optional["AudioRecordings"]:
-        """Update the transcript of an audio recording"""
-        with db():
-            recording = db.session.query(cls).filter(cls.id == recording_id).first()
-            if recording:
-                recording.transcript = transcript
-                db.session.commit()
-                db.session.refresh(recording)
-                return recording
-            return None
-    
-    @classmethod
-    def update_summary(cls, recording_id: int, summary: str) -> Optional["AudioRecordings"]:
-        """Update the summary of an audio recording"""
-        with db():
-            recording = db.session.query(cls).filter(cls.id == recording_id).first()
-            if recording:
-                recording.summary = summary
-                db.session.commit()
-                db.session.refresh(recording)
-                return recording
-            return None
+
     
 # class AgentPhoneNumberModel(Base):
 #     __tablename__ = "agent_phone_number"
@@ -1325,6 +1328,188 @@ class ApprovedDomainModel(Base):
                 db.session.commit()
                 return True
             return False
+
+
+class ConversationModel(Base):
+    __tablename__ = "conversations"
+
+    id = Column(Integer, primary_key=True)
+    transcript = Column(JSONB, nullable=True)
+    summary = Column(String, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    audio_recording_id = Column(Integer, ForeignKey("audio_recordings.id"), nullable=False)
+
+    def __repr__(self):
+        return f"<Conversation(id={self.id})>"
+    
+    @classmethod
+    def create(cls, audio_recording_id: int, transcript: List[str], summary: Optional[str] = None) -> "ConversationModel":
+        with db():
+            conversation = cls(transcript=transcript, summary=summary, audio_recording_id=audio_recording_id)
+            db.session.add(conversation)
+            db.session.commit()
+            db.session.refresh(conversation)
+            return conversation
+        
+    @classmethod
+    def get_by_audio_recording_id(cls, audio_recording_id: int) -> Optional["ConversationModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.audio_recording_id == audio_recording_id).first()
+        
+    @classmethod
+    def get_all(cls) -> List["ConversationModel"]:
+        with db():
+            return db.session.query(cls).all()
+        
+    @classmethod
+    def delete(cls, id: int) -> bool:
+        with db():
+            conversation = db.session.query(cls).filter(cls.id == id).first()
+            if conversation:
+                db.session.delete(conversation)
+                db.session.commit()
+                return True
+            return False
+
+    @classmethod
+    def update_summary(cls, id: int, summary: str) -> bool:
+        with db():
+            conversation = db.session.query(cls).filter(cls.id == id).first()
+            if conversation:
+                conversation.summary = summary
+                db.session.commit()
+                db.session.refresh(conversation)
+                return conversation
+            return False
+
+class OverallTokenLimitModel(Base):
+    __tablename__ = "overall_token_limit"
+    
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+    overall_token_limit = Column(Integer, nullable=True, default=0)
+    last_used_tokens = Column(Integer, nullable=True, default=0)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # Relationship with Agent
+    agent = relationship("AgentModel", back_populates="overall_token_limit")
+
+    def __repr__(self):
+        return f"<OverallTokenLimit(id={self.id}, agent_id={self.agent_id})>"
+
+    @classmethod
+    def create(cls, agent_id: int, overall_token_limit: int, last_used_tokens: int) -> "OverallTokenLimitModel":
+        """Create a new overall token limit record"""
+        with db():
+            overall_token_limit = cls(agent_id=agent_id, overall_token_limit=overall_token_limit, last_used_tokens=last_used_tokens)
+            db.session.add(overall_token_limit)
+            db.session.commit()
+            db.session.refresh(overall_token_limit)
+            return overall_token_limit
+
+    @classmethod
+    def get_by_agent_id(cls, agent_id: int) -> Optional["OverallTokenLimitModel"]:
+        """Get overall token limit by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).first()
+
+    @classmethod
+    def update(cls, agent_id: int, overall_token_limit: Optional[int] = None, last_used_tokens: Optional[int] = None) -> "OverallTokenLimitModel":
+        """Update overall token limit record"""
+        with db():
+            overall_token_limit = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if overall_token_limit:
+                if overall_token_limit is not None:
+                    overall_token_limit.overall_token_limit = overall_token_limit
+                if last_used_tokens is not None:
+                    overall_token_limit.last_used_tokens = last_used_tokens
+                db.session.commit()
+                db.session.refresh(overall_token_limit)
+                return overall_token_limit
+            return None
+
+    @classmethod
+    def delete(cls, agent_id: int) -> bool:
+        """Delete overall token limit record"""
+        try:
+            with db():
+                overall_token_limit = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+                if overall_token_limit:
+                    db.session.delete(overall_token_limit)
+                    db.session.commit()
+                return True
+        except Exception:
+            return False
+
+
+class DailyCallLimitModel(Base):
+    """Daily Call Limit Model"""
+    __tablename__ = "daily_call_limit"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), unique=True)
+    set_value = Column(Integer, nullable=False)
+    last_used = Column(Integer, nullable=False, default=0)
+    last_updated = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    # Relationship with Agent
+    agent = relationship("AgentModel", back_populates="daily_call_limit")
+
+    def __repr__(self):
+        return f"<DailyCallLimit(id={self.id}, agent_id={self.agent_id})>"
+
+    @classmethod
+    def create(cls, agent_id: int, set_value: int, last_used: int = 0) -> "DailyCallLimitModel":
+        """Create a new daily call limit record"""
+        with db():
+            daily_call_limit = cls(
+                agent_id=agent_id,
+                set_value=set_value,
+                last_used=last_used,
+                last_updated=datetime.utcnow()
+            )
+            db.session.add(daily_call_limit)
+            db.session.commit()
+            db.session.refresh(daily_call_limit)
+            return daily_call_limit
+
+    @classmethod
+    def get_by_agent_id(cls, agent_id: int) -> Optional["DailyCallLimitModel"]:
+        """Get daily call limit by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).first()
+
+    @classmethod
+    def update(cls, agent_id: int, set_value: Optional[int] = None, last_used: Optional[int] = None) -> "DailyCallLimitModel":
+        """Update daily call limit record"""
+        with db():
+            daily_call_limit = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if daily_call_limit:
+                if set_value is not None:
+                    daily_call_limit.set_value = set_value
+                if last_used is not None:
+                    daily_call_limit.last_used = last_used
+                daily_call_limit.last_updated = datetime.utcnow()
+                db.session.commit()
+                db.session.refresh(daily_call_limit)
+                return daily_call_limit
+            return None
+
+    @classmethod
+    def delete(cls, agent_id: int) -> bool:
+        """Delete daily call limit record"""
+        try:
+            with db():
+                daily_call_limit = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+                if daily_call_limit:
+                    db.session.delete(daily_call_limit)
+                    db.session.commit()
+                return True
+        except Exception:
+            return False
+
 
 Base.metadata.create_all(engine)
 
