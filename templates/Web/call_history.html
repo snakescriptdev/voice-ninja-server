@@ -14,11 +14,11 @@
                 <div class="d-flex align-items-center gap-2" style="flex:1;">
                     <button type="button"
                         class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
-                        <img src="https://dev.voiceninja.ai/static/Web/images/hamburger-icon.svg" class="img-fluid">
+                        <img src="{{ host }}/static/Web/images/hamburger-icon.svg" class="img-fluid">
                     </button>
                     <div class="d-flex align-items-center gap-2 w-100">
                         <div class="page_back_arrow d-flex align-items-center justify-content-center">
-                            <a href="#" onclick="window.history.back()" class=""><img src="https://dev.voiceninja.ai/static/Web/images/left-arrow.svg" class="img-fluid"></a>
+                            <a href="#" onclick="window.history.back()" class=""><img src="{{ host }}/static/Web/images/left-arrow.svg" class="img-fluid"></a>
                         </div>
                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 13 13" fill="none">
                             <path d="M6.5 12.875C4.87083 12.875 3.45133 12.335 2.2415 11.255C1.03167 10.1751 0.337972 8.82617 0.160417 7.20833H1.6125C1.77778 8.43611 2.3239 9.45139 3.25087 10.2542C4.17785 11.0569 5.26089 11.4583 6.5 11.4583C7.88125 11.4583 9.05307 10.9774 10.0155 10.0155C10.9778 9.05354 11.4588 7.88172 11.4583 6.5C11.4579 5.11828 10.9769 3.94669 10.0155 2.98525C9.05401 2.02381 7.88219 1.54261 6.5 1.54167C5.68542 1.54167 4.92396 1.73056 4.21562 2.10833C3.50729 2.48611 2.91111 3.00556 2.42708 3.66667H4.375V5.08333H0.125V0.833333H1.54167V2.49792C2.14375 1.74236 2.87876 1.15799 3.74671 0.744792C4.61465 0.331597 5.53242 0.125 6.5 0.125C7.38542 0.125 8.21487 0.293347 8.98837 0.630042C9.76187 0.966736 10.4348 1.42101 11.0071 1.99287C11.5795 2.56474 12.034 3.23765 12.3707 4.01163C12.7074 4.7856 12.8755 5.61506 12.875 6.5C12.8745 7.38494 12.7064 8.2144 12.3707 8.98837C12.0349 9.76235 11.5804 10.4353 11.0071 11.0071C10.4338 11.579 9.76093 12.0335 8.98837 12.3707C8.21582 12.7078 7.38636 12.8759 6.5 12.875ZM8.48333 9.475L5.79167 6.78333V2.95833H7.20833V6.21667L9.475 8.48333L8.48333 9.475Z" fill="#000000"></path>
@@ -29,7 +29,9 @@
                 <div class="dropdown">
                     <button class="bg-transparent border-0 dropdown-toggle" type="button" data-bs-toggle="dropdown"
                         aria-expanded="false">
-                        {{ request.session.get("user").get('name')[0].upper() }}
+                        <div class="user-avatar">
+                            {{ request.session.get("user").get('name')[0].upper() }}
+                        </div>
                     </button>
                     <ul class="dropdown-menu">
                         <li>
@@ -79,7 +81,7 @@
                             </thead>
                             <tbody>
                                 {% for audio_recording in page_obj.items %}
-                                    <tr data-id="{{ audio_recording.id }}">
+                                    <tr data-id="{{ audio_recording.id }}" onclick="openOffcanvas(this)" data-bs-toggle="offcanvas" data-bs-target="#offcanvasRight" aria-controls="offcanvasRight">
                                         <td>{{ agent_name }}</td>
                                         <td>{{ selected_voice }}</td>
                                         <td>{{ audio_recording.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td> 
@@ -103,7 +105,7 @@
                                                         data-audio-recording-id="{{ audio_recording.id }}" 
                                                         aria-label="Delete audio recording {{ audio_recording.id }}" 
                                                         onclick="event.stopPropagation();">
-                                                    <img src="https://dev.voiceninja.ai/static/Web/images/delete-icon.svg" 
+                                                    <img src="{{ host }}/static/Web/images/delete-icon.svg" 
                                                         alt="Delete" 
                                                         class="img-fluid">
                                                 </button>
@@ -125,19 +127,19 @@
                             <ul class="pagination justify-content-end gap-2 mb-0">
                                 {%- if page_obj.has_previous -%}
                                 <li class="page-item">
-                                    <a class="page-link pagination_arrow" href="https://dev.voiceninja.ai/call_history?agent_id={{ agent_id }}&page={{ page_obj.previous_page_number }}" tabindex="-1" aria-disabled="false">&lt;</a>
+                                    <a class="page-link pagination_arrow" href="{{ host }}/call_history?agent_id={{ agent_id }}&page={{ page_obj.previous_page_number }}" tabindex="-1" aria-disabled="false">&lt;</a>
                                 </li>
                                 {%- endif -%}
                                 
                                 {%- for page in page_obj.page_range -%}
                                 <li class="page-item {{ 'active' if page == page_obj.page else '' }}">
-                                    <a class="page-link" href="https://dev.voiceninja.ai/call_history?agent_id={{ agent_id }}&page={{ page }}" {% if page == page_obj.page %}aria-current="page"{% endif %}>{{ page }}</a>
+                                    <a class="page-link" href="{{ host }}/call_history?agent_id={{ agent_id }}&page={{ page }}" {% if page == page_obj.page %}aria-current="page"{% endif %}>{{ page }}</a>
                                 </li>
                                 {%- endfor -%}
                                 
                                 {%- if page_obj.has_next -%}
                                 <li class="page-item">
-                                    <a class="page-link pagination_arrow" href="https://dev.voiceninja.ai/call_history?agent_id={{ agent_id }}&page={{ page_obj.next_page_number }}">&gt;</a>
+                                    <a class="page-link pagination_arrow" href="{{ host }}/call_history?agent_id={{ agent_id }}&page={{ page_obj.next_page_number }}">&gt;</a>
                                 </li>
                                 {%- endif -%}
                             </ul>
@@ -150,7 +152,6 @@
         </div>
     </div>
 </body>
-
 
 
 <!-- Modal -->
@@ -174,8 +175,65 @@
 </div>
 
 
+<!-- offcanvas for call history detail -->
+<div class="offcanvas offcanvas-end call_history_offcanvas" tabindex="-1" id="offcanvasRight" aria-labelledby="offcanvasRightLabel">
+  <div class="offcanvas-header border-bottom">
+    <h5 class="offcanvas-title" id="offcanvasRightLabel">Call Details</h5>
+    <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+  </div>
+  <div class="offcanvas-body">
+    <div class="call_details mb-4">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h6 class="text-muted">Overview</h6>
+          <audio controls class="w-100 mb-3" id="audioPlayer">
+            <source id="audioSource" src="" type="audio/wav">
+            Your browser does not support the audio element.
+          </audio>
+          <h6 class="text-muted">Call Summary</h6>
+          <p id="callSummary"></p>
+          
+          <div class="row mt-3">
+            <div class="col-6">
+              <p class="text-muted mb-1">Call Duration</p>
+              <p class="fw-medium" id="callDuration"></p>
+            </div>
+            <div class="col-6">
+              <p class="text-muted mb-1">Call Date</p>
+              <p class="fw-medium" id="callDate"></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="collected_variables mb-4">
+      <h6 class="mb-3">Client Data</h6>
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h6 class="text-muted">Language</h6>
+          <p class="fw-medium">🇺🇸 English</p>
+        </div>
+      </div>
+      
+      <h6 class="mt-3">Dynamic Variables</h6>
+      <div id="dynamicVariables">
+        <!-- Dynamic variables will be inserted here -->
+      </div>
+    </div>
+
+    <div class="conversation_history">
+      <h6 class="mb-3">Conversation Transcript</h6>
+      <div id="transcriptContainer">
+        <!-- Transcript messages will be inserted here -->
+      </div>
+    </div>
+  </div>
+</div>
+
 
 <script>
+const host = "{{ host }}";  
 // Add this JavaScript code to your file
 document.addEventListener('DOMContentLoaded', function() {
     // Select all delete buttons
@@ -198,7 +256,7 @@ document.addEventListener('DOMContentLoaded', function() {
 document.getElementById('confirm-delete').addEventListener('click', function() {
     const audioRecordingId = this.getAttribute('data-audio-recording-id');
     const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
-    fetch(`https://dev.voiceninja.ai/api/delete_audio_recording/?audio_recording_id=${audioRecordingId}`, {
+    fetch(`${host}/api/delete_audio_recording/?audio_recording_id=${audioRecordingId}`, {
         method: 'DELETE',
         headers: { "X-CSRFToken": '{{ csrf_token }}' }, 
     })
@@ -228,6 +286,154 @@ document.getElementById('confirm-delete').addEventListener('click', function() {
         deleteModal.hide();
     });
 });
+
+
+// Define openOffcanvas function in global scope
+window.openOffcanvas = function(element) {
+    const call_id = element.getAttribute('data-id');
+    
+    // Create and show full screen loader
+    const fullScreenLoader = document.createElement('div');
+    fullScreenLoader.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255,255,255,0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    `;
+    fullScreenLoader.innerHTML = `
+        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    `;
+    document.body.appendChild(fullScreenLoader);
+
+    fetch(`${host}/api/call_details`, {
+        method: 'POST',
+        headers: { 
+            "X-CSRFToken": '{{ csrf_token }}',
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+            call_id: call_id
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === "success") {
+            try {
+                // Format timestamp
+                const createdAt = new Date(data.call.created_at);
+                const formattedDate = createdAt.toLocaleString();
+
+                // Prepare content before showing offcanvas
+                const callDetailsSection = document.querySelector('.call_details');
+                const conversationSection = document.querySelector('.conversation_history');
+                const dynamicVariablesContainer = document.getElementById('dynamicVariables');
+
+                // Update call details section
+                callDetailsSection.innerHTML = `
+                    <div class="card shadow-sm">
+                        <div class="card-body">
+                            <h6 class="text-muted">Overview</h6>
+                            <audio controls class="w-100 mb-3" id="audioPlayer">
+                                <source src="${data.call.audio_file}" type="audio/wav">
+                                Your browser does not support the audio element.
+                            </audio>
+                            <div id="durationScript"></div>
+                            <h6 class="text-muted">Call Summary</h6>
+                            <p>${data.summary || 'No summary available'}</p>
+                            
+                            <div class="row mt-3">
+                                <div class="col-6">
+                                    <p class="text-muted mb-1">Duration:</p>
+                                    <p class="fw-medium"><span id="audioDuration">0:00</span></p>
+                                </div>
+                                <div class="col-6">
+                                    <p class="text-muted mb-1">Call Date</p>
+                                    <p class="fw-medium">${formattedDate}</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                // Add duration script after HTML is set
+                const durationScript = document.createElement('script');
+                durationScript.textContent = `
+                    document.getElementById('audioPlayer').addEventListener('loadedmetadata', function() {
+                        const duration = this.duration;
+                        const minutes = Math.floor(duration / 60);
+                        const seconds = Math.floor(duration % 60);
+                        document.getElementById('audioDuration').textContent = 
+                            minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
+                    });
+                `;
+                document.getElementById('durationScript').appendChild(durationScript);
+
+                const dynamic_variable = data.dynamic_variable;
+                dynamicVariablesContainer.innerHTML = '';
+
+                for (const [key, value] of Object.entries(dynamic_variable)) {
+                    const variableItem = document.createElement('div');
+                    variableItem.classList.add('card', 'mb-2', 'shadow-sm');
+                    variableItem.innerHTML = `
+                        <div class="card-body">
+                            <p class="text-muted mb-1">${key}</p>
+                            <p class="fw-medium">${value}</p>
+                        </div>
+                    `;
+                    dynamicVariablesContainer.appendChild(variableItem);
+                }
+
+                // Update conversation history section
+                conversationSection.innerHTML = `
+                    <h6 class="mb-3">Conversation Transcript</h6>
+                    <div class="conversation_history_item mb-3 p-3 rounded">
+                        ${data.transcript.map(msg => `
+                            <div class="d-flex mb-3 ${msg.role === 'assistant' ? 'justify-content-start' : 'justify-content-end'}">
+                                <div class="p-3 rounded ${msg.role === 'assistant' ? 'bg-light' : 'bg-primary text-white'}" style="max-width: 75%;">
+                                    <p class="mb-1 small ${msg.role === 'assistant' ? 'text-muted' : 'text-white'}">${msg.role === 'assistant' ? 'Assistant' : 'User'}</p>
+                                    <p class="mb-0">${msg.content}</p>
+                                </div>
+                            </div>
+                        `).join('') || 'No transcript available'}
+                    </div>
+                `;
+
+                // Remove loader and show offcanvas
+                fullScreenLoader.remove();
+                const offcanvas = new bootstrap.Offcanvas(document.getElementById('offcanvasRight'));
+                
+                // Add event listener for when offcanvas is hidden
+                document.getElementById('offcanvasRight').addEventListener('hidden.bs.offcanvas', function () {
+                    // Remove backdrop
+                    document.querySelector('.offcanvas-backdrop')?.remove();
+                });
+
+                offcanvas.show();
+
+            } catch (error) {
+                console.error('Error updating content:', error);
+                fullScreenLoader.remove();
+                toastr.error("Error displaying call details", { positionClass: "toast-top-right" });
+            }
+        } else {
+            fullScreenLoader.remove();
+            toastr.error("Failed to fetch call details", { positionClass: "toast-top-right" });
+        }
+    })
+    .catch(error => {
+        console.error('Error fetching call details:', error);
+        fullScreenLoader.remove();
+        toastr.error("Error fetching call details", { positionClass: "toast-top-right" });
+    });
+};
 </script>
 
 
