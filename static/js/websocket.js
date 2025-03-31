@@ -137,6 +137,10 @@ class WebSocketClient {
     
     updateStatus(status, message) {
         try {
+            const statusText = document.getElementById('status-text');
+            if (statusText) {
+                statusText.textContent = message;
+            }
             // const statusPanel = document.querySelector('.status-panel');
             // const statusText = document.getElementById('connection-status');
             
@@ -187,6 +191,7 @@ class WebSocketClient {
                 await this.setupAudioProcessing();
             }
         } catch (error) {
+
             this.log(`Audio initialization failed: ${error.message}`, 'error');
         }
     }
@@ -200,7 +205,7 @@ class WebSocketClient {
                 // this.connectBtn.innerHTML = '<img src="/static/Web/images/no-microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
                 return;
             }
-
+            
             this.updateStatus('connecting', 'Connecting...');
             this.log('Attempting to connect...');
             // this.connectBtn.innerHTML = '<img src="/static/Web/images/microphone.gif" style="width: 35px; height: 35px; object-fit: cover; vertical-align: middle; margin-right: 5px;">';
@@ -208,11 +213,12 @@ class WebSocketClient {
             // Use dynamic WebSocket URL
             // const authHeader = this.getAuthHeader();
             // const voice = this.get_voice();
-            this.ws = new WebSocket(`wss://dev.voiceninja.ai/ws/agent_ws/?agent_id=${this.agentId}`); 
+            const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/agent_ws/?agent_id=${this.agentId}`;
+            this.ws = new WebSocket(wsUrl); 
             this.ws.binaryType = 'arraybuffer';
             
             this.ws.onopen = () => {
-                this.updateStatus('connected', 'Connected');
+                this.updateStatus('connected', 'Say something..');
                 this.log('Connected successfully!', 'info');
                 // this.log('Selected Voice: ' + voice, 'info');
                 // this.connectBtn.disabled = true;
