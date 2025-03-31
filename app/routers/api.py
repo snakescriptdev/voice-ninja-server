@@ -12,8 +12,9 @@ from app.databases.models import (
     AgentConnectionModel, PaymentModel, 
     AdminTokenModel, AudioRecordings, 
     TokensToConsume, ApprovedDomainModel, CallModel,
-    KnowledgeBaseModel, KnowledgeBaseFileModel, WebhookModel, CustomFunctionModel,
-    ConversationModel
+    KnowledgeBaseModel, KnowledgeBaseFileModel, WebhookModel, 
+    CustomFunctionModel,ConversationModel, DailyCallLimitModel,
+    OverallTokenLimitModel
     )
 from app.databases.schema import  AudioRecordListSchema
 import json, re
@@ -1586,7 +1587,6 @@ async def custom_functions(request: Request):
         if not function_timeout:
             function_timeout = None  # or set a default integer like 0
 
-
         # Ensure function_parameters is a valid JSON string
         if isinstance(function_parameters, str):
             function_parameters = json.loads(function_parameters)
@@ -1782,6 +1782,7 @@ async def call_details(request: Request):
                     summary = generate_summary(transcript)
                     ConversationModel.update_summary(conversation.id, summary)
             agent = AgentModel.get_by_id(call.agent_id)
+            call_details = CallModel.get_by_call_id(call.call_id)
 
             return JSONResponse(status_code=200, content={
                 "status": "success", 
@@ -1793,7 +1794,7 @@ async def call_details(request: Request):
                 },
                 "transcript": transcript,
                 "summary": summary,
-                "dynamic_variable": agent.dynamic_variable
+                "dynamic_variable": call_details.variables if call_details else agent.dynamic_variable
             })
         else:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Call not found"})
@@ -1911,6 +1912,34 @@ async def create_text(request: Request):
 
         print("Error:", str(e))
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/update-agent-token-settings", name="update-agent-token-settings")
+async def update_agent_token_settings(request: Request):
+    try:
+        data = await request.json()
+        overall_token_limit = data.get("overall_token_limit")
+        daily_token_limit = data.get("daily_token_limit")
+        per_call_token_limit = data.get("per_call_token_limit")
+        agent_id = data.get("agent_id")
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+        AgentModel.update_per_call_token_limit(agent_id, per_call_token_limit)
+        if DailyCallLimitModel.get_by_agent_id(agent_id):
+            DailyCallLimitModel.update_set_value(agent_id, daily_token_limit)
+        else:
+            DailyCallLimitModel.create(agent_id, daily_token_limit)
+        if OverallTokenLimitModel.get_by_agent_id(agent_id):
+            OverallTokenLimitModel.update_set_value(agent_id, overall_token_limit)
+        else:
+            OverallTokenLimitModel.create(agent_id, overall_token_limit)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Token settings updated successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
 
 
 @router.post("/check-payload", name="check-payload")
