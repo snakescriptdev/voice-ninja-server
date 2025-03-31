@@ -380,7 +380,7 @@ def generate_summary(transcript):
         }
 
 
-async def save_conversation( transcript: list, summary: Optional[str], call_id: str):
+async def save_conversation( transcript: list, call_id: str):
 
     logger.info(f"call_id: {call_id}")
     try:
@@ -390,14 +390,12 @@ async def save_conversation( transcript: list, summary: Optional[str], call_id: 
         if not audio_model:
             logger.error(f"No AudioRecordings found for call_id: {call_id}")
             return None
-        
-        print(audio_model, "----audiomodl----------")
+        summary = generate_summary(transcript)  # No need for await
 
-
-        # Create ConversationModel using the retrieved audio_model
-        ConversationModel.create(
+        conversation = ConversationModel.create(
             audio_recording_id=audio_model.id,
-            transcript=transcript
+            transcript=transcript,
+            summary=summary  # Ensure summary is passed properly
         )
         logger.info("Conversation saved")
         return True

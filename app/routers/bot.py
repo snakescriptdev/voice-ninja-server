@@ -331,9 +331,9 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         await task.cancel()
         await runner.cancel()
         if stream_sid:
-            await save_conversation(conversation_list, "", stream_sid)
+            await save_conversation(conversation_list, stream_sid)
         else:
-            await save_conversation(conversation_list, "", uid)
+            await save_conversation(conversation_list,  uid)
         if token_task:
             token_task.cancel()
             logger.info("Stopped token deduction as client disconnected.")

@@ -4,7 +4,7 @@ from app.services import RunAssistant
 from typing import Dict
 import secrets,uuid, json
 from app.routers.bot import run_bot
-from app.databases.models import AgentModel, CustomFunctionModel
+from app.databases.models import AgentModel, CustomFunctionModel, DailyCallLimitModel, OverallTokenLimitModel
 from user_agents import parse
 
 router = APIRouter(prefix="/ws")
@@ -126,6 +126,37 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
         dynamic_variables = agent.dynamic_variable
         temperature = agent.temperature
         max_output_tokens = agent.max_output_tokens
+        custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
+        daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id)
+        overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id)
+        per_call_token_limit = agent.per_call_token_limit if agent.per_call_token_limit else 0
+        update_per_call_token_limit = agent.update_per_call_token_limit if agent.update_per_call_token_limit else 0
+
+        if daily_call_limit and daily_call_limit.last_used == 0:
+            logger.error(f"Daily call limit reached: {daily_call_limit.last_used}/{daily_call_limit.set_value}")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        
+        if overall_token_limit and overall_token_limit.last_used == 0:
+            logger.error(f"Overall token limit reached: {overall_token_limit.last_used}/{overall_token_limit.overall_token_limit}")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        
+        if per_call_token_limit > 0 and update_per_call_token_limit >= per_call_token_limit:
+            logger.error(f"Per call token limit reached: {update_per_call_token_limit}/{per_call_token_limit}")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        
+        if per_call_token_limit > 0:
+            AgentModel.update_per_call_token_limit(agent_id, update_per_call_token_limit + 1)
+        
+        custom_functions_list = []
+        for function in custom_functions:
+            custom_functions_list.append({
+                "name": function.function_name,
+                "description": function.function_description,
+                "parameters": function.function_parameters
+            })
         print("WebSocket connection accepted")
         await run_bot(websocket, voice, stream_sid, welcome_msg, system_instruction, knowledge_base_text, agent.id, user_id, dynamic_variables, None, None, temperature, max_output_tokens)
 
@@ -182,6 +213,29 @@ async def agent_websocket_endpoint(websocket: WebSocket):
         temperature = agent.temperature
         max_output_tokens = agent.max_output_tokens
         custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
+        daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id)
+        overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id)
+        per_call_token_limit = agent.per_call_token_limit if agent.per_call_token_limit else 0
+        update_per_call_token_limit = agent.update_per_call_token_limit if agent.update_per_call_token_limit else 0
+
+        if daily_call_limit and daily_call_limit.last_used == 0:
+            logger.error(f"Daily call limit reached: {daily_call_limit.last_used}/{daily_call_limit.set_value}")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        
+        if overall_token_limit and overall_token_limit.last_used_tokens == 0:
+            logger.error(f"Overall token limit reached: {overall_token_limit.last_used_tokens}/{overall_token_limit.overall_token_limit}")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        
+        if per_call_token_limit > 0 and int(update_per_call_token_limit) >= per_call_token_limit:
+            logger.error(f"Per call token limit reached: {update_per_call_token_limit}/{per_call_token_limit}")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+            return
+        
+        if per_call_token_limit > 0:
+            AgentModel.update_value_per_call_token_limit(agent_id, update_per_call_token_limit + 1)
+
         custom_functions_list = []
         for function in custom_functions:
             custom_functions_list.append({

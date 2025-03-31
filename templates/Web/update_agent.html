@@ -245,15 +245,15 @@
                                     <div class="mt-3">
                                         <div class="mb-3">
                                             <label class="form-label">Overall Token Limit</label>
-                                            <input type="number" class="form-control" id="overall-token-limit">
+                                            <input type="number" class="form-control" id="overall-token-limit" value="{{ overall_token_limit }}" required>
                                         </div>
                                         <div class="mb-3">
                                             <label class="form-label">Daily Token Limit</label>
-                                            <input type="number" class="form-control" id="daily-token-limit">
+                                            <input type="number" class="form-control" id="daily-token-limit" value="{{ daily_call_limit }}" required>
                                         </div>
                                         <div class="mb-3">
                                             <label class="form-label">Per Call Token Limit</label>
-                                            <input type="number" class="form-control" id="per-call-token-limit">
+                                            <input type="number" class="form-control" id="per-call-token-limit" value="{{ per_call_token_limit }}" required>
                                         </div>
                                         <div class="variable-modal-footer d-flex align-items-center gap-2 justify-content-end pt-2">
                                             <button class="cancel-btn" onclick="toggleTokenModal()">Cancel</button>
@@ -1652,12 +1652,17 @@ function saveVariable() {
             const overallTokenLimit = document.getElementById('overall-token-limit').value;
             const dailyTokenLimit = document.getElementById('daily-token-limit').value;
             const perCallTokenLimit = document.getElementById('per-call-token-limit').value;
-
+            if(overallTokenLimit == "" || dailyTokenLimit == "" || perCallTokenLimit == ""){
+                toastr.error('Please fill all the fields');
+                return;
+            }
+            const currentUrl = new URL(window.location.href);   
+            const agentId = currentUrl.searchParams.get("agent_id");
             $.ajax({
                 url: host + '/api/update-agent-token-settings',
                 type: 'POST',
                 contentType: 'application/json',
-                data: JSON.stringify({ overall_token_limit: overallTokenLimit, daily_token_limit: dailyTokenLimit, per_call_token_limit: perCallTokenLimit }),
+                data: JSON.stringify({ overall_token_limit: overallTokenLimit, daily_token_limit: dailyTokenLimit, per_call_token_limit: perCallTokenLimit, agent_id: agentId }),
                 success: function(response) {
                     if(response.status == "success"){
                         toastr.success('Token settings saved successfully');
