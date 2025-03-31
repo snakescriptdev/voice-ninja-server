@@ -412,7 +412,7 @@ def chatbot_script(request: Request, agent_id: str):
 
                         '''
             
-        elif overall_token_limit and int(overall_token_limit.last_used_tokens) == 0:
+        elif overall_token_limit and int(overall_token_limit.last_used_tokens) == int(overall_token_limit.overall_token_limit):
             script_content = f'''document.addEventListener('DOMContentLoaded', function() {{
                     (function() {{
                         console.log("Script is running...");
@@ -451,7 +451,7 @@ def chatbot_script(request: Request, agent_id: str):
                         `;
                         
                         popup.innerHTML = `
-                            <h2 style="font-size: 24px; margin-bottom: 10px;">Need More Tokens?</h2>
+                            <h2 style="font-size: 24px; margin-bottom: 10px;">Overall Token Limit Reached</h2>
                             <p style="font-size: 18px; margin-bottom: 20px;">Upgrade now to unlock unlimited tokens and access all premium features!</p>
                             <a href="{host}/update_agent?agent_id={agent.id}" class='buy-button' style="
                                 background: #fff;
@@ -475,7 +475,7 @@ def chatbot_script(request: Request, agent_id: str):
 
                         '''
         
-        elif daily_call_limit and int(daily_call_limit.set_value) == 0:
+        elif daily_call_limit and int(daily_call_limit.set_value) == int(daily_call_limit.last_used):
             script_content = f'''document.addEventListener('DOMContentLoaded', function() {{
                     (function() {{
                         console.log("Script is running...");
@@ -514,7 +514,7 @@ def chatbot_script(request: Request, agent_id: str):
                         `;
                         
                         popup.innerHTML = `
-                            <h2 style="font-size: 24px; margin-bottom: 10px;">Need More Tokens?</h2>
+                            <h2 style="font-size: 24px; margin-bottom: 10px;">Daily Call Limit Reached</h2>
                             <p style="font-size: 18px; margin-bottom: 20px;">You've reached your daily call limit. Please update your plan to continue using the service.</p>
                             <a href="{host}/update_agent?agent_id={agent.id}" class='buy-button' style="
                                 background: #fff;
