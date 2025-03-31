@@ -17,15 +17,18 @@ from pipecat.transports.network.fastapi_websocket import (
 )
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService, InputParams
 from pipecat.serializers.twilio import TwilioFrameSerializer
-from app.utils.helper import save_audio, send_request
+from app.utils.helper import save_audio, send_request, save_conversation
 # from app.services.bot_tools import end_call_tool
 import asyncio, uuid
 from fastapi.websockets import WebSocketState
-from app.databases.models import TokensToConsume, UserModel, AgentModel, CallModel, CustomFunctionModel, WebhookModel   
+from datetime import datetime
+from app.databases.models import TokensToConsume, UserModel, AgentModel, CallModel, CustomFunctionModel, WebhookModel, OverallTokenLimitModel, DailyCallLimitModel
 from app.databases.models import db
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from enum import Enum
+from pipecat.processors.transcript_processor import TranscriptProcessor
+from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalModalities
 
 
 
@@ -55,6 +58,7 @@ tools = [
         }
     ]
 
+
 SAMPLE_RATE = 8000
 load_dotenv(override=True)
 async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instruction='hello',knowledge_base=None, agent_id=None, user_id=None, dynamic_variables=None, uid=None, custom_functions_list=None, temperature=None, max_output_tokens=None):
@@ -70,7 +74,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             serializer=TwilioFrameSerializer(stream_sid) if stream_sid else ProtobufFrameSerializer(),
         )
     )
-
+    
+    conversation_list = []
     tokens_to_consume = TokensToConsume.get_by_id(1).token_values
     if temperature:
         temperature = float(temperature)
@@ -137,7 +142,9 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         api_key=os.getenv("GOOGLE_API_KEY"),
         voice_id=voice,    
         tools=tools,
-        params=InputParams(temperature=temperature, max_tokens=max_output_tokens)          
+        transcribe_user_audio=True,
+        transcribe_model_audio=True,
+        params=InputParams(temperature=temperature, max_tokens=max_output_tokens, modalities=GeminiMultimodalModalities.AUDIO)          
     )
 
 
@@ -229,36 +236,34 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     if custom_functions_list:
         for function in custom_functions_list:
             llm.register_function(function["name"], custom_function)
+
     llm.register_function("end_call",end_call)
     context = OpenAILLMContext([{"role": "user", "content":" "}],tools=tools)
-
     context_aggregator = llm.create_context_aggregator(context)
     audiobuffer = AudioBufferProcessor()
-
+    transcript = TranscriptProcessor()
     pipeline = Pipeline(
         [
-            transport.input(),
-            context_aggregator.user(),
-            llm,
-            audiobuffer,
-            transport.output(),
-            context_aggregator.assistant(),
+            transport.input(),                # Handles incoming user data
+            context_aggregator.user(),        # Manages user context
+            llm,                              # Processes input using the LLM service
+            audiobuffer,                      # Buffers audio for processing
+            transport.output(),               # Sends responses back to the user
+            transcript.user(),                # Logs user inputs
+            transcript.assistant(),           # Logs assistant responses
+            context_aggregator.assistant(),   # Manages assistant context
         ]
     )
-
 
     task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
     runner = PipelineRunner(handle_sigint=False)
 
-    async def deduct_tokens_periodically(user_id, tokens_to_consume, websocket_client):
+
+    async def deduct_tokens_periodically(user_id, tokens_to_consume, agent_id, websocket_client):
         """
         Dynamically deduct tokens from the user's profile at an interval based on tokens per minute.
-        Automatically disconnects the client when tokens reach 0.
-
-        Args:
-            user_id (int): The ID of the user.
-            tokens_to_consume (int): Tokens to be consumed per minute.
-            websocket_client: The WebSocket client instance to close the call.
+        Also updates the overall token limit and daily call limit for the agent.
+        Disconnects the call if the set limit for tokens or calls is exceeded.
         """
         if tokens_to_consume <= 0:
             logger.error("Invalid token consumption rate. It must be greater than 0.")
@@ -266,23 +271,64 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
 
         interval = 60 / tokens_to_consume
         logger.info(f"Starting token deduction every {interval:.2f} seconds ({tokens_to_consume} tokens/minute).")
-
+        agent = AgentModel.get_by_id(agent_id)
+        per_call_token_limit = agent.per_call_token_limit
+        set_value_per_call_token = 0 
         while True:
-            with db():  
+            with db():
                 user = db.session.query(UserModel).filter(UserModel.id == user_id).with_for_update().first()
+                overall_token_limit = db.session.query(OverallTokenLimitModel).filter(OverallTokenLimitModel.agent_id == agent_id).with_for_update().first()
+                daily_call_limit = db.session.query(DailyCallLimitModel).filter(DailyCallLimitModel.agent_id == agent_id).with_for_update().first()
+                
                 
                 if user and user.tokens > 0:
+                    if overall_token_limit and overall_token_limit.last_used_tokens >= overall_token_limit.overall_token_limit:
+                        logger.warning("Overall token limit exceeded. Disconnecting call...")
+                        await websocket_client.close(code=1000, reason="Overall token limit exceeded")
+                        logger.info("WebSocket connection closed due to overall token limit.")
+                        break
+                    
+                    if daily_call_limit:
+                        time_difference = datetime.utcnow() - daily_call_limit.last_updated
+                        if time_difference.total_seconds() >= 86400:
+                            daily_call_limit.last_used = 0
+                        
+                        if daily_call_limit.last_used >= daily_call_limit.set_value:
+                            logger.warning("Daily call limit exceeded. Disconnecting call...")
+                            await websocket_client.close(code=1000, reason="Daily call limit exceeded")
+                            logger.info("WebSocket connection closed due to daily call limit.")
+                            break
+                        
+                        daily_call_limit.last_used += 1
+                        daily_call_limit.last_updated = datetime.utcnow()
+                        db.session.commit()
+                        logger.info(f"Updated daily call usage: {daily_call_limit.last_used}")
+                    
+                    if per_call_token_limit > 0:
+                        set_value_per_call_token += 1
+                        if set_value_per_call_token >= per_call_token_limit:
+                            logger.warning("Per call token limit exceeded. Disconnecting call...")
+                            await websocket_client.close(code=1000, reason="Per call token limit exceeded")
+                            logger.info("WebSocket connection closed due to per call token limit.")
+                            break
+
                     user.tokens -= 1
-                    db.session.commit()  
+                    db.session.commit()
                     logger.info(f"Deducted 1 token. Remaining tokens: {user.tokens}")
+                    
+                    if overall_token_limit:
+                        overall_token_limit.last_used_tokens += 1
+                        db.session.commit()
+                        logger.info(f"Updated overall token usage: {overall_token_limit.last_used_tokens}")
                 else:
                     logger.warning("User has run out of tokens. Disconnecting call...")
-
                     await websocket_client.close(code=1000, reason="Insufficient tokens")
                     logger.info("WebSocket connection closed due to insufficient tokens.")
                     break 
+            
+            await asyncio.sleep(interval)
 
-            await asyncio.sleep(interval)  
+
 
 
 
@@ -293,6 +339,16 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         else:
             await save_audio(audio, sample_rate, num_channels, uid, voice, int(agent_id))
 
+
+    @transcript.event_handler("on_transcript_update")
+    async def handle_update(processor, frame):
+        try:
+            for msg in frame.messages:
+                conversation_list.append({"role": msg.role, "content": msg.content})
+        except Exception as e:
+            logger.error(f"Error processing user transcript: {e}")
+
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         tokens_to_consume = TokensToConsume.get_by_id(1).token_values
@@ -301,7 +357,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             tokens_to_consume = 10
         
         global token_task
-        token_task = asyncio.create_task(deduct_tokens_periodically(user_id, tokens_to_consume, websocket_client))
+        token_task = asyncio.create_task(deduct_tokens_periodically(user_id, tokens_to_consume, agent_id, websocket_client))
 
         await audiobuffer.start_recording()
         a = await task.queue_frames([context_aggregator.user().get_context_frame()])
@@ -312,9 +368,13 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         await audiobuffer.stop_recording()
         await task.cancel()
         await runner.cancel()
-
+        if stream_sid:
+            await save_conversation(conversation_list, stream_sid)
+        else:
+            await save_conversation(conversation_list,  uid)
         if token_task:
             token_task.cancel()
             logger.info("Stopped token deduction as client disconnected.")
+        conversation_list.clear()
 
     await runner.run(task)

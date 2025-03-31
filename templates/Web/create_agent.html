@@ -8,15 +8,15 @@
         <div id="content" class="page_content position-relative">
             <button type="button"
                         class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0 position-absolute ms-2">
-                        <img src="https://dev.voiceninja.ai/static/Web/images/hamburger-icon.svg" class="img-fluid">
+                        <img src="{{ host }}/static/Web/images/hamburger-icon.svg" class="img-fluid">
                     </button>
             <div class="agent_data_outer d-flex align-items-center gap-3 justify-content-between">
                 <div class="d-flex align-items-center gap-3 w-100">
-                    <a href="https://dev.voiceninja.ai/dashboard" class="page_back_arrow d-flex align-items-center justify-content-center"><img src="https://dev.voiceninja.ai/static/Web/images/left-arrow.svg" class="img-fluid"></a>
+                    <a href="{{ host }}/dashboard" class="page_back_arrow d-flex align-items-center justify-content-center"><img src="{{ host }}/static/Web/images/left-arrow.svg" class="img-fluid"></a>
                     <div class="">
                         <h3 id="agent-name" class="mb-0 d-flex gap-1">{% if agent %}{{ agent.agent_name }}{% else %}Agent{% endif %}
                             <span onclick="editHeading()" class="edit-heading-icon">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/pencil-icon.svg" style="cursor: pointer;">
+                                <img src="{{ host }}/static/Web/images/pencil-icon.svg" style="cursor: pointer;">
                             </span>
                         </h3>
                     </div>
@@ -24,7 +24,7 @@
                 {% if not agent %}
                 <div>
                     <button type="button" class="help-ai-btn" data-bs-toggle="modal" data-bs-target="#helpAiModal">
-                       <span><img src="https://dev.voiceninja.ai/static/Web/images/btn-star-icon.svg" class="img-fluid"> Help from AI</span>
+                       <span><img src="{{ host }}/static/Web/images/btn-star-icon.svg" class="img-fluid"> Help from AI</span>
                     </button>
                 </div>
                 {% endif %}
@@ -37,10 +37,10 @@
                                 <option {% if agent and agent.selected_model == "Gemini" %}selected{% endif %}>Gemini</option>
                             </select>
                             <div class="agent_type_select_icon">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/ai-icon.svg" class="img-fluid">
+                                <img src="{{ host }}/static/Web/images/ai-icon.svg" class="img-fluid">
                             </div>
                             <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/setting-icon.svg" class="img-fluid">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
                             </div>
                         </div>
                         <div class="agent_select_box position-relative">
@@ -52,10 +52,10 @@
                                 <option {% if agent and agent.selected_voice == "Puck" %}selected{% endif %}>Puck</option>
                             </select>
                             <div class="agent_type_select_icon">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/jack-img.svg" class="img-fluid">
+                                <img src="{{ host }}/static/Web/images/jack-img.svg" class="img-fluid">
                             </div>
                             <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/setting-icon.svg" class="img-fluid">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
                             </div>
                         </div>
                         <div class="agent_select_box position-relative">
@@ -63,10 +63,10 @@
                                 <option selected>English</option>
                             </select>
                             <div class="agent_type_select_icon">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/lang-icon.svg" class="img-fluid">
+                                <img src="{{ host }}/static/Web/images/lang-icon.svg" class="img-fluid">
                             </div>
                             <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/setting-icon.svg" class="img-fluid">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
                             </div>
                         </div>
                         <div class="agent_select_box position-relative">
@@ -83,10 +83,10 @@
                                 </select>
 
                             <div class="agent_type_select_icon">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/jack-img.svg" class="img-fluid">
+                                <img src="{{ host }}/static/Web/images/jack-img.svg" class="img-fluid">
                             </div>
                             <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/setting-icon.svg" class="img-fluid">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
                             </div>
                         </div>
                     </div>
@@ -142,20 +142,20 @@
                                             <div class="mt-3">
                                                 <h6>Choose Icons</h6>
                                                 <div class="d-flex align-items-center gap-2 flex-wrap">
-                                                    <div class="icon-option active" onclick="changeIcon('https://dev.voiceninja.ai/static/Web/images/gif-icon-1.gif', this)">
-                                                    <img src="https://dev.voiceninja.ai/static/Web/images/gif-icon-1.gif" class="img-fluid">
+                                                    <div class="icon-option active" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-1.gif', this)">
+                                                    <img src="{{ host }}/static/Web/images/gif-icon-1.gif" class="img-fluid">
                                                     </div>
-                                                    <div class="icon-option" onclick="changeIcon('https://dev.voiceninja.ai/static/Web/images/gif-icon2.gif', this)">
-                                                    <img src="https://dev.voiceninja.ai/static/Web/images/gif-icon2.gif" class="img-fluid">
+                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon2.gif', this)">
+                                                    <img src="{{ host }}/static/Web/images/gif-icon2.gif" class="img-fluid">
                                                     </div>
-                                                    <div class="icon-option" onclick="changeIcon('https://dev.voiceninja.ai/static/Web/images/gif-icon-3.gif', this)">
-                                                    <img src="https://dev.voiceninja.ai/static/Web/images/gif-icon-3.gif" class="img-fluid">
+                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-3.gif', this)">
+                                                    <img src="{{ host }}/static/Web/images/gif-icon-3.gif" class="img-fluid">
                                                     </div>
-                                                    <div class="icon-option" onclick="changeIcon('https://dev.voiceninja.ai/static/Web/images/gif-icon-4.gif', this)">
-                                                    <img src="https://dev.voiceninja.ai/static/Web/images/gif-icon-4.gif" class="img-fluid">
+                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-4.gif', this)">
+                                                    <img src="{{ host }}/static/Web/images/gif-icon-4.gif" class="img-fluid">
                                                     </div>
-                                                    <div class="icon-option" onclick="changeIcon('https://dev.voiceninja.ai/static/Web/images/gif-icon-5.gif', this)">
-                                                        <img src="https://dev.voiceninja.ai/static/Web/images/gif-icon-5.gif" class="img-fluid">
+                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-5.gif', this)">
+                                                        <img src="{{ host }}/static/Web/images/gif-icon-5.gif" class="img-fluid">
                                                     </div>
                                                 </div>
                                                 </div>
@@ -163,7 +163,7 @@
                                         </div> 
                                      <h1>connect with me</h1>
                                     <div class="status-indicator">
-                                       <img src="https://dev.voiceninja.ai/static/Web/images/wave.gif" alt="voice_icon">
+                                       <img src="{{ host }}/static/Web/images/wave.gif" alt="voice_icon">
                                     </div>
                                     <button onclick="saveChanges()">Save Changes</button>
                                 </div>
@@ -210,7 +210,7 @@
     <div class="modal-dialog modal-dialog-centered">
       <div class="modal-content">
         <div class="modal-header">
-          <h3 class="d-flex align-items-center gap-3 mb-0"><span><img src="https://dev.voiceninja.ai/static/Web/images/eos-icons_ai.svg" class="img-fluid"></span> Prompt Generator</h3>
+          <h3 class="d-flex align-items-center gap-3 mb-0"><span><img src="{{ host }}/static/Web/images/eos-icons_ai.svg" class="img-fluid"></span> Prompt Generator</h3>
           <button type="button" class="btn-close" data-bs-dismiss="modal" id="close-help-ai-modal" aria-label="Close"></button>
         </div>
         <div class="modal-body p-0">
@@ -272,8 +272,8 @@
           </div>
           <!-- Navigation Buttons -->
             <div class="slider-nav d-flex align-items-center justify-content-between">
-                <button class="prev-btn align-items-center justify-content-center prev_btn" disabled><img src="https://dev.voiceninja.ai/static/Web/images/slider-prev-icon.svg" class="img-fluid">Previous</button>
-                <button class="next-btn align-items-center justify-content-center"> Next <img src="https://dev.voiceninja.ai/static/Web/images/slider-next-icon.svg" class="img-fluid"></button>
+                <button class="prev-btn align-items-center justify-content-center prev_btn" disabled><img src="{{ host }}/static/Web/images/slider-prev-icon.svg" class="img-fluid">Previous</button>
+                <button class="next-btn align-items-center justify-content-center"> Next <img src="{{ host }}/static/Web/images/slider-next-icon.svg" class="img-fluid"></button>
                 <button class="submit-btn align-items-center justify-content-center" style="display: none;" id="generate-prompt-btn">Submit</button>
             </div>
         </div>
@@ -358,7 +358,7 @@
         secondaryColor: null,
         pulseColor: null
     };
-    let host = "https://dev.voiceninja.ai";
+    let host = "{{ host }}";
 
 
     document.addEventListener("DOMContentLoaded", function() {
@@ -515,13 +515,13 @@
             let agentId = "{{ agent.id if agent else '' }}";
             if(agentId){
                 $.ajax({
-                    url: `https://dev.voiceninja.ai/api/get_agent_connection`,
+                    url: `{{ host }}/api/get_agent_connection`,
                     type: 'GET',
                     data: {agent_id: agentId},
                     success: function(response){    
                         if(response.status == "success"){
                             let connection = response.data || {};
-                            let iconUrl = connection.icon_url || "https://dev.voiceninja.ai/static/Web/images/gif-icon-1.gif";
+                            let iconUrl = connection.icon_url || "{{ host }}/static/Web/images/gif-icon-1.gif";
                             let primaryColor = connection.primary_color || "#00b4d8";
                             let secondaryColor = connection.secondary_color || "#0077b6"; 
                             let pulseColor = connection.pulse_color || "rgba(0, 180, 216, 0.3)";
@@ -573,7 +573,7 @@ function saveChanges() {
         }
 
         let agentId = "{{ agent.id if agent else '' }}"; // Use Jinja safely
-        let iconUrl = document.getElementById('selectedIcon')?.src || "https://dev.voiceninja.ai/static/Web/images/gif-icon-1.gif";
+        let iconUrl = document.getElementById('selectedIcon')?.src || "{{ host }}/static/Web/images/gif-icon-1.gif";
 
         // Get colors from CSS variables (avoiding localStorage)
         let primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim() || "#00b4d8";
