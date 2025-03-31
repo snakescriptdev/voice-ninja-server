@@ -1927,7 +1927,7 @@ async def update_agent_token_settings(request: Request):
         agent = AgentModel.get_by_id(agent_id)
         if not agent:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
-        AgentModel.update_per_call_token_limit(agent_id, per_call_token_limit)
+        AgentModel.update_value_per_call_token_limit(agent_id, per_call_token_limit)
         if DailyCallLimitModel.get_by_agent_id(agent_id):
             DailyCallLimitModel.update_set_value(agent_id, daily_token_limit)
         else:

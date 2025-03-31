@@ -1479,13 +1479,13 @@ class OverallTokenLimitModel(Base):
             return False
     
     @classmethod
-    def update_set_value(cls, agent_id: int, set_value: int) -> "OverallTokenLimitModel":
+    def update_set_value(cls, agent_id: int, set_value: int, last_used: int = 0) -> "OverallTokenLimitModel":
         """Update overall token limit set value"""
         with db():
             overall_token_limit = db.session.query(cls).filter(cls.agent_id == agent_id).first()
             if overall_token_limit:
                 overall_token_limit.overall_token_limit = set_value
-                overall_token_limit.last_used_tokens = set_value
+                overall_token_limit.last_used_tokens = last_used
                 db.session.commit()
                 db.session.refresh(overall_token_limit)
                 return overall_token_limit
@@ -1559,13 +1559,13 @@ class DailyCallLimitModel(Base):
             return False
     
     @classmethod
-    def update_set_value(cls, agent_id: int, set_value: int) -> "DailyCallLimitModel":
+    def update_set_value(cls, agent_id: int, set_value: int, last_used: int = 0) -> "DailyCallLimitModel":
         """Update daily call limit set value"""
         with db():
             daily_call_limit = db.session.query(cls).filter(cls.agent_id == agent_id).first()
             if daily_call_limit:
                 daily_call_limit.set_value = set_value
-                daily_call_limit.last_used = set_value
+                daily_call_limit.last_used = last_used
                 db.session.commit()
                 db.session.refresh(daily_call_limit)
                 return daily_call_limit
