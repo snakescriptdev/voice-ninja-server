@@ -258,6 +258,7 @@ class AgentModel(Base):
     temperature = Column(Float, nullable=True,default=0.0)
     dynamic_id = Column(String, nullable=True,default=str(uuid.uuid4()))
     per_call_token_limit = Column(Integer, nullable=True,default=0)
+    update_per_call_token_limit = Column(Integer, nullable=True,default=0)
 
     knowledge_base = relationship(
         "KnowledgeBaseModel",
@@ -333,7 +334,21 @@ class AgentModel(Base):
                 db.session.refresh(agent)
                 return agent
             return None
-        
+    
+    @classmethod
+    def update_value_per_call_token_limit(cls, agent_id: int, update_per_call_token_limit: int) -> "AgentModel":
+        """
+        Update an agent's per call token limit by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.update_per_call_token_limit = update_per_call_token_limit
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+
     @classmethod
     def delete(cls, agent_id: int) -> bool:
         """
@@ -435,6 +450,20 @@ class AgentModel(Base):
                 return agent
             return None
     
+    @classmethod
+    def update_value_per_call_token_limit(cls, agent_id: int, per_call_token_limit: int) -> "AgentModel":
+        """
+        Update an agent's per call token limit by ID
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()    
+            if agent:
+                agent.per_call_token_limit = per_call_token_limit
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+        
     @classmethod
     def update_name(cls, agent_id: int, agent_name: str) -> "AgentModel":
         """
@@ -1070,6 +1099,12 @@ class CallModel(Base):
         """Get call by agent ID"""
         with db():
             return db.session.query(cls).filter(cls.agent_id == agent_id).first()
+        
+    @classmethod
+    def get_by_call_id(cls, call_id: str) -> Optional["CallModel"]:
+        """Get call by call ID"""
+        with db():
+            return db.session.query(cls).filter(cls.call_id == call_id).first()
 
     @classmethod
     def create(cls, agent_id: int, call_id: str, variables: dict) -> "CallModel":
@@ -1335,7 +1370,7 @@ class ConversationModel(Base):
 
     id = Column(Integer, primary_key=True)
     transcript = Column(JSONB, nullable=True)
-    summary = Column(String, nullable=True)
+    summary = Column(String, nullable=True, default="")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     audio_recording_id = Column(Integer, ForeignKey("audio_recordings.id"), nullable=False)
@@ -1344,7 +1379,7 @@ class ConversationModel(Base):
         return f"<Conversation(id={self.id})>"
     
     @classmethod
-    def create(cls, audio_recording_id: int, transcript: List[str], summary: Optional[str] = None) -> "ConversationModel":
+    def create(cls, audio_recording_id: int, transcript: List[dict], summary: Optional[str] = "") -> "ConversationModel":
         with db():
             conversation = cls(transcript=transcript, summary=summary, audio_recording_id=audio_recording_id)
             db.session.add(conversation)
@@ -1400,7 +1435,7 @@ class OverallTokenLimitModel(Base):
         return f"<OverallTokenLimit(id={self.id}, agent_id={self.agent_id})>"
 
     @classmethod
-    def create(cls, agent_id: int, overall_token_limit: int, last_used_tokens: int) -> "OverallTokenLimitModel":
+    def create(cls, agent_id: int, overall_token_limit: int, last_used_tokens: Optional[int] = 0) -> "OverallTokenLimitModel":
         """Create a new overall token limit record"""
         with db():
             overall_token_limit = cls(agent_id=agent_id, overall_token_limit=overall_token_limit, last_used_tokens=last_used_tokens)
@@ -1442,6 +1477,19 @@ class OverallTokenLimitModel(Base):
                 return True
         except Exception:
             return False
+    
+    @classmethod
+    def update_set_value(cls, agent_id: int, set_value: int) -> "OverallTokenLimitModel":
+        """Update overall token limit set value"""
+        with db():
+            overall_token_limit = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if overall_token_limit:
+                overall_token_limit.overall_token_limit = set_value
+                overall_token_limit.last_used_tokens = set_value
+                db.session.commit()
+                db.session.refresh(overall_token_limit)
+                return overall_token_limit
+            return None
 
 
 class DailyCallLimitModel(Base):
@@ -1450,7 +1498,7 @@ class DailyCallLimitModel(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     agent_id = Column(Integer, ForeignKey("agents.id"), unique=True)
-    set_value = Column(Integer, nullable=False)
+    set_value = Column(Integer, nullable=False, default=0)
     last_used = Column(Integer, nullable=False, default=0)
     last_updated = Column(DateTime, nullable=False, default=datetime.utcnow)
 
@@ -1509,6 +1557,19 @@ class DailyCallLimitModel(Base):
                 return True
         except Exception:
             return False
+    
+    @classmethod
+    def update_set_value(cls, agent_id: int, set_value: int) -> "DailyCallLimitModel":
+        """Update daily call limit set value"""
+        with db():
+            daily_call_limit = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if daily_call_limit:
+                daily_call_limit.set_value = set_value
+                daily_call_limit.last_used = set_value
+                db.session.commit()
+                db.session.refresh(daily_call_limit)
+                return daily_call_limit
+            return None
 
 
 Base.metadata.create_all(engine)

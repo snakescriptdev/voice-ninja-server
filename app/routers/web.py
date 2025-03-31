@@ -3,7 +3,7 @@ from fastapi.templating import Jinja2Templates
 from app.core import VoiceSettings
 from app.utils.helper import Paginator, check_session_expiry_redirect
 from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse
-from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel
+from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel
 from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
 import os
@@ -167,6 +167,8 @@ async def update_agent(request: Request):
         ).scalars().first()
     
     custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
+    daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id)
+    overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id)
     return templates.TemplateResponse(
         "Web/update_agent.html",
         {
@@ -178,7 +180,10 @@ async def update_agent(request: Request):
             "selected_knowledge": selected_knowledge,
             "dynamic_variables": dynamic_variables,
             "custom_functions": custom_functions,
-            "host": os.getenv("HOST")
+            "host": os.getenv("HOST"),
+            "daily_call_limit": daily_call_limit.set_value if daily_call_limit else 0,
+            "overall_token_limit": overall_token_limit.overall_token_limit if overall_token_limit else 0,
+            "per_call_token_limit": agent.per_call_token_limit if agent.per_call_token_limit else 0
         },
     )
 
@@ -340,8 +345,9 @@ def chatbot_script(request: Request, agent_id: str):
     host = os.getenv("HOST")
     appearances = AgentConnectionModel.get_by_agent_id(agent.id)
     approved_domain = ApprovedDomainModel.check_domain_exists(domain, created_by)
+    daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent.id)
+    overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent.id)
     if approved_domain or domain in domains:
-
         user = UserModel.get_by_id(created_by)
         if int(user.tokens) == 0:
             script_content = f'''document.addEventListener('DOMContentLoaded', function() {{
@@ -396,6 +402,132 @@ def chatbot_script(request: Request, agent_id: str):
                                 text-decoration: none;
                                 transition: background 0.3s;">
                                 Buy Now
+                            </a>
+                        `;
+                        
+                        document.body.appendChild(popup);
+                        setTimeout(() => {{ popup.style.display = 'block'; }}, 1000);
+                    }})();
+                }});
+
+                        '''
+            
+        elif overall_token_limit and int(overall_token_limit.last_used_tokens) == 0:
+            script_content = f'''document.addEventListener('DOMContentLoaded', function() {{
+                    (function() {{
+                        console.log("Script is running...");
+                        
+                        // Inject external scripts dynamically
+                        const protobufScript = document.createElement('script');
+                        protobufScript.src = "https://cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js";
+                        document.head.appendChild(protobufScript);
+                        
+                        const webJsScript = document.createElement('script');
+                        webJsScript.src = "{host}/static/js/websocket.js";
+                        document.head.appendChild(webJsScript);
+                        
+                        const botStyle = document.createElement('link');
+                        botStyle.rel = 'stylesheet';
+                        botStyle.type = 'text/css';
+                        botStyle.href = "{host}/static/Web/css/bot_style.css";
+                        document.head.appendChild(botStyle);
+                        
+                        // Create and style popup dynamically
+                        const popup = document.createElement('div');
+                        popup.className = 'popup';
+                        popup.style.cssText = `
+                            background: linear-gradient(135deg, #0C7FDA, #99d2ff);
+                            color: white;
+                            padding: 20px;
+                            border-radius: 12px;
+                            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+                            text-align: center;
+                            max-width: 350px;
+                            position: fixed;
+                            top: 50%;
+                            left: 50%;
+                            transform: translate(-50%, -50%);
+                            display: none;
+                        `;
+                        
+                        popup.innerHTML = `
+                            <h2 style="font-size: 24px; margin-bottom: 10px;">Need More Tokens?</h2>
+                            <p style="font-size: 18px; margin-bottom: 20px;">Upgrade now to unlock unlimited tokens and access all premium features!</p>
+                            <a href="{host}/update_agent?agent_id={agent.id}" class='buy-button' style="
+                                background: #fff;
+                                color: #0C7FDA;
+                                padding: 10px 20px;
+                                font-size: 18px;
+                                font-weight: bold;
+                                border: none;
+                                border-radius: 6px;
+                                cursor: pointer;
+                                text-decoration: none;
+                                transition: background 0.3s;">
+                                Update Token
+                            </a>
+                        `;
+                        
+                        document.body.appendChild(popup);
+                        setTimeout(() => {{ popup.style.display = 'block'; }}, 1000);
+                    }})();
+                }});
+
+                        '''
+        
+        elif daily_call_limit and int(daily_call_limit.set_value) == 0:
+            script_content = f'''document.addEventListener('DOMContentLoaded', function() {{
+                    (function() {{
+                        console.log("Script is running...");
+                        
+                        // Inject external scripts dynamically
+                        const protobufScript = document.createElement('script');
+                        protobufScript.src = "https://cdn.jsdelivr.net/npm/protobufjs@7.X.X/dist/protobuf.min.js";
+                        document.head.appendChild(protobufScript);
+                        
+                        const webJsScript = document.createElement('script');
+                        webJsScript.src = "{host}/static/js/websocket.js";
+                        document.head.appendChild(webJsScript);
+                        
+                        const botStyle = document.createElement('link');
+                        botStyle.rel = 'stylesheet';
+                        botStyle.type = 'text/css';
+                        botStyle.href = "{host}/static/Web/css/bot_style.css";
+                        document.head.appendChild(botStyle);
+                        
+                        // Create and style popup dynamically
+                        const popup = document.createElement('div');
+                        popup.className = 'popup';
+                        popup.style.cssText = `
+                            background: linear-gradient(135deg, #0C7FDA, #99d2ff);
+                            color: white;
+                            padding: 20px;
+                            border-radius: 12px;
+                            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+                            text-align: center;
+                            max-width: 350px;
+                            position: fixed;
+                            top: 50%;
+                            left: 50%;
+                            transform: translate(-50%, -50%);
+                            display: none;
+                        `;
+                        
+                        popup.innerHTML = `
+                            <h2 style="font-size: 24px; margin-bottom: 10px;">Need More Tokens?</h2>
+                            <p style="font-size: 18px; margin-bottom: 20px;">You've reached your daily call limit. Please update your plan to continue using the service.</p>
+                            <a href="{host}/update_agent?agent_id={agent.id}" class='buy-button' style="
+                                background: #fff;
+                                color: #0C7FDA;
+                                padding: 10px 20px;
+                                font-size: 18px;
+                                font-weight: bold;
+                                border: none;
+                                border-radius: 6px;
+                                cursor: pointer;
+                                text-decoration: none;
+                                transition: background 0.3s;">
+                                Update Token
                             </a>
                         `;
                         
