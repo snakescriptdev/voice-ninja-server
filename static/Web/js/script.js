@@ -52,7 +52,6 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 
-
 // editHeading script
 function editHeading() {
     let heading = document.getElementById("agent-name");
@@ -60,24 +59,64 @@ function editHeading() {
 
     let input = document.createElement("input");
     input.type = "text";
-    input.className = "form-control"; // Changed from input.class to input.className
+    input.className = "form-control";
     input.value = currentText;
     
-    input.onblur = function () { // Save the new text when input loses focus
-        heading.innerHTML = input.value + ' <span onclick="editHeading()"><img src="/static/Web/images/pencil-icon.svg" style="cursor: pointer;"></span>';
+    // Create update function to avoid duplicate code
+    const updateHeading = (value) => {
+        const currentUrl = new URL(window.location.href);
+        const agentId = currentUrl.searchParams.get("agent_id");
+
+        // Call API to update agent name
+        fetch(`${host}/api/update-agent`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCSRFToken()
+            },
+            body: JSON.stringify({
+                agent_id: agentId,
+                agent_name: value
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === "success") {
+                const span = document.createElement('span');
+                span.onclick = editHeading;
+                span.className = "edit-heading-icon";
+                const img = document.createElement('img');
+                img.src = "/static/Web/images/pencil-icon.svg";
+                img.style.cursor = "pointer";
+                span.appendChild(img);
+                
+                heading.textContent = value + ' ';
+                heading.appendChild(span);
+                toastr.success('Agent name updated successfully');
+            } else {
+                toastr.error(data.message || 'Error updating agent name');
+            }
+        })
+        .catch(error => {
+            toastr.error('Error updating agent name');
+            console.error('Error:', error);
+        });
     };
 
-    input.onkeydown = function(event) { // Handle enter key press
+    input.onblur = function() {
+        updateHeading(this.value);
+    };
+
+    input.onkeydown = function(event) {
         if (event.key === "Enter") {
-            heading.innerHTML = input.value + ' <span onclick="editHeading()"><img src="/static/Web/images/pencil-icon.svg" style="cursor: pointer;"></span>';
+            updateHeading(this.value);
         }
     };
 
-    heading.innerHTML = ""; // Clear heading content
+    heading.textContent = ""; // Use textContent instead of innerHTML
     heading.appendChild(input);
-    input.focus(); // Focus on input
+    input.focus();
 }
-
 
 
 // sidebar active link script
