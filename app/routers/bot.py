@@ -103,9 +103,6 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
                     "parameters": function["parameters"]
                 })
 
-    print("temperature", temperature)
-    print("max_output_tokens", max_output_tokens)
-
     llm = GeminiMultimodalLiveLLMService(
         system_instruction=f"""
             Say {welcome_msg} to the user first. Then, follow these instructions while answering the question: {system_instruction}
@@ -261,72 +258,87 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
 
     async def deduct_tokens_periodically(user_id, tokens_to_consume, agent_id, websocket_client):
         """
-        Dynamically deduct tokens from the user's profile at an interval based on tokens per minute.
-        Also updates the overall token limit and daily call limit for the agent.
-        Disconnects the call if the set limit for tokens or calls is exceeded.
+        Deducts tokens periodically and enforces token/call limits.
         """
         if tokens_to_consume <= 0:
-            logger.error("Invalid token consumption rate. It must be greater than 0.")
+            logger.error("Invalid token consumption rate. Must be greater than 0.")
             return
 
         interval = 60 / tokens_to_consume
-        logger.info(f"Starting token deduction every {interval:.2f} seconds ({tokens_to_consume} tokens/minute).")
+        logger.info(f"Starting token deduction every {interval:.2f} seconds")
+        
         agent = AgentModel.get_by_id(agent_id)
-        per_call_token_limit = agent.per_call_token_limit
-        set_value_per_call_token = 0 
+        per_call_tokens = 0
+        
         while True:
-            with db():
-                user = db.session.query(UserModel).filter(UserModel.id == user_id).with_for_update().first()
-                overall_token_limit = db.session.query(OverallTokenLimitModel).filter(OverallTokenLimitModel.agent_id == agent_id).with_for_update().first()
-                daily_call_limit = db.session.query(DailyCallLimitModel).filter(DailyCallLimitModel.agent_id == agent_id).with_for_update().first()
-                
-                
-                if user and user.tokens > 0:
-                    if overall_token_limit and overall_token_limit.last_used_tokens >= overall_token_limit.overall_token_limit:
-                        logger.warning("Overall token limit exceeded. Disconnecting call...")
-                        await websocket_client.close(code=1000, reason="Overall token limit exceeded")
-                        logger.info("WebSocket connection closed due to overall token limit.")
+            try:
+                with db():
+                    # Get all required models in one query
+                    user, overall_limit, daily_limit = (
+                        db.session.query(
+                            UserModel,
+                            OverallTokenLimitModel,
+                            DailyCallLimitModel
+                        ).filter(
+                            UserModel.id == user_id,
+                            OverallTokenLimitModel.agent_id == agent_id,
+                            DailyCallLimitModel.agent_id == agent_id
+                        ).with_for_update().first()
+                    )
+
+                    if not user or user.tokens <= 0:
+                        await close_websocket(websocket_client, "Insufficient tokens")
                         break
-                    
-                    if daily_call_limit:
-                        time_difference = datetime.utcnow() - daily_call_limit.last_updated
-                        if time_difference.total_seconds() >= 86400:
-                            daily_call_limit.last_used = 0
+
+                    # Check overall token limit
+                    if overall_limit and overall_limit.last_used_tokens >= overall_limit.overall_token_limit:
+                        await close_websocket(websocket_client, "Overall token limit exceeded")
+                        break
+
+                    # Check daily call limit
+                    if daily_limit:
+                        if should_reset_daily_limit(daily_limit.last_updated):
+                            daily_limit.last_used = 0
                         
-                        if daily_call_limit.last_used >= daily_call_limit.set_value:
-                            logger.warning("Daily call limit exceeded. Disconnecting call...")
-                            await websocket_client.close(code=1000, reason="Daily call limit exceeded")
-                            logger.info("WebSocket connection closed due to daily call limit.")
+                        if daily_limit.last_used >= daily_limit.set_value:
+                            await close_websocket(websocket_client, "Daily call limit exceeded")
                             break
                         
-                        daily_call_limit.last_used += 1
-                        daily_call_limit.last_updated = datetime.utcnow()
-                        db.session.commit()
-                        logger.info(f"Updated daily call usage: {daily_call_limit.last_used}")
-                    
-                    if per_call_token_limit > 0:
-                        set_value_per_call_token += 1
-                        if set_value_per_call_token >= per_call_token_limit:
-                            logger.warning("Per call token limit exceeded. Disconnecting call...")
-                            await websocket_client.close(code=1000, reason="Per call token limit exceeded")
-                            logger.info("WebSocket connection closed due to per call token limit.")
+                        daily_limit.last_used += 1
+                        daily_limit.last_updated = datetime.utcnow()
+                        logger.info(f"Updated daily call usage: {daily_limit.last_used}")
+
+                    # Check per call token limit
+                    if agent.per_call_token_limit > 0:
+                        per_call_tokens += 1
+                        if per_call_tokens >= agent.per_call_token_limit:
+                            await close_websocket(websocket_client, "Per call token limit exceeded")
                             break
 
+                    # Update token counts
                     user.tokens -= 1
-                    db.session.commit()
-                    logger.info(f"Deducted 1 token. Remaining tokens: {user.tokens}")
+                    if overall_limit:
+                        overall_limit.last_used_tokens += 1
                     
-                    if overall_token_limit:
-                        overall_token_limit.last_used_tokens += 1
-                        db.session.commit()
-                        logger.info(f"Updated overall token usage: {overall_token_limit.last_used_tokens}")
-                else:
-                    logger.warning("User has run out of tokens. Disconnecting call...")
-                    await websocket_client.close(code=1000, reason="Insufficient tokens")
-                    logger.info("WebSocket connection closed due to insufficient tokens.")
-                    break 
-            
+                    db.session.commit()
+                    logger.info(f"Tokens remaining: {user.tokens}, Overall usage: {overall_limit.last_used_tokens if overall_limit else 'N/A'}")
+
+            except Exception as e:
+                logger.error(f"Error in token deduction: {e}")
+                await close_websocket(websocket_client, "Internal error during token processing")
+                break
+
             await asyncio.sleep(interval)
+
+    async def close_websocket(websocket, reason):
+        """Helper to close websocket with logging"""
+        logger.warning(f"{reason}. Disconnecting call...")
+        await websocket.close(code=1000, reason=reason)
+        logger.info(f"WebSocket connection closed: {reason}")
+
+    def should_reset_daily_limit(last_updated):
+        """Check if daily limit should reset"""
+        return (datetime.utcnow() - last_updated).total_seconds() >= 86400
 
 
 
