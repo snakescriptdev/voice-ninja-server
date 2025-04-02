@@ -79,7 +79,7 @@
                                     <th>Delete</th>
                                 </tr>
                             </thead>
-                            <tbody>
+                            <tbody style="overflow-y: hidden;">
                                 {% for audio_recording in page_obj.items %}
                                     <tr data-id="{{ audio_recording.id }}" onclick="openOffcanvas(this)" data-bs-toggle="offcanvas" data-bs-target="#offcanvasRight" aria-controls="offcanvasRight">
                                         <td>{{ agent_name }}</td>
@@ -98,13 +98,12 @@
                                             </div>
                                         </td>
                                         <td>
-                                            <div class="max-content">
+                                            <div class="max-content" onclick="event.stopPropagation();">
                                                 <button class="delete-btn btn btn-danger" 
                                                         data-bs-toggle="modal" 
                                                         data-bs-target="#deleteModal" 
                                                         data-audio-recording-id="{{ audio_recording.id }}" 
-                                                        aria-label="Delete audio recording {{ audio_recording.id }}" 
-                                                        onclick="event.stopPropagation();">
+                                                        aria-label="Delete audio recording {{ audio_recording.id }}">
                                                     <img src="{{ host }}/static/Web/images/delete-icon.svg" 
                                                         alt="Delete" 
                                                         class="img-fluid">
@@ -147,7 +146,6 @@
                     </div>
                     
                 </div>
-                
             </div>
         </div>
     </div>
