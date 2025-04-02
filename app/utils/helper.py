@@ -10,19 +10,22 @@ import fitz, io
 from PIL import Image
 import pytesseract
 import docx2txt
-import io
+import io,json
 import wave
 import aiofiles
 import logging
 from datetime import datetime
 from pathlib import Path
 from config import MEDIA_DIR
-from app.databases.models import AudioRecordings
+from app.databases.models import AudioRecordings, ConversationModel
 import hmac
 import hashlib
 import google.generativeai as genai
 import aiohttp
 from aiohttp import ClientConnectorError
+import base64
+from typing import Optional
+from fastapi_sqlalchemy import db
 
 logger = logging.getLogger(__name__)
 @dataclass
@@ -220,7 +223,8 @@ async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str
             agent_id=agent_id,
             audio_file=str(full_file_path),
             audio_name=audio_name,
-            created_at=datetime.now()
+            created_at=datetime.now(),
+            call_id=SID
         )
 
         return relative_path
@@ -328,3 +332,76 @@ async def send_request(url, data):
         except Exception as e:
             logger.exception(f"Error sending request: {e}")
             return {"status": "error", "message": f"Request failed: {str(e)}"}
+
+
+
+def generate_summary(transcript):
+    """
+    Generates a summary from an audio file by first transcribing it and then summarizing the transcript.
+    
+    Args:
+        audio_file_path (str): Path to the audio file
+        
+    Returns:
+        dict: Dictionary containing status and either summary or error message
+    """
+    try:
+            
+        # Initialize Gemini model for summarization
+        genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+
+        
+        # Prompt for summarization
+        prompt = f"""Please provide a concise summary of the following transcript:
+        
+        {transcript}
+        
+        Focus on the key points and main ideas. Keep the summary clear and brief."""
+        
+        # Generate summary
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.3,
+                "max_output_tokens": 500
+            }
+        )
+        
+        summary = response.text.strip()
+        
+        return summary
+        
+    except Exception as e:
+        logger.exception(f"Error generating summary: {e}")
+        return {
+            "status": "error", 
+            "message": f"Failed to generate summary: {str(e)}"
+        }
+
+
+async def save_conversation( transcript: list, call_id: str):
+
+    logger.info(f"call_id: {call_id}")
+    try:
+        # Ensure audio_model is retrieved within a session
+        audio_model = AudioRecordings.get_by_call_id(call_id)
+
+        if not audio_model:
+            logger.error(f"No AudioRecordings found for call_id: {call_id}")
+            return None
+        summary = generate_summary(transcript)  # No need for await
+
+        conversation = ConversationModel.create(
+            audio_recording_id=audio_model.id,
+            transcript=transcript,
+            summary=summary  # Ensure summary is passed properly
+        )
+        logger.info("Conversation saved")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error saving conversation: {e}")
+        return None
+
+    

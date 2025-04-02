@@ -55,9 +55,108 @@
                                     <h6 class="d-flex align-items-center gap-2 mb-0"><span><img
                                                 src="{{ host }}/static/Web/images/book-icon.svg" class="img-fluid"></span> Knowledge Base
                                     </h6>
-                                    <button type="button" class="d-flex gap-3 border-0" data-bs-toggle="modal" data-bs-target="#addKnowledgeBaseModal"><img
-                                            src="{{ host }}/static/Web/images/white-plus-icon.svg" class="img-fluid">
-                                        <span>Add</span></button>
+                                    <div class="dropdown">
+                                        <button type="button" class="d-flex gap-3 border-0 dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false">
+                                            <img src="{{ host }}/static/Web/images/white-plus-icon.svg" class="img-fluid">
+                                            <span>Add</span>
+                                        </button>
+                                        <ul class="dropdown-menu">
+                                            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#addUrlModal">Add URL</a></li>
+                                            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#addKnowledgeBaseModal">Add Files</a></li>
+                                            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#createTextModal">Create Text</a></li>
+                                        </ul>
+
+                                        <!-- Add URL Modal -->
+                                        <div class="modal fade" id="addUrlModal" tabindex="-1" aria-labelledby="addUrlModalLabel" aria-hidden="true">
+                                            <div class="modal-dialog modal-dialog-centered">
+                                                <div class="modal-content">
+                                                    <div class="modal-header">
+                                                        <h5 class="modal-title" id="addUrlModalLabel">Add URL</h5>
+                                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                    </div>
+                                                    <div class="modal-body">
+                                                        <form id="addUrlForm" onsubmit="addUrl(event)">
+                                                            <div class="mb-3">
+                                                                <label for="urlName" class="form-label">Name</label>
+                                                                <input type="text" class="form-control" id="urlName" required>
+                                                            </div>
+                                                            <div class="mb-3">
+                                                                <label for="urlInput" class="form-label">Enter URL</label>
+                                                                <input type="url" class="form-control" id="urlInput" required>
+                                                            </div>
+                                                        </form>
+                                                    </div>
+                                                    <div class="modal-footer">
+                                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                                        <button type="submit" form="addUrlForm" class="btn btn-primary">Add URL</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Add Files Modal -->
+                                        <div class="modal fade inbound_call_modal" id="addKnowledgeBaseModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
+                                            <div class="modal-dialog modal-dialog-centered">
+                                              <div class="modal-content" >
+                                                <div class="modal-header border-0">
+                                                  <h3>Add Knowledge Base</h3>
+                                                  <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                </div>
+                                                <div class="modal-body">
+                                                  <form>
+                                                    <div class="form_input">
+                                                        <label class="form-label mb-3">Knowledge Base Name</label>
+                                                        <input type="text" class="form-control" placeholder="Knowledge Base Name" id="knowledgeBaseName">
+                                                    </div>
+                                                    <div class="form_input">
+                                                        <label class="form-label mb-0">Upload Files</label>
+                                                        <div class="upload_area">
+                                                            <label for="uploadFile" class="" id="uploadLabel">
+                                                                <span class="label-text d-flex justify-content-center flex-column align-items-center gap-1"><span><img src="{{ host }}/static/Web/images/upload-file-icon.svg" class="img-fluid"></span>
+                                                                Choose multiple docx, txt or pdf file or drag & drop it here.<span class="file_size_text">Up to 5 MB</span></span>
+                                                                <p id="fileName" class="d-none mb-0 text-center"></p>
+                                                            </label>
+                                                            <input type="file" class="form-control d-none" id="uploadFile" name="attachment" accept=".docx, .txt, .pdf" multiple>
+                                                        </div>
+                                                    </div>
+                                                    <div class="form_btns d-flex justify-content-end align-items-center gap-3">
+                                                        <button type="button" class="" data-bs-dismiss="modal">Cancel</button>
+                                                        <button type="submit" id="save_btn" class="bg_black_btn">Save</button>
+                                                    </div>
+                                                  </form>
+                                                </div>
+                                              </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Create Text Modal -->
+                                        <div class="modal fade" id="createTextModal" tabindex="-1" aria-labelledby="createTextModalLabel" aria-hidden="true">
+                                            <div class="modal-dialog modal-dialog-centered">
+                                                <div class="modal-content">
+                                                    <div class="modal-header">
+                                                        <h5 class="modal-title" id="createTextModalLabel">Create Text</h5>
+                                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                                    </div>
+                                                    <div class="modal-body">
+                                                        <form id="createTextForm" onsubmit="createText(event)">
+                                                            <div class="mb-3">
+                                                                <label for="textTitle" class="form-label">Title</label>
+                                                                <input type="text" class="form-control" id="textTitle" required>
+                                                            </div>
+                                                            <div class="mb-3">
+                                                                <label for="textContent" class="form-label">Content</label>
+                                                                <textarea class="form-control" id="textContent" rows="5" required></textarea>
+                                                            </div>
+                                                        </form>
+                                                    </div>
+                                                    <div class="modal-footer">
+                                                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                                                        <button type="submit" form="createTextForm" class="btn btn-primary">Save Text</button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="knowledge_base_list" id="knowledge-base-list">
                                     {% for knowledge_base in page_obj.items %}
@@ -181,43 +280,6 @@
         </div>
     </div>
     
-
-<!--Make an inbound call Modal -->
-<div class="modal fade inbound_call_modal" id="addKnowledgeBaseModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-      <div class="modal-content" >
-        <div class="modal-header border-0">
-          <h3>Add Knowledge Base</h3>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-        </div>
-        <div class="modal-body">
-          <form>
-            <div class="form_input">
-                <label class="form-label mb-3">Knowledge Base Name</label>
-                <input type="text" class="form-control" placeholder="Knowledge Base Name" id="knowledgeBaseName">
-            </div>
-            <div class="form_input">
-                <label class="form-label mb-0">Upload Files</label>
-                <div class="upload_area">
-                    <label for="uploadFile" class="" id="uploadLabel">
-                        <span class="label-text d-flex justify-content-center flex-column align-items-center gap-1"><span><img src="{{ host }}/static/Web/images/upload-file-icon.svg" class="img-fluid"></span>
-                        Choose multiple docx, txt or pdf file or drag & drop it here.<span class="file_size_text">Up to 5 MB</span></span>
-                        <p id="fileName" class="d-none mb-0 text-center"></p>
-                    </label>
-                    <input type="file" class="form-control d-none" id="uploadFile" name="attachment" accept=".docx, .txt, .pdf" multiple>
-                </div>
-            </div>
-            <div class="form_btns d-flex justify-content-end align-items-center gap-3">
-                <button type="button" class="" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" id="save_btn" class="bg_black_btn">Save</button>
-            </div>
-          </form>
-        </div>
-      </div>
-    </div>
-</div>
-
-
   
 <!--Add more files to Knowledge Base Modal -->
 <div class="modal fade inbound_call_modal" id="AddFilesModel" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1" aria-hidden="true">
@@ -477,7 +539,7 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
                     </div>
                 </div>
                 <div class="d-flex align-items-center gap-2 delete_download_btns">
-                    <a href="${file.url}" class="d-flex" download>
+                    <a class="d-flex" onclick="downloadFile('${file.url}')"  download>
                         <img src="{{ host }}/static/Web/images/download-icon.svg" class="img-fluid">
                     </a>
                     <a class="d-flex" onclick="deleteFile(${file.id}, ${file.knowledge_base_id})">
@@ -874,8 +936,192 @@ function saveMoreFiles(e) {
     });
 }
 
+function addUrl(e) {
+        e.preventDefault();
+        const url = document.getElementById("urlInput").value;
+        const name = document.getElementById("urlName").value;
+        if (!url || !name) {
+            toastr.error("Please enter a URL and name.", "Error", {
+                positionClass: "toast-top-right"
+            });
+            return;
+        }
 
-    </script>
+        // Create and show full screen loader
+        const fullScreenLoader = document.createElement('div');
+        fullScreenLoader.id = 'fullScreenLoader';
+        fullScreenLoader.style.cssText = `
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255, 255, 255, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        `;
+
+        const spinnerHTML = `
+            <div class="spinner" style="
+                width: 50px;
+                height: 50px;
+                border: 5px solid #f3f3f3;
+                border-top: 5px solid #3498db;
+                border-radius: 50%;
+                animation: none;
+            "></div>
+        `;
+
+        fullScreenLoader.innerHTML = spinnerHTML;
+        document.body.appendChild(fullScreenLoader);
+
+        fetch("{{ host }}/api/add_url", {
+            method: "POST",
+            body: JSON.stringify({
+                url: url,
+                name: name
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            // Remove loader
+            document.getElementById('fullScreenLoader').remove();
+
+            if (data.status === "success") {
+                // Close the modal
+                document.querySelector(".modal-backdrop")?.remove();
+                const addUrlModal = document.getElementById("addUrlModal");
+                if (addUrlModal) {
+                    addUrlModal.style.display = "none";
+                    addUrlModal.classList.remove("show");
+                }
+                toastr.success(data.message, "Success", {
+                    positionClass: "toast-top-right"
+                });
+                document.getElementById("urlInput").value = "";
+                document.getElementById("urlName").value = "";
+                setTimeout(() => {
+                    location.reload();
+                }, 1000);
+            } else {
+                toastr.error(data.message, "Error", {
+                    positionClass: "toast-top-right"
+                });
+            }
+        })
+        .catch(error => {
+            // Remove loader
+            document.getElementById('fullScreenLoader').remove();
+            
+            toastr.error("An unexpected error occurred while adding the URL.", "Error", {
+                positionClass: "toast-top-right"
+            });
+            console.error("Error:", error);
+        });
+}
+
+function downloadFile(url) {
+    if (url.includes('/media/media/')) {
+        url = url.replace('/media/media/', '/media/');
+    }
+    window.open(url, '_blank');
+}
+
+function createText(e) {
+    e.preventDefault();
+    const title = document.getElementById("textTitle").value;
+    const content = document.getElementById("textContent").value;
+    if (!title || !content) {
+        toastr.error("Please enter a title and content.", "Error", {
+            positionClass: "toast-top-right"
+        });
+        return;
+    }
+
+    // Create and show full screen loader
+    const fullScreenLoader = document.createElement('div');
+    fullScreenLoader.id = 'fullScreenLoader';
+    fullScreenLoader.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(255, 255, 255, 0.8);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    `;
+
+    const spinnerHTML = `
+        <div class="spinner" style="
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: none;
+        "></div>
+    `;
+
+    const styleSheet = document.createElement('style');
+    styleSheet.textContent = `
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    `;
+    document.head.appendChild(styleSheet);
+
+    fullScreenLoader.innerHTML = spinnerHTML;
+    document.body.appendChild(fullScreenLoader);
+
+    fetch("{{ host }}/api/create_text", {
+        method: "POST",
+        body: JSON.stringify({
+            title: title,
+            content: content
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        // Remove loader
+        fullScreenLoader.remove();
+
+        if (data.status === "success") {
+            toastr.success(data.message, "Success", {
+                positionClass: "toast-top-right"
+            });
+            document.querySelector(".modal-backdrop")?.remove();
+            const createTextModal = document.getElementById("createTextModal");
+            if (createTextModal) {
+                createTextModal.style.display = "none";
+                createTextModal.classList.remove("show");
+            }
+            setTimeout(() => {
+                location.reload();
+            }, 1000);
+        } else {
+            toastr.error(data.message, "Error", {
+                positionClass: "toast-top-right"
+            });
+        }
+    })
+    .catch(error => {
+        // Remove loader on error
+        fullScreenLoader.remove();
+        
+        toastr.error("An unexpected error occurred while creating the text.", "Error", {
+            positionClass: "toast-top-right"    
+        });
+        console.error("Error:", error);
+    });
+}
+
+</script>
 
 
 {% endblock %}

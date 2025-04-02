@@ -207,13 +207,32 @@ span {
 
 .login-container {
     min-height: 100vh;
-    background-image: url(../images/login-bg.png);
-    background-size: cover;
+    background:#000000;
+    position: relative;
+    overflow: hidden;
+}
+.login-container::after, .login-container::before{
+    content: '';
+    position: absolute;
+    background-image: url(../images/body-ellipses.png);
     background-repeat: no-repeat;
+    height: 500px;
+    width: 1100px;
+    right: 0px;
+    top: -30px;
+}
+.login-container::before{
+    right: unset;
+    top:unset;
+    bottom: 0px;
+    background-image: url(../images/body-ellipses-bottom.png);
+    opacity: 0.6;
 }
 
 .login-container .row {
     min-height: 100vh;
+    position: relative;
+    z-index: 2;
 }
 
 .login_left h3 {
@@ -236,6 +255,10 @@ span {
     line-height: 77.18px;
     letter-spacing: 0.1em;
     color: #ffffff;
+    background: linear-gradient(90deg, #999999 0%, #FFFFFF 51.5%, #999999 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
 }
 
 .login_left .welcome_text h1 span {
@@ -259,7 +282,7 @@ span {
     display: flex;
     flex-direction: column;
     padding: 100px 0px;
-    gap: 300px;
+    gap: 140px;
 }
 
 .login_form {
@@ -271,8 +294,8 @@ span {
     font-weight: 600;
     font-size: 16px;
     line-height: 24px;
-    color: #ECF2FF;
-    padding: 1rem 40px;
+    color: #a2a2a2;
+    padding: 18px 25px;
 }
 
 .login_form .form-floating>.form-control-plaintext~label,
@@ -280,43 +303,31 @@ span {
 .login_form .form-floating>.form-control:not(:placeholder-shown)~label,
 .login_form .form-floating>.form-select~label {
     opacity: 1;
-    transform: scale(.85) translateY(0px) translateX(9px);
+    transform: scale(.85) translateY(-29px) translateX(9px);
 }
 
 .login_form .form-floating input {
-    border: 3px solid #FFFFFF;
-    border-radius: 5px;
     background: #FFFFFF1A;
     color: #fff;
-    padding: 25px 40px;
-    padding-top: 48px;
+    border: 1px solid #FFFFFF1A;
+    border-radius: 30px;    
+    padding-top: 25px;
+    padding: 30px 25px;
 }
 
-.login_form .form-floating::after {
-    content: '';
-    position: absolute;
-    left: 0px;
-    background: #fff;
-    height: 100%;
-    width: 18px;
-    top: 0px;
-    display: none;
+.login_form .form-floating input:focus label{
+    top: -30px;
 }
-
+.login_form .form-floating>.form-control:focus, .login_form .form-floating>.form-control:not(:placeholder-shown) {
+    padding-top: 30px;
+    padding-bottom: 30px;
+}
 .login_form .form-floating>.form-control::placeholder {
     color: #ECF2FF;
 }
-
-.login_form .form-floating:has(input:focus)::after {
-    display: block;
+.login_form .form-floating input:focus label{
+    top: -30px;
 }
-
-.login_form .form-floating>.form-control:focus,
-.login_form .form-floating>.form-control:not(:placeholder-shown) {
-    padding-top: 48px;
-    padding-bottom: 25px;
-}
-
 .login_form .form-check label {
     color: #FFFFFF;
     font-weight: 500;
@@ -347,7 +358,6 @@ span {
 .login_signup_btn .login-button,
 .login_signup_btn .login-button {
     border: 2px solid #FFFFFF;
-    border-radius: 5px;
     padding: 12px 12px;
     text-align: center;
     color: #FFFFFF;
@@ -355,11 +365,21 @@ span {
     font-size: 16px;
     line-height: 24px;
     background: transparent;
+    border-radius: 30px;
+    transition: 0.5s;
 }
 
 .login_signup_btn .login-button.active_btn {
     background-color: #ffffff;
-    color: #5516AE;
+    color: #000000;
+}
+.login_signup_btn .login-button:hover{
+    background-color: #ffffff;
+    color: #000000;
+}
+
+.login_form .form-floating{
+    margin-bottom: 35px;
 }
 
 .login_form_heading {
@@ -2063,4 +2083,7 @@ table .max-content {
     font-size: 16px;
     font-weight: 500;
     border: 2px solid #0000001A;
+}
+.offcanvas.call_history_offcanvas{
+    width: 50%;
 }

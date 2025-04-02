@@ -11,7 +11,11 @@ from app.databases.models import (
     AgentModel, ResetPasswordModel, 
     AgentConnectionModel, PaymentModel, 
     AdminTokenModel, AudioRecordings, 
-    TokensToConsume, ApprovedDomainModel)
+    TokensToConsume, ApprovedDomainModel, CallModel,
+    KnowledgeBaseModel, KnowledgeBaseFileModel, WebhookModel, 
+    CustomFunctionModel,ConversationModel, DailyCallLimitModel,
+    OverallTokenLimitModel
+    )
 from app.databases.schema import  AudioRecordListSchema
 import json, re
 import bcrypt
@@ -23,15 +27,13 @@ from pydantic import BaseModel
 from datetime import datetime
 import shutil
 import json
-from app.databases.models import KnowledgeBaseModel, KnowledgeBaseFileModel, WebhookModel, CustomFunctionModel
 from app.utils.helper import extract_text_from_file, generate_agent_prompt
 from config import MEDIA_DIR  # ✅ Import properly
 import razorpay
 from app.utils.helper import verify_razorpay_signature
 from jinja2 import Environment, meta
-from app.utils.langchain_integration import convert_to_vectorstore, get_splits
-
-
+from app.utils.helper import generate_summary
+from app.utils.scrap import scrape_and_get_file
 
 router = APIRouter(prefix="/api")
 
@@ -313,7 +315,7 @@ async def user_register(request: Request):
                         <p>Hi {user.name} !!!
                                 <br>Please click on the link below to verify your account
                                 <br>
-                                <a href="https://dev.voiceninja.ai/verify-account/{email_token}">Verify Account</a>
+                                <a href="{ host }/verify-account/{email_token}">Verify Account</a>
                                 <br>
                                 <br>
                                 <br>
@@ -946,11 +948,11 @@ async def upload_knowledge_base(request: Request):
             })
             uploaded_files.append(attachment.filename)
 
-        splits = get_splits(content_list)
-        vector_id = str(uuid.uuid4())
-        if splits:
-            vector_path =convert_to_vectorstore(splits, vector_id)
-            KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
+        # splits = get_splits(content_list)
+        # vector_id = str(uuid.uuid4())
+        # if splits:
+        #     vector_path =convert_to_vectorstore(splits, vector_id)
+        #     KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
         return JSONResponse(
             status_code=200,
             content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "uploaded_files": uploaded_files}
@@ -1438,11 +1440,15 @@ async def update_agent(request: Request):
         data = await request.json()
         agent_id = data.get("agent_id")
         selected_voice = data.get("selected_voice")
+        agent_name = data.get("agent_name")
         if agent_id:
             agent = AgentModel.get_by_id(agent_id)
             if agent:
-                AgentModel.update_voice(agent_id, selected_voice)
-                return JSONResponse(status_code=200, content={"status": "success", "message": "Voice updated successfully"})
+                if agent_name:
+                    AgentModel.update_name(agent_id, agent_name)
+                if selected_voice:
+                    AgentModel.update_voice(agent_id, selected_voice)
+                return JSONResponse(status_code=200, content={"status": "success", "message": "Agent updated successfully"})
             else:
                 return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
         else:
@@ -1580,7 +1586,6 @@ async def custom_functions(request: Request):
         function_timeout = data.get('function_timeout')
         if not function_timeout:
             function_timeout = None  # or set a default integer like 0
-
 
         # Ensure function_parameters is a valid JSON string
         if isinstance(function_parameters, str):
@@ -1759,6 +1764,183 @@ async def delete_webhook(request: Request):
         return JSONResponse(status_code=200, content={"status": "success", "message": "Webhook deleted successfully"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/call_details", name="call_details")
+async def call_details(request: Request):
+    try:
+        data = await request.json()
+        call_id = data.get("call_id")
+        call = AudioRecordings.get_by_id(call_id)
+        if call:
+            conversation = ConversationModel.get_by_audio_recording_id(call_id)
+            if conversation:
+                transcript = conversation.transcript
+                if conversation.summary:
+                    summary = conversation.summary
+                else:
+                    summary = generate_summary(transcript)
+                    ConversationModel.update_summary(conversation.id, summary)
+            agent = AgentModel.get_by_id(call.agent_id)
+            call_details = CallModel.get_by_call_id(call.call_id)
+
+            return JSONResponse(status_code=200, content={
+                "status": "success", 
+                "message": "Call details fetched successfully",
+                "call": {
+                    "id": call.id,
+                    "audio_file": call.audio_file,
+                    "created_at": str(call.created_at) if hasattr(call, 'created_at') else None,
+                },
+                "transcript": transcript,
+                "summary": summary,
+                "dynamic_variable": call_details.variables if call_details else agent.dynamic_variable
+            })
+        else:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Call not found"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/add_url", name="add_url")
+async def add_url(request: Request):
+
+    file_path = None
+    try:
+        data = await request.json()
+        url = data.get("url")
+        name = data.get("name")
+        
+        if not url:
+            return JSONResponse(
+                status_code=400, content={"status": "error", "message": "No url uploaded."}
+            )
+
+        user = request.session.get("user")
+
+        # Check if Knowledge Base already exists
+        knowledge_base = KnowledgeBaseModel.get_by_name(name, user.get("user_id"))
+
+        if not knowledge_base:
+            knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=name, url=url)
+        
+        temp_file_name = f"{name}_{uuid.uuid4()}.txt"
+        temp_file_path = os.path.join(MEDIA_DIR, "knowledge_base_files", temp_file_name)
+
+        if not os.path.exists(temp_file_path):
+            os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
+            with open(temp_file_path, "w") as file:
+                file.write("")
+
+        file_path = scrape_and_get_file(url, temp_file_path)
+
+        # Extract text
+        text_content = ""
+        with open(file_path, "r") as file:
+            text_content = file.read()
+
+        # Save file details to database
+        KnowledgeBaseFileModel.create(
+            knowledge_base_id=knowledge_base.id,
+            file_name=name,
+            file_path=file_path,
+            text_content=text_content
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "file_path": file_path}
+        )
+
+    except Exception as e:
+        knowledge_base = KnowledgeBaseModel.get_by_name(name, user.get("user_id"))
+        if knowledge_base:
+            files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+            for file in files:
+                KnowledgeBaseFileModel.delete(file.id)
+            KnowledgeBaseModel.delete(knowledge_base.id)
+        # Cleanup any saved files on error
+        if file_path:
+            os.remove(file_path)    
+
+        print("Error:", str(e))
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/create_text", name="create_text")
+async def create_text(request: Request):
+    try:
+        data = await request.json()
+        title = data.get("title")
+        content = data.get("content")
+        if not title or not content:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Title and content are required"})
+        user = request.session.get("user")
+        # Check if Knowledge Base already exists
+        knowledge_base = KnowledgeBaseModel.get_by_name(title, user.get("user_id"))
+
+        if not knowledge_base:
+            knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=title)
+
+        file_path = os.path.join(MEDIA_DIR, f"knowledge_base_files/{title}_{uuid.uuid4()}.txt")
+
+        with open(file_path, "w") as file:
+            file.write(content)
+
+        # Save file details to database
+        KnowledgeBaseFileModel.create(
+            knowledge_base_id=knowledge_base.id,
+            file_name=title,
+            file_path=file_path,
+            text_content=content
+        )
+
+        return JSONResponse(
+            status_code=200,
+            content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "file_path": file_path}
+        )
+
+    except Exception as e:
+        knowledge_base = KnowledgeBaseModel.get_by_name(title, user.get("user_id"))
+        if knowledge_base:
+            files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+            for file in files:
+                KnowledgeBaseFileModel.delete(file.id)
+            KnowledgeBaseModel.delete(knowledge_base.id)
+        # Cleanup any saved files on error
+        if file_path:
+            os.remove(file_path)    
+
+        print("Error:", str(e))
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@router.post("/update-agent-token-settings", name="update-agent-token-settings")
+async def update_agent_token_settings(request: Request):
+    try:
+        data = await request.json()
+        overall_token_limit = data.get("overall_token_limit")
+        daily_token_limit = data.get("daily_token_limit")
+        per_call_token_limit = data.get("per_call_token_limit")
+        agent_id = data.get("agent_id")
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+        AgentModel.update_value_per_call_token_limit(agent_id, per_call_token_limit)
+        if DailyCallLimitModel.get_by_agent_id(agent_id):
+            DailyCallLimitModel.update_set_value(agent_id, daily_token_limit)
+        else:
+            DailyCallLimitModel.create(agent_id, daily_token_limit)
+        if OverallTokenLimitModel.get_by_agent_id(agent_id):
+            OverallTokenLimitModel.update_set_value(agent_id, overall_token_limit)
+        else:
+            OverallTokenLimitModel.create(agent_id, overall_token_limit)
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Token settings updated successfully"})
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
 
 @router.post("/check-payload", name="check-payload")
 async def check_payload(request: Request):

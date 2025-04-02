@@ -41,7 +41,7 @@
                                 <img src="{{ host }}/static/Web/images/ai-icon.svg" class="img-fluid">
                             </div>
                             <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer" onclick="openDialog()">
-                                <img src="https://dev.voiceninja.ai/static/Web/images/setting-icon.svg" class="img-fluid">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
                             </div>
                         </div>
                         <div class="agent_select_box position-relative">
@@ -229,8 +229,40 @@
                             </div>
                         </div>
                         <a href="{{ url_for('call_history') }}?agent_id={{ agent.id }}">
-                            <button class="w-max-content view-call-history-btn" id="create-agent-btn">View Call History</button>
+                            <div class="w-max-content view-call-history-btn d-flex align-items-center gap-2" id="create-agent-btn">
+                                <img src="{{ host }}/static/Web/images/call-history.svg" class="img-fluid">
+                            </div>
                         </a>
+                        <div class="position-relative">
+                            <div class="w-max-content view-call-history-btn d-flex align-items-center gap-2" id="token-settings-btn" onclick="toggleTokenModal()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="currentColor" class="bi bi-sliders" viewBox="0 0 16 16">
+                                    <path fill-rule="evenodd" d="M11.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M9.05 3a2.5 2.5 0 0 1 4.9 0H16v1h-2.05a2.5 2.5 0 0 1-4.9 0H0V3zM4.5 7a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M2.05 8a2.5 2.5 0 0 1 4.9 0H16v1H6.95a2.5 2.5 0 0 1-4.9 0H0V8zm9.45 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3m-2.45 1a2.5 2.5 0 0 1 4.9 0H16v1h-2.05a2.5 2.5 0 0 1-4.9 0H0v-1z"/>
+                                </svg>
+                            </div>
+                            <div class="variable-modal" id="token-modal" style="display: none;">
+                                <div class="variable-modal-content">
+                                    <h6 class="border-bottom pb-2">Token Settings</h6>
+                                    <div class="mt-3">
+                                        <div class="mb-3">
+                                            <label class="form-label">Overall Token Limit</label>
+                                            <input type="number" class="form-control" id="overall-token-limit" value="{{ overall_token_limit }}" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Daily Token Limit</label>
+                                            <input type="number" class="form-control" id="daily-token-limit" value="{{ daily_call_limit }}" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Per Call Token Limit</label>
+                                            <input type="number" class="form-control" id="per-call-token-limit" value="{{ per_call_token_limit }}" required>
+                                        </div>
+                                        <div class="variable-modal-footer d-flex align-items-center gap-2 justify-content-end pt-2">
+                                            <button class="cancel-btn" onclick="toggleTokenModal()">Cancel</button>
+                                            <button class="save-btn" onclick="saveTokenSettings()">Save</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     {% endif %}
                 </div>
@@ -249,7 +281,7 @@
                                 <textarea class="copy_link_text" id="agent-script" disabled readonly></textarea>
                                 <script>
                                     document.addEventListener("DOMContentLoaded", function() {
-                                        const agentId = "{{ agent.id }}";
+                                        const agentId = "{{ agent.dynamic_id }}";
                                         const origin = window.location.origin;
                                         const scriptTag = `<script src="${origin}/chatbot-script.js/${agentId}"><\/script>`;
                                         document.getElementById("agent-script").value = scriptTag;
@@ -269,7 +301,7 @@
                                     <img src="{{ host }}/static/Web/images/icon-bot-img.png" class="img-fluid" width="30" height="30">
                                     <div class="customize-bot-btn-tooltip">Customize Your Bot</div>
                                 </button>
-                                <a href="{{ url_for('preview_agent') }}?agent_id={{ agent.id }}" target="_blank">
+                                <a href="{{ url_for('preview_agent') }}?agent_id={{ agent.dynamic_id }}" target="_blank">
                                     <button class="customize-bot-btn position-relative">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="#0c7fda" class="bi bi-eye-fill" viewBox="0 0 16 16">
                                         <path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0"/>
@@ -378,6 +410,7 @@
                             </div>
                             <input type="text" id="welcome-message" class="form-control mt-2" placeholder="Enter custom welcome message..." style="display: none;">
                             <div class="options">
+                                <div class="option" data-value="custom">Add Custom Message</div>
                                 <div class="option" data-value="1">Hi, I am SAGE, how can I help you?</div>
                                 <div class="option" data-value="2">Hey there, Captain! How can I help you?</div>
                                 <div class="option" data-value="3">Hi there, I am Jack Sparrow, how can I help you?</div>
@@ -566,8 +599,6 @@
     }
 </script>
 <script>
-let host = "https://dev.voiceninja.ai";
-// Declare selectedIconUrl globally
 let host = "{{ host }}";
 let selectedIconUrl = "{{ host }}/static/Web/images/gif-icon-1.gif"; // Default icon
 
@@ -1129,12 +1160,14 @@ document.addEventListener("DOMContentLoaded", function () {
             saveTimeout = setTimeout(() => {
                 saveWelcomeMessage(value);
             }, 300);
+            welcomeMessageInput.style.display = "none";
+            selectBox.style.display = "block";
+            optionsContainer.style.display = "none";
         } else {
-            selectBox.innerText = "Enter custom welcome message...";
+            toastr.error("Please enter a welcome message", { positionClass: "toast-top-right" });
+            welcomeMessageInput.focus();
+            return;
         }
-        welcomeMessageInput.style.display = "none";
-        selectBox.style.display = "block";
-        optionsContainer.style.display = "none";
     }
 
     function saveWelcomeMessage(message) {
@@ -1605,6 +1638,46 @@ function saveVariable() {
                     }
                     else{
                         toastr.error('Error saving settings: ' + error);
+                    }
+                }
+            });
+        }
+
+        function toggleTokenModal() {
+            const tokenModal = document.getElementById('token-modal');
+            tokenModal.style.display = tokenModal.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function saveTokenSettings() {
+            const overallTokenLimit = document.getElementById('overall-token-limit').value;
+            const dailyTokenLimit = document.getElementById('daily-token-limit').value;
+            const perCallTokenLimit = document.getElementById('per-call-token-limit').value;
+            if(overallTokenLimit == "" || dailyTokenLimit == "" || perCallTokenLimit == ""){
+                toastr.error('Please fill all the fields');
+                return;
+            }
+            const currentUrl = new URL(window.location.href);   
+            const agentId = currentUrl.searchParams.get("agent_id");
+            $.ajax({
+                url: host + '/api/update-agent-token-settings',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ overall_token_limit: overallTokenLimit, daily_token_limit: dailyTokenLimit, per_call_token_limit: perCallTokenLimit, agent_id: agentId }),
+                success: function(response) {
+                    if(response.status == "success"){
+                        toastr.success('Token settings saved successfully');
+                        toggleTokenModal();
+                    }
+                    else{
+                        toastr.error(response.message);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    if(xhr.responseJSON.message){
+                        toastr.error(xhr.responseJSON.message);
+                    }
+                    else{
+                        toastr.error('Error saving token settings: ' + error);
                     }
                 }
             });
