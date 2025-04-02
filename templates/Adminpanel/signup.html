@@ -4,14 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Voice Agent India</title>
-    <link rel="stylesheet" href="https://dev.voiceninja.ai/static/Adminpanel/css/bootstrap.min.css">
-    <link rel="stylesheet" href="https://dev.voiceninja.ai/static/Adminpanel/css/style.css">
-    <link rel="stylesheet" href="https://dev.voiceninja.ai/static/Adminpanel/css/responsive.css">
+    <link rel="stylesheet" href="{{ host }}/static/Adminpanel/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ host }}/static/Adminpanel/css/style.css">
+    <link rel="stylesheet" href="{{ host }}/static/Adminpanel/css/responsive.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick-theme.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
         <!-- Fix: Load jQuery before toastr -->
-        <script src="https://dev.voiceninja.ai/static/Adminpanel/js/jquery.min.js"></script>
+        <script src="{{ host }}i/static/Adminpanel/js/jquery.min.js"></script>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css">
 </head>
@@ -43,10 +43,10 @@
     </section>
         
 </body>
-<script src="https://dev.voiceninja.ai/static/Adminpanel/js/jquery.min.js"></script>
+<script src="{{ host }}/static/Adminpanel/js/jquery.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/slick-carousel/1.8.1/slick.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://dev.voiceninja.ai/static/Adminpanel/js/bootstrap.bundle.min.js"></script>
+<script src="{{ host }}/static/Adminpanel/js/bootstrap.bundle.min.js"></script>
 <script>
     $(document).ready(function() {
         $('form').submit(function(e) {
@@ -59,7 +59,7 @@
                 return;
             }
             $.ajax({
-                url: "https://dev.voiceninja.ai" '/api/admin_signup',
+                url: "{{ host }}/api/admin_signup",
                 type: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify({
@@ -70,7 +70,7 @@
                 success: function(response) {
                     toastr.success('Admin signup successful');
                     setTimeout(function() {
-                        window.location.href = "https://dev.voiceninja.ai" '/admin';
+                        window.location.href = "{{ host }}/admin/";
                     }, 1000);
                 },
                 error: function(response) {

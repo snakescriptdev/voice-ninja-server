@@ -11,8 +11,7 @@
                 <div class="col-md-6">
                     <div class="login_left">
                         <div class="site_logo d-flex align-items-center gap-3">
-                            <img src="https://dev.voiceninja.ai/static/Web/images/voice-ninja-logo.svg" class="img-fluid">
-                            <h3 class="mb-0"><span>Voice</span><br>Ninja</h3>
+                            <img src="{{ host }}/static/Web/images/white-logo.png" class="img-fluid"  width="230px">
                         </div>
                         <div class="welcome_text">
                             <h1>Hello,<br> <span>Welcome!</span></h1>
@@ -22,18 +21,18 @@
                 </div>
                 <div class="col-md-6">
                     <form class="login_form mx-auto" id="login-form">
-                        <div class="form-floating mb-4">
-                            <input type="email" class="form-control" id="email" name="email" placeholder="Email" required>
+                        <div class="form-floating">
+                            <input type="email" class="form-control" id="email" name="email" placeholder="" required>
                             <label for="email">Email address</label>
                         </div>
-                        <div class="form-floating mb-4">
-                            <input type="password" class="form-control" id="password" name="password" placeholder="*********" required>
+                        <div class="form-floating">
+                            <input type="password" class="form-control" id="password" name="password" placeholder="" required>
                             <label for="password">Password</label>
                             <div class="show_pass_icon position-absolute" onclick="togglePassword(this)">
                                 <img src="{{ host }}/static/Web/images/eye-icon.svg" class="img-fluid" id="toggleIcon">
                             </div>
                         </div>
-                        <div class="d-flex align-items-center justify-content-between mt-4 flex-wrap">
+                        <div class="d-flex align-items-center justify-content-between mt-4 flex-wrap forgot-password-container">
                             <div class="form-check d-flex gap-2 align-items-center">
                                 <input class="form-check-input mt-0" type="checkbox" value="" id="flexCheckDefault">
                                 <label class="form-check-label mb-0" for="flexCheckDefault">
@@ -41,7 +40,7 @@
                                 </label>
                             </div>
                             <div class="forgot-password">
-                                <a href="{{ host }}/forget-password">Forgot Password?</a>
+                                <a href="{{ host }}/forget_password">Forgot Password?</a>
                             </div>
                         </div>
                         <div class="pt-1 login_signup_btn d-flex align-items-center gap-sm-4 gap-3">

@@ -17,15 +17,18 @@ from pipecat.transports.network.fastapi_websocket import (
 )
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService, InputParams
 from pipecat.serializers.twilio import TwilioFrameSerializer
-from app.utils.helper import save_audio, send_request
+from app.utils.helper import save_audio, send_request, save_conversation
 # from app.services.bot_tools import end_call_tool
 import asyncio, uuid
 from fastapi.websockets import WebSocketState
-from app.databases.models import TokensToConsume, UserModel, AgentModel, CallModel, CustomFunctionModel, WebhookModel   
+from datetime import datetime
+from app.databases.models import TokensToConsume, UserModel, AgentModel, CallModel, CustomFunctionModel, WebhookModel, OverallTokenLimitModel, DailyCallLimitModel
 from app.databases.models import db
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from enum import Enum
+from pipecat.processors.transcript_processor import TranscriptProcessor
+from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalModalities
 
 
 
@@ -55,6 +58,7 @@ tools = [
         }
     ]
 
+
 SAMPLE_RATE = 8000
 load_dotenv(override=True)
 async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instruction='hello',knowledge_base=None, agent_id=None, user_id=None, dynamic_variables=None, uid=None, custom_functions_list=None, temperature=None, max_output_tokens=None):
@@ -70,7 +74,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             serializer=TwilioFrameSerializer(stream_sid) if stream_sid else ProtobufFrameSerializer(),
         )
     )
-
+    
+    conversation_list = []
     tokens_to_consume = TokensToConsume.get_by_id(1).token_values
     if temperature:
         temperature = float(temperature)
@@ -97,9 +102,6 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
                     "description": function["description"],
                     "parameters": function["parameters"]
                 })
-
-    print("temperature", temperature)
-    print("max_output_tokens", max_output_tokens)
 
     llm = GeminiMultimodalLiveLLMService(
         system_instruction=f"""
@@ -137,7 +139,9 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         api_key=os.getenv("GOOGLE_API_KEY"),
         voice_id=voice,    
         tools=tools,
-        params=InputParams(temperature=temperature, max_tokens=max_output_tokens)          
+        transcribe_user_audio=True,
+        transcribe_model_audio=True,
+        params=InputParams(temperature=temperature, max_tokens=max_output_tokens, modalities=GeminiMultimodalModalities.AUDIO)          
     )
 
 
@@ -229,60 +233,114 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     if custom_functions_list:
         for function in custom_functions_list:
             llm.register_function(function["name"], custom_function)
+
     llm.register_function("end_call",end_call)
     context = OpenAILLMContext([{"role": "user", "content":" "}],tools=tools)
-
     context_aggregator = llm.create_context_aggregator(context)
     audiobuffer = AudioBufferProcessor()
-
+    transcript = TranscriptProcessor()
     pipeline = Pipeline(
         [
-            transport.input(),
-            context_aggregator.user(),
-            llm,
-            audiobuffer,
-            transport.output(),
-            context_aggregator.assistant(),
+            transport.input(),                # Handles incoming user data
+            context_aggregator.user(),        # Manages user context
+            llm,                              # Processes input using the LLM service
+            audiobuffer,                      # Buffers audio for processing
+            transport.output(),               # Sends responses back to the user
+            transcript.user(),                # Logs user inputs
+            transcript.assistant(),           # Logs assistant responses
+            context_aggregator.assistant(),   # Manages assistant context
         ]
     )
-
 
     task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
     runner = PipelineRunner(handle_sigint=False)
 
-    async def deduct_tokens_periodically(user_id, tokens_to_consume, websocket_client):
-        """
-        Dynamically deduct tokens from the user's profile at an interval based on tokens per minute.
-        Automatically disconnects the client when tokens reach 0.
 
-        Args:
-            user_id (int): The ID of the user.
-            tokens_to_consume (int): Tokens to be consumed per minute.
-            websocket_client: The WebSocket client instance to close the call.
+    async def deduct_tokens_periodically(user_id, tokens_to_consume, agent_id, websocket_client):
+        """
+        Deducts tokens periodically and enforces token/call limits.
         """
         if tokens_to_consume <= 0:
-            logger.error("Invalid token consumption rate. It must be greater than 0.")
+            logger.error("Invalid token consumption rate. Must be greater than 0.")
             return
 
         interval = 60 / tokens_to_consume
-        logger.info(f"Starting token deduction every {interval:.2f} seconds ({tokens_to_consume} tokens/minute).")
-
+        logger.info(f"Starting token deduction every {interval:.2f} seconds")
+        
+        agent = AgentModel.get_by_id(agent_id)
+        per_call_tokens = 0
+        
         while True:
-            with db():  
-                user = db.session.query(UserModel).filter(UserModel.id == user_id).with_for_update().first()
-                
-                if user and user.tokens > 0:
+            try:
+                with db():
+                    # Get all required models in one query
+                    user, overall_limit, daily_limit = (
+                        db.session.query(
+                            UserModel,
+                            OverallTokenLimitModel,
+                            DailyCallLimitModel
+                        ).filter(
+                            UserModel.id == user_id,
+                            OverallTokenLimitModel.agent_id == agent_id,
+                            DailyCallLimitModel.agent_id == agent_id
+                        ).with_for_update().first()
+                    )
+
+                    if not user or user.tokens <= 0:
+                        await close_websocket(websocket_client, "Insufficient tokens")
+                        break
+
+                    # Check overall token limit
+                    if overall_limit and overall_limit.last_used_tokens >= overall_limit.overall_token_limit:
+                        await close_websocket(websocket_client, "Overall token limit exceeded")
+                        break
+
+                    # Check daily call limit
+                    if daily_limit:
+                        if should_reset_daily_limit(daily_limit.last_updated):
+                            daily_limit.last_used = 0
+                        
+                        if daily_limit.last_used >= daily_limit.set_value:
+                            await close_websocket(websocket_client, "Daily call limit exceeded")
+                            break
+                        
+                        daily_limit.last_used += 1
+                        daily_limit.last_updated = datetime.utcnow()
+                        logger.info(f"Updated daily call usage: {daily_limit.last_used}")
+
+                    # Check per call token limit
+                    if agent.per_call_token_limit > 0:
+                        per_call_tokens += 1
+                        if per_call_tokens >= agent.per_call_token_limit:
+                            await close_websocket(websocket_client, "Per call token limit exceeded")
+                            break
+
+                    # Update token counts
                     user.tokens -= 1
-                    db.session.commit()  
-                    logger.info(f"Deducted 1 token. Remaining tokens: {user.tokens}")
-                else:
-                    logger.warning("User has run out of tokens. Disconnecting call...")
+                    if overall_limit:
+                        overall_limit.last_used_tokens += 1
+                    
+                    db.session.commit()
+                    logger.info(f"Tokens remaining: {user.tokens}, Overall usage: {overall_limit.last_used_tokens if overall_limit else 'N/A'}")
 
-                    await websocket_client.close(code=1000, reason="Insufficient tokens")
-                    logger.info("WebSocket connection closed due to insufficient tokens.")
-                    break 
+            except Exception as e:
+                logger.error(f"Error in token deduction: {e}")
+                await close_websocket(websocket_client, "Internal error during token processing")
+                break
 
-            await asyncio.sleep(interval)  
+            await asyncio.sleep(interval)
+
+    async def close_websocket(websocket, reason):
+        """Helper to close websocket with logging"""
+        logger.warning(f"{reason}. Disconnecting call...")
+        await websocket.close(code=1000, reason=reason)
+        logger.info(f"WebSocket connection closed: {reason}")
+
+    def should_reset_daily_limit(last_updated):
+        """Check if daily limit should reset"""
+        return (datetime.utcnow() - last_updated).total_seconds() >= 86400
+
+
 
 
 
@@ -293,6 +351,16 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         else:
             await save_audio(audio, sample_rate, num_channels, uid, voice, int(agent_id))
 
+
+    @transcript.event_handler("on_transcript_update")
+    async def handle_update(processor, frame):
+        try:
+            for msg in frame.messages:
+                conversation_list.append({"role": msg.role, "content": msg.content})
+        except Exception as e:
+            logger.error(f"Error processing user transcript: {e}")
+
+
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
         tokens_to_consume = TokensToConsume.get_by_id(1).token_values
@@ -301,7 +369,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             tokens_to_consume = 10
         
         global token_task
-        token_task = asyncio.create_task(deduct_tokens_periodically(user_id, tokens_to_consume, websocket_client))
+        token_task = asyncio.create_task(deduct_tokens_periodically(user_id, tokens_to_consume, agent_id, websocket_client))
 
         await audiobuffer.start_recording()
         a = await task.queue_frames([context_aggregator.user().get_context_frame()])
@@ -312,9 +380,13 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         await audiobuffer.stop_recording()
         await task.cancel()
         await runner.cancel()
-
+        if stream_sid:
+            await save_conversation(conversation_list, stream_sid)
+        else:
+            await save_conversation(conversation_list,  uid)
         if token_task:
             token_task.cancel()
             logger.info("Stopped token deduction as client disconnected.")
+        conversation_list.clear()
 
     await runner.run(task)
