@@ -22,13 +22,12 @@ from app.utils.helper import save_audio, send_request, save_conversation
 import asyncio, uuid
 from fastapi.websockets import WebSocketState
 from datetime import datetime
-from app.databases.models import TokensToConsume, UserModel, AgentModel, CallModel, CustomFunctionModel, WebhookModel, OverallTokenLimitModel, DailyCallLimitModel
+from app.databases.models import TokensToConsume, UserModel, AgentModel, CallModel, CustomFunctionModel, WebhookModel, OverallTokenLimitModel, DailyCallLimitModel,agent_knowledge_association
 from app.databases.models import db
-from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any
-from enum import Enum
 from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalModalities
+from app.utils.langchain_integration import retrieve_from_vectorstore
+from pipecat.frames.frames import FunctionCallResultProperties
 
 
 
@@ -53,10 +52,21 @@ tools = [
                     {
                         "name": "end_call",
                         "description": "This Tool is designed to disconnect the call with a client system command. Use it with caution.",
+                    },
+                    {
+                        "name": "retrieve_text_from_vectorstore",
+                        "description": "This Tool is designed to retrieve text from a vector store. Use it with caution.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "The query to search the vector store with."}
+                            },
+                            "required": ["query"]
+                        }
                     }
                 ]
-        }
-    ]
+            }
+        ]
 
 
 SAMPLE_RATE = 8000
@@ -109,9 +119,15 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
 
             **IMPORTANT**  
 
-            1. **Answering Questions:**  
-            - Use the following knowledge base to answer user questions: `{knowledge_base}`  
-
+            1. **Handling Answering Questions:**  
+            - If the user asks a question that is not in the knowledge base:
+                1. First respond with "Please wait a moment while I search for that information in my knowledge base."
+                2. Then use the `retrieve_text_from_vectorstore()` function to search for relevant information
+                3. this vectorstore have data about the product, services, and other information.
+                3. If results are found, provide the answer based on the retrieved documents
+                4. If no results are found, inform the user that you could not find relevant information
+            - The `retrieve_text_from_vectorstore()` function takes a query as input and returns a list of documents that are relevant to the query.
+    
             2. **Handling Dynamic Variables:**  
             - You have access to one function: `set_dynamic_variable()`, which sets the dynamic variables for the call.  
             - You should call this function when the user provides all their information details.
@@ -135,6 +151,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
                 - Or any similar farewell phrases.  
             - Before calling `end_call()`, politely acknowledge their goodbye and thank them for the conversation.  
             - Then, trigger the `end_call()` function to properly close the connection. 
+            - If the user asks a question that you don't know the answer to, use the `retrieve_text_from_vectorstore()` function to answer the question.
         """,
         api_key=os.getenv("GOOGLE_API_KEY"),
         voice_id=voice,    
@@ -227,6 +244,38 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         except Exception as e:
             logger.error(f"Error in custom_function: {str(e)}")
             return {"status": "error", "message": f"Error processing custom function: {str(e)}"}
+    
+
+    async def retrieve_text_from_vectorstore(function_name, tool_call_id, args, llm, context, result_callback) -> dict:
+        try:
+            agent = AgentModel.get_by_id(agent_id)
+            if agent:
+                from sqlalchemy.orm import sessionmaker
+                from app.databases.models import engine
+                from sqlalchemy import select
+                from app.databases.models import agent_knowledge_association, KnowledgeBaseModel
+                Session = sessionmaker(bind=engine)
+                session = Session() 
+        
+                query = select(agent_knowledge_association).where(
+                    agent_knowledge_association.c.agent_id == agent_id
+                )
+                result = session.execute(query)
+                existing_association = result.fetchone()
+                knowledge_base = KnowledgeBaseModel.get_by_id(existing_association.knowledge_base_id)
+                response = await retrieve_from_vectorstore(args["query"], knowledge_base.vector_path, knowledge_base.vector_id, 5)
+                data = response
+                await result_callback(data)
+            else:
+                return {"status": "error", "message": "Agent not found"}
+        except Exception as e:
+            logger.error(f"Error in retrieve_from_vectorstore: {str(e)}")
+            data = "Something went wrong while searching in the vector store"
+            properties = FunctionCallResultProperties(run_llm=True)
+            await result_callback(data, properties=properties)
+
+    
+    llm.register_function("retrieve_text_from_vectorstore",retrieve_text_from_vectorstore)
 
     if dynamic_variables:
         llm.register_function("set_dynamic_variable",set_dynamic_variable)
