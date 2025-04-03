@@ -34,6 +34,8 @@ from app.utils.helper import verify_razorpay_signature
 from jinja2 import Environment, meta
 from app.utils.helper import generate_summary
 from app.utils.scrap import scrape_and_get_file
+from app.utils.langchain_integration import get_splits, convert_to_vectorstore
+import asyncio
 
 router = APIRouter(prefix="/api")
 
@@ -948,11 +950,11 @@ async def upload_knowledge_base(request: Request):
             })
             uploaded_files.append(attachment.filename)
 
-        # splits = get_splits(content_list)
-        # vector_id = str(uuid.uuid4())
-        # if splits:
-        #     vector_path =convert_to_vectorstore(splits, vector_id)
-        #     KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
+        splits = get_splits(content_list)
+        vector_id = str(uuid.uuid4())
+        if splits:
+            status, vector_path =convert_to_vectorstore(splits, vector_id)
+            KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
         return JSONResponse(
             status_code=200,
             content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "uploaded_files": uploaded_files}
@@ -1832,20 +1834,50 @@ async def add_url(request: Request):
             with open(temp_file_path, "w") as file:
                 file.write("")
 
+        # First scrape and get the file
         file_path = scrape_and_get_file(url, temp_file_path)
 
-        # Extract text
-        text_content = ""
-        with open(file_path, "r") as file:
-            text_content = file.read()
+        # Wait a short time for scraping to complete and file to be written
+        await asyncio.sleep(2)
 
-        # Save file details to database
-        KnowledgeBaseFileModel.create(
+        # Extract text content
+        text_content = ""
+        try:
+            with open(file_path, "r") as file:
+                text_content = file.read()
+        except FileNotFoundError:
+            # If file not ready yet, wait longer and try again
+            await asyncio.sleep(5)
+            with open(file_path, "r") as file:
+                text_content = file.read()
+
+        # First save the file details to database
+        knowledge_base_file = KnowledgeBaseFileModel.create(
             knowledge_base_id=knowledge_base.id,
             file_name=name,
             file_path=file_path,
             text_content=text_content
         )
+
+        # Wait for DB save to complete
+        await asyncio.sleep(1)
+
+        # Only proceed with vector storage if file was saved successfully
+        if knowledge_base_file:
+            content_list = []
+            content_list.append({
+                "file_path": file_path,
+                "text_content": text_content
+            })
+
+            # Create vector storage in background
+            splits = get_splits(content_list)
+            vector_id = str(uuid.uuid4())
+            if splits:
+                status, vector_path = convert_to_vectorstore(splits, vector_id)
+                if status:
+                    # Update knowledge base with vector info only after successful conversion
+                    KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
 
         return JSONResponse(
             status_code=200,
@@ -1893,7 +1925,17 @@ async def create_text(request: Request):
             file_path=file_path,
             text_content=content
         )
+        content_list = []
+        content_list.append({
+                "file_path": file_path,
+                "text_content": content
+            })
 
+        splits = get_splits(content_list)
+        vector_id = str(uuid.uuid4())
+        if splits:
+            status, vector_path =convert_to_vectorstore(splits, vector_id)
+            KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
         return JSONResponse(
             status_code=200,
             content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "file_path": file_path}
