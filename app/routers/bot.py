@@ -124,8 +124,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
                 1. First respond with "Please wait a moment while I search for that information in my knowledge base."
                 2. Then use the `retrieve_text_from_vectorstore()` function to search for relevant information
                 3. this vectorstore have data about the product, services, and other information.
-                3. If results are found, provide the answer based on the retrieved documents
-                4. If no results are found, inform the user that you could not find relevant information
+                4. If results are found, provide the answer based on the retrieved documents
+                5. If no results are found, inform the user that you could not find relevant information and ask them to provide more information or to try another query.
             - The `retrieve_text_from_vectorstore()` function takes a query as input and returns a list of documents that are relevant to the query.
     
             2. **Handling Dynamic Variables:**  
