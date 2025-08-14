@@ -1358,11 +1358,12 @@ document.getElementById("save-custom-function").addEventListener("click", functi
                 `);
             }
             else{
-                toastr.error('Something went wrong!');
+                toastr.error(response.message || 'Something went wrong!');
             }
         },
         error: function(xhr, status, error) {
-            toastr.error('Error saving custom function: ' + error);
+            let errorMessage = xhr?.responseJSON?.message;
+            toastr.error(errorMessage || 'Error saving custom function: ' + error);
         }
     });
 });

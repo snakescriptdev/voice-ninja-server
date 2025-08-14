@@ -14,17 +14,28 @@ router = APIRouter()
 
 templates = Jinja2Templates(directory="templates")
 
+def get_host_with_fallback():
+    """Get host with proper fallback and URL scheme"""
+    host = os.getenv("HOST", "localhost:8000")
+    if not host.startswith(('http://', 'https://')):
+        host = f"http://{host}"
+    return host
+
 @router.get("/signup")
 async def index(request: Request):  
     user = request.session.get("user")
     if user and user.get("is_authenticated"):
         return RedirectResponse(url="/dashboard")
+    
+    # Get host with fallback
+    host = get_host_with_fallback()
+    
     return templates.TemplateResponse(
         "Web/signup.html", 
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "host": os.getenv("HOST")
+            "host": host
         }
     )
 
@@ -34,12 +45,18 @@ async def login(request: Request):
     user = request.session.get("user")
     if user and user.get("is_authenticated"):
         return RedirectResponse(url="/dashboard")
+    
+    # Get host with fallback
+    host = os.getenv("HOST", "http://localhost:8000")
+    if not host.startswith(('http://', 'https://')):
+        host = f"http://{host}"
+    
     return templates.TemplateResponse(
         "Web/login.html", 
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "host": os.getenv("HOST")
+            "host": host
         }
     )
 
