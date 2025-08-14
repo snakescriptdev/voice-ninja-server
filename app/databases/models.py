@@ -11,9 +11,28 @@ from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 import uuid
 
-# DB_URL="postgresql://postgres:Snak3sCr1pT@localhost/voice_ninja"
-DB_URL= os.getenv("DB_URL")
-engine = create_engine(DB_URL, echo=False)
+# Database configuration with fallback
+DB_URL = os.getenv("DB_URL")
+if not DB_URL:
+    # Try to load from .env file if not already loaded
+    from dotenv import load_dotenv
+    load_dotenv()
+    DB_URL = os.getenv("DB_URL")
+
+if not DB_URL:
+    # Final fallback - use default local database
+    DB_URL = "postgresql://postgres:1234@localhost/voice_ninja"
+    print(f"Warning: Using default database URL: {DB_URL}")
+    print("To use a custom database, set the DB_URL environment variable")
+
+try:
+    engine = create_engine(DB_URL, echo=False)
+    print(f"Database connection established successfully")
+except Exception as e:
+    print(f"Error connecting to database: {e}")
+    print(f"Please check your database configuration and ensure PostgreSQL is running")
+    raise
+
 Base = declarative_base()
 
 

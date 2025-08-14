@@ -309,7 +309,7 @@ async def user_register(request: Request):
                 ResetPasswordModel.create(email=email, token=email_token)
             else:
                 ResetPasswordModel.update(email=email, token=email_token)
-            host = request.headers.get("host")
+            host = request.headers.get("origin")
             template = f"""
                         <html>
                         <body>                    
@@ -1591,7 +1591,9 @@ async def custom_functions(request: Request):
 
         # Ensure function_parameters is a valid JSON string
         if isinstance(function_parameters, str):
-            function_parameters = json.loads(function_parameters)
+            function_parameters = (
+                json.loads(function_parameters) if isinstance(function_parameters, str) and function_parameters.strip() else function_parameters or {}
+            )
 
         agent_id = data.get("agent_id")
 
@@ -1601,6 +1603,12 @@ async def custom_functions(request: Request):
         agent = AgentModel.get_by_id(agent_id)
         if not agent:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+
+        if not re.match(r'^[A-Za-z_][A-Za-z0-9_.-]{0,63}$', function_name):
+            return JSONResponse(
+                status_code=400, 
+                content={"status": "error", "message": "Invalid function name. Must start with a letter or underscore and contain only letters, digits, underscores (_), dots (.), or dashes (-), max length 64."}
+            )
 
         # Ensure correct parameter order when calling create()
         obj = CustomFunctionModel.create(

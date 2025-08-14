@@ -2,9 +2,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from .routers import APISRouter, WebRouter, WebSocketRouter, AdminRouter
 from fastapi_sqlalchemy import DBSessionMiddleware,db
-from app.core import VoiceSettings
+from app.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 import os
 from config import MEDIA_DIR 
@@ -18,10 +19,25 @@ os.makedirs(MEDIA_DIR, exist_ok=True)
 from dotenv import load_dotenv
 load_dotenv()  # Force load before Settings
 
+# Custom static files handler with cache-busting
+class NoCacheStaticFiles(StaticFiles):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+    
+    async def __call__(self, scope, receive, send):
+        response = await super().__call__(scope, receive, send)
+        
+        # Add cache-busting headers
+        if hasattr(response, 'headers'):
+            response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
+        
+        return response
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
-app.mount("/audio", StaticFiles(directory="audio_storage"), name="audio")
+app.mount("/static", NoCacheStaticFiles(directory="static"), name="static")
+app.mount("/media", NoCacheStaticFiles(directory=MEDIA_DIR), name="media")
+app.mount("/audio", NoCacheStaticFiles(directory="audio_storage"), name="audio")
 
 app.add_middleware(
     CORSMiddleware,
