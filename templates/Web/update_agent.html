@@ -156,12 +156,12 @@
                     <div class="agent_select_box position-relative d-flex align-items-center gap-2">
                         <div class="functions_dropdown">
                             <div class="nav-item dropdown">
-                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown" data-bs-auto-close="outside">Funtions</a>
+                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown" data-bs-auto-close="outside">Functions</a>
                                 <ul class="dropdown-menu dropdown-menu-end shadow mt-2 dropbottom">
                                     <div id="function-list">
                                     {% for function in custom_functions %}
                                     <li class="dropdown-item gap-3 d-flex align-items-center justify-content-between mb-2" id="function-{{ function.id }}">
-                                        <div class="">{{ function.function_name }}</div>
+                                        <div class="functionNameDivBlock">{{ function.function_name }}</div>
                                         <div class="d-flex align-items-center gap-2">
                                             <button class="edit-function-btn bg-transparent border-0 p-0" onclick="editFunction(`{{ function.id }}`)"><img src="{{ host }}/static/Web/images/edit-icon.svg" class="img-fluid"></button>   
                                             <button class="delete-function-btn bg-transparent border-0 p-0" onclick="deleteFunction(`{{ function.id }}`)"><img src="{{ host }}/static/Web/images/black-dlt-icon.svg" class="img-fluid"></button>
@@ -1349,7 +1349,7 @@ document.getElementById("save-custom-function").addEventListener("click", functi
                 var functionData = response.data
                 $('#function-list').append(`
                     <li class="dropdown-item gap-3 d-flex align-items-center justify-content-between mb-2" id="function-${functionData.id}">
-                        <div class="">${functionData.function_name}</div>
+                        <div class="functionNameDivBlock">${functionData.function_name}</div>
                         <div class="d-flex align-items-center gap-2">
                             <button class="edit-function-btn bg-transparent border-0 p-0" onclick="editFunction(${functionData.id})"><img src="{{ url_for('static', path='/Web/images/edit-icon.svg') }}" class="img-fluid"></button>   
                             <button class="delete-function-btn bg-transparent border-0 p-0" onclick="deleteFunction(${functionData.id})"><img src="{{ url_for('static', path='/Web/images/black-dlt-icon.svg') }}" class="img-fluid"></button>
@@ -1367,6 +1367,65 @@ document.getElementById("save-custom-function").addEventListener("click", functi
         }
     });
 });
+
+
+function updateFunctionElement(functionData) {
+    const $li = $(`#function-${functionData.id}`);
+    if ($li.length) {
+        $li.find('div.functionNameDivBlock').text(functionData.function_name);
+        $li.find('.edit-function-btn').attr('onclick', `editFunction(${functionData.id})`);
+        $li.find('.delete-function-btn').attr('onclick', `deleteFunction(${functionData.id})`);
+    }
+}
+
+
+function handleEditCustomFunction(functionId){
+    let functionName = document.getElementById("edit_function_name").value;
+    let functionDescription = document.getElementById("edit_function_description").value;
+    let functionUrl = document.getElementById("edit_function_url").value;
+    let functionTimeout = document.getElementById("edit_function_timeout").value;
+    let functionParameters = document.getElementById("edit-parameters").value;
+    const currentUrl = new URL(window.location.href);
+    const agentId = currentUrl.searchParams.get("agent_id");
+
+    let data = {
+        function_name: functionName,
+        function_description: functionDescription,
+        function_url: functionUrl,
+        function_timeout: functionTimeout,
+        function_parameters: functionParameters,
+        agent_id: agentId
+    };
+
+    $.ajax({
+        url: `{{ host }}/api/edit-custom-functions/${functionId}`,
+        type: 'PUT',
+        contentType: 'application/json',
+        data: JSON.stringify(data),
+        success: function(response) {
+            if(response.status == "success"){
+                toastr.success('Custom function saved successfully');
+                $('#customFunctionEditModal').modal('hide');
+                // Clear form fields
+                document.getElementById("edit_function_name").value = '';
+                document.getElementById("edit_function_description").value = '';
+                document.getElementById("edit_function_url").value = '';
+                document.getElementById("edit_function_timeout").value = '';
+                document.getElementById("edit-parameters").value = '';
+                var functionData = response.data
+                updateFunctionElement(functionData);
+            }
+            else{
+                toastr.error(response.message || 'Something went wrong!');
+            }
+        },
+        error: function(xhr, status, error) {
+            let errorMessage = xhr?.responseJSON?.message;
+            toastr.error(errorMessage || 'Error saving custom function: ' + error);
+        }
+    });
+}
+
 function editFunction(functionId) {
     $.ajax({
         url: "{{ host }}/api/get-custom-functions",
@@ -1403,20 +1462,20 @@ function editFunction(functionId) {
                                 <form id="editFunctionForm">
                                     <div class="form_field mb-3">
                                         <label for="function_name" class="form-label">Name</label>
-                                        <input type="text" class="form-control" id="function_name" value="${functionData.function_name || ''}" placeholder="Enter function name">
+                                        <input type="text" class="form-control" id="edit_function_name" value="${functionData.function_name || ''}" placeholder="Enter function name">
                                     </div>
                                     <div class="form_field mb-3">
                                         <label for="function_description" class="form-label">Description</label>
-                                        <textarea class="form-control" id="function_description" placeholder="Enter function description">${functionData.function_description || ''}</textarea>
+                                        <textarea class="form-control" id="edit_function_description" placeholder="Enter function description">${functionData.function_description || ''}</textarea>
                                     </div>
                                     <div class="form_field mb-3">
                                         <label for="function_url" class="form-label">Your URL</label>
-                                        <input type="text" class="form-control" id="function_url" value="${functionData.function_url || ''}" placeholder="Enter function URL">
+                                        <input type="text" class="form-control" id="edit_function_url" value="${functionData.function_url || ''}" placeholder="Enter function URL">
                                     </div>
                                     <div class="form_field mb-3">
                                         <label for="function_timeout" class="form-label">API Timeout (Optional)</label>
                                         <div class="d-flex align-items-center gap-2">
-                                            <input type="text" class="form-control" id="function_timeout" value="${functionData.function_timeout || ''}" placeholder="120000">
+                                            <input type="text" class="form-control" id="edit_function_timeout" value="${functionData.function_timeout || ''}" placeholder="120000">
                                             <small class="text-muted">milliseconds</small>
                                         </div>
                                     </div>
@@ -1437,7 +1496,7 @@ function editFunction(functionId) {
                             </div>
                             <div class="modal-footer">
                                 <button type="button" class="btn" data-bs-dismiss="modal">Close</button>
-                                <button type="button" id="save-custom-function" class="btn save_btn">Save</button>
+                                <button type="button" id="save-edit-custom-function" class="btn save_btn" onclick="handleEditCustomFunction('${functionId}')">Save</button>
                             </div>
                         </div>
                     </div>

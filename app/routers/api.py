@@ -32,11 +32,11 @@ from config import MEDIA_DIR  # ✅ Import properly
 import razorpay
 from app.utils.helper import verify_razorpay_signature
 from jinja2 import Environment, meta
-from app.utils.helper import generate_summary
+from app.utils.helper import generate_summary,is_valid_url
 from app.utils.scrap import scrape_and_get_file
 from app.utils.langchain_integration import get_splits, convert_to_vectorstore
 import asyncio
-
+from fastapi_sqlalchemy import db
 router = APIRouter(prefix="/api")
 
 razorpay_client = razorpay.Client(auth=(os.getenv("RAZOR_KEY_ID"), os.getenv("RAZOR_KEY_SECRET")))
@@ -1595,6 +1595,15 @@ async def custom_functions(request: Request):
                 json.loads(function_parameters) if isinstance(function_parameters, str) and function_parameters.strip() else function_parameters or {}
             )
 
+        if function_url and not is_valid_url(function_url):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "Invalid function URL. It must start with http:// or https:// and be a valid URL."
+                }
+            )
+
         agent_id = data.get("agent_id")
 
         if not agent_id:
@@ -1609,6 +1618,25 @@ async def custom_functions(request: Request):
                 status_code=400, 
                 content={"status": "error", "message": "Invalid function name. Must start with a letter or underscore and contain only letters, digits, underscores (_), dots (.), or dashes (-), max length 64."}
             )
+
+        existing_function = (
+            db.session.query(CustomFunctionModel)
+            .filter(
+                CustomFunctionModel.agent_id == agent_id,
+                CustomFunctionModel.function_name == function_name,
+            )
+            .first()
+        )
+
+        if existing_function:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": f"A function with the name '{function_name}' already exists for this agent."
+                }
+            )
+            
 
         # Ensure correct parameter order when calling create()
         obj = CustomFunctionModel.create(
@@ -1632,6 +1660,97 @@ async def custom_functions(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
+@router.put("/edit-custom-functions/{function_id}", name="edit-custom-function")
+async def edit_custom_function(function_id: int, request: Request):
+    try:
+        data = await request.json()
+
+        function_name = data.get("function_name")
+        function_description = data.get("function_description")
+        function_url = data.get("function_url")
+        function_timeout = data.get("function_timeout")
+        function_parameters = data.get("function_parameters", {})
+        agent_id = data.get("agent_id")
+
+        if not function_timeout:
+            function_timeout = None
+
+        if isinstance(function_parameters, str):
+            try:
+                function_parameters = json.loads(function_parameters.strip() or '{}')
+            except json.JSONDecodeError:
+                function_parameters = {}
+        else:
+            function_parameters = function_parameters or {}
+
+
+        if function_url and not is_valid_url(function_url):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "Invalid function URL. It must start with http:// or https:// and be a valid URL."
+                }
+            )
+
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+
+        if not re.match(r'^[A-Za-z_][A-Za-z0-9_.-]{0,63}$', function_name):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Invalid function name. Must start with a letter or underscore and contain only letters, digits, underscores (_), dots (.), or dashes (-), max length 64."}
+            )
+
+        existing_function = (
+            db.session.query(CustomFunctionModel)
+            .filter(
+                CustomFunctionModel.agent_id == agent_id,
+                CustomFunctionModel.function_name == function_name,
+                CustomFunctionModel.id != function_id 
+            )
+            .first()
+        )
+
+        if existing_function:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": f"A function with the name '{function_name}' already exists for this agent."
+                }
+            )
+
+        obj = db.session.query(CustomFunctionModel).filter(CustomFunctionModel.id == function_id).first()
+        if not obj:
+            return JSONResponse(status_code=404, content={"status": "error", "message": "Custom function not found"})
+
+        obj.function_name = function_name
+        obj.function_description = function_description
+        obj.function_url = function_url
+        obj.function_timeout = function_timeout
+        obj.function_parameters = function_parameters
+
+        db.session.commit()
+        db.session.refresh(obj)
+
+        response_data = {
+            "id": obj.id,
+            "function_name": obj.function_name,
+            "function_description": obj.function_description,
+            "function_url": obj.function_url,
+            "function_timeout": obj.function_timeout,
+            "function_parameters": obj.function_parameters
+        }
+
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Custom function updated successfully", "data": response_data})
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
     
 @router.get("/get-custom-functions", name="get-custom-functions")
 async def get_custom_functions(request: Request):
