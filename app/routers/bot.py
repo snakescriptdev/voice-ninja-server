@@ -18,6 +18,7 @@ from pipecat.transports.network.fastapi_websocket import (
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService, InputParams
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from app.utils.helper import save_audio, send_request, save_conversation
+from app.services.enhanced_vad import EnhancedSileroVADAnalyzer, NoiseAdaptiveAudioProcessor
 # from app.services.bot_tools import end_call_tool
 import asyncio, uuid
 from fastapi.websockets import WebSocketState
@@ -28,6 +29,7 @@ from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalModalities
 from app.utils.langchain_integration import retrieve_from_vectorstore
 from pipecat.frames.frames import FunctionCallResultProperties
+from app.core.config import VoiceSettings
 
 
 
@@ -69,9 +71,29 @@ tools = [
         ]
 
 
-SAMPLE_RATE = 8000
 load_dotenv(override=True)
 async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instruction='hello',knowledge_base=None, agent_id=None, user_id=None, dynamic_variables=None, uid=None, custom_functions_list=None, temperature=None, max_output_tokens=None):
+    # Import settings for audio configuration
+    
+    # Audio quality configuration to prevent voice breaking
+    AUDIO_CONFIG = {
+        'sample_rate': VoiceSettings.AUDIO_SAMPLE_RATE,
+        'channels': VoiceSettings.AUDIO_CHANNELS,
+        'buffer_size_ms': VoiceSettings.AUDIO_BUFFER_SIZE_MS,
+        'smoothing_window_ms': VoiceSettings.AUDIO_SMOOTHING_WINDOW_MS,
+        'silence_threshold_ms': VoiceSettings.AUDIO_SILENCE_THRESHOLD_MS,
+        'max_buffer_size_ms': VoiceSettings.AUDIO_MAX_BUFFER_SIZE_MS,
+        'drop_threshold_ms': VoiceSettings.AUDIO_DROP_THRESHOLD_MS,
+        'fade_in_ms': VoiceSettings.AUDIO_FADE_IN_MS,
+        'fade_out_ms': VoiceSettings.AUDIO_FADE_OUT_MS,
+        'websocket_buffer_size': VoiceSettings.WEBSOCKET_BUFFER_SIZE,
+        'websocket_max_message_size': VoiceSettings.WEBSOCKET_MAX_MESSAGE_SIZE
+    }
+    
+    # Initialize enhanced audio processing
+    enhanced_vad = EnhancedSileroVADAnalyzer()
+    noise_adaptive_processor = NoiseAdaptiveAudioProcessor()
+    
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
         params=FastAPIWebsocketParams(
@@ -79,9 +101,11 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             audio_in_enabled=True,
             add_wav_header=not bool(stream_sid),
             vad_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(),
+            vad_analyzer=enhanced_vad,  # Use enhanced VAD
             vad_audio_passthrough=True,
             serializer=TwilioFrameSerializer(stream_sid) if stream_sid else ProtobufFrameSerializer(),
+            # Note: Some audio parameters may not be supported by FastAPIWebsocketParams
+            # We'll handle audio quality through AudioBufferProcessor instead
         )
     )
     
@@ -137,9 +161,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             3. **Custom Functions:**
                 - You have access to the following custom functions: {', '.join([f"`{func['name']}`" for func in custom_functions_list]) if custom_functions_list else "None"}
                 - Call these functions when appropriate based on the following triggers:
-                {
-                    '\\n'.join([f"- `{func['name']}`: Call when {func.get('description', 'needed')}" for func in custom_functions_list]) if custom_functions_list else ""
-                }
+                {chr(10).join([f"- `{func['name']}`: Call when {func.get('description', 'needed')}" for func in custom_functions_list]) if custom_functions_list else ""}
                 - When calling a custom function, acknowledge to the user what you're doing, then call the function, and explain the result to the user.
 
             4. **Handling Call Disconnection:**  
@@ -286,7 +308,18 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     llm.register_function("end_call",end_call)
     context = OpenAILLMContext([{"role": "user", "content":" "}],tools=tools)
     context_aggregator = llm.create_context_aggregator(context)
-    audiobuffer = AudioBufferProcessor()
+    # Get adaptive buffer size based on noise level
+    adaptive_buffer_size = noise_adaptive_processor.get_optimal_buffer_size()
+    
+    audiobuffer = AudioBufferProcessor(
+        # Enhanced audio buffer configuration with noise adaptation
+        buffer_size_ms=adaptive_buffer_size,
+        sample_rate=AUDIO_CONFIG['sample_rate'],
+        num_channels=AUDIO_CONFIG['channels'],
+        # Enable continuous streaming for better audio quality
+        user_continuous_stream=True,
+        assistant_continuous_stream=True
+    )
     transcript = TranscriptProcessor()
     pipeline = Pipeline(
         [
@@ -294,6 +327,12 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             context_aggregator.user(),        # Manages user context
             llm,                              # Processes input using the LLM service
             audiobuffer,                      # Buffers audio for processing
+            # Enhanced audio smoothing with noise adaptation
+            AudioBufferProcessor(
+                buffer_size_ms=adaptive_buffer_size // 2,  # Smaller buffer for smoothing
+                sample_rate=AUDIO_CONFIG['sample_rate'],
+                num_channels=AUDIO_CONFIG['channels']
+            ),
             transport.output(),               # Sends responses back to the user
             transcript.user(),                # Logs user inputs
             transcript.assistant(),           # Logs assistant responses
@@ -322,18 +361,24 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         while True:
             try:
                 with db():
-                    # Get all required models in one query
-                    user, overall_limit, daily_limit = (
-                        db.session.query(
-                            UserModel,
-                            OverallTokenLimitModel,
-                            DailyCallLimitModel
-                        ).filter(
-                            UserModel.id == user_id,
-                            OverallTokenLimitModel.agent_id == agent_id,
-                            DailyCallLimitModel.agent_id == agent_id
-                        ).with_for_update().first()
-                    )
+                    # Query each model separately
+                    user = db.session.query(UserModel).filter(UserModel.id == user_id).first()
+                    overall_limit = db.session.query(OverallTokenLimitModel).filter(
+                        OverallTokenLimitModel.agent_id == agent_id
+                    ).first()
+                    daily_limit = db.session.query(DailyCallLimitModel).filter(
+                        DailyCallLimitModel.agent_id == agent_id
+                    ).first()
+
+                    # Check if any are None
+                    if not user:
+                        logger.error(f"User {user_id} not found")
+                        return
+
+                    if not overall_limit:
+                        logger.warning(f"Overall token limit not found for agent {agent_id}")
+                    if not daily_limit:
+                        logger.warning(f"Daily call limit not found for agent {agent_id}")
 
                     if not user or user.tokens <= 0:
                         await close_websocket(websocket_client, "Insufficient tokens")
@@ -395,11 +440,13 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
 
     @audiobuffer.event_handler("on_audio_data")
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
-        if stream_sid:
-            await save_audio(audio, sample_rate, num_channels, stream_sid, voice, int(agent_id))
-        else:
-            await save_audio(audio, sample_rate, num_channels, uid, voice, int(agent_id))
-
+        try:
+            if stream_sid:
+                await save_audio(audio, sample_rate, num_channels, stream_sid, voice, int(agent_id))
+            else:
+                await save_audio(audio, sample_rate, num_channels, uid, voice, int(agent_id))
+        except Exception as e:
+            logger.error(f"Error processing audio data: {str(e)}")
 
     @transcript.event_handler("on_transcript_update")
     async def handle_update(processor, frame):
@@ -438,4 +485,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             logger.info("Stopped token deduction as client disconnected.")
         conversation_list.clear()
 
-    await runner.run(task)
+    try:
+        await runner.run(task)
+    except Exception as ex:
+        error_msg = str(ex)
+        logger.error(f"Bot execution error: {error_msg}")

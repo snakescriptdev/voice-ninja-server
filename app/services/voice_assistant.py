@@ -212,5 +212,7 @@ async def RunAssistant(websocket_client, voice, uid):
         await audiobuffer.stop_recording()
         await task.cancel()
         await runner.cancel()
-
-    await runner.run(task)
+    try:
+        await runner.run(task)
+    except Exception as ex:
+        print(f'ex: {str(ex)}')
