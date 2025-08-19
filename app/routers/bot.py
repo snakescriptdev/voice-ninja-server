@@ -3,7 +3,7 @@ import sys
 from dotenv import load_dotenv
 import pandas as pd
 from loguru import logger
-from pipecat.audio.vad.silero import SileroVADAnalyzer
+from pipecat.audio.vad.silero import SileroVADAnalyzer,VADParams
 from pipecat.frames.frames import EndFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
@@ -18,7 +18,6 @@ from pipecat.transports.network.fastapi_websocket import (
 from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalLiveLLMService, InputParams
 from pipecat.serializers.twilio import TwilioFrameSerializer
 from app.utils.helper import save_audio, send_request, save_conversation
-from app.services.enhanced_vad import EnhancedSileroVADAnalyzer, NoiseAdaptiveAudioProcessor
 # from app.services.bot_tools import end_call_tool
 import asyncio, uuid
 from fastapi.websockets import WebSocketState
@@ -30,7 +29,8 @@ from pipecat.services.gemini_multimodal_live.gemini import GeminiMultimodalModal
 from app.utils.langchain_integration import retrieve_from_vectorstore
 from pipecat.frames.frames import FunctionCallResultProperties
 from app.core.config import VoiceSettings
-
+from pipecat.audio.filters.noisereduce_filter import NoisereduceFilter
+import numpy as np
 
 
 def generate_json_schema(dynamic_fields):
@@ -89,26 +89,38 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         'websocket_buffer_size': VoiceSettings.WEBSOCKET_BUFFER_SIZE,
         'websocket_max_message_size': VoiceSettings.WEBSOCKET_MAX_MESSAGE_SIZE
     }
+
+    vad_analyzer = SileroVADAnalyzer(params=VADParams(
+        confidence=0.8,  # lower
+        start_secs=0.4,
+        stop_secs=0.6,
+        min_volume=0.05  # slightly higher to filter quiet noise
+    ))
+
+    global last_speech_time, speech_buffer
     
-    # Initialize enhanced audio processing
-    enhanced_vad = EnhancedSileroVADAnalyzer()
-    noise_adaptive_processor = NoiseAdaptiveAudioProcessor()
-    
+    last_speech_time = None
+    speech_buffer = []
+
+    audio_filter = NoisereduceFilter()
+    if VoiceSettings.AUDIO_NOISE_REDUCTION_ENABLED:
+        audio_filter.strength = VoiceSettings.AUDIO_NOISE_REDUCTION_STRENGTH
+
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
         params=FastAPIWebsocketParams(
+            audio_in_filter=audio_filter,
             audio_out_enabled=True,
             audio_in_enabled=True,
             add_wav_header=not bool(stream_sid),
-            vad_enabled=True,
-            vad_analyzer=enhanced_vad,  # Use enhanced VAD
+            vad_enabled=False,
+            handle_interruptions = False,
+            vad_analyzer=vad_analyzer,
             vad_audio_passthrough=True,
             serializer=TwilioFrameSerializer(stream_sid) if stream_sid else ProtobufFrameSerializer(),
-            # Note: Some audio parameters may not be supported by FastAPIWebsocketParams
-            # We'll handle audio quality through AudioBufferProcessor instead
         )
     )
-    
+
     conversation_list = []
     tokens_to_consume = TokensToConsume.get_by_id(1).token_values
     if temperature:
@@ -309,40 +321,42 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     context = OpenAILLMContext([{"role": "user", "content":" "}],tools=tools)
     context_aggregator = llm.create_context_aggregator(context)
     # Get adaptive buffer size based on noise level
-    adaptive_buffer_size = noise_adaptive_processor.get_optimal_buffer_size()
-    
+    adaptive_buffer_size = VoiceSettings.AUDIO_BUFFER_SIZE_MS
+    if VoiceSettings.AUDIO_ADAPTIVE_BUFFERING:
+        adaptive_buffer_size = min(
+            VoiceSettings.AUDIO_MAX_NOISE_BUFFER_SIZE_MS,
+            int(VoiceSettings.AUDIO_BUFFER_SIZE_MS * VoiceSettings.AUDIO_BUFFER_SCALING_FACTOR)
+        )
+
+    logger.info(f"adaptive_buffer_size : {adaptive_buffer_size}")
+
     audiobuffer = AudioBufferProcessor(
-        # Enhanced audio buffer configuration with noise adaptation
         buffer_size_ms=adaptive_buffer_size,
         sample_rate=AUDIO_CONFIG['sample_rate'],
         num_channels=AUDIO_CONFIG['channels'],
-        # Enable continuous streaming for better audio quality
         user_continuous_stream=True,
-        assistant_continuous_stream=True
+        assistant_continuous_stream=False
     )
+
     transcript = TranscriptProcessor()
-    pipeline = Pipeline(
-        [
-            transport.input(),                # Handles incoming user data
-            context_aggregator.user(),        # Manages user context
-            llm,                              # Processes input using the LLM service
-            audiobuffer,                      # Buffers audio for processing
-            # Enhanced audio smoothing with noise adaptation
-            AudioBufferProcessor(
-                buffer_size_ms=adaptive_buffer_size // 2,  # Smaller buffer for smoothing
-                sample_rate=AUDIO_CONFIG['sample_rate'],
-                num_channels=AUDIO_CONFIG['channels']
-            ),
-            transport.output(),               # Sends responses back to the user
-            transcript.user(),                # Logs user inputs
-            transcript.assistant(),           # Logs assistant responses
-            context_aggregator.assistant(),   # Manages assistant context
-        ]
-    )
 
-    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
+    pipeline = Pipeline([
+        transport.input(),
+        context_aggregator.user(),
+        audiobuffer,
+        llm,
+        transport.output(),
+        transcript.user(),
+        transcript.assistant(),
+        context_aggregator.assistant(),
+    ])
+
+    task = PipelineTask(pipeline, params=PipelineParams(
+        audio_in_sample_rate=16000,
+        audio_out_sample_rate=16000,
+        ))
+
     runner = PipelineRunner(handle_sigint=False)
-
 
     async def deduct_tokens_periodically(user_id, tokens_to_consume, agent_id, websocket_client):
         """
@@ -434,19 +448,154 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         """Check if daily limit should reset"""
         return (datetime.utcnow() - last_updated).total_seconds() >= 86400
 
+    # Global buffers
+    # Minimum duration to consider speech valid (in seconds)
+    MIN_SPEECH_DURATION_SEC = 0.5
+
+    # Minimum gap to consider the user has paused
+    MAX_SHORT_PAUSE_SEC = 0.3
+
+    FADE_MS = 50
+    SAMPLE_RATE = VoiceSettings.AUDIO_SAMPLE_RATE
+
+    def apply_fade(audio: np.ndarray, fade_ms=FADE_MS, sample_rate=SAMPLE_RATE):
+        fade_samples = int(sample_rate * fade_ms / 1000)
+        fade_in = np.linspace(0, 1, fade_samples)
+        fade_out = np.linspace(1, 0, fade_samples)
+        audio[:fade_samples] *= fade_in
+        audio[-fade_samples:] *= fade_out
+        return audio
 
 
+    @audiobuffer.event_handler("on_audio_generated")
+    async def on_audio_generated(frame):
+        await transport.output().queue_frame(frame)
 
+    
+    # # Track sustained speech
+    # speech_confidence_window = []
+    # SPEECH_WINDOW_SIZE = 5  # ~5 chunks (~200ms if 40ms frames)
+    # SPEECH_CONFIDENCE_THRESHOLD = 0.85
+    # MIN_SPEECH_DURATION_SEC = 0.6   # must be at least 600ms to be valid speech
+    # NOISE_RMS_THRESHOLD = 0.05      # noise floor
+
+    # @audiobuffer.event_handler("on_audio_data")
+    # async def on_audio_data(buffer, audio, sample_rate, num_channels):
+    #     global last_speech_time, speech_buffer, speech_confidence_window
+
+    #     try:
+    #         # Apply noise reduction first
+    #         if VoiceSettings.AUDIO_NOISE_REDUCTION_ENABLED:
+    #             audio = audio_filter.apply(audio, sample_rate)
+
+    #         confidence = vad_analyzer.voice_confidence(audio)
+    #         rms_volume = (sum([x**2 for x in audio]) / len(audio)) ** 0.5
+
+    #         speech_confidence_window.append((confidence, rms_volume))
+    #         if len(speech_confidence_window) > SPEECH_WINDOW_SIZE:
+    #             speech_confidence_window.pop(0)
+
+    #         # Check sustained speech (majority of last N frames)
+    #         avg_conf = sum(c for c, _ in speech_confidence_window) / len(speech_confidence_window)
+    #         avg_rms  = sum(r for _, r in speech_confidence_window) / len(speech_confidence_window)
+
+    #         is_sustained_speech = (
+    #             avg_conf > SPEECH_CONFIDENCE_THRESHOLD 
+    #             and avg_rms > NOISE_RMS_THRESHOLD
+    #         )
+
+    #         if is_sustained_speech:
+    #             speech_buffer.extend(audio)
+    #             last_speech_time = datetime.utcnow()
+    #         else:
+    #             if last_speech_time and (datetime.utcnow() - last_speech_time).total_seconds() < MAX_SHORT_PAUSE_SEC:
+    #                 # short pause, continue buffer
+    #                 speech_buffer.extend(audio)
+    #             else:
+    #                 speech_duration = len(speech_buffer) / sample_rate
+    #                 if speech_buffer and speech_duration >= MIN_SPEECH_DURATION_SEC:
+    #                     # Save only if real speech
+    #                     processed = apply_fade(np.array(speech_buffer))
+    #                     await save_audio(
+    #                         processed, sample_rate, num_channels,
+    #                         stream_sid or uid, voice, int(agent_id)
+    #                     )
+    #                 # Reset
+    #                 speech_buffer = []
+    #                 last_speech_time = None
+
+    #     except Exception as e:
+    #         logger.error(f"Error in on_audio_data: {e}")
+    
+
+    # Global buffers
+    speech_buffer = []
+    last_speech_time = None
+
+    # VAD & noise parameters
+    SPEECH_WINDOW_SIZE = 5          # Frames to average
+    SPEECH_CONFIDENCE_THRESHOLD = 0.85
+    MIN_SPEECH_DURATION_SEC = 0.6   # Minimum speech to commit
+    MAX_SHORT_PAUSE_SEC = 0.3       # Max pause to continue speech buffer
+    BACKGROUND_RMS = 0.03           # Estimated noise floor
+    NOISE_RMS_THRESHOLD = max(BACKGROUND_RMS * 3, 0.05)
+
+    FADE_MS = 50
+    SAMPLE_RATE = VoiceSettings.AUDIO_SAMPLE_RATE
+
+    def apply_fade(audio: np.ndarray, fade_ms=FADE_MS, sample_rate=SAMPLE_RATE):
+        fade_samples = int(sample_rate * fade_ms / 1000)
+        fade_in = np.linspace(0, 1, fade_samples)
+        fade_out = np.linspace(1, 0, fade_samples)
+        audio[:fade_samples] *= fade_in
+        audio[-fade_samples:] *= fade_out
+        return audio
+
+    speech_confidence_window = []
 
     @audiobuffer.event_handler("on_audio_data")
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
+        global last_speech_time, speech_buffer, speech_confidence_window
         try:
-            if stream_sid:
-                await save_audio(audio, sample_rate, num_channels, stream_sid, voice, int(agent_id))
+            # Apply noise reduction
+            if VoiceSettings.AUDIO_NOISE_REDUCTION_ENABLED:
+                audio = audio_filter.apply(audio, sample_rate)
+
+            # VAD confidence + RMS volume
+            confidence = vad_analyzer.voice_confidence(audio)
+            rms_volume = (np.mean(np.square(audio))) ** 0.5
+
+            # Maintain rolling window for smoothing
+            speech_confidence_window.append((confidence, rms_volume))
+            if len(speech_confidence_window) > SPEECH_WINDOW_SIZE:
+                speech_confidence_window.pop(0)
+
+            avg_conf = sum(c for c, _ in speech_confidence_window) / len(speech_confidence_window)
+            avg_rms  = sum(r for _, r in speech_confidence_window) / len(speech_confidence_window)
+
+            # Detect sustained speech
+            is_sustained_speech = avg_conf > SPEECH_CONFIDENCE_THRESHOLD and avg_rms > NOISE_RMS_THRESHOLD
+
+            if is_sustained_speech:
+                speech_buffer.extend(audio)
+                last_speech_time = datetime.utcnow()
             else:
-                await save_audio(audio, sample_rate, num_channels, uid, voice, int(agent_id))
+                # Check if buffer should be committed
+                if last_speech_time:
+                    silence_duration = (datetime.utcnow() - last_speech_time).total_seconds()
+                    if silence_duration > MAX_SHORT_PAUSE_SEC:
+                        if speech_buffer and len(speech_buffer) / sample_rate >= MIN_SPEECH_DURATION_SEC:
+                            processed = apply_fade(np.array(speech_buffer))
+                            await save_audio(
+                                processed, sample_rate, num_channels,
+                                stream_sid or uid, voice, int(agent_id)
+                            )
+                        # Reset buffer
+                        speech_buffer = []
+                        last_speech_time = None
+
         except Exception as e:
-            logger.error(f"Error processing audio data: {str(e)}")
+            logger.error(f"Error in on_audio_data: {e}")
 
     @transcript.event_handler("on_transcript_update")
     async def handle_update(processor, frame):
