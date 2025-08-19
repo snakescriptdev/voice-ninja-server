@@ -43,11 +43,11 @@ class Settings(BaseSettings):
     AUDIO_SILENCE_THRESHOLD_MS: int = 500
     AUDIO_MAX_BUFFER_SIZE_MS: int = 1000
     AUDIO_DROP_THRESHOLD_MS: int = 100
-    AUDIO_FADE_IN_MS: int = 10
-    AUDIO_FADE_OUT_MS: int = 10
+    AUDIO_FADE_IN_MS: int = 30
+    AUDIO_FADE_OUT_MS: int = 30
     AUDIO_CHANNELS: int = 1
-    WEBSOCKET_BUFFER_SIZE: int = 65536
-    WEBSOCKET_MAX_MESSAGE_SIZE: int = 1048576
+    WEBSOCKET_BUFFER_SIZE: int = 262144
+    WEBSOCKET_MAX_MESSAGE_SIZE: int = 8 * 1024 * 1024
     
     # Enhanced Audio Quality for Noisy Environments
     AUDIO_NOISE_REDUCTION_ENABLED: bool = True
