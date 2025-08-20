@@ -151,3 +151,20 @@ if (document.getElementById('uploadFile')) {
     uploadLabel.classList.add('d-none');
     });
 }
+
+function getCSRFToken() {
+    let token = null;
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta) {
+        token = meta.getAttribute('content');
+    }
+
+    if (!token) {
+        const input = document.querySelector('input[name="csrfmiddlewaretoken"]');
+        if (input) {
+            token = input.value;
+        }
+    }
+
+    return token;
+}

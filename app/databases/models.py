@@ -10,6 +10,7 @@ from config import MEDIA_DIR
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 import uuid
+from app.core.config import DEFAULT_VARS
 
 # Database configuration with fallback
 DB_URL = os.getenv("DB_URL")
@@ -273,6 +274,7 @@ class AgentModel(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     is_design_enabled = Column(Boolean,default=False)
     dynamic_variable = Column(JSONB, nullable=True , default={})
+    noise_setting_variable = Column(JSONB, nullable=True , default=DEFAULT_VARS)
     max_output_tokens = Column(Integer, nullable=True,default=1000) 
     temperature = Column(Float, nullable=True,default=0.0)
     dynamic_id = Column(String, nullable=True,default=str(uuid.uuid4()))
@@ -492,6 +494,20 @@ class AgentModel(Base):
             agent = db.session.query(cls).filter(cls.id == agent_id).first()    
             if agent:
                 agent.agent_name = agent_name
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+
+    @classmethod
+    def update_noise_settings(cls, agent_id: int, noise_settings: dict) -> "AgentModel":
+        """
+        Update an agent's noise_setting_variable field
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.noise_setting_variable = noise_settings
                 db.session.commit()
                 db.session.refresh(agent)
                 return agent

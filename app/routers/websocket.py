@@ -124,6 +124,7 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
         welcome_msg = agent.welcome_msg
         system_instruction = agent.agent_prompt
         dynamic_variables = agent.dynamic_variable
+        noise_setting_variables = agent.noise_setting_variable
         temperature = agent.temperature
         max_output_tokens = agent.max_output_tokens
         custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
@@ -156,7 +157,7 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
                 "parameters": function.function_parameters
             })
         print("WebSocket connection accepted")
-        await run_bot(websocket, voice, stream_sid, welcome_msg, system_instruction, knowledge_base_text, agent.id, user_id, dynamic_variables, None, None, temperature, max_output_tokens)
+        await run_bot(websocket, voice, stream_sid, welcome_msg, system_instruction, knowledge_base_text, agent.id, user_id, dynamic_variables, noise_setting_variables ,None, None, temperature, max_output_tokens)
 
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}", exc_info=True)
@@ -208,6 +209,7 @@ async def agent_websocket_endpoint(websocket: WebSocket):
         welcome_msg = agent.welcome_msg
         system_instruction = agent.agent_prompt
         dynamic_variables = agent.dynamic_variable
+        noise_setting_variables = agent.noise_setting_variable
         temperature = agent.temperature
         max_output_tokens = agent.max_output_tokens
         custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
@@ -247,7 +249,7 @@ async def agent_websocket_endpoint(websocket: WebSocket):
             "device_type": device_type,
         }
         await websocket.send_json(json_data)
-        await run_bot(websocket, voice, None, welcome_msg, system_instruction, knowledge_base_text, agent.id, user, dynamic_variables, str(uid), custom_functions_list, temperature, max_output_tokens)
+        await run_bot(websocket, voice, None, welcome_msg, system_instruction, knowledge_base_text, agent.id, user, dynamic_variables,  noise_setting_variables ,str(uid), custom_functions_list, temperature, max_output_tokens)
 
         
     except Exception as e:

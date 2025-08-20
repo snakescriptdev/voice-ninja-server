@@ -1,6 +1,7 @@
 from fastapi import APIRouter,Request
 from fastapi.templating import Jinja2Templates
 from app.core import VoiceSettings
+from app.core.config import DEFAULT_VARS,NOISE_SETTINGS_DESCRIPTIONS
 from app.utils.helper import Paginator, check_session_expiry_redirect
 from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse
 from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel
@@ -174,6 +175,19 @@ async def update_agent(request: Request):
     knowledge_result =  session.execute(select(KnowledgeBaseModel))
     knowledge_bases = knowledge_result.scalars().all()
     dynamic_variables = agent.dynamic_variable
+
+    noise_settings_variables = agent.noise_setting_variable or {}
+    merged_noise_vars = {**DEFAULT_VARS, **noise_settings_variables}
+
+    noise_form_data = {}
+    for key, description in NOISE_SETTINGS_DESCRIPTIONS.items():
+        value = merged_noise_vars.get(key, None)
+        is_default = True if DEFAULT_VARS.get(key) == value else False 
+        noise_form_data[key] = {
+            "value": value,
+            "description": description,
+            "is_default": is_default
+        }
     # Get the selected knowledge base for this agent
     selected_knowledge = None
     if agent_knowledge_ids:
@@ -196,6 +210,7 @@ async def update_agent(request: Request):
             "agent_knowledge_ids": agent_knowledge_ids,
             "selected_knowledge": selected_knowledge,
             "dynamic_variables": dynamic_variables,
+            "noise_form_data":noise_form_data,
             "custom_functions": custom_functions,
             "host": os.getenv("HOST"),
             "daily_call_limit": daily_call_limit.set_value if daily_call_limit else 0,
