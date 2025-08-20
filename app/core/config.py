@@ -101,4 +101,42 @@ class Settings(BaseSettings):
 def get_settings() -> Settings:
     return Settings()
 
+NOISE_SETTINGS_DESCRIPTIONS = {
+    "AUDIO_SAMPLE_RATE": "Sample rate of the audio in Hz (e.g., 16000, 44100).",
+    "AUDIO_CHANNELS": "Number of audio channels: 1 for mono, 2 for stereo.",
+    "AUDIO_BUFFER_SIZE_MS": "Size of the audio buffer in milliseconds. Controls processing chunks.",
+    "AUDIO_SMOOTHING_WINDOW_MS": "Window size in ms used to smooth audio to reduce glitches.",
+    "AUDIO_SILENCE_THRESHOLD_MS": "Minimum silence duration in ms to consider end of speech.",
+    "AUDIO_MAX_BUFFER_SIZE_MS": "Maximum buffer size in ms for audio processing.",
+    "AUDIO_DROP_THRESHOLD_MS": "Threshold in ms; audio longer than this may be dropped.",
+    "AUDIO_FADE_IN_MS": "Duration in ms for fade-in effect on recorded audio.",
+    "AUDIO_FADE_OUT_MS": "Duration in ms for fade-out effect on recorded audio.",
+    "WEBSOCKET_BUFFER_SIZE": "Size of the buffer for incoming WebSocket audio frames.",
+    "WEBSOCKET_MAX_MESSAGE_SIZE": "Maximum WebSocket message size in bytes.",
+    "AUDIO_NOISE_REDUCTION_ENABLED": "Whether noise reduction is enabled (True/False).",
+    "AUDIO_NOISE_REDUCTION_STRENGTH": "Strength of noise reduction applied (0.0 - 1.0).",
+    "AUDIO_ADAPTIVE_BUFFERING": "Enable adaptive buffering based on noise level (True/False).",
+    "AUDIO_MAX_NOISE_BUFFER_SIZE_MS": "Maximum buffer size in ms when adaptive buffering is enabled.",
+    "AUDIO_BUFFER_SCALING_FACTOR": "Scaling factor applied to buffer size during adaptive buffering."
+}
+
 VoiceSettings = get_settings()
+
+DEFAULT_VARS = {
+    "AUDIO_SAMPLE_RATE": VoiceSettings.AUDIO_SAMPLE_RATE,
+    "AUDIO_CHANNELS": VoiceSettings.AUDIO_CHANNELS,
+    "AUDIO_BUFFER_SIZE_MS": VoiceSettings.AUDIO_BUFFER_SIZE_MS,
+    "AUDIO_SMOOTHING_WINDOW_MS": VoiceSettings.AUDIO_SMOOTHING_WINDOW_MS,
+    "AUDIO_SILENCE_THRESHOLD_MS": VoiceSettings.AUDIO_SILENCE_THRESHOLD_MS,
+    "AUDIO_MAX_BUFFER_SIZE_MS": VoiceSettings.AUDIO_MAX_BUFFER_SIZE_MS,
+    "AUDIO_DROP_THRESHOLD_MS": VoiceSettings.AUDIO_DROP_THRESHOLD_MS,
+    "AUDIO_FADE_IN_MS": VoiceSettings.AUDIO_FADE_IN_MS,
+    "AUDIO_FADE_OUT_MS": VoiceSettings.AUDIO_FADE_OUT_MS,
+    "WEBSOCKET_BUFFER_SIZE": VoiceSettings.WEBSOCKET_BUFFER_SIZE,
+    "WEBSOCKET_MAX_MESSAGE_SIZE": VoiceSettings.WEBSOCKET_MAX_MESSAGE_SIZE,
+    "AUDIO_NOISE_REDUCTION_ENABLED": VoiceSettings.AUDIO_NOISE_REDUCTION_ENABLED,
+    "AUDIO_NOISE_REDUCTION_STRENGTH": VoiceSettings.AUDIO_NOISE_REDUCTION_STRENGTH,
+    "AUDIO_ADAPTIVE_BUFFERING": VoiceSettings.AUDIO_ADAPTIVE_BUFFERING,
+    "AUDIO_MAX_NOISE_BUFFER_SIZE_MS": VoiceSettings.AUDIO_MAX_NOISE_BUFFER_SIZE_MS,
+    "AUDIO_BUFFER_SCALING_FACTOR": VoiceSettings.AUDIO_BUFFER_SCALING_FACTOR
+}

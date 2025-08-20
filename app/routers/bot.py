@@ -31,6 +31,7 @@ from pipecat.frames.frames import FunctionCallResultProperties
 from app.core.config import VoiceSettings
 from pipecat.audio.filters.noisereduce_filter import NoisereduceFilter
 import numpy as np
+from pipecat.services.llm_service import FunctionCallParams
 
 
 def generate_json_schema(dynamic_fields):
@@ -72,22 +73,25 @@ tools = [
 
 
 load_dotenv(override=True)
-async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instruction='hello',knowledge_base=None, agent_id=None, user_id=None, dynamic_variables=None, uid=None, custom_functions_list=None, temperature=None, max_output_tokens=None):
-    # Import settings for audio configuration
-    
-    # Audio quality configuration to prevent voice breaking
+async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instruction='hello',knowledge_base=None, agent_id=None, user_id=None, dynamic_variables=None, noise_setting_variables= None, uid=None, custom_functions_list=None, temperature=None, max_output_tokens=None):
+
     AUDIO_CONFIG = {
-        'sample_rate': VoiceSettings.AUDIO_SAMPLE_RATE,
-        'channels': VoiceSettings.AUDIO_CHANNELS,
-        'buffer_size_ms': VoiceSettings.AUDIO_BUFFER_SIZE_MS,
-        'smoothing_window_ms': VoiceSettings.AUDIO_SMOOTHING_WINDOW_MS,
-        'silence_threshold_ms': VoiceSettings.AUDIO_SILENCE_THRESHOLD_MS,
-        'max_buffer_size_ms': VoiceSettings.AUDIO_MAX_BUFFER_SIZE_MS,
-        'drop_threshold_ms': VoiceSettings.AUDIO_DROP_THRESHOLD_MS,
-        'fade_in_ms': VoiceSettings.AUDIO_FADE_IN_MS,
-        'fade_out_ms': VoiceSettings.AUDIO_FADE_OUT_MS,
-        'websocket_buffer_size': VoiceSettings.WEBSOCKET_BUFFER_SIZE,
-        'websocket_max_message_size': VoiceSettings.WEBSOCKET_MAX_MESSAGE_SIZE
+        'sample_rate': int(noise_setting_variables.get("AUDIO_SAMPLE_RATE", VoiceSettings.AUDIO_SAMPLE_RATE)),
+        'channels': int(noise_setting_variables.get("AUDIO_CHANNELS", VoiceSettings.AUDIO_CHANNELS)),
+        'buffer_size_ms': int(noise_setting_variables.get("AUDIO_BUFFER_SIZE_MS", VoiceSettings.AUDIO_BUFFER_SIZE_MS)),
+        'smoothing_window_ms': int(noise_setting_variables.get("AUDIO_SMOOTHING_WINDOW_MS", VoiceSettings.AUDIO_SMOOTHING_WINDOW_MS)),
+        'silence_threshold_ms': int(noise_setting_variables.get("AUDIO_SILENCE_THRESHOLD_MS", VoiceSettings.AUDIO_SILENCE_THRESHOLD_MS)),
+        'max_buffer_size_ms': int(noise_setting_variables.get("AUDIO_MAX_BUFFER_SIZE_MS", VoiceSettings.AUDIO_MAX_BUFFER_SIZE_MS)),
+        'drop_threshold_ms': int(noise_setting_variables.get("AUDIO_DROP_THRESHOLD_MS", VoiceSettings.AUDIO_DROP_THRESHOLD_MS)),
+        'fade_in_ms': int(noise_setting_variables.get("AUDIO_FADE_IN_MS", VoiceSettings.AUDIO_FADE_IN_MS)),
+        'fade_out_ms': int(noise_setting_variables.get("AUDIO_FADE_OUT_MS", VoiceSettings.AUDIO_FADE_OUT_MS)),
+        'websocket_buffer_size': int(noise_setting_variables.get("WEBSOCKET_BUFFER_SIZE", VoiceSettings.WEBSOCKET_BUFFER_SIZE)),
+        'websocket_max_message_size': int(noise_setting_variables.get("WEBSOCKET_MAX_MESSAGE_SIZE", VoiceSettings.WEBSOCKET_MAX_MESSAGE_SIZE)),
+        'audio_noise_reduction_enabled': bool(noise_setting_variables.get("AUDIO_NOISE_REDUCTION_ENABLED", VoiceSettings.AUDIO_NOISE_REDUCTION_ENABLED)),
+        'audio_noise_reduction_strength': float(noise_setting_variables.get("AUDIO_NOISE_REDUCTION_STRENGTH", VoiceSettings.AUDIO_NOISE_REDUCTION_STRENGTH)),
+        'audio_adaptive_buffering': bool(noise_setting_variables.get("AUDIO_ADAPTIVE_BUFFERING", VoiceSettings.AUDIO_ADAPTIVE_BUFFERING)),
+        'audio_max_noise_buffer_size_ms': int(noise_setting_variables.get("AUDIO_MAX_NOISE_BUFFER_SIZE_MS", VoiceSettings.AUDIO_MAX_NOISE_BUFFER_SIZE_MS)),
+        'audio_buffer_scaling_factor': float(noise_setting_variables.get("AUDIO_BUFFER_SCALING_FACTOR", VoiceSettings.AUDIO_BUFFER_SCALING_FACTOR)),
     }
 
     vad_analyzer = SileroVADAnalyzer(params=VADParams(
@@ -103,8 +107,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     speech_buffer = []
 
     audio_filter = NoisereduceFilter()
-    if VoiceSettings.AUDIO_NOISE_REDUCTION_ENABLED:
-        audio_filter.strength = VoiceSettings.AUDIO_NOISE_REDUCTION_STRENGTH
+    if AUDIO_CONFIG["audio_noise_reduction_enabled"]:
+        audio_filter.strength = AUDIO_CONFIG["audio_noise_reduction_strength"]
 
     transport = FastAPIWebsocketTransport(
         websocket=websocket_client,
@@ -113,8 +117,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             audio_out_enabled=True,
             audio_in_enabled=True,
             add_wav_header=not bool(stream_sid),
-            vad_enabled=False,
-            handle_interruptions = False,
+            vad_enabled=True,
+            handle_interruptions = True,
             vad_analyzer=vad_analyzer,
             vad_audio_passthrough=True,
             serializer=TwilioFrameSerializer(stream_sid) if stream_sid else ProtobufFrameSerializer(),
@@ -196,27 +200,12 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     )
 
 
-    async def end_call(function_name, tool_call_id, args, llm, context, result_callback) -> dict:
-        """
-        Handles the end call functionality
-        
-        Args:
-            function_name (str): Name of the function being called
-            tool_call_id (str): ID of the tool call
-            args (dict): Arguments passed to the function
-            llm (object): LLM service instance
-            context (object): Conversation context
-            result_callback (callable): Callback for results
-            
-        Returns:
-            dict: Response containing status and message
-        """
+    async def end_call(params: FunctionCallParams) -> dict:
         try:
             async def delayed_close():
                 try:
-                    await asyncio.sleep(5) 
+                    await asyncio.sleep(5)
                     logger.info(f"Websocket client state: {websocket_client.client_state}")
-                    
                     if websocket_client.client_state != WebSocketState.DISCONNECTED:
                         await websocket_client.close(code=1000, reason="Call ended normally")
                         logger.info("Websocket closed successfully after delay")
@@ -224,37 +213,25 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
                     logger.error(f"Error in delayed close: {str(e)}")
 
             asyncio.create_task(delayed_close())
-            
-
             return {"status": "success", "message": "Call end initiated"}
-            
+
         except Exception as e:
             logger.error(f"Error in end_call: {str(e)}")
             return {"status": "error", "message": f"Error processing end call: {str(e)}"}
-        
-    async def set_dynamic_variable(function_name, tool_call_id, args, llm, context, result_callback) -> dict:
-        """
-        Handles the set dynamic variable functionality
-        
-        Args:
-            function_name (str): Name of the function being called
-            tool_call_id (str): ID of the tool call
-            args (dict): Arguments passed to the function
-            llm (object): LLM service instance
-            context (object): Conversation context
-            result_callback (callable): Callback for results
 
-        Returns:
-            dict: Response containing status and message
-        """
-        try:            
-            # Get the call model from the database
+    async def set_dynamic_variable(params: FunctionCallParams) -> dict:
+        args = params.arguments
+        llm = params.llm
+        context = params.context
+        result_callback = params.result_callback
+        
+        try:
             agent = AgentModel.get_by_id(agent_id)
-            if agent:        
-                call = CallModel.create(agent_id=agent_id,call_id=uid, variables=args)
+            if agent:
+                call = CallModel.create(agent_id=agent_id, call_id=uid, variables=args)
                 webhook = WebhookModel.get_by_user(user_id)
                 if webhook:
-                   response = await send_request(webhook.webhook_url, args)
+                    response = await send_request(webhook.webhook_url, args)
                 return {"status": "success", "message": "Call details saved successfully"}
             else:
                 return {"status": "success", "message": "Agent not found"}
@@ -262,14 +239,18 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             logger.error(f"Error in set_dynamic_variable: {str(e)}")
             return {"status": "error", "message": f"Error processing set dynamic variable: {str(e)}"}
     
-    async def custom_function(function_name, tool_call_id, args, llm, context, result_callback) -> dict:
+    async def custom_function(params: FunctionCallParams) -> dict:
+        args = params.arguments
+        llm = params.llm
+        context = params.context
+        result_callback = params.result_callback
+
         try:
             agent = AgentModel.get_by_id(agent_id)
-            if agent: 
-                custom_function = CustomFunctionModel.get_by_name(function_name, agent_id)
-                if custom_function:
-                    custom_function_url = custom_function.function_url
-                    response = await send_request(custom_function_url, args)
+            if agent:
+                custom_func = CustomFunctionModel.get_by_name(params.function_name, agent_id)
+                if custom_func:
+                    response = await send_request(custom_func.function_url, args)
                     return {"status": "success", "message": "Custom function executed successfully"}
                 else:
                     return {"status": "error", "message": "Custom function not found"}
@@ -278,9 +259,13 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         except Exception as e:
             logger.error(f"Error in custom_function: {str(e)}")
             return {"status": "error", "message": f"Error processing custom function: {str(e)}"}
-    
 
-    async def retrieve_text_from_vectorstore(function_name, tool_call_id, args, llm, context, result_callback) -> dict:
+    async def retrieve_text_from_vectorstore(params: FunctionCallParams) -> dict:
+        args = params.arguments
+        llm = params.llm
+        context = params.context
+        result_callback = params.result_callback
+
         try:
             agent = AgentModel.get_by_id(agent_id)
             if agent:
@@ -288,26 +273,27 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
                 from app.databases.models import engine
                 from sqlalchemy import select
                 from app.databases.models import agent_knowledge_association, KnowledgeBaseModel
+
                 Session = sessionmaker(bind=engine)
-                session = Session() 
-        
+                session = Session()
+
                 query = select(agent_knowledge_association).where(
                     agent_knowledge_association.c.agent_id == agent_id
                 )
                 result = session.execute(query)
                 existing_association = result.fetchone()
                 knowledge_base = KnowledgeBaseModel.get_by_id(existing_association.knowledge_base_id)
+
                 response = await retrieve_from_vectorstore(args["query"], knowledge_base.vector_path, knowledge_base.vector_id, 5)
-                data = response
-                await result_callback(data)
+                await result_callback(response)
             else:
                 return {"status": "error", "message": "Agent not found"}
+
         except Exception as e:
             logger.error(f"Error in retrieve_from_vectorstore: {str(e)}")
             data = "Something went wrong while searching in the vector store"
             properties = FunctionCallResultProperties(run_llm=True)
             await result_callback(data, properties=properties)
-
     
     llm.register_function("retrieve_text_from_vectorstore",retrieve_text_from_vectorstore)
 
@@ -321,11 +307,11 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     context = OpenAILLMContext([{"role": "user", "content":" "}],tools=tools)
     context_aggregator = llm.create_context_aggregator(context)
     # Get adaptive buffer size based on noise level
-    adaptive_buffer_size = VoiceSettings.AUDIO_BUFFER_SIZE_MS
-    if VoiceSettings.AUDIO_ADAPTIVE_BUFFERING:
+    adaptive_buffer_size = int(AUDIO_CONFIG.get("buffer_size_ms", 200))
+    if AUDIO_CONFIG['audio_adaptive_buffering']:
         adaptive_buffer_size = min(
-            VoiceSettings.AUDIO_MAX_NOISE_BUFFER_SIZE_MS,
-            int(VoiceSettings.AUDIO_BUFFER_SIZE_MS * VoiceSettings.AUDIO_BUFFER_SCALING_FACTOR)
+            int(AUDIO_CONFIG.get("audio_max_noise_buffer_size_ms", 1500)),
+            int(int(AUDIO_CONFIG.get("buffer_size_ms", 200)) * float(AUDIO_CONFIG.get('audio_buffer_scaling_factor', 1.0)))
         )
 
     logger.info(f"adaptive_buffer_size : {adaptive_buffer_size}")
@@ -448,87 +434,10 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         """Check if daily limit should reset"""
         return (datetime.utcnow() - last_updated).total_seconds() >= 86400
 
-    # Global buffers
-    # Minimum duration to consider speech valid (in seconds)
-    MIN_SPEECH_DURATION_SEC = 0.5
-
-    # Minimum gap to consider the user has paused
-    MAX_SHORT_PAUSE_SEC = 0.3
-
-    FADE_MS = 50
-    SAMPLE_RATE = VoiceSettings.AUDIO_SAMPLE_RATE
-
-    def apply_fade(audio: np.ndarray, fade_ms=FADE_MS, sample_rate=SAMPLE_RATE):
-        fade_samples = int(sample_rate * fade_ms / 1000)
-        fade_in = np.linspace(0, 1, fade_samples)
-        fade_out = np.linspace(1, 0, fade_samples)
-        audio[:fade_samples] *= fade_in
-        audio[-fade_samples:] *= fade_out
-        return audio
-
-
     @audiobuffer.event_handler("on_audio_generated")
     async def on_audio_generated(frame):
         await transport.output().queue_frame(frame)
 
-    
-    # # Track sustained speech
-    # speech_confidence_window = []
-    # SPEECH_WINDOW_SIZE = 5  # ~5 chunks (~200ms if 40ms frames)
-    # SPEECH_CONFIDENCE_THRESHOLD = 0.85
-    # MIN_SPEECH_DURATION_SEC = 0.6   # must be at least 600ms to be valid speech
-    # NOISE_RMS_THRESHOLD = 0.05      # noise floor
-
-    # @audiobuffer.event_handler("on_audio_data")
-    # async def on_audio_data(buffer, audio, sample_rate, num_channels):
-    #     global last_speech_time, speech_buffer, speech_confidence_window
-
-    #     try:
-    #         # Apply noise reduction first
-    #         if VoiceSettings.AUDIO_NOISE_REDUCTION_ENABLED:
-    #             audio = audio_filter.apply(audio, sample_rate)
-
-    #         confidence = vad_analyzer.voice_confidence(audio)
-    #         rms_volume = (sum([x**2 for x in audio]) / len(audio)) ** 0.5
-
-    #         speech_confidence_window.append((confidence, rms_volume))
-    #         if len(speech_confidence_window) > SPEECH_WINDOW_SIZE:
-    #             speech_confidence_window.pop(0)
-
-    #         # Check sustained speech (majority of last N frames)
-    #         avg_conf = sum(c for c, _ in speech_confidence_window) / len(speech_confidence_window)
-    #         avg_rms  = sum(r for _, r in speech_confidence_window) / len(speech_confidence_window)
-
-    #         is_sustained_speech = (
-    #             avg_conf > SPEECH_CONFIDENCE_THRESHOLD 
-    #             and avg_rms > NOISE_RMS_THRESHOLD
-    #         )
-
-    #         if is_sustained_speech:
-    #             speech_buffer.extend(audio)
-    #             last_speech_time = datetime.utcnow()
-    #         else:
-    #             if last_speech_time and (datetime.utcnow() - last_speech_time).total_seconds() < MAX_SHORT_PAUSE_SEC:
-    #                 # short pause, continue buffer
-    #                 speech_buffer.extend(audio)
-    #             else:
-    #                 speech_duration = len(speech_buffer) / sample_rate
-    #                 if speech_buffer and speech_duration >= MIN_SPEECH_DURATION_SEC:
-    #                     # Save only if real speech
-    #                     processed = apply_fade(np.array(speech_buffer))
-    #                     await save_audio(
-    #                         processed, sample_rate, num_channels,
-    #                         stream_sid or uid, voice, int(agent_id)
-    #                     )
-    #                 # Reset
-    #                 speech_buffer = []
-    #                 last_speech_time = None
-
-    #     except Exception as e:
-    #         logger.error(f"Error in on_audio_data: {e}")
-    
-
-    # Global buffers
     speech_buffer = []
     last_speech_time = None
 
@@ -541,7 +450,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     NOISE_RMS_THRESHOLD = max(BACKGROUND_RMS * 3, 0.05)
 
     FADE_MS = 50
-    SAMPLE_RATE = VoiceSettings.AUDIO_SAMPLE_RATE
+    SAMPLE_RATE = AUDIO_CONFIG.get("sample_rate")
 
     def apply_fade(audio: np.ndarray, fade_ms=FADE_MS, sample_rate=SAMPLE_RATE):
         fade_samples = int(sample_rate * fade_ms / 1000)
@@ -558,7 +467,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         global last_speech_time, speech_buffer, speech_confidence_window
         try:
             # Apply noise reduction
-            if VoiceSettings.AUDIO_NOISE_REDUCTION_ENABLED:
+            if AUDIO_CONFIG["audio_noise_reduction_enabled"]:
                 audio = audio_filter.apply(audio, sample_rate)
 
             # VAD confidence + RMS volume
