@@ -37,6 +37,10 @@ from app.utils.scrap import scrape_and_get_file
 from app.utils.langchain_integration import get_splits, convert_to_vectorstore
 import asyncio
 from fastapi_sqlalchemy import db
+from app.validators.api_validators import SaveNoiseVariablesRequest,ResetNoiseVariablesRequest
+from pydantic import ValidationError
+from app.core.config import DEFAULT_VARS,NOISE_SETTINGS_DESCRIPTIONS
+
 router = APIRouter(prefix="/api")
 
 razorpay_client = razorpay.Client(auth=(os.getenv("RAZOR_KEY_ID"), os.getenv("RAZOR_KEY_SECRET")))
@@ -1898,6 +1902,7 @@ async def delete_webhook(request: Request):
 @router.post("/call_details", name="call_details")
 async def call_details(request: Request):
     try:
+        transcript,summary = None,None
         data = await request.json()
         call_id = data.get("call_id")
         call = AudioRecordings.get_by_id(call_id)
@@ -2129,3 +2134,93 @@ async def toggle_webhook(request: Request):
         return JSONResponse(status_code=200, content={"status": "success", "message": "Custom functions fetched successfully"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/save-noise-variables", name="save-noise-variables")
+async def save_noise_variables(request: Request):
+    try:
+        data = await request.json()
+        req = SaveNoiseVariablesRequest(**data)
+        agent = AgentModel.get_by_id(req.agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+        
+        updated_agent = AgentModel.update_noise_settings(agent_id=req.agent_id, noise_settings=req.variables)
+
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Variables saved successfully"})
+    
+    except ValidationError as ve:
+        if ve.errors():
+            first_error = ve.errors()[0]
+            ctx_error = first_error.get("ctx", {}).get("error")
+            if ctx_error and isinstance(ctx_error, ValueError):
+                inner_errors = ctx_error.args[0] if ctx_error.args else {}
+                if isinstance(inner_errors, dict) and inner_errors:
+                    field_name, msg = list(inner_errors.items())[0]
+                    human_msg = f"Invalid value for '{field_name}': {msg}"
+                else:
+                    human_msg = "Invalid input"
+            else:
+                loc = first_error.get("loc", ["field"])
+                field_name = loc[-1] if loc else "field"
+                msg = first_error.get("msg", "Invalid value")
+                human_msg = f"Invalid value for '{field_name}': {msg}"
+        else:
+            human_msg = "Invalid input"
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Validation error", "errors": human_msg},
+        )
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.get("/agents/{agent_id}/noise-variables")
+async def get_noise_variables(agent_id: int):
+    agent = AgentModel.get_by_id(agent_id)
+    if not agent:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Agent not found"})
+    
+    noise_vars = agent.noise_setting_variable or {}
+        
+    response_data = {}
+    for key, value in noise_vars.items():
+        response_data[key] = {
+            "value": value,
+            "description": NOISE_SETTINGS_DESCRIPTIONS.get(key,f"Description for {key}"), 
+            "is_default": True if DEFAULT_VARS.get(key) == value else False 
+        }
+
+    return {"status": "success", "data": response_data}
+
+
+@router.post("/reset-noise-variables", name="reset-noise-variables")
+async def reset_noise_variables(request: Request):
+    try:
+        data = await request.json()
+        req = ResetNoiseVariablesRequest.model_validate(data)
+
+        agent_id = req.agent_id
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Agent not found"}
+            )
+
+        var_to_reset = req.variables[-1]
+        current_vars = agent.noise_setting_variable or {}
+
+        if var_to_reset in DEFAULT_VARS:
+            current_vars[var_to_reset] = DEFAULT_VARS[var_to_reset]
+
+        updated_agent = AgentModel.update_noise_settings(agent_id=agent_id, noise_settings=current_vars)
+
+        return JSONResponse(
+            status_code=200,
+            content={"status": "success", "message": "Variables reset to default successfully","value":getattr(updated_agent,"noise_setting_variable",{}).get(var_to_reset)}
+        )
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+        )
