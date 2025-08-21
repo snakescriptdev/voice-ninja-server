@@ -412,3 +412,9 @@ def is_valid_url(url: str) -> bool:
         return all([result.scheme in ("https"), result.netloc])
     except Exception:
         return False
+
+def get_logged_in_user(request: Request):
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return None
+    return user

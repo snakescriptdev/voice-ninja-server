@@ -46,12 +46,13 @@
                         </div>
                         <div class="agent_select_box position-relative">
                             <select class="form-select" id="selected-voice" onchange="updateAgentVoice(this.value)">
-                                <option {% if agent and agent.selected_voice == "Aoede" %}selected{% endif %}>Aoede</option>
-                                <option {% if agent and agent.selected_voice == "Charon" %}selected{% endif %}>Charon</option>
-                                <option {% if agent and agent.selected_voice == "Fenrir" %}selected{% endif %}>Fenrir</option>
-                                <option {% if agent and agent.selected_voice == "Kore" %}selected{% endif %}>Kore</option>
-                                <option {% if agent and agent.selected_voice == "Puck" %}selected{% endif %}>Puck</option>
-                            </select>
+                                {% for voice in voices %}
+                                    <option value="{{ voice.id }}" 
+                                        {% if agent and agent.selected_voice == voice.id %}selected{% endif %}>
+                                        {{ voice.voice_name }}
+                                    </option>
+                                {% endfor %}
+                            </select>                            
                             <script>
                             function updateAgentVoice(voice) {
                                 const currentUrl = new URL(window.location.href);

@@ -10,7 +10,9 @@ from config import MEDIA_DIR
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 import uuid
-from app.core.config import DEFAULT_VARS
+from app.core.config import DEFAULT_VARS,Settings
+import logging
+logger = logging.getLogger(__name__)
 
 # Database configuration with fallback
 DB_URL = os.getenv("DB_URL")
@@ -149,6 +151,7 @@ class UserModel(Base):
     tokens = Column(Integer, nullable=True,default=0)
     is_admin = Column(Boolean,default=False)
     approved_domains = relationship("ApprovedDomainModel", back_populates="creator")
+    voices = relationship("VoiceModel", back_populates="user")
 
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email})>"
@@ -265,7 +268,8 @@ class AgentModel(Base):
     created_by = Column(Integer, nullable=True,default=0)
     agent_name = Column(String, nullable=True,default="")
     selected_model = Column(String, nullable=True,default="")
-    selected_voice = Column(String, nullable=True,default="")
+    selected_voice = Column(Integer, ForeignKey("custom_voices.id"), nullable=True)
+    selected_voice_obj = relationship("VoiceModel", back_populates="agents")
     phone_number = Column(String, nullable=True,default="")
     agent_prompt = Column(String, nullable=True,default="")
     selected_language = Column(String, nullable=True,default="")
@@ -1607,5 +1611,145 @@ class DailyCallLimitModel(Base):
             return None
 
 
-Base.metadata.create_all(engine)
+class VoiceModel(Base):
+    '''
+    This model stores default voices of Gemini and custom voices added by users via mic,
+    uploaded to ElevenLabs. Also stores the audio file path for playback.
+    '''
+    __tablename__ = "custom_voices"
 
+    id = Column(Integer, primary_key=True, index=True)
+    voice_name = Column(String, nullable=False)
+    is_custom_voice = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    modified_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Nullable user_id for default voices
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    user = relationship("UserModel", back_populates="voices")
+
+    elevenlabs_voice_id = Column(String, nullable=True)
+    elevenlabs_error = Column(String, nullable=True)
+
+    # Path to audio file for playback
+    audio_file = Column(String, nullable=True)
+    agents = relationship("AgentModel", back_populates="selected_voice_obj")
+
+    def __repr__(self):
+        return f"<Voice(id={self.id}, name={self.voice_name}, custom={self.is_custom_voice})>"
+
+    # ------------------ CLASS METHODS ------------------ #
+    @classmethod
+    def get_by_id(cls, voice_id: int) -> Optional["VoiceModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.id == voice_id).first()
+    
+    @classmethod
+    def get_allowed_voices(cls, user_id: int) -> List["VoiceModel"]:
+        """
+        Returns voices that are either:
+        - Custom voices created by the given user
+        - Default (non-custom) voices
+        """
+        with db():
+            return db.session.query(cls).filter(
+                ((cls.is_custom_voice == True) & (cls.user_id == user_id)) |
+                (cls.is_custom_voice == False)
+            ).all()
+
+    @classmethod
+    def get_all_by_user(cls, user_id: int) -> List["VoiceModel"]:
+        with db():
+            return db.session.query(cls).filter(
+                (cls.user_id == user_id) | (cls.user_id == None)  # Include default voices
+            ).all()
+
+    @classmethod
+    def create(cls, voice_name: str, is_custom_voice: bool = False, user_id: Optional[int] = None,
+               elevenlabs_voice_id: Optional[str] = None, elevenlabs_error: Optional[str] = None,
+               audio_file: Optional[str] = None) -> "VoiceModel":
+        with db():
+            voice = cls(
+                voice_name=voice_name,
+                is_custom_voice=is_custom_voice,
+                user_id=user_id,
+                elevenlabs_voice_id=elevenlabs_voice_id,
+                elevenlabs_error=elevenlabs_error,
+                audio_file=audio_file
+            )
+            db.session.add(voice)
+            db.session.commit()
+            db.session.refresh(voice)
+            return voice
+
+    @classmethod
+    def update(cls, voice_id: int, **kwargs) -> Optional["VoiceModel"]:
+        with db():
+            voice = db.session.query(cls).filter(cls.id == voice_id).first()
+            if voice:
+                for key, value in kwargs.items():
+                    if hasattr(voice, key):
+                        setattr(voice, key, value)
+                db.session.commit()
+                db.session.refresh(voice)
+                return voice
+            return None
+
+    @classmethod
+    def delete(cls, voice_id: int) -> bool:
+        try:
+            with db():
+                voice = db.session.query(cls).filter(cls.id == voice_id).first()
+                if voice:
+                    db.session.delete(voice)
+                    db.session.commit()
+                return True
+        except Exception:
+            return False
+
+    @classmethod
+    def get_by_name_and_user(cls, voice_name: str, user_id: Optional[int] = None) -> Optional["VoiceModel"]:
+        """
+        Get a voice by its name and user ID.
+        If user_id is None, it will search only default voices.
+        """
+        with db():
+            query = db.session.query(cls).filter(cls.voice_name == voice_name)
+            if user_id is not None:
+                query = query.filter(cls.user_id == user_id)
+            else:
+                query = query.filter(cls.user_id == None)
+            return query.first()
+
+    @classmethod
+    def ensure_default_voices(cls):
+        """
+        Ensure that all ALLOWED_VOICES exist in DB as default voices.
+        Runs once on server start.
+        """
+
+        settings = Settings()
+        allowed_voices = getattr(settings, "ALLOWED_VOICES", [])
+
+        if not allowed_voices:
+            logger.warning("⚠️ No allowed voices found in Settings.ALLOWED_VOICES")
+            return
+
+        with db():
+            for name in allowed_voices:
+                existing = db.session.query(cls).filter(
+                    cls.voice_name == name,
+                    cls.is_custom_voice == False,
+                    cls.user_id == None
+                ).first()
+                if not existing:
+                    voice = cls(
+                        voice_name=name,
+                        is_custom_voice=False,
+                        user_id=None
+                    )
+                    db.session.add(voice)
+                    logger.info(f"✅ Added default voice from Settings: {name}")
+            db.session.commit()
+
+Base.metadata.create_all(engine)
