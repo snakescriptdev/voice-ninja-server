@@ -98,7 +98,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         confidence=0.8,  # lower
         start_secs=0.4,
         stop_secs=0.6,
-        min_volume=0.05  # slightly higher to filter quiet noise
+        min_volume=0.7 # slightly higher to filter quiet noise
     ))
 
     global last_speech_time, speech_buffer
@@ -117,8 +117,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             audio_out_enabled=True,
             audio_in_enabled=True,
             add_wav_header=not bool(stream_sid),
-            vad_enabled=True,
-            handle_interruptions = True,
+            vad_enabled=False,
+            handle_interruptions = False,
             vad_analyzer=vad_analyzer,
             vad_audio_passthrough=True,
             serializer=TwilioFrameSerializer(stream_sid) if stream_sid else ProtobufFrameSerializer(),
@@ -320,7 +320,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         buffer_size_ms=adaptive_buffer_size,
         sample_rate=AUDIO_CONFIG['sample_rate'],
         num_channels=AUDIO_CONFIG['channels'],
-        user_continuous_stream=True,
+        user_continuous_stream=False,
         assistant_continuous_stream=False
     )
 
@@ -340,7 +340,10 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     task = PipelineTask(pipeline, params=PipelineParams(
         audio_in_sample_rate=16000,
         audio_out_sample_rate=16000,
-        ))
+        allow_interruptions=False,
+        enable_metrics=True,
+        enable_usage_metrics=True,
+    ))
 
     runner = PipelineRunner(handle_sigint=False)
 
