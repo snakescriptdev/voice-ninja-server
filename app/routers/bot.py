@@ -32,7 +32,8 @@ from app.core.config import VoiceSettings
 from pipecat.audio.filters.noisereduce_filter import NoisereduceFilter
 import numpy as np
 from pipecat.services.llm_service import FunctionCallParams
-
+from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
+from pipecat.transcriptions.language import Language
 
 def generate_json_schema(dynamic_fields):
     schema = {
@@ -73,7 +74,23 @@ tools = [
 
 
 load_dotenv(override=True)
-async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instruction='hello',knowledge_base=None, agent_id=None, user_id=None, dynamic_variables=None, noise_setting_variables= None, uid=None, custom_functions_list=None, temperature=None, max_output_tokens=None):
+
+async def run_bot(websocket_client, **kwargs):
+    voice = kwargs.get("voice")
+    stream_sid = kwargs.get("stream_sid")
+    welcome_msg = kwargs.get("welcome_msg")
+    system_instruction = kwargs.get("system_instruction", "hello")
+    knowledge_base = kwargs.get("knowledge_base")
+    agent_id = kwargs.get("agent_id")
+    user_id = kwargs.get("user_id")
+    dynamic_variables = kwargs.get("dynamic_variables")
+    noise_setting_variables = kwargs.get("noise_setting_variables")
+    uid = kwargs.get("uid")
+    custom_functions_list = kwargs.get("custom_functions_list")
+    temperature = kwargs.get("temperature")
+    max_output_tokens = kwargs.get("max_output_tokens")
+    custom_voice = kwargs.get("is_custom_voice", False)
+    custom_voice_id = kwargs.get("custom_voice_id",None)
 
     AUDIO_CONFIG = {
         'sample_rate': int(noise_setting_variables.get("AUDIO_SAMPLE_RATE", VoiceSettings.AUDIO_SAMPLE_RATE)),
@@ -105,8 +122,31 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     
     last_speech_time = None
     speech_buffer = []
+    conversation_list = []
+
+    gemini_llm_voice_id = None if custom_voice else voice
+    gemini_llm_modalities = GeminiMultimodalModalities.TEXT if custom_voice else GeminiMultimodalModalities.AUDIO
+    transcribe_gemini_llm_model_audio = False if custom_voice else True
 
     audio_filter = NoisereduceFilter()
+    transcript = TranscriptProcessor()
+
+    speech_buffer = []
+    last_speech_time = None
+
+    # VAD & noise parameters
+    SPEECH_WINDOW_SIZE = 5          # Frames to average
+    SPEECH_CONFIDENCE_THRESHOLD = 0.85
+    MIN_SPEECH_DURATION_SEC = 0.6   # Minimum speech to commit
+    MAX_SHORT_PAUSE_SEC = 0.3       # Max pause to continue speech buffer
+    BACKGROUND_RMS = 0.03           # Estimated noise floor
+    NOISE_RMS_THRESHOLD = max(BACKGROUND_RMS * 3, 0.05)
+
+    FADE_MS = 50
+    SAMPLE_RATE = AUDIO_CONFIG.get("sample_rate")
+
+    speech_confidence_window = []
+
     if AUDIO_CONFIG["audio_noise_reduction_enabled"]:
         audio_filter.strength = AUDIO_CONFIG["audio_noise_reduction_strength"]
 
@@ -125,7 +165,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         )
     )
 
-    conversation_list = []
+    
     tokens_to_consume = TokensToConsume.get_by_id(1).token_values
     if temperature:
         temperature = float(temperature)
@@ -152,6 +192,8 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
                     "description": function["description"],
                     "parameters": function["parameters"]
                 })
+
+    
 
     llm = GeminiMultimodalLiveLLMService(
         system_instruction=f"""
@@ -192,13 +234,12 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
             - If the user asks a question that you don't know the answer to, use the `retrieve_text_from_vectorstore()` function to answer the question.
         """,
         api_key=os.getenv("GOOGLE_API_KEY"),
-        voice_id=voice,    
+        voice_id=gemini_llm_voice_id,    
         tools=tools,
         transcribe_user_audio=True,
-        transcribe_model_audio=True,
-        params=InputParams(temperature=temperature, max_tokens=max_output_tokens, modalities=GeminiMultimodalModalities.AUDIO)          
+        transcribe_model_audio=transcribe_gemini_llm_model_audio,
+        params=InputParams(temperature=temperature, max_tokens=max_output_tokens, modalities=gemini_llm_modalities)          
     )
-
 
     async def end_call(params: FunctionCallParams) -> dict:
         try:
@@ -324,18 +365,51 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         assistant_continuous_stream=False
     )
 
-    transcript = TranscriptProcessor()
+    
+    logger.info(f"custom_voice: {custom_voice} and custom_voice_id: {custom_voice_id}")
 
-    pipeline = Pipeline([
-        transport.input(),
-        context_aggregator.user(),
-        audiobuffer,
-        llm,
-        transport.output(),
-        transcript.user(),
-        transcript.assistant(),
-        context_aggregator.assistant(),
-    ])
+    if custom_voice and custom_voice_id:
+        logger.info(f"Using elevenlabs as TTS")
+        #If custom voice is present, means user wants to use his custom voice which we saved in elevenlabs.
+        tts = ElevenLabsTTSService(
+            api_key=os.getenv("ELEVENLABS_API_KEY"),
+            voice_id=custom_voice_id, #do chnage this one.
+            model="eleven_flash_v2_5",  # Fast, high-quality model
+            params=ElevenLabsTTSService.InputParams(
+                language=Language.EN,
+                stability=0.7,
+                similarity_boost=0.8,
+                style=0.5,
+                use_speaker_boost=True,
+                speed=1.0
+            )
+        )
+
+        pipeline = Pipeline([
+            transport.input(),
+            context_aggregator.user(),
+            audiobuffer,
+            llm,
+            tts,
+            transport.output(),
+            transcript.user(),
+            transcript.assistant(),
+            context_aggregator.assistant(),
+        ])
+    
+    else:
+        logger.info(f"Pipeline with GEMINI used")
+        pipeline = Pipeline([
+            transport.input(),
+            context_aggregator.user(),
+            audiobuffer,
+            llm,
+            transport.output(),
+            transcript.user(),
+            transcript.assistant(),
+            context_aggregator.assistant(),
+        ])
+
 
     task = PipelineTask(pipeline, params=PipelineParams(
         audio_in_sample_rate=16000,
@@ -441,19 +515,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
     async def on_audio_generated(frame):
         await transport.output().queue_frame(frame)
 
-    speech_buffer = []
-    last_speech_time = None
-
-    # VAD & noise parameters
-    SPEECH_WINDOW_SIZE = 5          # Frames to average
-    SPEECH_CONFIDENCE_THRESHOLD = 0.85
-    MIN_SPEECH_DURATION_SEC = 0.6   # Minimum speech to commit
-    MAX_SHORT_PAUSE_SEC = 0.3       # Max pause to continue speech buffer
-    BACKGROUND_RMS = 0.03           # Estimated noise floor
-    NOISE_RMS_THRESHOLD = max(BACKGROUND_RMS * 3, 0.05)
-
-    FADE_MS = 50
-    SAMPLE_RATE = AUDIO_CONFIG.get("sample_rate")
+    
 
     def apply_fade(audio: np.ndarray, fade_ms=FADE_MS, sample_rate=SAMPLE_RATE):
         fade_samples = int(sample_rate * fade_ms / 1000)
@@ -463,7 +525,7 @@ async def run_bot(websocket_client, voice, stream_sid, welcome_msg, system_instr
         audio[-fade_samples:] *= fade_out
         return audio
 
-    speech_confidence_window = []
+    
 
     @audiobuffer.event_handler("on_audio_data")
     async def on_audio_data(buffer, audio, sample_rate, num_channels):

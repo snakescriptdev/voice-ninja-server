@@ -1,15 +1,23 @@
-from fastapi import APIRouter,Request
+from fastapi import APIRouter,Request,UploadFile, Form, Depends
 from fastapi.templating import Jinja2Templates
 from app.core import VoiceSettings
 from app.core.config import DEFAULT_VARS,NOISE_SETTINGS_DESCRIPTIONS
-from app.utils.helper import Paginator, check_session_expiry_redirect
-from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse
-from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel
+from app.utils.helper import Paginator, check_session_expiry_redirect,get_logged_in_user
+from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse,JSONResponse
+from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel,VoiceModel
 from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
-import os
+import os, shutil
 from dotenv import load_dotenv
+from fastapi import Query
 
+from sqlalchemy.exc import SQLAlchemyError
+from app.routers.schemas.voice_schemas import (
+    validate_create_voice_request,
+    validate_edit_voice,
+    validate_delete_voice,
+)
+from app.services.elevenlabs_utils import ElevenLabsUtils
 load_dotenv()
 router = APIRouter()
 
@@ -200,11 +208,12 @@ async def update_agent(request: Request):
     custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
     daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id)
     overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id)
+    voices = VoiceModel.get_allowed_voices(user_id=user_id)
     return templates.TemplateResponse(
         "Web/update_agent.html",
         {
             "request": request,
-            "voices": VoiceSettings.ALLOWED_VOICES,
+            "voices": voices,
             "agent": agent,
             "knowledge_bases": knowledge_bases,
             "agent_knowledge_ids": agent_knowledge_ids,
@@ -1166,3 +1175,159 @@ async def home(request: Request):
         "Web/home.html",
         {"request": request, "host": os.getenv("HOST")}
     )
+
+@router.get("/custom-voice-dashboard", name="custom_voice_dashboard")
+@check_session_expiry_redirect
+async def dashboard(request: Request, page: int = 1, search: str = None):
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return RedirectResponse(url="/login")
+
+    voices = VoiceModel.get_all_by_user(user.get("user_id"))
+
+    if search:
+        voices = [v for v in voices if search.lower() in v.voice_name.lower()]
+
+    items_per_page = 10
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    paginator = Paginator(voices, page, items_per_page, start, end)
+
+    return templates.TemplateResponse(
+        "Web/custom_voice_dashboard.html",
+        {
+            "request": request,
+            "page_obj": paginator,
+            "user": user,
+            "host": os.getenv("HOST")
+        }
+    )
+
+@router.post("/api/create_voice")
+async def create_voice(request: Request, voice_name: str = Form(...), audio_file: UploadFile | None = None):
+    user = get_logged_in_user(request)
+    if not user:
+        return JSONResponse({"status": False, "message": "Login required"}, status_code=401)
+
+    try:
+        payload, error = validate_create_voice_request(voice_name, audio_file)
+        if error:
+            return error
+
+        # check if same voice exists for this user
+        exists = VoiceModel.get_by_name_and_user(payload.voice_name, user["user_id"])
+        if exists:
+            return JSONResponse({"status": False, "message": f"Voice name '{payload.voice_name}' already exists."})
+
+        file_path = None
+        save_dir = "static/uploads/custom_voices"
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, audio_file.filename)
+        with open(save_path, "wb") as f:
+            shutil.copyfileobj(audio_file.file, f)
+        file_path = save_path
+
+        elevenlabs_obj = ElevenLabsUtils()
+        response = elevenlabs_obj.create_cloned_voice(file_path=file_path, name=payload.voice_name)
+        if response.status:
+            elevenlabs_voice_id = response.data.get("voice_id")
+        else:
+            return JSONResponse({"status": False,"error":f"{str(response.error_message)}","message": "Error in creating voice at elevenlabs."})
+
+        voice = VoiceModel.create(
+            voice_name=payload.voice_name,
+            user_id=user["user_id"],
+            audio_file=file_path,
+            is_custom_voice=True,
+            elevenlabs_voice_id = elevenlabs_voice_id
+        )
+        return JSONResponse({"status": True, "message": f"Voice '{payload.voice_name}' created successfully."})
+    except SQLAlchemyError:
+        return JSONResponse({"status": False, "message": "Database error occurred."})
+    except Exception as e:
+        return JSONResponse({"status": False,"message":"Some Error Occurred","error": str(e)})
+
+
+@router.post("/api/edit_voice")
+async def edit_voice(request: Request, payload: dict):
+    user = get_logged_in_user(request)
+    if not user:
+        return JSONResponse(
+            {"status": False, "message": "Login required"},
+            status_code=401,
+        )
+
+    validation_error = validate_edit_voice(payload)
+    if validation_error:
+        return validation_error
+
+    try:
+        voice = VoiceModel.get_by_id(payload["voice_id"])
+        if not voice:
+            return JSONResponse({"status": False, "message": "Voice not found."}, status_code=404)
+
+        if voice.user_id != user["user_id"]:
+            return JSONResponse({"status": False, "message": "Unauthorized."}, status_code=403)
+
+        exists = VoiceModel.get_by_name_and_user(payload["voice_name"], user["user_id"])
+        if exists and exists.id != voice.id:
+            return JSONResponse({"status": False, "message": "Voice name already exists."}, status_code=400)
+
+        elevenlabs_obj = ElevenLabsUtils()
+        voice_id = voice.elevenlabs_voice_id
+        if not voice_id:
+            return JSONResponse({"status": True, "message": f"Voice not found on elevenlabs. Please create new one."})
+
+        new_voice_response = elevenlabs_obj.edit_voice_name(voice_id=voice.elevenlabs_voice_id, new_name=payload.get("voice_name"))
+        if not new_voice_response.status:
+            return JSONResponse({"status": False, "message": f"Error in updating voice on elevenlabs '{new_voice_response.error_message}'."})
+        
+        updated_voice = VoiceModel.update(payload["voice_id"], voice_name=payload["voice_name"])
+        return JSONResponse({"status": True, "message": f"Voice name updated to '{payload['voice_name']}'."})
+
+    except Exception as e:
+        return JSONResponse(
+            {"status": False, "message": "Some Error Occurred", "error": str(e)},
+            status_code=500,
+        )
+
+
+@router.delete("/api/delete_voice")
+async def delete_voice(request:Request, voice_id: int = Query(...)):
+    user = get_logged_in_user(request)
+    if not user:
+        return JSONResponse(
+            {"status": False, "message": "Login required"},
+            status_code=401,
+        )
+
+    validation_error = validate_delete_voice(voice_id)
+    if validation_error:
+        return validation_error
+
+    try:
+        voice = VoiceModel.get_by_id(voice_id)
+        if not voice:
+            return JSONResponse({"status": False, "message": "Voice not found."}, status_code=404)
+
+        if voice.user_id != user["user_id"]:
+            return JSONResponse({"status": False, "message": "Unauthorized."}, status_code=403)
+
+        if voice.audio_file and os.path.exists(voice.audio_file):
+            os.remove(voice.audio_file)
+
+        voice_id_to_delete = voice.elevenlabs_voice_id
+        if voice_id_to_delete:
+            elevenlabs_obj = ElevenLabsUtils()
+            response = elevenlabs_obj.delete_voice(voice_id=voice_id_to_delete)
+            if not response.status:
+                return JSONResponse({"status": False,"error":f"{str(response.error_message)}","message": "Error in deleting voice at elevenlabs."})
+
+        VoiceModel.delete(voice_id)
+        return JSONResponse({"status": True, "message": f"Voice '{voice.voice_name}' deleted successfully."})
+
+    except Exception as e:
+        return JSONResponse(
+            {"status": False, "message": "Some Error Occurred", "error": str(e)},
+            status_code=500,
+        )
