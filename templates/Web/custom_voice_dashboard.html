@@ -1,0 +1,195 @@
+{% extends 'Web/base.html' %}
+
+{% block title %}
+<title>Voices Dashboard</title>
+{% endblock %}
+
+{% block content %}
+
+<body>
+
+<div class="wrapper">
+    <!-- Sidebar -->
+    {% include 'Web/sidebar.html' %}
+
+    <!-- Page Content -->
+    <div id="content" class="page_content position-relative">
+        <div class="agent_page_header d-flex align-items-center justify-content-between">
+            <div class="d-flex align-items-center gap-2">
+                <button type="button" class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
+                    <img src="{{ host }}/static/Web/images/hamburger-icon.svg" class="img-fluid">
+                </button>
+                <div class="d-flex align-items-center gap-2">
+                    <img src="{{ host }}/static/Web/images/voice-icon.svg" class="img-fluid">
+                    <h6 class="mb-0">Voices</h6>
+                </div>
+            </div>
+            <div>
+                <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createVoiceModal">Add Voice</button>
+            </div>
+        </div>
+
+        <div class="table_filters pt-0 d-flex justify-content-between align-items-center gap-2 mt-3">
+            <div class="table_search_box position-relative">
+                <input type="search" class="form-control" placeholder="Search" id="voice-search">
+                <div class="search_icon">
+                    <img src="{{ host }}/static/Web/images/search-icon.svg" class="img-fluid">
+                </div>
+            </div>
+        </div>
+
+        <div class="agent_table_outer mt-3">
+            <div class="agent_table">
+                <div class="table-responsive">
+                    <table class="table mb-0" id="voices-table">
+                        <thead>
+                            <tr>
+                                <th>Voice Name</th>
+                                <th>Type</th>
+                                <th>ElevenLabs ID</th>
+                                <th>Audio</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for voice in page_obj.items %}
+                            <tr>
+                                <td>{{ voice.voice_name }}</td>
+                                <td>{{ 'Custom' if voice.is_custom_voice else 'Default' }}</td>
+                                <td>{{ voice.elevenlabs_voice_id or '-' }}</td>
+                                <td>
+                                    {% if voice.audio_file %}
+                                    <audio controls>
+                                        <source src="{{ host }}/{{ voice.audio_file }}" type="audio/mpeg">
+                                        Your browser does not support the audio element.
+                                    </audio>
+                                    {% else %}
+                                    -
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <button class="btn btn-sm btn-info edit-voice-btn" 
+                                            data-voice-id="{{ voice.id }}" 
+                                            data-voice-name="{{ voice.voice_name }}">
+                                        Edit
+                                    </button>
+                                    <button class="btn btn-sm btn-danger delete-voice-btn" 
+                                            data-voice-id="{{ voice.id }}" 
+                                            data-voice-name="{{ voice.voice_name }}">
+                                        Delete
+                                    </button>
+                                </td>
+                            </tr>
+                            {% else %}
+                            <tr>
+                                <td colspan="5" class="text-center">No voices found</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="table_pagination">
+                    <nav aria-label="Page navigation">
+                        <ul class="pagination justify-content-end gap-2 mb-0">
+                            {%- set query_param = request.query_params.get('search', '') -%}
+                
+                            {%- if page_obj.has_previous -%}
+                            <li class="page-item">
+                                <a class="page-link pagination_arrow" href="{{ host }}/custom-voice-dashboard?page={{ page_obj.previous_page_number }}{% if query_param %}&search={{ query_param }}{% endif %}" tabindex="-1" aria-disabled="false">&lt;</a>
+                            </li>
+                            {%- endif -%}
+                            
+                            {%- for page in page_obj.page_range -%}
+                            <li class="page-item {{ 'active' if page == page_obj.page else '' }}">
+                                <a class="page-link" href="{{ host }}/custom-voice-dashboard?page={{ page }}{% if query_param %}&search={{ query_param }}{% endif %}" {% if page == page_obj.page %}aria-current="page"{% endif %}>{{ page }}</a>
+                            </li>
+                            {%- endfor -%}
+                            
+                            {%- if page_obj.has_next -%}
+                            <li class="page-item">
+                                <a class="page-link pagination_arrow" href="{{ host }}/custom-voice-dashboard?page={{ page_obj.next_page_number }}{% if query_param %}&search={{ query_param }}{% endif %}">&gt;</a>
+                            </li>
+                            {%- endif -%}
+                        </ul>
+                    </nav>
+                </div>
+                
+                
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Create Voice Modal -->
+<div class="modal fade" id="createVoiceModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Add Voice</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center">
+                <div id="recording-section">
+                    <button id="start-record-btn" class="btn btn-primary mb-3">Start Recording</button>
+                    <div id="recording-indicator" class="mb-3" style="display:none;">
+                        <div class="recording-bubble"></div>
+                        <p>Recording... Speak now!</p>
+                    </div>
+                    <audio id="voice-preview" controls style="display:none;"></audio>
+                    <div class="mt-3">
+                        <button id="re-record-btn" class="btn btn-warning" style="display:none;">Re-record</button>
+                    </div>
+                </div>
+
+                <form id="create-voice-form" style="display:none;">
+                    <div class="mb-3">
+                        <label for="voice-name" class="form-label">Voice Name</label>
+                        <input type="text" class="form-control" id="voice-name" required>
+                    </div>
+                    <button type="submit" class="btn btn-success">Add Voice</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Edit Voice Modal -->
+<div class="modal fade" id="editVoiceModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Edit Voice Name</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <form id="edit-voice-form">
+                    <input type="hidden" id="edit-voice-id">
+                    <div class="mb-3">
+                        <label for="edit-voice-name" class="form-label">Voice Name</label>
+                        <input type="text" class="form-control" id="edit-voice-name" required>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Update Name</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Modal -->
+<div class="modal fade" id="deleteVoiceModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-body text-center">
+                <h5>Are you sure?</h5>
+                <p>You want to delete <strong id="delete-voice-name"></strong>?</p>
+                <button class="btn btn-danger" id="confirm-delete-voice">Delete</button>
+                <button class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/voiceDashboard.js"></script>
+
+{% endblock %}
