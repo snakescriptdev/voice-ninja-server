@@ -1269,6 +1269,9 @@ async def edit_voice(request: Request, payload: dict):
         if voice.user_id != user["user_id"]:
             return JSONResponse({"status": False, "message": "Unauthorized."}, status_code=403)
 
+        if payload["voice_name"] == voice.voice_name:
+            return JSONResponse({"status": False, "message": "No voice name change detected."}, status_code=400)
+
         exists = VoiceModel.get_by_name_and_user(payload["voice_name"], user["user_id"])
         if exists and exists.id != voice.id:
             return JSONResponse({"status": False, "message": "Voice name already exists."}, status_code=400)
