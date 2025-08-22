@@ -17,16 +17,7 @@ logger = logging.getLogger(__name__)
 # Database configuration with fallback
 DB_URL = os.getenv("DB_URL")
 if not DB_URL:
-    # Try to load from .env file if not already loaded
-    from dotenv import load_dotenv
-    load_dotenv()
-    DB_URL = os.getenv("DB_URL")
-
-if not DB_URL:
-    # Final fallback - use default local database
-    DB_URL = "postgresql://postgres:1234@localhost/voice_ninja"
-    print(f"Warning: Using default database URL: {DB_URL}")
-    print("To use a custom database, set the DB_URL environment variable")
+    raise Exception("DB_URL not passed")
 
 try:
     engine = create_engine(DB_URL, echo=False)
@@ -269,7 +260,7 @@ class AgentModel(Base):
     agent_name = Column(String, nullable=True,default="")
     selected_model = Column(String, nullable=True,default="")
     selected_voice = Column(Integer, ForeignKey("custom_voices.id"), nullable=True)
-    selected_voice_obj = relationship("VoiceModel", back_populates="agents")
+    selected_voice_obj = relationship("VoiceModel", back_populates="agents",lazy="joined" )
     phone_number = Column(String, nullable=True,default="")
     agent_prompt = Column(String, nullable=True,default="")
     selected_language = Column(String, nullable=True,default="")

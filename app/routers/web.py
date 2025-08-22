@@ -593,13 +593,7 @@ def chatbot_script(request: Request, agent_id: str):
                         webJsScript.src = "{host}/static/js/websocket.js";
                         document.head.appendChild(webJsScript);
 
-                        // Include Bot Styles
-                        const botStyle = document.createElement('link');
-                        botStyle.rel = 'stylesheet';
-                        botStyle.type = 'text/css';
-                        botStyle.href = "{host}/static/Web/css/bot_style.css";
-                        document.head.appendChild(botStyle);
-
+                        
                         webJsScript.onload = function() {{
                             if (typeof WebSocketClient === 'function') {{
                                 const client = new WebSocketClient({agent.id});
