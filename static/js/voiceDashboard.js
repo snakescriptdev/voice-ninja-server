@@ -1,4 +1,3 @@
-
 let mediaRecorder;
 let audioChunks = [];
 
@@ -7,25 +6,39 @@ const recordingIndicator = document.getElementById("recording-indicator");
 const voicePreview = document.getElementById("voice-preview");
 const reRecordBtn = document.getElementById("re-record-btn");
 const createVoiceForm = document.getElementById("create-voice-form");
-const host = ""; 
+const host = window.location.origin;
 
-document.addEventListener("DOMContentLoaded", function() {
-    const host = window.location.origin;
 
-    // Open edit modal and fill data
-    document.querySelectorAll(".edit-voice-btn").forEach(btn => {
-        btn.addEventListener("click", function() {
-            const voiceId = this.dataset.voiceId;
-            const voiceName = this.dataset.voiceName;
-            document.getElementById("edit-voice-id").value = voiceId;
-            document.getElementById("edit-voice-name").value = voiceName;
-            new bootstrap.Modal(document.getElementById("editVoiceModal")).show();
-        });
-    });
+const searchInput = document.getElementById("voice-search");
+const tableBody = document.querySelector("#voices-table tbody");
+const paginationContainer = document.querySelector(".table_pagination .pagination");
 
-    // Submit edit
-    document.getElementById("edit-voice-form").addEventListener("submit", async function(e){
+let currentPage = parseInt(new URLSearchParams(window.location.search).get("page")) || 1;
+
+
+function showOrHideLoader(show){
+    let loaderEle = document.querySelector(".loading-state");
+    if(loaderEle){
+        show? loaderEle.style.display = "flex" : loaderEle.style.display = "none";
+    }
+}
+
+function handleOpenEditVoiceModal(element){
+    const voiceId = element.dataset.voiceId;
+    const voiceName = element.dataset.voiceName;
+    document.getElementById("edit-voice-id").value = voiceId;
+    document.getElementById("edit-voice-name").value = voiceName;
+    $("#editVoiceModal").modal("show");
+}
+
+function handleCloseEditModal(){
+    $("#editVoiceModal").modal("hide");
+}
+
+async function handleEditVoice(e){
+    try{
         e.preventDefault();
+        showOrHideLoader(true);
         const voiceId = document.getElementById("edit-voice-id").value;
         const voiceName = document.getElementById("edit-voice-name").value.trim();
 
@@ -37,35 +50,51 @@ document.addEventListener("DOMContentLoaded", function() {
         const data = await resp.json();
         if(data.status){
             toastr.success(data.message);
-            setTimeout(()=> location.reload(), 1000);
+            const eleBtnEle = document.getElementById(`edit-voice-btn-${voiceId}`);
+            eleBtnEle.setAttribute("data-voice-name",voiceName);
+            const deleteBtnEle = document.getElementById(`delete-voice-btn-${voiceId}`);
+            deleteBtnEle.setAttribute("data-voice-name",voiceName);
+            document.querySelector(`#voice-row-${voiceId} [data-field="voiceName"]`).textContent = voiceName;
+            $("#editVoiceModal").modal("hide");
         } else toastr.error(data.message);
-    });
+    }
+    catch(error){
+        console.error({error});
+        toastr.error("Some Error in editing voice name. Please contact support team.")
+    }
+    finally{
+        showOrHideLoader(false);
+    }
+}
 
-    // Delete voice
-    document.querySelectorAll(".delete-voice-btn").forEach(btn => {
-        btn.addEventListener("click", function(){
-            const voiceId = this.dataset.voiceId;
-            const voiceName = this.dataset.voiceName;
-            document.getElementById("delete-voice-name").innerText = voiceName;
-            const modal = new bootstrap.Modal(document.getElementById("deleteVoiceModal"));
-            modal.show();
+function handleDeleteVoice(element){
+    try{
+        showOrHideLoader(true);
+        const voiceId = element.dataset.voiceId;
+        const voiceName = element.dataset.voiceName;
+        document.getElementById("delete-voice-name").innerText = voiceName;
+        const modal = new bootstrap.Modal(document.getElementById("deleteVoiceModal"));
+        modal.show();
 
-            document.getElementById("confirm-delete-voice").onclick = async function(){
-                const resp = await fetch(`${host}/api/delete_voice/?voice_id=${voiceId}`, {method: "DELETE"});
-                const data = await resp.json();
-                if(data.status){
-                    toastr.success(data.message);
-                    modal.hide();
-                    setTimeout(()=> location.reload(), 1000);
-                } else toastr.error(data.message);
-            };
-        });
-    });
+        document.getElementById("confirm-delete-voice").onclick = async function(){
+            const resp = await fetch(`${host}/api/delete_voice/?voice_id=${voiceId}`, {method: "DELETE"});
+            const data = await resp.json();
+            if(data.status){
+                toastr.success(data.message);
+                modal.hide();
+                setTimeout(()=> location.reload(), 1000);
+            } else toastr.error(data.message);
+        };
+    }
+    catch(error){
+        console.error({error});
+        toastr.error("Some Error in deleting voice. Please contact support team.")
+    }
+    finally{
+        showOrHideLoader(false);
+    }
+}
 
-});
-
-
-// Start Recording
 startBtn.addEventListener("click", async () => {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -79,14 +108,12 @@ startBtn.addEventListener("click", async () => {
         startBtn.style.display = "none";
         recordingIndicator.style.display = "block";
 
-        // Stop automatically after 10 seconds
         setTimeout(() => mediaRecorder.stop(), 10000);
     } catch (err) {
         toastr.error("Microphone access denied or error: " + err.message);
     }
 });
 
-// Handle Recording Stop
 function handleRecordingStop() {
     recordingIndicator.style.display = "none";
 
@@ -98,20 +125,20 @@ function handleRecordingStop() {
     reRecordBtn.style.display = "inline-block";
     createVoiceForm.style.display = "block";
 
-    // Save audioBlob to formData on submission
     createVoiceForm.onsubmit = async (e) => {
-        e.preventDefault();
-        const voiceName = document.getElementById("voice-name").value.trim();
-        if (!voiceName) {
-            toastr.error("Please enter a voice name.");
-            return;
-        }
-
-        const formData = new FormData();
-        formData.append("voice_name", voiceName);
-        formData.append("audio_file", audioBlob, "voice.webm");
-
         try {
+            showOrHideLoader(true);
+            e.preventDefault();
+            const voiceName = document.getElementById("voice-name").value.trim();
+            if (!voiceName) {
+                toastr.error("Please enter a voice name.");
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append("voice_name", voiceName);
+            formData.append("audio_file", audioBlob, "voice.webm");
+        
             const resp = await fetch(`${host}/api/create_voice`, { method: "POST", body: formData });
             const data = await resp.json();
             if (data.status) {
@@ -121,13 +148,16 @@ function handleRecordingStop() {
             } else {
                 toastr.error(data.message);
             }
-        } catch (err) {
+        } 
+        catch (err) {
             toastr.error("Error uploading voice: " + err.message);
+        }
+        finally{
+            showOrHideLoader(false);
         }
     };
 }
 
-// Re-record
 reRecordBtn.addEventListener("click", () => {
     voicePreview.style.display = "none";
     reRecordBtn.style.display = "none";
@@ -136,16 +166,10 @@ reRecordBtn.addEventListener("click", () => {
 });
 
 
-document.addEventListener("DOMContentLoaded", function() {
-    const searchInput = document.getElementById("voice-search");
-    const tableBody = document.querySelector("#voices-table tbody");
-    const paginationContainer = document.querySelector(".table_pagination .pagination");
-
-    let currentPage = parseInt(new URLSearchParams(window.location.search).get("page")) || 1;
-
-    async function fetchVoices(query = "", page = 1) {
+async function fetchVoices(query = "", page = 1) {
+    try{
+        showOrHideLoader(true);
         const host = window.location.origin;
-
         // Build URL with query params
         const url = new URL(`${host}/custom-voice-dashboard`);
         url.searchParams.append("page", page);
@@ -164,27 +188,41 @@ document.addEventListener("DOMContentLoaded", function() {
         if(newTbody && newPagination){
             tableBody.innerHTML = newTbody.innerHTML;
             paginationContainer.innerHTML = newPagination.innerHTML;
-
-            attachEventListeners(); // Reattach edit/delete events
         }
     }
+    catch(error){
+        console.error({error});
+    }
+    finally{
+        showOrHideLoader(false);
+    }
+}
 
-    searchInput.addEventListener("input", function(e) {
-        const query = e.target.value.trim();
-        currentPage = 1; // reset page
-        fetchVoices(query, currentPage);
-    });
-
-    // Optional: handle pagination clicks
-    paginationContainer.addEventListener("click", function(e){
-        e.preventDefault();
-        const target = e.target.closest("a.page-link");
-        if(!target) return;
-
-        const urlParams = new URLSearchParams(target.getAttribute("href").split("?")[1]);
-        const page = urlParams.get("page") || 1;
-        const query = searchInput.value.trim();
-        currentPage = parseInt(page);
-        fetchVoices(query, currentPage);
-    });
+searchInput.addEventListener("input", function(e) {
+    const query = e.target.value.trim();
+    currentPage = 1;
+    fetchVoices(query, currentPage);
 });
+
+paginationContainer.addEventListener("click", function(e){
+    e.preventDefault();
+    const target = e.target.closest("a.page-link");
+    if(!target) return;
+
+    const urlParams = new URLSearchParams(target.getAttribute("href").split("?")[1]);
+    const page = urlParams.get("page") || 1;
+    const query = searchInput.value.trim();
+    currentPage = parseInt(page);
+    fetchVoices(query, currentPage);
+})
+
+
+function openDeleteVoiceModal(){
+    $("#deleteVoiceModal").modal("show");
+}
+
+function handleCloseDeleteVoiceModal(){
+    $("#deleteVoiceModal").modal("hide");
+}
+
+fetchVoices(); //for initial loading
