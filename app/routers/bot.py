@@ -373,7 +373,7 @@ async def run_bot(websocket_client, **kwargs):
         #If custom voice is present, means user wants to use his custom voice which we saved in elevenlabs.
         tts = ElevenLabsTTSService(
             api_key=os.getenv("ELEVENLABS_API_KEY"),
-            voice_id=custom_voice_id, #do chnage this one.
+            voice_id=custom_voice_id, 
             model="eleven_flash_v2_5",  # Fast, high-quality model
             params=ElevenLabsTTSService.InputParams(
                 language=Language.EN,
