@@ -117,13 +117,13 @@
                                     <td>
                                         <div class="d-flex align-items-center justify-content-center gap-1 max-content">
                                             <span>
-                                                {% if agent.selected_voice %}
-                                                <img src="{{ host }}/static/Web/images/voice-icon.svg" class="img-fluid">
+                                                {% if agent.selected_voice_obj and agent.selected_voice_obj.voice_name %}
+                                                    <img src="{{ host }}/static/Web/images/voice-icon.svg" class="img-fluid">
                                                 {% endif %}
                                             </span>
-                                            {{ agent.selected_voice }}
+                                            {{ agent.selected_voice_obj.voice_name if agent.selected_voice_obj else "" }}
                                         </div>
-                                    </td>
+                                    </td>                                    
                                     <td>
                                         <div class="max-content">
                                             {% if agent.phone_number %}
