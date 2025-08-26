@@ -146,11 +146,12 @@ async def create_agent(request: Request):
     from app.databases.models import KnowledgeBaseModel
     user_id = request.session.get("user").get("user_id")
     knowledge_bases = KnowledgeBaseModel.get_all_by_user(user_id)
+    voices = VoiceModel.get_allowed_voices(user_id=user_id)
     return templates.TemplateResponse(
         "Web/create_agent.html", 
         {
             "request": request,
-            "voices": VoiceSettings.ALLOWED_VOICES,
+            "voices": voices,
             "knowledge_bases":knowledge_bases,
             "host": os.getenv("HOST")
         }

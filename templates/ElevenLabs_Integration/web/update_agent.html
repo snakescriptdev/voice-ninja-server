@@ -1,0 +1,1924 @@
+{% extends 'Web/base.html' %}
+
+{% block content %}
+    <div class="wrapper">
+        {% include 'Web/sidebar.html' %}
+
+        <!-- Page Content  -->
+        <div id="content" class="page_content position-relative">
+            <button type="button"
+                        class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0 position-absolute ms-2">
+                        <img src="{{ host }}/static/Web/images/hamburger-icon.svg" class="img-fluid">
+                    </button>
+            <div class="agent_data_outer d-flex align-items-center gap-3 justify-content-between">
+                <div class="d-flex align-items-center gap-3 w-100">
+                    <a href="{{ host }}/dashboard" class="page_back_arrow d-flex align-items-center justify-content-center"><img
+                            src="{{ host }}/static/Web/images/left-arrow.svg" class="img-fluid"></a>
+                    <div class="">
+                        <h3 id="agent-name" class="mb-0 d-flex gap-1">{% if agent %}{{ agent.agent_name }}{% else %}Agent{% endif %}
+                            <span onclick="editHeading()" class="edit-heading-icon">
+                                <img src="{{ host }}/static/Web/images/pencil-icon.svg" style="cursor: pointer;">
+                            </span>
+                        </h3>
+                    </div>
+                </div>
+                {% if not agent %}
+                <div>
+                    <button type="button" class="help-ai-btn" data-bs-toggle="modal" data-bs-target="#helpAiModal">
+                       <span><img src="{{ host }}/static/Web/images/btn-star-icon.svg" class="img-fluid"> Help from AI</span>
+                    </button>
+                </div>
+                {% endif %}
+            </div>
+            <div class="agent_type_box">
+                <div class="agent_type_dropdown d-flex align-items-center justify-content-between">
+                    <div class="d-flex align-items-center gap-2">
+                        <div class="agent_select_box position-relative">
+                            <select class="form-select" id="selected-model">
+                                <option {% if agent and agent.selected_model == "Gemini" %}selected{% endif %}>Gemini</option>
+                            </select>
+                            <div class="agent_type_select_icon">
+                                <img src="{{ host }}/static/Web/images/ai-icon.svg" class="img-fluid">
+                            </div>
+                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer" onclick="openDialog()">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
+                            </div>
+                        </div>
+                        <div class="agent_select_box position-relative">
+                            <select class="form-select" id="selected-voice" onchange="updateAgentVoice(this.value)">
+                                {% for voice in voices %}
+                                    <option value="{{ voice.id }}" 
+                                        {% if agent and agent.selected_voice == voice.id %}selected{% endif %}>
+                                        {{ voice.voice_name }}
+                                    </option>
+                                {% endfor %}
+                            </select>                            
+                            <script>
+                            function updateAgentVoice(voice) {
+                                const currentUrl = new URL(window.location.href);
+                                const agentId = currentUrl.searchParams.get("agent_id");
+                                
+                                fetch( `${host}/api/update-agent`, {
+                                    method: "POST", 
+                                    headers: {
+                                        "Content-Type": "application/json",
+                                        "X-CSRFToken": getCSRFToken()
+                                    },
+                                    body: JSON.stringify({
+                                        agent_id: agentId,
+                                        selected_voice: voice
+                                    })
+                                })
+                                .then(response => response.json())
+                                .then(data => {
+                                    if(data.status === "success") {
+                                        toastr.success("Voice updated successfully");
+                                    } else {
+                                        toastr.error("Failed to update voice");
+                                    }
+                                })
+                                .catch(error => {
+                                    console.error("Error:", error);
+                                    toastr.error("Something went wrong!");
+                                });
+                            }
+                            </script>
+                            <div class="agent_type_select_icon">
+                                <img src="{{ host }}/static/Web/images/jack-img.svg" class="img-fluid">
+                            </div>
+                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
+                            </div>
+                        </div>
+                        <div class="agent_select_box position-relative">
+                            <select class="form-select" id = "selected-language">
+                                <option selected>English</option>
+                            </select>
+                            <div class="agent_type_select_icon">
+                                <img src="{{ host }}/static/Web/images/lang-icon.svg" class="img-fluid">
+                            </div>
+                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
+                            </div>
+                        </div>
+                        <div class="agent_select_box position-relative">
+                            <select name="knowledge_base" id="selected-knowledge-base" class="form-select" onchange="updateKnowledgeBase(this.value)">
+                                    <option value="" disabled {% if not selected_knowledge %}selected{% endif %}>
+                                        Select Knowledge Base
+                                    </option>
+                                    {% for knowledge_base in knowledge_bases %}
+                                        <option value="{{ knowledge_base.id }}"
+                                            {% if selected_knowledge and selected_knowledge.id == knowledge_base.id %}selected{% endif %}>
+                                            {{ knowledge_base.knowledge_base_name }}
+                                        </option>
+                                    {% endfor %}
+                            </select>
+                            <script>
+                            function updateKnowledgeBase(knowledgeBaseId) {
+                                const currentUrl = new URL(window.location.href);
+                                const agentId = currentUrl.searchParams.get("agent_id");
+                                
+                                fetch(`${host}/api/attach-knowledge-base`, {
+                                    method: "POST",
+                                    headers: {
+                                        "Content-Type": "application/json",
+                                        "X-CSRFToken": getCSRFToken()
+                                    },
+                                    body: JSON.stringify({
+                                        agent_id: agentId,
+                                        knowledge_base_id: knowledgeBaseId
+                                    })
+                                })
+                                .then(response => response.json())
+                                .then(data => {
+                                    if(data.status === "success") {
+                                        toastr.success("Knowledge base updated successfully");
+                                    } else {
+                                        toastr.error("Failed to update knowledge base");
+                                    }
+                                })
+                                .catch(error => {
+                                    console.error("Error:", error);
+                                    toastr.error("Something went wrong!");
+                                });
+                            }
+                            </script>
+
+                            <div class="agent_type_select_icon">
+                                <img src="{{ host }}/static/Web/images/jack-img.svg" class="img-fluid">
+                            </div>
+                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="position-relative">
+                        <button class="variable-btn" onclick="toggleNoiseVariablesModal()" style="width:37px; height:37px;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" class="bi bi-volume-down-fill" viewBox="0 0 16 16">
+                                <path d="M9 4a.5.5 0 0 0-.812-.39L5.825 5.5H3.5A.5.5 0 0 0 3 6v4a.5.5 0 0 0 .5.5h2.325l2.363 1.89A.5.5 0 0 0 9 12zm3.025 4a4.5 4.5 0 0 1-1.318 3.182L10 10.475A3.5 3.5 0 0 0 11.025 8 3.5 3.5 0 0 0 10 5.525l.707-.707A4.5 4.5 0 0 1 12.025 8"/>
+                              </svg>
+                        </button>  
+                        <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                            <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
+                        </div>                            
+                    </div>
+
+                    {% if request.url.path == '/update_agent' %}                    
+                    <div class="agent_select_box position-relative d-flex align-items-center gap-2">
+                        <div class="functions_dropdown">
+                            <div class="nav-item dropdown">
+                                <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown" data-bs-auto-close="outside">Functions</a>
+                                <ul class="dropdown-menu dropdown-menu-end shadow mt-2 dropbottom">
+                                    <div id="function-list">
+                                    {% for function in custom_functions %}
+                                    <li class="dropdown-item gap-3 d-flex align-items-center justify-content-between mb-2" id="function-{{ function.id }}">
+                                        <div class="functionNameDivBlock">{{ function.function_name }}</div>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <button class="edit-function-btn bg-transparent border-0 p-0" onclick="editFunction(`{{ function.id }}`)"><img src="{{ host }}/static/Web/images/edit-icon.svg" class="img-fluid"></button>   
+                                            <button class="delete-function-btn bg-transparent border-0 p-0" onclick="deleteFunction(`{{ function.id }}`)"><img src="{{ host }}/static/Web/images/black-dlt-icon.svg" class="img-fluid"></button>
+                                        </div>
+                                    </li>
+                                    {% endfor %}
+                                    </div>
+                                    <li class="">
+                                        <a href="#" class="dropdown-item dropdown-toggle text-start" data-bs-toggle="dropdown">+ Add</a>
+                                        <ul class="dropdown-menu shadow mt-2">
+                                            <!-- <li class="mb-2">
+                                                <a class="dropdown-item d-flex align-items-center gap-2" href=""><span><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="currentColor" class="bi bi-telephone-x" viewBox="0 0 16 16">
+                                                <path d="M3.654 1.328a.678.678 0 0 0-1.015-.063L1.605 2.3c-.483.484-.661 1.169-.45 1.77a17.6 17.6 0 0 0 4.168 6.608 17.6 17.6 0 0 0 6.608 4.168c.601.211 1.286.033 1.77-.45l1.034-1.034a.678.678 0 0 0-.063-1.015l-2.307-1.794a.68.68 0 0 0-.58-.122l-2.19.547a1.75 1.75 0 0 1-1.657-.459L5.482 8.062a1.75 1.75 0 0 1-.46-1.657l.548-2.19a.68.68 0 0 0-.122-.58zM1.884.511a1.745 1.745 0 0 1 2.612.163L6.29 2.98c.329.423.445.974.315 1.494l-.547 2.19a.68.68 0 0 0 .178.643l2.457 2.457a.68.68 0 0 0 .644.178l2.189-.547a1.75 1.75 0 0 1 1.494.315l2.306 1.794c.829.645.905 1.87.163 2.611l-1.034 1.034c-.74.74-1.846 1.065-2.877.702a18.6 18.6 0 0 1-7.01-4.42 18.6 18.6 0 0 1-4.42-7.009c-.362-1.03-.037-2.137.703-2.877z"/>
+                                                <path fill-rule="evenodd" d="M11.146 1.646a.5.5 0 0 1 .708 0L13 2.793l1.146-1.147a.5.5 0 0 1 .708.708L13.707 3.5l1.147 1.146a.5.5 0 0 1-.708.708L13 4.207l-1.146 1.147a.5.5 0 0 1-.708-.708L12.293 3.5l-1.147-1.146a.5.5 0 0 1 0-.708"/>
+                                                </svg></span> End Call</a>
+                                            </li> -->
+                                            <li>
+                                                <a class="dropdown-item d-flex align-items-center gap-2" href="" data-bs-toggle="modal" data-bs-target="#customFuntionModal"> 
+                                                <span><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4.33337 14.6667V10" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M4.33337 3.33398V1.33398" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M11.6666 14.666V12.666" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M11.6666 6.00065V1.33398" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.33337 4.66732V8.66732C6.33337 9.40065 6.00004 10.0007 5.00004 10.0007H3.66671C2.66671 10.0007 2.33337 9.40065 2.33337 8.66732V4.66732C2.33337 3.93398 2.66671 3.33398 3.66671 3.33398H5.00004C6.00004 3.33398 6.33337 3.93398 6.33337 4.66732Z" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M13.6666 7.33333V11.3333C13.6666 12.0667 13.3333 12.6667 12.3333 12.6667H11C9.99996 12.6667 9.66663 12.0667 9.66663 11.3333V7.33333C9.66663 6.6 9.99996 6 11 6H12.3333C13.3333 6 13.6666 6.6 13.6666 7.33333Z" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+                                                </span>
+                                                Custom Function</a>
+                                            </li>
+                                        </ul>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="position-relative">
+                            <button class="variable-btn" onclick="toggleVariableModal()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-braces" viewBox="0 0 16 16">
+                                    <path d="M2.114 8.063V7.9c1.005-.102 1.497-.615 1.497-1.6V4.503c0-1.094.39-1.538 1.354-1.538h.273V2h-.376C3.25 2 2.49 2.759 2.49 4.352v1.524c0 1.094-.376 1.456-1.49 1.456v1.299c1.114 0 1.49.362 1.49 1.456v1.524c0 1.593.759 2.352 2.372 2.352h.376v-.964h-.273c-.964 0-1.354-.444-1.354-1.538V9.663c0-.984-.492-1.497-1.497-1.6M13.886 7.9v.163c-1.005.103-1.497.616-1.497 1.6v1.798c0 1.094-.39 1.538-1.354 1.538h-.273v.964h.376c1.613 0 2.372-.759 2.372-2.352v-1.524c0-1.094.376-1.456 1.49-1.456V7.332c-1.114 0-1.49-.362-1.49-1.456V4.352C13.51 2.759 12.75 2 11.138 2h-.376v.964h.273c.964 0 1.354.444 1.354 1.538V6.3c0 .984.492 1.497 1.497 1.6"/>
+                                </svg>
+                            </button>
+                            <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
+                                <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
+                            </div>
+                            <div class="variable-modal" id="variable-modal" style="display: none;">
+                                <div class="variable-modal-content">
+                                    <h6 class="border-bottom pb-2">Dynamic Variables</h6>
+                                    <div>
+                                        <small class="text-muted">Set dynamic variables for dashboard audio and llm tests</small>
+                                        <div class="mt-3 border-bottom pb-2 variable-modal-content-item-outer">
+                                            <div class="variable-modal-content-item mb-2">
+                                                <h5 class="mb-0">Variable Name</h5>
+                                                <h5 class="mb-0">Test Value</h5>
+                                            </div>
+                                                <div id="dynamic-variables">
+                                                    {% for key, value in dynamic_variables.items() %}
+                                                        <div class="variable-modal-content-item mb-2">
+                                                            <input type="text" class="form-control" value="{{ key }}">
+                                                            <input type="text" class="form-control" value="{{ value }}">
+                                                            <button class="dlt_btn bg-transparent border-0 p-0" onclick="removeVariable(this)">
+                                                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-12 w-12"><path d="M3 6h18"></path><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                                                            </button>   
+                                                        </div>
+                                                    {% endfor %}
+                                                </div>
+                                            <div>
+                                                <button class="add-variable-btn"  onclick="addNewVariable()">+ Add</button>
+                                            </div>
+                                        </div>
+                                        <div class="variable-modal-footer d-flex align-items-center gap-2 justify-content-end pt-2">
+                                            <button class="cancel-btn"  onclick="toggleVariableModal()" >Cancel</button>
+                                            <button class="save-btn" onclick="saveVariable()">Save</button>
+                                        </div>
+                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                        <a href="{{ url_for('call_history') }}?agent_id={{ agent.id }}">
+                            <div class="w-max-content view-call-history-btn d-flex align-items-center gap-2" id="create-agent-btn">
+                                <img src="{{ host }}/static/Web/images/call-history.svg" class="img-fluid">
+                            </div>
+                        </a>
+                        <div class="position-relative">
+                            <div class="w-max-content view-call-history-btn d-flex align-items-center gap-2" id="token-settings-btn" onclick="toggleTokenModal()">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="currentColor" class="bi bi-sliders" viewBox="0 0 16 16">
+                                    <path fill-rule="evenodd" d="M11.5 2a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M9.05 3a2.5 2.5 0 0 1 4.9 0H16v1h-2.05a2.5 2.5 0 0 1-4.9 0H0V3zM4.5 7a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3M2.05 8a2.5 2.5 0 0 1 4.9 0H16v1H6.95a2.5 2.5 0 0 1-4.9 0H0V8zm9.45 4a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3m-2.45 1a2.5 2.5 0 0 1 4.9 0H16v1h-2.05a2.5 2.5 0 0 1-4.9 0H0v-1z"/>
+                                </svg>
+                            </div>
+                            <div class="variable-modal" id="token-modal" style="display: none;">
+                                <div class="variable-modal-content">
+                                    <h6 class="border-bottom pb-2">Token Settings</h6>
+                                    <div class="mt-3">
+                                        <div class="mb-3">
+                                            <label class="form-label">Overall Token Limit</label>
+                                            <input type="number" class="form-control" id="overall-token-limit" value="{{ overall_token_limit }}" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Daily Token Limit</label>
+                                            <input type="number" class="form-control" id="daily-token-limit" value="{{ daily_call_limit }}" required>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label">Per Call Token Limit</label>
+                                            <input type="number" class="form-control" id="per-call-token-limit" value="{{ per_call_token_limit }}" required>
+                                        </div>
+                                        <div class="variable-modal-footer d-flex align-items-center gap-2 justify-content-end pt-2">
+                                            <button class="cancel-btn" onclick="toggleTokenModal()">Cancel</button>
+                                            <button class="save-btn" onclick="saveTokenSettings()">Save</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="agent_type_box_inner">
+                    <div class="agent_type_textarea">
+                        <textarea class="form-control" id="agent-prompt" placeholder="Enter your prompt here....">{% if agent %}{{ agent.agent_prompt }}{% endif %}</textarea>
+                        <div class="agent_type_textarea_footer pt-1">
+                            <small style="font-size:12px;" class="text-muted">Use <span>&#123;&#123;_&#125;&#125;</span> to add variables. (Learn more)</small>
+                        </div>
+                    </div>
+                    {% if agent %}
+                    <div class="row align-items-end">
+                        <div class="col-md-8 mt-4">
+                            <label class="form-label">Your Agent Script</label>
+                            <div class="copy_link_box d-flex align-items-center justify-content-between mx-auto">
+                                <textarea class="copy_link_text" id="agent-script" disabled readonly></textarea>
+                                <script>
+                                    document.addEventListener("DOMContentLoaded", function() {
+                                        const agentId = "{{ agent.dynamic_id }}";
+                                        const origin = window.location.origin;
+                                        const scriptTag = `<script src="${origin}/chatbot-script.js/${agentId}"><\/script>`;
+                                        document.getElementById("agent-script").value = scriptTag;
+                                    })
+                                </script>
+                                <button class="copy_link_btn border-0 bg-transparent position-relative" id="copy-link-btn" onclick="copyScript()">
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-copy" viewBox="0 0 16 16">
+                                    <path fill-rule="evenodd" d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V2a1 1 0 0 0-1-1zM2 5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1v-1h1v1a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h1v1z"/>
+                                </svg>
+                                <div class="tooltip_text">Copy</div>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="col-md-2 mt-4 position-relative">
+                            <div class="d-flex align-items-center gap-2 justify-content-center">
+                                <button class="customize-bot-btn position-relative" id="customize-bot-btn" onclick="toggleCustomizeModal()">
+                                    <img src="{{ host }}/static/Web/images/icon-bot-img.png" class="img-fluid" width="30" height="30">
+                                    <div class="customize-bot-btn-tooltip">Customize Your Bot</div>
+                                </button>
+                                <a href="{{ url_for('preview_agent') }}?agent_id={{ agent.dynamic_id }}" target="_blank">
+                                    <button class="customize-bot-btn position-relative">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="#0c7fda" class="bi bi-eye-fill" viewBox="0 0 16 16">
+                                        <path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0"/>
+                                        <path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8m8 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7"/>
+                                        </svg>
+                                        <div class="customize-bot-btn-tooltip">Preview Agent</div>
+                                    </button>
+                                </a>
+                            </div>
+                            <div class="customize-bot-modal" id="customize-bot-modal" style="display: none;">
+                                <div class="recorder-controls show">
+                                    <div class="settings">
+                                        <div class="icon" onclick="toggleColorPalette()">
+                                           <i class="fa-solid fa-gear"></i>
+                                        </div>
+                                        <div id="colorPalette" class="color-palette">
+                                            <div class="color-box d-flex align-items-center gap-2 flex-wrap">
+                                                <div class="color-option" style="background: linear-gradient(45deg, #00b4d8, #0077b6);" onclick="changeTheme('#00b4d8', '#0077b6', 'rgba(0, 180, 216, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #e63946, #9d0208);" onclick="changeTheme('#e63946', '#9d0208', 'rgba(230, 57, 70, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #8338ec, #5e60ce);" onclick="changeTheme('#8338ec', '#5e60ce', 'rgba(131, 56, 236, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #06d6a0, #118ab2);" onclick="changeTheme('#06d6a0', '#118ab2', 'rgba(6, 214, 160, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #fb8500, #ffb703);" onclick="changeTheme('#fb8500', '#ffb703', 'rgba(251, 133, 0, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #ff5a5f, #c1839f);" onclick="changeTheme('#ff5a5f', '#c1839f', 'rgba(255, 90, 95, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #2ec4b6, #20a4f3);" onclick="changeTheme('#2ec4b6', '#20a4f3', 'rgba(46, 196, 182, 0.3)')"></div>
+                                                <div class="color-option" style="background: linear-gradient(45deg, #7209b7, #4361ee);" onclick="changeTheme('#7209b7', '#4361ee', 'rgba(114, 9, 183, 0.3)')"></div>
+                                            </div>
+                                            <div class="mt-3">
+                                                <h6>Choose Icons</h6>
+                                                <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                    <div class="icon-option active" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-1.gif', this)">
+                                                    <img src="{{ host }}/static/Web/images/gif-icon-1.gif" class="img-fluid">
+                                                    </div>
+                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon2.gif', this)">
+                                                    <img src="{{ host }}/static/Web/images/gif-icon2.gif" class="img-fluid">
+                                                    </div>
+                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-3.gif', this)">
+                                                    <img src="{{ host }}/static/Web/images/gif-icon-3.gif" class="img-fluid">
+                                                    </div>
+                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-4.gif', this)">
+                                                    <img src="{{ host }}/static/Web/images/gif-icon-4.gif" class="img-fluid">
+                                                    </div>
+                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-5.gif', this)">
+                                                        <img src="{{ host }}/static/Web/images/gif-icon-5.gif" class="img-fluid">
+                                                    </div>
+                                                </div>
+                                                </div>
+                                            </div>
+                                        </div> 
+                                     <h1>connect with me</h1>
+                                    <div class="status-indicator">
+                                       <img src="{{ host }}/static/Web/images/wave.gif" alt="voice_icon">
+                                    </div>
+                                    <button onclick="saveChanges()">Save Changes</button>
+                                </div>
+                            </div>
+                            <script>
+                                function toggleCustomizeModal() {
+                                    const modal = document.getElementById('customize-bot-modal');
+                                    if(modal.style.display === 'none') {
+                                        modal.style.display = 'block';
+                                    } else {
+                                        modal.style.display = 'none';
+                                    }
+                                }
+                            </script>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label">Enable Design</label>
+                            <div class="form-check form-switch d-flex align-items-center gap-2 ps-0">
+                                <label class="form-label mb-0">Off</label>
+                                <input class="form-check-input float-none ms-0" type="checkbox" role="switch" id="flexSwitchCheckChecked"  {% if agent.is_design_enabled %} checked {% endif %} onchange="toggleDesign(this.checked)">
+                                <label class="form-label mb-0">On</label>
+                            </div>
+                        </div>
+                        <script>
+                            async function toggleDesign(isEnabled) {
+                                try {
+                                    const response = await fetch("{{ host }}/api/toggle-design", {
+                                        method: 'POST',
+                                        headers: {
+                                            'Content-Type': 'application/json'
+                                        },
+                                        body: JSON.stringify({
+                                            agent_id: '{{ agent.id }}',
+                                            is_enabled: isEnabled
+                                        })
+                                    });
+                                    const data = await response.json();
+                                    if (data.status === 'success') {
+                                        toastr.success("Design toggle updated successfully");
+                                    } else {
+                                        toastr.error("Failed to update design toggle");
+                                    }
+                                } catch (error) {
+                                    toastr.error("Error updating design toggle:", error);
+                                }
+                            }
+                        </script>
+                    </div>
+                    {% endif %}
+                    <div class="wlcm_msg_box pt-4">
+                        <label class="form-label">Welcome Message</label>
+                        <div class="custom-select">
+                            <div class="select-box position-relative" id="welcome-msg">
+                                {% if agent %}{{ agent.welcome_msg }}{% else %}Hi, how are you?{% endif %}
+                            </div>
+                            <input type="text" id="welcome-message" class="form-control mt-2" placeholder="Enter custom welcome message..." style="display: none;">
+                            <div class="options">
+                                <div class="option" data-value="custom">Add Custom Message</div>
+                                <div class="option" data-value="1">Hi, I am SAGE, how can I help you?</div>
+                                <div class="option" data-value="2">Hey there, Captain! How can I help you?</div>
+                                <div class="option" data-value="3">Hi there, I am Jack Sparrow, how can I help you?</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    </div>
+                    {% if not agent %}
+                    <div class="save_btn_box mt-3 text-center">
+                        <button type="button" class="save_btn" id="save-btn">
+                            Save
+                        </button>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" tabindex="-1" aria-hidden="true" id="noise-settings-modal" style="display: none;">
+        <div class="modal-dialog modal-dialog-centered" style="max-width:650px;">
+            <div class="variable-modal-content modal-content">
+                <h6 class="border-bottom p-3">Noise Settings</h6>
+                <div class="px-3">
+                    <small class="text-muted">Set noise settings variables for audio.</small>
+                    <div class="mt-3 border-bottom pb-2 variable-modal-content-item-outer">
+                        <div class="variable-modal-content-item mb-2">
+                            <h5 class="mb-0">Variable Name</h5>
+                            <h5 class="mb-0">Assigned Value</h5>
+                            <h5 class="mb-0">Reset</h5>
+                        </div>
+                        <div id="noise-settings">
+                        <!--Populated dynamically from API response-->
+                        </div>
+                    </div>
+                    <div class="variable-modal-footer d-flex align-items-center gap-2 justify-content-end p-3">
+                        <button class="cancel-btn" onclick="closeNoiseVariableModal()">Cancel</button>
+                        <button class="save-btn" onclick="saveNoiseVariabless()">Save</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div> 
+<!--Custom Funtion Modal -->
+<div class="modal fade custom_function_modal" id="customFuntionModal" tabindex="-1" aria-labelledby="customFuntionModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h1 class="mb-0 d-flex align-items-center gap-2" id="customFuntionModalLabel">
+        <span>
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4.33337 14.6667V10" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M4.33337 3.33398V1.33398" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M11.6666 14.666V12.666" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M11.6666 6.00065V1.33398" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.33337 4.66732V8.66732C6.33337 9.40065 6.00004 10.0007 5.00004 10.0007H3.66671C2.66671 10.0007 2.33337 9.40065 2.33337 8.66732V4.66732C2.33337 3.93398 2.66671 3.33398 3.66671 3.33398H5.00004C6.00004 3.33398 6.33337 3.93398 6.33337 4.66732Z" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M13.6666 7.33333V11.3333C13.6666 12.0667 13.3333 12.6667 12.3333 12.6667H11C9.99996 12.6667 9.66663 12.0667 9.66663 11.3333V7.33333C9.66663 6.6 9.99996 6 11 6H12.3333C13.3333 6 13.6666 6.6 13.6666 7.33333Z" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+        </span>Custom Funtion</h1>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <form >
+            <div class="form_field mb-3">
+                <label for="function_name" class="form-label">Name</label>
+                <input type="text" class="form-control" id="function_name" placeholder="Enter function name">
+            </div>
+            <div class="form_field mb-3">
+                <label for="function_description" class="form-label">Description</label>
+                <textarea class="form-control" id="function_description" placeholder="Enter function description"></textarea>
+            </div>
+            <div class="form_field mb-3">
+                <label for="function_url" class="form-label">Your URL</label>
+                <input type="text" class="form-control" id="function_url" placeholder="Enter function url">
+            </div>
+            <div class="form_field mb-3">
+                <label for="" class="form-label">API Timeout (Optional)</label>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="text" class="form-control" id="function-timeout" placeholder="120000">
+                    <small class="text-muted">milliseconds</small>
+                </div>
+            </div>
+            <div class="form_field mb-3 parameters_field">
+                <label for="parameters" class="form-label mb-0">Parameters (Optional)</label>
+                <small class="text-muted">JSON schema that defines the format in which the LLM will return. Please refer to the docs.</small>
+                <textarea class="form-control my-2" id="parameters" placeholder="Enter function parameters"></textarea>
+                <div class="d-flex align-items-center gap-2">
+                    <button type="button" class="btn btn-secondary">example 1</button>
+                    <button type="button" class="btn btn-secondary">example 2</button>
+                    <button type="button" class="btn btn-secondary">example 3</button>
+                </div>
+            </div>
+            <div class="format_json_btn_box mb-3">
+                <button type="button" onclick="formatJSON()" class="w-100">Format JSON</button>
+            </div>
+        </form>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn" data-bs-dismiss="modal">Close</button>
+        <button type="button" id="save-custom-function" class="btn save_btn">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+    <!-- Modal -->
+<div class="modal fade help-ai-modal" id="helpAiModal" data-bs-backdrop="static" tabindex="-1" aria-labelledby="helpAiModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 class="d-flex align-items-center gap-3 mb-0"><span><img src="{{ url_for('static', path='/Web/images/eos-icons_ai.svg') }}" class="img-fluid"></span> Prompt Generator</h3>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" id="close-help-ai-modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body p-0">
+          <div class="help_ai_modal_slider">
+            <div class="help_ai_modal_slider_item">
+                <h4>What is the primary function of your AI agent?</h4>
+                <div>
+                    <select class="form-select" id="agent-function">
+                        <option value="Answering questions" selected>Answering questions</option>
+                        <option value="Providing information">Providing information</option>
+                        <option value="Assisting with tasks">Assisting with tasks</option>
+                        <option value="Engaging in conversations">Engaging in conversations</option>
+                    </select>
+                </div>
+            </div>
+            <div class="help_ai_modal_slider_item">
+                <h4>What tone should the AI agent use?</h4>
+                <div>
+                    <select class="form-select" id="agent-tone">
+                        <option value="Formal" selected>Formal</option>
+                        <option value="Friendly">Friendly</option>
+                        <option value="Professional">Professional</option>
+                        <option value="Neutral">Neutral</option>
+                        <option value="Humorous">Humorous</option>
+                    </select>
+                </div>
+            </div>
+            <div class="help_ai_modal_slider_item">
+                <h4>What level of detail should the responses have?</h4>
+                <div>
+                    <select class="form-select" id='level-of-detail'>
+                        <option value="Brief and concise"  selected>Brief and concise</option>
+                        <option value="Moderate detail">Moderate detail</option>
+                        <option value="In-depth and explanatory">In-depth and explanatory</option>
+                        <option value="Step-by-step guidance">Step-by-step guidance</option>
+                    </select>
+                </div>
+            </div>
+            <div class="help_ai_modal_slider_item">
+                <h4>Which industry does your AI agent serve?</h4>
+                <div>
+                    <select class="form-select" id='industry'>
+                        <option value="Retail"  selected>Retail</option>
+                        <option value="Healthcare">Healthcare</option>
+                        <option value="Finance">Finance</option>
+                        <option value="Technology">Technology</option>
+                        <option value="Education">Education</option>
+                        <option value="Customer Support">Customer Support</option>
+                        <option value="Marketing">Marketing</option>
+                    </select>
+                </div>
+            </div>
+            <div class="help_ai_modal_slider_item">
+                <h4>What would you like to call your agent? (Optional)</h4>
+                <div>
+                   <input type="text" class="form-control" placeholder="(Optional)" id='agent-name-new'>
+                </div>
+            </div>
+          </div>
+          <!-- Navigation Buttons -->
+            <div class="slider-nav d-flex align-items-center justify-content-between">
+                <button class="prev-btn align-items-center justify-content-center prev_btn" disabled><img src="{{ url_for('static', path='/Web/images/slider-prev-icon.svg') }}" class="img-fluid">Previous</button>
+                <button class="next-btn align-items-center justify-content-center"> Next <img src="{{ url_for('static', path='/Web/images/slider-next-icon.svg') }}" class="img-fluid"></button>
+                <button class="submit-btn align-items-center justify-content-center" style="display: none;" id="generate-prompt-btn">Submit</button>
+            </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <div id="dialog" style="position: absolute; width: 300px; background: #fff; border-radius: 8px; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); padding: 16px; left: 330px; top: 180px; border: 1px solid #ddd; z-index: 1000; display: none;">
+        <div>
+            <strong>LLM Temperature</strong>
+            <p style="font-size: 12px; color: #666;">Lower value yields better function call results.</p>
+            <small class="text-muted">Default: 1.0</small>
+            <div style="position: relative; width: 100%;">
+                <input id="temperatureSlider" type="range" min="0.0" max="2.0" step="0.1" value="{% if agent.temperature %}{{ agent.temperature }}{% else %}0.00{% endif %}" style="width: 100%;" >
+                <div id="sliderValue" style="position: absolute; top: -25px; left: 0%; transform: translateX(-50%); background: #0C7FDA; color: white; border-radius: 50%; width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; font-size: 12px;">0.00</div>
+            </div>
+        </div>
+        <div>
+            <strong>Max Output Tokens</strong>
+            <p style="font-size: 12px; color: #666;">The maximum number of tokens to generate in the completion.</p>
+            <small class="text-muted">Min: 100</small>
+            <small class="text-muted">Default: 4096</small>
+            <small class="text-muted">Max: 8000</small>
+            <div style="position: relative; width: 100%;">
+                <input id="maxOutputTokensSlider" type="text" class="form-control" placeholder="Enter max output tokens" value="{% if agent.max_output_tokens %}{{ agent.max_output_tokens }}{% else %}1000{% endif %}">
+            </div>
+        </div>
+        <hr style="margin-top: 10px;">
+        <div style="display: flex; justify-content: flex-end; margin-top: 10px;">
+            <button id="closeDialog" style="padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; background: #f0f0f0;" onclick="closeDialog()">Cancel</button>
+            <button style="padding: 6px 12px; border: none; border-radius: 4px; cursor: pointer; background: #0C7FDA; color: white; margin-left: 8px;" onclick="saveSettings()">Save</button>
+        </div>
+    </div>
+  <script>
+    function toggleVariableModal() {
+        const modal = document.getElementById('variable-modal');
+        if(modal.style.display === 'none') {
+            modal.style.display = 'block';
+        } else {
+            modal.style.display = 'none';
+        }
+    }
+</script>
+<script>
+let host = "{{ host }}";
+let selectedIconUrl = "{{ host }}/static/Web/images/gif-icon-1.gif"; // Default icon
+
+    $(document).ready(function () {
+        var $slider = $('.help_ai_modal_slider');
+    
+        function initSlider() {
+            if (!$slider.hasClass('slick-initialized')) {
+                $slider.slick({
+                    infinite: false,
+                    slidesToShow: 1,
+                    slidesToScroll: 1,
+                    arrows: false, // Hide default arrows
+                    dots: false,
+                    adaptiveHeight: true, // Adjust height dynamically
+                });
+    
+                // Reveal the slider after initialization
+                $slider.css("display", "block");
+            }
+        }
+    
+        $('.modal').on('shown.bs.modal', function () {
+            initSlider();
+            setTimeout(() => {
+                $slider.slick('setPosition'); // Ensure correct rendering
+            }, 100); // Small delay to prevent width glitch
+        });
+    
+        $('.prev-btn').click(function () {
+            if (!$(this).prop('disabled')) {
+                $slider.slick('slickPrev');
+            }
+        });
+    
+        $('.next-btn').click(function () {
+            $slider.slick('slickNext');
+        });
+    
+        $slider.on('afterChange', function (event, slick, currentSlide) {
+            $('.prev-btn').prop('disabled', currentSlide === 0);
+            $('.next-btn').toggle(currentSlide !== slick.slideCount - 1);
+            $('.submit-btn').toggle(currentSlide === slick.slideCount - 1);
+        });
+    
+        function resetModal() {
+            $("#agent-function").val("Answering questions");
+            $("#agent-tone").val("Formal");
+            $("#level-of-detail").val("Brief and concise");
+            $("#industry").val("Retail");
+            $("#agent-name-new").val("");
+    
+            // Reset slider to the first slide
+            $slider.slick('slickGoTo', 0);
+            $('.prev-btn').prop('disabled', true);
+            $('.next-btn').show();
+            $('.submit-btn').hide();
+        }
+    
+        $('.modal').on('hidden.bs.modal', function () {
+            resetModal();
+    
+            // Manually trigger a width update on close to prevent glitch
+            setTimeout(() => {
+                $slider.slick('setPosition');
+            }, 100);
+        });
+    });
+    
+    
+    
+    
+</script>
+<script>
+    let selectedTheme = {
+        primaryColor: null,
+        secondaryColor: null,
+        pulseColor: null
+    };
+
+
+    document.addEventListener("DOMContentLoaded", function() {
+        const selectBox = document.getElementById("welcome-msg");
+        const optionsContainer = document.querySelector(".options");
+        const options = document.querySelectorAll(".option");
+
+        // Toggle dropdown
+        selectBox.addEventListener("click", function() {
+            optionsContainer.classList.toggle("active");
+        });
+
+        // Change the selected option
+        options.forEach(option => {
+            option.addEventListener("click", function() {
+                selectBox.textContent = this.textContent;
+                optionsContainer.classList.remove("active");
+            });
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener("click", function(event) {
+            if (!selectBox.parentElement.contains(event.target)) {
+                optionsContainer.classList.remove("active");
+            }
+        });
+    });
+    
+    function copyScript(){
+        let script = $("#agent-script").val();
+        navigator.clipboard.writeText(script);
+        toastr.success("Script copied to clipboard", {positionClass: "toast-top-right"});
+    }
+</script>
+
+<script>
+    
+    
+
+    $(document).ready(function () {
+        $(".select-box").click(function () {
+            $(".options").toggleClass("visible");
+        });
+
+        $(".option").click(function () {
+            let selectedText = $(this).text();
+            $(".select-box").text(selectedText);
+            $(".options").removeClass("visible");
+        });
+
+        // Close dropdown when clicking outside
+        $(document).click(function (e) {
+            if (!$(e.target).closest(".custom-select").length) {
+                $(".options").removeClass("visible");
+            }
+        });
+    });
+
+
+    $("#save-btn").click(function(){
+        let searchParams = new URLSearchParams(window.location.search);
+        let agentId = searchParams.get('agent_id');
+
+        let agentName = $("#agent-name").text().trim();
+        let agentPrompt = $("#agent-prompt").val();
+        let welcomeMsg = $("#welcome-msg").text();
+        let selectedModel = $("#selected-model").val();
+        let selectedVoice = $("#selected-voice").val();
+        let selectedLanguage = $("#selected-language").val();
+        let selectedKnowledgeBase = $("#selected-knowledge-base").val();
+        if(agentName == "" || agentPrompt == "" || welcomeMsg == "" || selectedModel == "" || selectedVoice == "" || selectedLanguage == ""){
+            toastr.error("Please fill all the fields", {positionClass: "toast-top-right"});
+            return;
+        }
+
+        // Use absolute URL to avoid redirect
+        let requestUrl = agentId ? `{{ host }}/api/edit_agent` : `{{ host }}/api/create_new_agent`;
+
+        $.ajax({    
+            url: requestUrl,
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                agent_id: agentId,
+                agent_name: agentName,
+                agent_prompt: agentPrompt,
+                welcome_msg: welcomeMsg,
+                selected_model: selectedModel,
+                selected_voice: selectedVoice,
+                selected_language: selectedLanguage,
+                selected_knowledge_base: selectedKnowledgeBase
+            }),
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            success: function(response){
+                if(response.status == "success"){
+                    toastr.success(response.message, {positionClass: "toast-top-right"});
+                    setTimeout(function(){
+                        window.location.href = "/dashboard"; // Use absolute path
+                    }, 2000);
+                }
+                else{
+                    toastr.error("Something went wrong!", {positionClass: "toast-top-right"});
+                }
+            },
+            error: function(xhr, status, error){
+                console.log("Error:", xhr.responseText); // Log error details
+                toastr.error("Something went wrong!", {positionClass: "toast-top-right"});
+            }
+        });
+    });
+
+    
+
+function changeIcon(iconUrl, element) {
+    // Remove 'active' class from previously selected icon
+    let previousActive = document.querySelector('.icon-option.active');
+    if (previousActive) {
+        previousActive.classList.remove('active');
+    }
+
+    // Ensure element exists
+    if (!element) {
+        console.error('Element is undefined');
+        return;
+    }
+
+    // Find the closest .icon-option parent
+    let iconOption = element.closest('.icon-option');
+    if (!iconOption) {
+        console.error('Could not find parent .icon-option element');
+        return;
+    }
+
+    // Add 'active' class to the selected icon
+    iconOption.classList.add('active');
+
+    // Update global variable for tracking the selected icon
+    selectedIconUrl = iconUrl;
+}
+
+
+    document.addEventListener("DOMContentLoaded", function() {
+        try {
+            let agentId = "{{ agent.id if agent else '' }}";
+            if(agentId){
+                $.ajax({
+                    url: `{{ host }}/api/get_agent_connection`,
+                    type: 'GET',
+                    data: {agent_id: agentId},
+                    success: function(response){    
+                        if(response.status == "success"){
+                            let connection = response.data || {};
+                            let iconUrl = connection.icon_url || "{{ host }}/static/Web/images/gif-icon-1.gif";
+                            let primaryColor = connection.primary_color || "#00b4d8";
+                            let secondaryColor = connection.secondary_color || "#0077b6"; 
+                            let pulseColor = connection.pulse_color || "rgba(0, 180, 216, 0.3)";
+                            
+                            // First apply theme
+                            changeTheme(primaryColor, secondaryColor, pulseColor);
+                            
+                            // Find icon option matching the saved icon URL
+                            let iconOptions = document.querySelectorAll('.icon-option');
+                            let matchingIcon = Array.from(iconOptions).find(option => {
+                                let img = option.querySelector('img');
+                                return img && img.src === iconUrl;
+                            });
+
+                            // If matching icon found, activate it, otherwise use first icon
+                            if (matchingIcon) {
+                                changeIcon(iconUrl, matchingIcon);
+                            } else {
+                                let firstIcon = document.querySelector('.icon-option');
+                                if (firstIcon) {
+                                    let firstIconUrl = firstIcon.querySelector('img').src;
+                                    changeIcon(firstIconUrl, firstIcon);
+                                }
+                            }
+                        }
+                    },
+                    error: function(xhr, status, error){
+                        console.log("Error:", xhr.responseText);
+                    }
+                });
+            }
+        } catch (error) {
+            console.error("Error in DOMContentLoaded:", error);
+        }
+    });
+
+
+function saveChanges() {
+    const customizeBotModal = document.getElementById('customize-bot-modal');
+    const voiceIcon = document.querySelector('.voice_icon');
+
+    if (customizeBotModal) {
+        customizeBotModal.classList.remove('show');
+        setTimeout(() => {
+            customizeBotModal.style.display = 'none';
+            if (voiceIcon) {
+                voiceIcon.style.display = 'block';
+            }
+        }, 500);
+    }
+
+    let agentId = "{{ agent.id if agent else '' }}"; // Get agent ID safely
+    let iconUrl = selectedIconUrl; // Use dynamically updated icon
+
+    // Get colors from CSS variables
+    let primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim() || "#00b4d8";
+    let secondaryColor = getComputedStyle(document.documentElement).getPropertyValue('--secondary-color').trim() || "#0077b6";
+    let pulseColor = getComputedStyle(document.documentElement).getPropertyValue('--pulse-shadow').trim() || "rgba(0, 180, 216, 0.3)";
+
+    // Create the data payload
+    let data = {
+        agent_id: agentId,
+        icon_url: iconUrl,
+        primary_color: primaryColor,
+        secondary_color: secondaryColor,
+        pulse_color: pulseColor
+    };
+
+    // Send data to API
+    fetch(`{{ host }}/api/save_changes`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}'
+        },
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(response => {
+        if (response.status === "success") {
+            toastr.success("Changes saved successfully", { positionClass: "toast-top-right" });
+        } else {
+            throw new Error(response.message || "Something went wrong!");
+        }
+    })
+    .catch(error => {
+        toastr.error(error.message, { positionClass: "toast-top-right" });
+    });
+}
+
+
+
+function toggleRecorder() {
+    const customizeBotModal = document.getElementById('customize-bot-modal');
+    const voiceIcon = document.querySelector('.voice_icon');
+
+    if (customizeBotModal.classList.contains('show')) {
+        customizeBotModal.classList.remove('show');
+        setTimeout(() => {
+            customizeBotModal.classList.add('hidden');
+        }, 500);
+    } else {
+        customizeBotModal.classList.remove('hidden');
+        setTimeout(() => customizeBotModal.classList.add('show'), 10);
+        voiceIcon.style.display = 'none'; // Hide voice icon when opened
+    }
+}
+
+
+function toggleColorPalette() {
+    const colorPalette = document.getElementById('colorPalette');
+    colorPalette.classList.toggle('show');
+}
+function toggleIconPalette() {
+    const iconPalette = document.getElementById('iconPalette');
+    iconPalette.classList.toggle('show');
+}
+
+function changeTheme(primaryColor, secondaryColor, pulseColor) {
+        // Apply colors to CSS variables
+        document.documentElement.style.setProperty('--primary-color', primaryColor);
+        document.documentElement.style.setProperty('--secondary-color', secondaryColor);
+        document.documentElement.style.setProperty('--pulse-shadow', pulseColor);
+
+        // Convert Hex to RGB and store as CSS variable
+        const rgbMatch = primaryColor.match(/^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i);
+        if (rgbMatch) {
+            const r = parseInt(rgbMatch[1], 16);
+            const g = parseInt(rgbMatch[2], 16);
+            const b = parseInt(rgbMatch[3], 16);
+            document.documentElement.style.setProperty('--primary-color-rgb', `${r}, ${g}, ${b}`);
+        }
+
+        // Store theme in a global variable
+        selectedTheme = { primaryColor, secondaryColor, pulseColor };
+
+        // Hide the color palette
+        const colorPalette = document.getElementById('colorPalette');
+        if (colorPalette) {
+            colorPalette.classList.remove('show');
+        }
+    }
+
+
+    $("#generate-prompt-btn").click(function () {
+        let agentFunction = $("#agent-function").val();
+        let agentTone = $("#agent-tone").val();
+        let levelOfDetail = $("#level-of-detail").val();
+        let industry = $("#industry").val();
+        let agentName = $("#agent-name-new").val();
+    
+        if (agentFunction == "" || agentTone == "" || levelOfDetail == "" || industry == "") {
+            toastr.error("Please select all the fields", { positionClass: "toast-top-right" });
+            return;
+        }
+    
+        $("#generate-prompt-btn").prop("disabled", true);
+        $("#close-help-ai-modal").prop("disabled", true);
+    
+        $.ajax({
+            url: `{{ host }}/api/agent_prompt_suggestion/`,
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ agent_function: agentFunction, agent_tone: agentTone, level_of_detail: levelOfDetail, industry: industry, agent_name: agentName }),
+            headers: {
+                'X-CSRFToken': '{{ csrf_token }}'
+            },
+            success: function (response) {
+                if (response.status == "success") {
+                    toastr.success("Prompt generated successfully", { positionClass: "toast-top-right" });
+                    $("#agent-prompt").val(response.prompt);
+                } else {
+                    toastr.error(response.message, { positionClass: "toast-top-right" });
+                }
+    
+                $("#generate-prompt-btn").prop("disabled", false);
+                $("#close-help-ai-modal").prop("disabled", false);
+                $("#agent-name-new").val("");
+
+                $("#helpAiModal").modal("hide");
+            },
+            error: function (xhr, status, error) {
+                console.log("Error:", xhr.responseText);
+                toastr.error("Something went wrong!", { positionClass: "toast-top-right" });
+    
+                $("#generate-prompt-btn").prop("disabled", false);
+                $("#close-help-ai-modal").prop("disabled", false);
+                $("#helpAiModal").modal("hide");
+                $("#agent-name-new").val("");
+            }
+        });
+    });
+    
+
+document.addEventListener("DOMContentLoaded", function () {
+    const textarea = document.getElementById("agent-prompt");
+
+    // Check if the URL matches the update-agent pattern
+    const currentUrl = new URL(window.location.href);
+    if (currentUrl.pathname === "/update_agent" && currentUrl.searchParams.has("agent_id")) {
+        const agentId = currentUrl.searchParams.get("agent_id");
+        let initialValue = textarea.value.trim(); // Store the initial value
+
+        textarea.addEventListener("blur", function () {
+            const text = textarea.value.trim();  // Get the text value
+
+            if (text !== "" && text !== initialValue) {  
+                saveAgentPrompt(agentId, text);
+                initialValue = text; // Update initial value after successful save
+            }
+        });
+
+        function saveAgentPrompt(agentId, promptText) {
+            fetch("{{ host }}/api/save-agent-prompt", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken()  // If using Django
+                },
+                body: JSON.stringify({ agent_id: agentId, agent_prompt: promptText })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if(data.status == "success"){
+                    initialValue = promptText; // Update initial value
+                    dynamicVariables = data.dynamic_variables;
+                    const variableContainer = document.getElementById('dynamic-variables');
+                    variableContainer.innerHTML = '';
+                    Object.entries(dynamicVariables).forEach(([key, value]) => {
+                        const variableDiv = document.createElement('div');
+                        variableDiv.className = 'variable-modal-content-item mb-2';
+                        variableDiv.innerHTML = `
+                            <input type="text" class="form-control" value="${key}">
+                            <input type="text" class="form-control" value="${value}">
+                            <button class="dlt_btn bg-transparent border-0 p-0" onclick="removeVariable(this)">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-12 w-12">
+                                    <path d="M3 6h18"></path>
+                                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                                </svg>
+                            </button>
+                        `;
+                        variableContainer.appendChild(variableDiv);
+                    });
+                    toastr.success("Prompt saved successfully", { positionClass: "toast-top-right" });
+                } else if (data.status == "error"){
+                    toastr.error(data.message, { positionClass: "toast-top-right" });
+                }
+                else{
+                    toastr.error("Something went wrong!", { positionClass: "toast-top-right" });
+                }
+            })
+            .catch(error => {
+                if (error.message) {
+                    toastr.error(error.message, { positionClass: "toast-top-right" });
+                }
+                else{
+                    toastr.error("Something went wrong!", { positionClass: "toast-top-right" });
+                }
+                console.error("Error saving data:", error);
+            });
+        }
+    }
+});
+
+function getCSRFToken() {
+    return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+    const welcomeMessageInput = document.getElementById("welcome-message");
+    const selectBox = document.getElementById("welcome-msg");
+    const optionsContainer = document.querySelector(".options");
+    const options = document.querySelectorAll(".options .option");
+
+    const currentUrl = new URL(window.location.href);
+    const isUpdatePage = currentUrl.pathname === "/update_agent";
+    const agentId = currentUrl.searchParams.get("agent_id");
+
+    selectBox.addEventListener("click", function () {
+        optionsContainer.style.display = "block";
+    });
+
+    options.forEach(option => {
+        option.addEventListener("click", function () {
+            const selectedValue = this.getAttribute("data-value");
+            const selectedText = this.innerText;
+
+            if (selectedValue === "custom") {
+                selectBox.style.display = "none";
+                welcomeMessageInput.style.display = "block";
+                welcomeMessageInput.focus();
+            } else {
+                selectBox.innerText = selectedText;
+                welcomeMessageInput.style.display = "none";
+                selectBox.style.display = "block";
+                optionsContainer.style.display = "none";
+
+                saveWelcomeMessage(selectedText);
+            }
+        });
+    });
+
+    let saveTimeout;
+
+    welcomeMessageInput.addEventListener("blur", function () {
+        clearTimeout(saveTimeout);
+        handleCustomInput();
+    });
+
+    welcomeMessageInput.addEventListener("keypress", function (e) {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            clearTimeout(saveTimeout);
+            handleCustomInput();
+            welcomeMessageInput.blur();
+        }
+    });
+
+    function handleCustomInput() {
+        const value = welcomeMessageInput.value.trim();
+        if (value !== "") {
+            selectBox.innerText = value;
+            clearTimeout(saveTimeout);
+            saveTimeout = setTimeout(() => {
+                saveWelcomeMessage(value);
+            }, 300);
+            welcomeMessageInput.style.display = "none";
+            selectBox.style.display = "block";
+            optionsContainer.style.display = "none";
+        } else {
+            toastr.error("Please enter a welcome message", { positionClass: "toast-top-right" });
+            welcomeMessageInput.focus();
+            return;
+        }
+    }
+
+    function saveWelcomeMessage(message) {
+        
+        const endpoint = agentId ? "{{ host }}/api/save-welcome-message" : "{{ host }}/api/save-welcome-message";
+        const data = agentId ? 
+            { welcome_msg: message, agent_id: agentId } : 
+            { welcome_msg: message };
+
+        fetch(endpoint, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCSRFToken()
+            },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log("Saved successfully:", data);
+            toastr.success("Welcome message saved successfully", { positionClass: "toast-top-right" });
+        })
+        .catch(error => {
+            console.error("Error saving data:", error);
+            toastr.error("Error saving welcome message", { positionClass: "toast-top-right" });
+        });
+    }
+
+    function getCSRFToken() {
+        return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
+    }
+});
+
+
+function addNewVariable() {
+    var dynamicVariablesDiv = document.getElementById("dynamic-variables");
+
+    // Create new variable input container
+    var newVariableDiv = document.createElement("div");
+    newVariableDiv.className = "variable-modal-content-item mb-2";
+    newVariableDiv.innerHTML = `
+        <input type="text" class="form-control" placeholder="Variable Name">
+        <input type="text" class="form-control" placeholder="Enter the value">
+        <button class="dlt_btn bg-transparent border-0 p-0" onclick="removeVariable(this)">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-12 w-12">
+                <path d="M3 6h18"></path>
+                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+            </svg>
+        </button>
+    `;
+
+    // Append the new variable div to dynamic-variables
+    dynamicVariablesDiv.appendChild(newVariableDiv);
+}
+
+
+function removeVariable(button){
+    var variableModalContentItemOuter = button.parentElement;
+    variableModalContentItemOuter.remove();
+    const variableId = button.parentElement.querySelector('input[type="text"]').value;
+    const currentUrl = new URL(window.location.href);
+    const agentId = currentUrl.searchParams.get("agent_id");    
+    console.log(variableId, agentId);
+    $.ajax({
+        url: "{{ host }}/api/remove-variable",
+        type: 'DELETE',
+        contentType: 'application/json',
+        data: JSON.stringify({ variable_id: variableId, agent_id: agentId }),
+        success: function(response) {
+            toastr.success('Variable removed successfully');
+        },
+        error: function(xhr, status, error) {
+            toastr.error('Error removing variable: ' + error);
+        }
+    });
+}
+
+function formatJSON(){
+    var jsonTextarea = document.getElementById("parameters");
+    var formattedJSON = jsonTextarea.value;
+    jsonTextarea.value = formattedJSON;
+}
+
+function copyJSON(){
+    var jsonTextarea = document.getElementById("parameters");
+    var formattedJSON = jsonTextarea.value;
+    jsonTextarea.value = formattedJSON;
+}
+document.addEventListener('DOMContentLoaded', function() {
+    const example1Button = document.querySelector('.parameters_field .btn:nth-child(1)');
+    const parametersTextarea = document.getElementById('parameters');
+
+    example1Button.addEventListener('click', function() {
+        const exampleJSON = {
+            "type": "object", 
+            "properties": {
+                "appointment_available_ts": {
+                    "type": "string",
+                    "description": "The timestamp of the appointment that is available for booking."
+                }
+            },
+            "required": ["appointment_available_ts"]
+        };
+
+        parametersTextarea.value = JSON.stringify(exampleJSON, null, 2);
+    });
+
+    const example2Button = document.querySelector('.parameters_field .btn:nth-child(2)');
+    example2Button.addEventListener('click', function() {
+        const exampleJSON = {
+                "type": "object",
+                "properties": {
+                    "city": {
+                    "type": "string",
+                    "description": "The city for which the weather is to be fetched."
+                    }
+                },
+                "required": ["city"]
+                }
+
+        parametersTextarea.value = JSON.stringify(exampleJSON, null, 2);
+    });
+
+    const example3Button = document.querySelector('.parameters_field .btn:nth-child(3)');
+    example3Button.addEventListener('click', function() {
+        const exampleJSON = {
+                "type": "object",
+                "properties": {
+                    "appointment_available_ts": {
+                    "type": "string",
+                    "description": "The timestamp of the appointment that is available for booking."
+                    },
+                    "doctor_name": {
+                    "type": "string",
+                    "description": "An optional field to specify the name of the doctor."
+                    }
+                },
+                "required": ["appointment_available_ts"]
+                }
+
+        parametersTextarea.value = JSON.stringify(exampleJSON, null, 2);
+    });
+});
+
+document.getElementById("save-custom-function").addEventListener("click", function(){
+    let functionName = document.getElementById("function_name").value;
+    let functionDescription = document.getElementById("function_description").value;
+    let functionUrl = document.getElementById("function_url").value;
+    let functionTimeout = document.getElementById("function-timeout").value;
+    let functionParameters = document.getElementById("parameters").value;
+    const currentUrl = new URL(window.location.href);
+    const agentId = currentUrl.searchParams.get("agent_id");
+
+    let data = {
+        function_name: functionName,
+        function_description: functionDescription,
+        function_url: functionUrl,
+        function_timeout: functionTimeout,
+        function_parameters: functionParameters,
+        agent_id: agentId
+    };
+
+    $.ajax({
+        url: "{{ host }}/api/custom-functions",
+        type: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(data),
+        success: function(response) {
+            if(response.status == "success"){
+                toastr.success('Custom function saved successfully');
+                $('#customFuntionModal').modal('hide');
+                // Clear form fields
+                document.getElementById("function_name").value = '';
+                document.getElementById("function_description").value = '';
+                document.getElementById("function_url").value = '';
+                document.getElementById("function-timeout").value = '';
+                document.getElementById("parameters").value = '';
+                var functionData = response.data
+                $('#function-list').append(`
+                    <li class="dropdown-item gap-3 d-flex align-items-center justify-content-between mb-2" id="function-${functionData.id}">
+                        <div class="functionNameDivBlock">${functionData.function_name}</div>
+                        <div class="d-flex align-items-center gap-2">
+                            <button class="edit-function-btn bg-transparent border-0 p-0" onclick="editFunction(${functionData.id})"><img src="{{ url_for('static', path='/Web/images/edit-icon.svg') }}" class="img-fluid"></button>   
+                            <button class="delete-function-btn bg-transparent border-0 p-0" onclick="deleteFunction(${functionData.id})"><img src="{{ url_for('static', path='/Web/images/black-dlt-icon.svg') }}" class="img-fluid"></button>
+                        </div>
+                    </li>
+                `);
+            }
+            else{
+                toastr.error(response.message || 'Something went wrong!');
+            }
+        },
+        error: function(xhr, status, error) {
+            let errorMessage = xhr?.responseJSON?.message;
+            toastr.error(errorMessage || 'Error saving custom function: ' + error);
+        }
+    });
+});
+
+
+function updateFunctionElement(functionData) {
+    const $li = $(`#function-${functionData.id}`);
+    if ($li.length) {
+        $li.find('div.functionNameDivBlock').text(functionData.function_name);
+        $li.find('.edit-function-btn').attr('onclick', `editFunction(${functionData.id})`);
+        $li.find('.delete-function-btn').attr('onclick', `deleteFunction(${functionData.id})`);
+    }
+}
+
+
+function handleEditCustomFunction(functionId){
+    let functionName = document.getElementById("edit_function_name").value;
+    let functionDescription = document.getElementById("edit_function_description").value;
+    let functionUrl = document.getElementById("edit_function_url").value;
+    let functionTimeout = document.getElementById("edit_function_timeout").value;
+    let functionParameters = document.getElementById("edit-parameters").value;
+    const currentUrl = new URL(window.location.href);
+    const agentId = currentUrl.searchParams.get("agent_id");
+
+    let data = {
+        function_name: functionName,
+        function_description: functionDescription,
+        function_url: functionUrl,
+        function_timeout: functionTimeout,
+        function_parameters: functionParameters,
+        agent_id: agentId
+    };
+
+    $.ajax({
+        url: `{{ host }}/api/edit-custom-functions/${functionId}`,
+        type: 'PUT',
+        contentType: 'application/json',
+        data: JSON.stringify(data),
+        success: function(response) {
+            if(response.status == "success"){
+                toastr.success('Custom function saved successfully');
+                $('#customFunctionEditModal').modal('hide');
+                // Clear form fields
+                document.getElementById("edit_function_name").value = '';
+                document.getElementById("edit_function_description").value = '';
+                document.getElementById("edit_function_url").value = '';
+                document.getElementById("edit_function_timeout").value = '';
+                document.getElementById("edit-parameters").value = '';
+                var functionData = response.data
+                updateFunctionElement(functionData);
+            }
+            else{
+                toastr.error(response.message || 'Something went wrong!');
+            }
+        },
+        error: function(xhr, status, error) {
+            let errorMessage = xhr?.responseJSON?.message;
+            toastr.error(errorMessage || 'Error saving custom function: ' + error);
+        }
+    });
+}
+
+function editFunction(functionId) {
+    $.ajax({
+        url: "{{ host }}/api/get-custom-functions",
+        type: 'GET',
+        data: { function_id: functionId },
+        success: function(response) {
+            if (!response.data) {
+                toastr.error('No function data found.');
+                return;
+            }
+
+            var functionData = response.data;
+            var modal = `
+                <div class="modal fade custom_function_modal" id="customFunctionEditModal" tabindex="-1" aria-labelledby="customFunctionEditModalLabel">
+                    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h1 class="mb-0 d-flex align-items-center gap-2" id="customFunctionModalLabel">
+                                    <span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                                            <path d="M4.33337 14.6667V10" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                                            <path d="M4.33337 3.33398V1.33398" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                                            <path d="M11.6666 14.666V12.666" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                                            <path d="M11.6666 6.00065V1.33398" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                                            <path d="M6.33337 4.66732V8.66732C6.33337 9.40065 6.00004 10.0007 5.00004 10.0007H3.66671C2.66671 10.0007 2.33337 9.40065 2.33337 8.66732V4.66732C2.33337 3.93398 2.66671 3.33398 3.66671 3.33398H5.00004C6.00004 3.33398 6.33337 3.93398 6.33337 4.66732Z" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                                            <path d="M13.6666 7.33333V11.3333C13.6666 12.0667 13.3333 12.6667 12.3333 12.6667H11C9.99996 12.6667 9.66663 12.0667 9.66663 11.3333V7.33333C9.66663 6.6 9.99996 6 11 6H12.3333C13.3333 6 13.6666 6.6 13.6666 7.33333Z" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
+                                        </svg>
+                                    </span>
+                                    Custom Function
+                                </h1>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                            </div>
+                            <div class="modal-body">
+                                <form id="editFunctionForm">
+                                    <div class="form_field mb-3">
+                                        <label for="function_name" class="form-label">Name</label>
+                                        <input type="text" class="form-control" id="edit_function_name" value="${functionData.function_name || ''}" placeholder="Enter function name">
+                                    </div>
+                                    <div class="form_field mb-3">
+                                        <label for="function_description" class="form-label">Description</label>
+                                        <textarea class="form-control" id="edit_function_description" placeholder="Enter function description">${functionData.function_description || ''}</textarea>
+                                    </div>
+                                    <div class="form_field mb-3">
+                                        <label for="function_url" class="form-label">Your URL</label>
+                                        <input type="text" class="form-control" id="edit_function_url" value="${functionData.function_url || ''}" placeholder="Enter function URL">
+                                    </div>
+                                    <div class="form_field mb-3">
+                                        <label for="function_timeout" class="form-label">API Timeout (Optional)</label>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <input type="text" class="form-control" id="edit_function_timeout" value="${functionData.function_timeout || ''}" placeholder="120000">
+                                            <small class="text-muted">milliseconds</small>
+                                        </div>
+                                    </div>
+                                    <div class="form_field mb-3 parameters_field">
+                                        <label for="parameters" class="form-label mb-0">Parameters (Optional)</label>
+                                        <small class="text-muted">JSON schema that defines the format in which the LLM will return. Please refer to the docs.</small>
+                                        <textarea class="form-control my-2" id="edit-parameters" placeholder="Enter function parameters">${JSON.stringify(functionData.function_parameters, null, 2) || ''}</textarea>
+                                        <div class="d-flex align-items-center gap-2">
+                                            <button type="button" onclick="setExampleJSON('example1')" id="example1" class="btn btn-secondary">Example 1</button>
+                                            <button type="button" onclick="setExampleJSON('example2')" id="example2" class="btn btn-secondary">Example 2</button>
+                                            <button type="button" onclick="setExampleJSON('example3')" id="example3" class="btn btn-secondary">Example 3</button>
+                                        </div>
+                                    </div>
+                                    <div class="format_json_btn_box mb-3">
+                                        <button type="button" onclick="EditformatJSON()" class="w-100">Format JSON</button>
+                                    </div>
+                                </form>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn" data-bs-dismiss="modal">Close</button>
+                                <button type="button" id="save-edit-custom-function" class="btn save_btn" onclick="handleEditCustomFunction('${functionId}')">Save</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            // Remove any existing modal
+            $('#customFunctionEditModal').remove();
+            // Append the new modal to body
+            $('body').append(modal);
+            // Show the modal
+            $('#customFunctionEditModal').modal('show');
+            document.getElementById('example1')?.addEventListener('click', function () {
+                setExampleJSON('example1');
+            });
+        
+            document.getElementById('example2')?.addEventListener('click', function () {
+                setExampleJSON('example2');
+            });
+        
+            document.getElementById('example3')?.addEventListener('click', function () {
+                setExampleJSON('example3');
+            });
+        },
+        error: function(xhr, status, error) {
+            toastr.error('Error fetching custom function: ' + xhr.responseText || error);
+        }
+    });
+}
+
+function setExampleJSON(exampleId) {
+    const examples = {
+        "example1": {
+            "type": "object",
+            "properties": {
+                "appointment_available_ts": {
+                    "type": "string",
+                    "description": "The timestamp of the appointment that is available for booking."
+                }
+            },
+            "required": ["appointment_available_ts"]
+        },
+        "example2": {
+            "type": "object",
+            "properties": {
+                "city": {
+                    "type": "string",
+                    "description": "The city for which the weather is to be fetched."
+                }
+            },
+            "required": ["city"]
+        },
+        "example3": {
+            "type": "object",
+            "properties": {
+                "appointment_available_ts": {
+                    "type": "string",
+                    "description": "The timestamp of the appointment that is available for booking."
+                },
+                "doctor_name": {
+                    "type": "string",
+                    "description": "An optional field to specify the name of the doctor."
+                }
+            },
+            "required": ["appointment_available_ts"]
+        }
+    };
+
+    if (examples[exampleId]) {
+        const parametersTextarea = document.getElementById(`edit-parameters`);
+        parametersTextarea.value = JSON.stringify(examples[exampleId], null, 2);
+    }
+}
+
+function EditformatJSON(){
+    var jsonTextarea = document.getElementById("edit-parameters");
+    var formattedJSON = jsonTextarea.value;
+    jsonTextarea.value = formattedJSON;
+}
+
+
+function deleteFunction(functionId){
+    $.ajax({
+        url:  "{{ host }}/api/delete-custom-functions",
+        type: 'DELETE',
+        contentType: 'application/json',
+        data: JSON.stringify({ function_id: functionId }),
+        success: function(response) {
+            toastr.success('Custom function deleted successfully');
+            $('#function-'+functionId).remove();
+            $('#customFunctionEditModal').modal('hide');
+        },
+        error: function(xhr, status, error) {
+            toastr.error('Error deleting custom function: ' + error);
+        }
+    });
+}
+
+function saveVariable() {
+    // Get all variable input pairs
+    var variables = {};
+    var variableItems = document.querySelectorAll('#dynamic-variables .variable-modal-content-item');
+
+    variableItems.forEach(function(item, index) {
+        var inputs = item.querySelectorAll('input');
+        
+        console.log(`Row ${index + 1}: Found ${inputs.length} inputs`);
+        
+        if (inputs.length >= 2) {
+            var variableName = inputs[0].value.trim();
+            var variableValue = inputs[1].value.trim();
+            
+            console.log(`Row ${index + 1}: Name="${variableName}", Value="${variableValue}"`);
+            
+            if (variableName) {
+                variables[variableName] = variableValue;
+            }
+        }
+    });
+    const currentUrl = new URL(window.location.href);
+    const agentId = currentUrl.searchParams.get("agent_id");
+
+
+    // Save variables via AJAX
+    $.ajax({
+        url: "{{ host }}/api/save-variables",
+        type: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            variables: variables,
+            agent_id: agentId
+        }),
+        success: function(response) {
+            toastr.success('Variables saved successfully');
+            const modal = document.getElementById('variable-modal');
+            if (modal) {
+                modal.style.display = 'none';
+            }
+        },
+        error: function(xhr, status, error) {
+            toastr.error('Error saving variables: ' + error);
+        }
+    });
+}
+
+        function openDialog() {
+            const dialog = document.getElementById("dialog");
+            if (dialog) {
+                dialog.style.display = dialog.style.display === "none" ? "block" : "none";
+            }
+        }
+        
+        function closeDialog() {
+            const dialog = document.getElementById("dialog");
+            if (dialog) {
+                dialog.style.display = "none";
+            }
+        }
+
+        const slider = document.getElementById("temperatureSlider");
+        const sliderValue = document.getElementById("sliderValue");
+
+        // Set initial value and position based on existing value
+        const initialValue = slider.value;
+        const initialPercentage = ((initialValue - slider.min) / (slider.max - slider.min)) * 100;
+        sliderValue.textContent = parseFloat(initialValue).toFixed(1);
+        sliderValue.style.left = initialPercentage + "%";
+
+        slider.addEventListener("input", function() {
+            let percentage = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
+            sliderValue.textContent = parseFloat(slider.value).toFixed(1);
+            sliderValue.style.left = percentage + "%";
+        });
+
+        function saveSettings(){
+            const temperature = document.getElementById("temperatureSlider").value;
+            const maxOutputTokens = document.getElementById("maxOutputTokensSlider").value;
+            const currentUrl = new URL(window.location.href);
+            const agentId = currentUrl.searchParams.get("agent_id");
+            $.ajax({
+                url: host + '/api/update-agent-settings',
+                type: 'POST',
+                contentType: 'application/json',    
+                data: JSON.stringify({ temperature: temperature, max_output_tokens: maxOutputTokens, agent_id: agentId }),
+                success: function(response) {
+                    if(response.status == "success"){
+                        toastr.success('Settings saved successfully');
+                        const dialog = document.getElementById("dialog");
+                        if (dialog) {
+                            dialog.style.display = "none";
+                        }
+                    }
+                    else{
+                        toastr.error(response.message);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    if(xhr.responseJSON.message){
+                        toastr.error(xhr.responseJSON.message);
+                    }
+                    else{
+                        toastr.error('Error saving settings: ' + error);
+                    }
+                }
+            });
+        }
+
+        function toggleTokenModal() {
+            const tokenModal = document.getElementById('token-modal');
+            tokenModal.style.display = tokenModal.style.display === 'none' ? 'block' : 'none';
+        }
+
+        function saveTokenSettings() {
+            const overallTokenLimit = document.getElementById('overall-token-limit').value;
+            const dailyTokenLimit = document.getElementById('daily-token-limit').value;
+            const perCallTokenLimit = document.getElementById('per-call-token-limit').value;
+            if(overallTokenLimit == "" || dailyTokenLimit == "" || perCallTokenLimit == ""){
+                toastr.error('Please fill all the fields');
+                return;
+            }
+            const currentUrl = new URL(window.location.href);   
+            const agentId = currentUrl.searchParams.get("agent_id");
+            $.ajax({
+                url: host + '/api/update-agent-token-settings',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ overall_token_limit: overallTokenLimit, daily_token_limit: dailyTokenLimit, per_call_token_limit: perCallTokenLimit, agent_id: agentId }),
+                success: function(response) {
+                    if(response.status == "success"){
+                        toastr.success('Token settings saved successfully');
+                        toggleTokenModal();
+                    }
+                    else{
+                        toastr.error(response.message);
+                    }
+                },
+                error: function(xhr, status, error) {
+                    if(xhr.responseJSON.message){
+                        toastr.error(xhr.responseJSON.message);
+                    }
+                    else{
+                        toastr.error('Error saving token settings: ' + error);
+                    }
+                }
+            });
+        }
+    </script>
+
+    <script>
+        const currentUrl = new URL(window.location.href);
+        const agentId = currentUrl.searchParams.get("agent_id");
+         
+        function populateNoiseSettings(noiseData) {
+            const container = document.getElementById('noise-settings');
+            container.innerHTML = ''; // clear previous
+        
+            for (const [key, item] of Object.entries(noiseData)) {
+                const div = document.createElement('div');
+                div.className = 'variable-modal-content-item mb-2';
+                div.style.position = 'relative';
+        
+                div.innerHTML = `
+                    <div class="variable_name" style="position: relative; display:flex; align-items:center;">
+                        <button type="button" 
+                                class="variable_description" 
+                                onclick="toggleDescription(this)" 
+                                style="background:none; border:none; cursor:pointer; color:#0d6efd; margin-right:5px; display:flex; align-items:center;">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-info-circle" viewBox="0 0 16 16">
+                              <path d="M8 15A7 7 0 1 0 8 1a7 7 0 0 0 0 14zm0 1A8 8 0 1 1 8 0a8 8 0 0 1 0 16z"/>
+                              <path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 .876-.252 1.02-.598l.088-.416c.076-.34.223-.466.45-.508l.088-.02.082-.38-.45-.083c-.294-.07-.352-.176-.288-.469l.738-3.468c.194-.897-.105-1.319-.808-1.319-.545 0-.876.252-1.02.598z"/>
+                              <circle cx="8" cy="4.5" r="1"/>
+                            </svg>
+                        </button>
+                        <input type="text" class="form-control" value="${key}" readonly style="flex:1;">
+                        <span class="description-text" 
+                              style="display:none; margin-left:5px;">
+                            ${item.description}
+                        </span>
+                    </div>
+                    <input type="text" class="form-control" 
+                           value="${item.value}" 
+                           style="background-color: ${item.is_default ? '#f0f0f0' : '#ffffff'}; margin-top:5px;">
+                    <button class="btn btn-info btn-sm" onclick="resetToDefault(this)" style="margin-top:5px;">
+                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-clockwise" viewBox="0 0 16 16">
+                        <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
+                        <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
+                        </svg>
+                    </button>
+                `;
+                container.appendChild(div);
+            }
+        }
+        
+        function toggleDescription(button) {
+            // Close all open descriptions first
+            document.querySelectorAll('.description-text').forEach(el => {
+                el.style.display = 'none';
+            });
+        
+            const description = button.parentElement.querySelector('.description-text');
+            if (description) {
+                description.style.display = (description.style.display === 'block') ? 'none' : 'block';
+            }
+        }
+        
+        async function toggleNoiseVariablesModal() {
+            const modal = document.getElementById('noise-settings-modal');
+        
+            if (modal.style.display === 'none') {
+                // Fetch noise variables from API
+                try {
+                    const response = await fetch(`/api/agents/${agentId}/noise-variables`);
+                    const result = await response.json();
+                    if (result.status === 'success') {
+                        populateNoiseSettings(result.data);
+                    } else {
+                        alert(result.message || "Failed to load noise variables");
+                    }
+                } catch (err) {
+                    console.error(err);
+                    alert("Error fetching noise variables");
+                }
+        
+                $("#noise-settings-modal").modal("show");
+            } else {
+                $("#noise-settings-modal").modal("hide");
+            }
+        }
+        
+        function resetToDefault(btn) {
+            const parent = btn.closest('.variable-modal-content-item');
+            const key = parent.querySelector('input[readonly]').value;
+        
+            fetch('/api/reset-noise-variables', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    agent_id: agentId,
+                    variables: key ? [key] : null   // optional: reset specific key or all
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                parent.querySelector('input[type="text"]:not([readonly])').value = data.value;
+                parent.querySelector('input[type="text"]:not([readonly])').style.backgroundColor = '#f0f0f0';
+                toastr.success(`Reset ${key} to default`);
+            })
+            .catch(err => toastr.error('Error resetting variable: ' + err));
+        }
+
+        function saveNoiseVariabless() {
+            const items = document.querySelectorAll('#noise-settings .variable-modal-content-item');
+            const variables = {};
+
+            items.forEach(item => {
+                const key = item.querySelector('input[readonly]').value;
+                const value = item.querySelector('input[type="text"]:not([readonly])').value;
+                variables[key] = value;
+            });
+
+            fetch('/api/save-noise-variables', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ agent_id: agentId, variables })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === "success") {
+                    toastr.success(data.message);
+                    // update background colors
+                    items.forEach(item => {
+                        const key = item.querySelector('input[readonly]').value;
+                        const isDefault = data.defaults?.includes(key);
+                        item.querySelector('input[type="text"]:not([readonly])').style.backgroundColor = isDefault ? '#f0f0f0' : '#ffffff';
+                    });
+                } else {
+                    toastr.error("Error saving variables: " + JSON.stringify(data.errors || data.message));
+                }
+            })
+            .catch(err => toastr.error("Error saving variables: " + err));
+        }
+
+        function closeNoiseVariableModal(){
+            $("#noise-settings-modal").modal("hide");
+        }
+    </script>
+{% endblock %}
