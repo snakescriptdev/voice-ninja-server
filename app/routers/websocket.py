@@ -111,6 +111,7 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
                 select(agent_knowledge_association).where(agent_knowledge_association.c.agent_id == agent_id)
             )
         knowledge_base_result = result.fetchone()
+        knowledge_base_id = None
         knowledge_base_text = ""
         if knowledge_base_result:
             knowledge_base_id = knowledge_base_result.knowledge_base_id
@@ -173,7 +174,7 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
             "stream_sid": stream_sid,
             "welcome_msg": welcome_msg,
             "system_instruction": system_instruction,
-            "knowledge_base": knowledge_base_text,
+            "knowledge_base": knowledge_base_id,
             "agent_id": agent.id,
             "user_id": user_id,
             "dynamic_variables": dynamic_variables,
@@ -225,6 +226,7 @@ async def agent_websocket_endpoint(websocket: WebSocket):
             )
         knowledge_base_result = result.fetchone()
         knowledge_base_text = ""
+        knowledge_base_id = None
         if knowledge_base_result:
             knowledge_base_id = knowledge_base_result.knowledge_base_id
             knowledge_base = KnowledgeBaseModel.get_by_id(knowledge_base_id)
@@ -292,7 +294,7 @@ async def agent_websocket_endpoint(websocket: WebSocket):
             "stream_sid": None,
             "welcome_msg": welcome_msg,
             "system_instruction": system_instruction,
-            "knowledge_base": knowledge_base_text,
+            "knowledge_base": knowledge_base_id,
             "agent_id": agent.id,
             "user_id": user,
             "dynamic_variables": dynamic_variables,

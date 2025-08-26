@@ -68,7 +68,7 @@ function editHeading() {
         const agentId = currentUrl.searchParams.get("agent_id");
 
         // Call API to update agent name
-        fetch(`${host}/api/update-agent`, {
+        fetch(`${host}/elevenlabs/api/v1/update-agent`, {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",

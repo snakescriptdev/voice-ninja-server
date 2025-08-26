@@ -40,7 +40,6 @@ from fastapi_sqlalchemy import db
 from app.validators.api_validators import SaveNoiseVariablesRequest,ResetNoiseVariablesRequest
 from pydantic import ValidationError
 from app.core.config import DEFAULT_VARS,NOISE_SETTINGS_DESCRIPTIONS
-
 router = APIRouter(prefix="/api")
 
 razorpay_client = razorpay.Client(auth=(os.getenv("RAZOR_KEY_ID"), os.getenv("RAZOR_KEY_SECRET")))

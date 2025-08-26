@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from .routers import APISRouter, WebRouter, WebSocketRouter, AdminRouter
+from app.routers import APISRouter, WebRouter, WebSocketRouter, AdminRouter
+from elevenlabs_app.routers import ElevenLabsAPIRouter, ElevenLabsWebRouter
 from fastapi_sqlalchemy import DBSessionMiddleware,db
 from app.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
@@ -11,7 +12,7 @@ import os
 from config import MEDIA_DIR 
 from app.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
 
-app = FastAPI()
+app = FastAPI(title="Voice Ninja + ElevenLabs Integration", version="2.0.0")
 
 # Ensure the media directory exists
 os.makedirs(MEDIA_DIR, exist_ok=True)
@@ -57,9 +58,16 @@ app.add_middleware(SessionMiddleware, secret_key=VoiceSettings.SECRET_KEY)
 
 security = HTTPBasic()
 
-app.include_router(APISRouter)
-app.include_router(WebRouter)
-app.include_router(WebSocketRouter)
+# Include Voice Ninja app routers (existing)
+app.include_router(APISRouter, prefix="")
+app.include_router(WebRouter, prefix="")
+app.include_router(WebSocketRouter, prefix="/ws")
+app.include_router(AdminRouter, prefix="/admin")
+
+# Include ElevenLabs Integration app routers (new)
+app.include_router(ElevenLabsAPIRouter, prefix="/elevenlabs/api/v1")
+app.include_router(ElevenLabsWebRouter, prefix="/elevenlabs/web/v1")
+# app.include_router(ElevenLabsAdminRouter, prefix="/elevenlabs/admin")
 
 @app.on_event("startup")
 async def startup_event():
@@ -67,6 +75,4 @@ async def startup_event():
     AdminTokenModel.ensure_default_exists()
     TokensToConsume.ensure_default_exists()
     VoiceModel.ensure_default_voices()
-
-    
-app.include_router(AdminRouter)
+    print("Voice Ninja + ElevenLabs Integration started successfully!")
