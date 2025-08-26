@@ -17,11 +17,33 @@ logger = logging.getLogger(__name__)
 # Database configuration with fallback
 DB_URL = os.getenv("DB_URL")
 if not DB_URL:
-    raise Exception("DB_URL not passed")
+    # Try to load from .env file if not already loaded
+    from dotenv import load_dotenv
+    load_dotenv()
+    DB_URL = os.getenv("DB_URL")
+
+if not DB_URL:
+    # Final fallback - use default local database
+    DB_URL = "postgresql://postgres:1234@localhost/voice_ninja"
+    print(f"Warning: Using default database URL: {DB_URL}")
+    print("To use a custom database, set the DB_URL environment variable")
 
 try:
-    engine = create_engine(DB_URL, echo=False)
-    print(f"Database connection established successfully")
+    # Enhanced connection pooling for better performance
+    engine = create_engine(
+        DB_URL, 
+        echo=False,
+        pool_size=20,           # Increased from default
+        max_overflow=30,        # Allow more connections
+        pool_pre_ping=True,     # Validate connections
+        pool_recycle=3600,      # Recycle connections every hour
+        pool_timeout=30,        # Connection timeout
+        connect_args={
+            "connect_timeout": 10,
+            "application_name": "voice_ninja"
+        }
+    )
+    print(f"Database connection established successfully with enhanced pooling")
 except Exception as e:
     print(f"Error connecting to database: {e}")
     print(f"Please check your database configuration and ensure PostgreSQL is running")
@@ -287,6 +309,8 @@ class AgentModel(Base):
     custom_functions = relationship("CustomFunctionModel", back_populates="agent", cascade="all, delete-orphan")
     overall_token_limit = relationship("OverallTokenLimitModel", back_populates="agent", cascade="all, delete-orphan")
     daily_call_limit = relationship("DailyCallLimitModel", back_populates="agent", cascade="all, delete-orphan")
+
+    elvn_lab_agent_id = Column(String, nullable=True,default="") #stores agent id of elevenlab agent.
 
     def __repr__(self):
         return f"<Agent(id={self.id}, agent_name={self.agent_name})>"
