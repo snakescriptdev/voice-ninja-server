@@ -4,7 +4,7 @@ from elevenlabs_app.core import VoiceSettings
 from elevenlabs_app.core.config import DEFAULT_VARS,NOISE_SETTINGS_DESCRIPTIONS
 from elevenlabs_app.utils.helper import Paginator, check_session_expiry_redirect,get_logged_in_user
 from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse,JSONResponse
-from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel,VoiceModel
+from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel,VoiceModel,LLMModel,ElevenLabModel
 from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
 import os, shutil
@@ -18,6 +18,9 @@ from app.routers.schemas.voice_schemas import (
     validate_delete_voice,
 )
 from app.services.elevenlabs_utils import ElevenLabsUtils
+from elevenlabs_app.elevenlabs_config import DEFAULT_LANGUAGE,DEFAULT_LLM_ELEVENLAB,DEFAULT_MODEL_ELEVENLAB,ELEVENLABS_MODELS,VALID_LLMS
+from sqlalchemy import select, insert, delete
+
 load_dotenv()
 ElevenLabsWebRouter = APIRouter()
 templates = Jinja2Templates(directory="templates/")
@@ -32,7 +35,6 @@ async def update_agent(request: Request):
         if not agent_id or not user_id:
             return {"error": "Missing agent_id or user session"}
         
-        from sqlalchemy import select, insert, delete
         Session = sessionmaker(bind=engine)
         session = Session()
         # Fetch agent knowledge associations
@@ -75,11 +77,17 @@ async def update_agent(request: Request):
         daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id)
         overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id)
         voices = VoiceModel.get_allowed_voices(user_id=user_id)
+        llm_models = LLMModel.get_all()
+        selected_elevenlab_model = agent.selected_model_obj.name
+        elevenlab_model_rec = ElevenLabModel.get_by_name(selected_elevenlab_model)
+        allowed_languages = elevenlab_model_rec.languages
         return templates.TemplateResponse(
             "ElevenLabs_Integration/web/update_agent.html",
             {
                 "request": request,
                 "voices": voices,
+                "llm_models":llm_models,
+                "allowed_languages":allowed_languages,
                 "agent": agent,
                 "knowledge_bases": knowledge_bases,
                 "agent_knowledge_ids": agent_knowledge_ids,
@@ -105,15 +113,21 @@ async def update_agent(request: Request):
 @ElevenLabsWebRouter.get("/create_agent")
 @check_session_expiry_redirect
 async def create_agent(request: Request):
-    from app.databases.models import KnowledgeBaseModel
+    
     user_id = request.session.get("user").get("user_id")
     knowledge_bases = KnowledgeBaseModel.get_all_by_user(user_id)
     voices = VoiceModel.get_allowed_voices(user_id=user_id)
+    llm_models = LLMModel.get_all()
+    selected_elevenlab_model = DEFAULT_MODEL_ELEVENLAB
+    elevenlab_model_rec = ElevenLabModel.get_by_name(selected_elevenlab_model)
+    allowed_languages = elevenlab_model_rec.languages
     return templates.TemplateResponse(
         "ElevenLabs_Integration/web/create_agent.html", 
         {
             "request": request,
             "voices": voices,
+            "allowed_languages":allowed_languages,
+            "llm_models":llm_models,
             "knowledge_bases":knowledge_bases,
             "host": os.getenv("HOST")
         }

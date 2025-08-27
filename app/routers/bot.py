@@ -34,6 +34,7 @@ import numpy as np
 from pipecat.services.llm_service import FunctionCallParams
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.transcriptions.language import Language
+from pipecat.observers.loggers.user_bot_latency_log_observer import UserBotLatencyLogObserver
 
 def generate_json_schema(dynamic_fields):
     schema = {
@@ -91,6 +92,7 @@ async def run_bot(websocket_client, **kwargs):
     max_output_tokens = kwargs.get("max_output_tokens")
     custom_voice = kwargs.get("is_custom_voice", False)
     custom_voice_id = kwargs.get("custom_voice_id",None)
+    call_start_time = {}
 
     AUDIO_CONFIG = {
         'sample_rate': int(noise_setting_variables.get("AUDIO_SAMPLE_RATE", VoiceSettings.AUDIO_SAMPLE_RATE)),
@@ -118,6 +120,7 @@ async def run_bot(websocket_client, **kwargs):
         min_volume=0.7 # slightly higher to filter quiet noise
     ))
 
+
     global last_speech_time, speech_buffer
     
     last_speech_time = None
@@ -134,18 +137,13 @@ async def run_bot(websocket_client, **kwargs):
     speech_buffer = []
     last_speech_time = None
 
-    # VAD & noise parameters
-    SPEECH_WINDOW_SIZE = 5          # Frames to average
-    SPEECH_CONFIDENCE_THRESHOLD = 0.85
-    MIN_SPEECH_DURATION_SEC = 0.6   # Minimum speech to commit
-    MAX_SHORT_PAUSE_SEC = 0.3       # Max pause to continue speech buffer
+    # VAD & noise parameters (optimized for low latency)
+    SPEECH_CONFIDENCE_THRESHOLD = 0.80  # Reduced from 0.85 for faster detection
+    MIN_SPEECH_DURATION_SEC = 0.2   # Reduced from 0.6s to 0.2s for faster processing
     BACKGROUND_RMS = 0.03           # Estimated noise floor
-    NOISE_RMS_THRESHOLD = max(BACKGROUND_RMS * 3, 0.05)
+    NOISE_RMS_THRESHOLD = max(BACKGROUND_RMS * 2.5, 0.04)  # Reduced threshold for faster detection
 
-    FADE_MS = 50
     SAMPLE_RATE = AUDIO_CONFIG.get("sample_rate")
-
-    speech_confidence_window = []
 
     if AUDIO_CONFIG["audio_noise_reduction_enabled"]:
         audio_filter.strength = AUDIO_CONFIG["audio_noise_reduction_strength"]
@@ -193,7 +191,19 @@ async def run_bot(websocket_client, **kwargs):
                     "parameters": function["parameters"]
                 })
 
-    
+    kb_instructions = ""
+    if knowledge_base:
+        kb_instructions = f"""
+        - If the user asks a question that might relate to the knowledge base:
+            1. Say "Please wait a moment while I search for that information in my knowledge base."
+            2. Call `retrieve_text_from_vectorstore()` with the user’s query.
+            3. If results are found, use them to answer.
+            4. If no results are found, fall back to your own knowledge to answer clearly.
+        """
+    else:
+        kb_instructions = """
+        - You do NOT have access to a knowledge base. Use your own knowledge to answer clearly and step by step.
+        """
 
     llm = GeminiMultimodalLiveLLMService(
         system_instruction=f"""
@@ -202,13 +212,7 @@ async def run_bot(websocket_client, **kwargs):
             **IMPORTANT**  
 
             1. **Handling Answering Questions:**  
-            - If the user asks a question that is not in the knowledge base:
-                1. First respond with "Please wait a moment while I search for that information in my knowledge base."
-                2. Then use the `retrieve_text_from_vectorstore()` function to search for relevant information
-                3. this vectorstore have data about the product, services, and other information.
-                4. If results are found, provide the answer based on the retrieved documents
-                5. If no results are found, inform the user that you could not find relevant information and ask them to provide more information or to try another query.
-            - The `retrieve_text_from_vectorstore()` function takes a query as input and returns a list of documents that are relevant to the query.
+            {kb_instructions}
     
             2. **Handling Dynamic Variables:**  
             - You have access to one function: `set_dynamic_variable()`, which sets the dynamic variables for the call.  
@@ -285,6 +289,7 @@ async def run_bot(websocket_client, **kwargs):
         llm = params.llm
         context = params.context
         result_callback = params.result_callback
+        logger.info(f"inside custom_function args: {args}, llm:{llm}, context: {context}, result_callback: {result_callback} ")
 
         try:
             agent = AgentModel.get_by_id(agent_id)
@@ -292,7 +297,8 @@ async def run_bot(websocket_client, **kwargs):
                 custom_func = CustomFunctionModel.get_by_name(params.function_name, agent_id)
                 if custom_func:
                     response = await send_request(custom_func.function_url, args)
-                    return {"status": "success", "message": "Custom function executed successfully"}
+                    logger.info(f"custom_func: {custom_func} response is : {response}")
+                    return {**response}
                 else:
                     return {"status": "error", "message": "Custom function not found"}
             else:
@@ -306,10 +312,11 @@ async def run_bot(websocket_client, **kwargs):
         llm = params.llm
         context = params.context
         result_callback = params.result_callback
-
+        logger.info(f"inside retrieve_text_from_vectorstore args: {args}, llm:{llm}, context: {context}, result_callback: {result_callback} ")
         try:
             agent = AgentModel.get_by_id(agent_id)
             if agent:
+                logger.info(f"inside retrieve_text_from_vectorstore")
                 from sqlalchemy.orm import sessionmaker
                 from app.databases.models import engine
                 from sqlalchemy import select
@@ -336,7 +343,9 @@ async def run_bot(websocket_client, **kwargs):
             properties = FunctionCallResultProperties(run_llm=True)
             await result_callback(data, properties=properties)
     
-    llm.register_function("retrieve_text_from_vectorstore",retrieve_text_from_vectorstore)
+    if knowledge_base:
+        logger.info(f"knowledge_base: {knowledge_base} so attaching retrieve_text_from_vectorstore to the llm model")
+        llm.register_function("retrieve_text_from_vectorstore",retrieve_text_from_vectorstore)
 
     if dynamic_variables:
         llm.register_function("set_dynamic_variable",set_dynamic_variable)
@@ -347,15 +356,15 @@ async def run_bot(websocket_client, **kwargs):
     llm.register_function("end_call",end_call)
     context = OpenAILLMContext([{"role": "user", "content":" "}],tools=tools)
     context_aggregator = llm.create_context_aggregator(context)
-    # Get adaptive buffer size based on noise level
-    adaptive_buffer_size = int(AUDIO_CONFIG.get("buffer_size_ms", 200))
+    # Get adaptive buffer size based on noise level (optimized for low latency)
+    adaptive_buffer_size = int(AUDIO_CONFIG.get("buffer_size_ms", 50))  # Reduced from 200ms to 50ms
     if AUDIO_CONFIG['audio_adaptive_buffering']:
         adaptive_buffer_size = min(
-            int(AUDIO_CONFIG.get("audio_max_noise_buffer_size_ms", 1500)),
-            int(int(AUDIO_CONFIG.get("buffer_size_ms", 200)) * float(AUDIO_CONFIG.get('audio_buffer_scaling_factor', 1.0)))
+            int(AUDIO_CONFIG.get("audio_max_noise_buffer_size_ms", 300)),  # Reduced from 1500ms to 300ms
+            int(int(AUDIO_CONFIG.get("buffer_size_ms", 50)) * float(AUDIO_CONFIG.get('audio_buffer_scaling_factor', 1.2)))  # Reduced scaling factor
         )
 
-    logger.info(f"adaptive_buffer_size : {adaptive_buffer_size}")
+    logger.info(f"Optimized adaptive_buffer_size: {adaptive_buffer_size}ms for low latency")
 
     audiobuffer = AudioBufferProcessor(
         buffer_size_ms=adaptive_buffer_size,
@@ -414,9 +423,10 @@ async def run_bot(websocket_client, **kwargs):
     task = PipelineTask(pipeline, params=PipelineParams(
         audio_in_sample_rate=16000,
         audio_out_sample_rate=16000,
-        allow_interruptions=False,
-        enable_metrics=True,
-        enable_usage_metrics=True,
+        allow_interruptions=True,  # Enable interruptions for better responsiveness
+        # enable_metrics=True,      # Disable metrics for lower overhead
+        # enable_usage_metrics=True, # Disable usage metrics for lower overhead,
+        observers=[UserBotLatencyLogObserver()]
     ))
 
     runner = PipelineRunner(handle_sigint=False)
@@ -515,80 +525,92 @@ async def run_bot(websocket_client, **kwargs):
     async def on_audio_generated(frame):
         await transport.output().queue_frame(frame)
 
+    async def deduct_tokens(user_id, agent_id, tokens_to_deduct: int):
+        try:
+            with db():
+                user = db.session.query(UserModel).filter(UserModel.id == user_id).first()
+                if not user:
+                    logger.error(f"User {user_id} not found")
+                    return
+
+                if user.tokens < tokens_to_deduct:
+                    logger.warning(f"User {user_id} has only {user.tokens}, trying to deduct {tokens_to_deduct}")
+                    tokens_to_deduct = user.tokens  # avoid negative balance
+
+                user.tokens -= tokens_to_deduct
+
+                # update limits if needed
+                overall_limit = db.session.query(OverallTokenLimitModel).filter(
+                    OverallTokenLimitModel.agent_id == agent_id
+                ).first()
+                if overall_limit:
+                    overall_limit.last_used_tokens += tokens_to_deduct
+
+                daily_limit = db.session.query(DailyCallLimitModel).filter(
+                    DailyCallLimitModel.agent_id == agent_id
+                ).first()
+                if daily_limit:
+                    if should_reset_daily_limit(daily_limit.last_updated):
+                        daily_limit.last_used = 0
+                    daily_limit.last_used += tokens_to_deduct
+                    daily_limit.last_updated = datetime.utcnow()
+
+                db.session.commit()
+                logger.info(f"Deducted {tokens_to_deduct} tokens for user {user_id}, remaining {user.tokens}")
+        except Exception as e:
+            logger.error(f"Error in deduct_tokens: {e}")
+
+    # Frame counter for selective noise reduction
+    _frame_counter = 0
+    _noise_reduction_interval = 3  # Apply noise reduction every 3rd frame
     
-
-    def apply_fade(audio: np.ndarray, fade_ms=FADE_MS, sample_rate=SAMPLE_RATE):
-        fade_samples = int(sample_rate * fade_ms / 1000)
-        fade_in = np.linspace(0, 1, fade_samples)
-        fade_out = np.linspace(1, 0, fade_samples)
-        audio[:fade_samples] *= fade_in
-        audio[-fade_samples:] *= fade_out
-        return audio
-
-    
-
     @audiobuffer.event_handler("on_audio_data")
     async def on_audio_data(buffer, audio, sample_rate, num_channels):
-        global last_speech_time, speech_buffer, speech_confidence_window
+        global last_speech_time, speech_buffer
         try:
-            # Apply noise reduction
-            if AUDIO_CONFIG["audio_noise_reduction_enabled"]:
-                audio = audio_filter.apply(audio, sample_rate)
-
-            # VAD confidence + RMS volume
+            # Simplified speech detection
             confidence = vad_analyzer.voice_confidence(audio)
-            rms_volume = (np.mean(np.square(audio))) ** 0.5
-
-            # Maintain rolling window for smoothing
-            speech_confidence_window.append((confidence, rms_volume))
-            if len(speech_confidence_window) > SPEECH_WINDOW_SIZE:
-                speech_confidence_window.pop(0)
-
-            avg_conf = sum(c for c, _ in speech_confidence_window) / len(speech_confidence_window)
-            avg_rms  = sum(r for _, r in speech_confidence_window) / len(speech_confidence_window)
-
-            # Detect sustained speech
-            is_sustained_speech = avg_conf > SPEECH_CONFIDENCE_THRESHOLD and avg_rms > NOISE_RMS_THRESHOLD
-
-            if is_sustained_speech:
+            is_speech = confidence > 0.7  # Single threshold check
+            
+            if is_speech:
                 speech_buffer.extend(audio)
                 last_speech_time = datetime.utcnow()
-            else:
-                # Check if buffer should be committed
-                if last_speech_time:
-                    silence_duration = (datetime.utcnow() - last_speech_time).total_seconds()
-                    if silence_duration > MAX_SHORT_PAUSE_SEC:
-                        if speech_buffer and len(speech_buffer) / sample_rate >= MIN_SPEECH_DURATION_SEC:
-                            processed = apply_fade(np.array(speech_buffer))
-                            await save_audio(
-                                processed, sample_rate, num_channels,
-                                stream_sid or uid, voice, int(agent_id)
-                            )
-                        # Reset buffer
-                        speech_buffer = []
-                        last_speech_time = None
-
+            elif last_speech_time and speech_buffer:
+                # Immediate processing without complex checks
+                await save_audio(
+                    np.array(speech_buffer), sample_rate, num_channels,
+                    stream_sid or uid, voice, int(agent_id)
+                )
+                speech_buffer = []
+                last_speech_time = None
+                
         except Exception as e:
             logger.error(f"Error in on_audio_data: {e}")
 
     @transcript.event_handler("on_transcript_update")
     async def handle_update(processor, frame):
         try:
-            for msg in frame.messages:
-                conversation_list.append({"role": msg.role, "content": msg.content})
+            # Batch append messages for better performance
+            if frame.messages:
+                conversation_list.extend([
+                    {"role": msg.role, "content": msg.content} 
+                    for msg in frame.messages
+                ])
         except Exception as e:
             logger.error(f"Error processing user transcript: {e}")
 
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, client):
+        logger.info(f"transport ID is:  {transport.id}")
+        call_start_time[transport.id] = datetime.utcnow()
         tokens_to_consume = TokensToConsume.get_by_id(1).token_values
         if tokens_to_consume <= 0:
             logger.error("Invalid token rate; setting to default (10 tokens per minute).")
             tokens_to_consume = 10
         
-        global token_task
-        token_task = asyncio.create_task(deduct_tokens_periodically(user_id, tokens_to_consume, agent_id, websocket_client))
+        # global token_task
+        # token_task = asyncio.create_task(deduct_tokens_periodically(user_id, tokens_to_consume, agent_id, websocket_client))
 
         await audiobuffer.start_recording()
         a = await task.queue_frames([context_aggregator.user().get_context_frame()])
@@ -596,18 +618,31 @@ async def run_bot(websocket_client, **kwargs):
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, client):
+        logger.info(f"on_client_disconnected")
         await audiobuffer.stop_recording()
-        await task.cancel()
-        await runner.cancel()
+
+        logger.info(f"call_start_time: {call_start_time}")
+        start_time = call_start_time.pop(transport.id, None)
+        logger.info(f"start_time : {start_time}")
+        if start_time:
+            duration_seconds = (datetime.utcnow() - start_time).total_seconds()
+            logger.info(f"Call duration: {duration_seconds:.2f} seconds")
+
+            # deduct based on duration (example: 1 token per 60s)
+            tokens_to_deduct = max(1, int(duration_seconds // 60))  
+            await deduct_tokens(user_id, agent_id, tokens_to_deduct)
+
         if stream_sid:
             await save_conversation(conversation_list, stream_sid)
         else:
             await save_conversation(conversation_list,  uid)
-        if token_task:
-            token_task.cancel()
-            logger.info("Stopped token deduction as client disconnected.")
+        # if token_task:
+        #     token_task.cancel()
+        #     logger.info("Stopped token deduction as client disconnected.")
         conversation_list.clear()
-
+        await task.cancel()
+        await runner.cancel()
+        await transport.cleanup()
     try:
         await runner.run(task)
     except Exception as ex:
