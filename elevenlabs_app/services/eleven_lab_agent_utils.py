@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Any
 from elevenlabs import ElevenLabs
+from elevenlabs_app.elevenlabs_config import DEFAULT_LLM_ELEVENLAB,DEFAULT_MODEL_ELEVENLAB,VALID_LLMS
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -74,17 +75,40 @@ class ElevenLabsVoice(ElevenLabsBase):
 
         return ElevenLabsAgentResponse(status=False, error_message=error_message)
 
-    def get_voice(self, voice_id: str, retries: int = 3) -> ElevenLabsAgentResponse:
+    def get_voice(self, voice_id: str = None,retries: int = 3, **kwargs) -> ElevenLabsAgentResponse:
+        """
+        Fetch a single voice (if voice_id provided) or list voices with filters.
+
+        Accepted kwargs for listing voices:
+            next_page_token: str | None
+            page_size: int (max 100, default 10)
+            search: str | None
+            sort: str | None ('created_at_unix' or 'name')
+            sort_direction: str | None ('asc' or 'desc')
+            voice_type: str | None ('personal','community','default','workspace','non-default')
+            category: str | None ('premade','cloned','generated','professional')
+            fine_tuning_state: str | None ('draft','not_verified','not_started','queued','fine_tuning','fine_tuned','failed','delayed')
+            collection_id: str | None
+            include_total_count: bool (default True)
+            voice_ids: list[str] | None (max 100)
+        """
+        params = {k: v for k, v in kwargs.items() if v is not None}
+        error_message = None
+
         for attempt in range(1, retries + 1):
             try:
-                voice = self.client.voices.get(voice_id=voice_id)
-                logger.info(f"✅ Retrieved voice {voice_id}")
-                return ElevenLabsAgentResponse(status=True, data={"voice": voice})
+                if voice_id:
+                    voice = self.client.voices.get(voice_id=voice_id)
+                    return ElevenLabsAgentResponse(status=True, data={"voice": voice})
+                voices = self.client.voices.list(**params)
+                return ElevenLabsAgentResponse(status=True, data={"voices": voices})
             except Exception as e:
                 error_message = str(e)
-                logger.error(f"Attempt {attempt}: Unexpected error: {error_message}")
-            sleep(2)
+                logger.error(f"Attempt {attempt}: {error_message}")
+                sleep(2)
+
         return ElevenLabsAgentResponse(status=False, error_message=error_message)
+
 
     def edit_voice_name(self, voice_id: str, new_name: str, retries: int = 3) -> ElevenLabsAgentResponse:
         check = self.get_voice(voice_id)
@@ -129,32 +153,6 @@ class ElevenLabsVoice(ElevenLabsBase):
                 logger.error(f"Attempt {attempt}: Unexpected error: {error_message}")
             sleep(2)
         return ElevenLabsAgentResponse(status=False, error_message=error_message)
-
-class ElevenLabsAgentUtils:
-    def __init__(self):
-        super().__init__()
-
-    def construct_api_schema(self,kwargs):
-        url = kwargs.get("url")
-        method = kwargs.get("method")
-        path_params_schema = kwargs.get("path_params_schema")
-        query_params_schema = kwargs.get("query_params_schema")
-        request_body_schema = kwargs.get("request_body_schema")
-        request_headers = kwargs.get("request_headers")
-        auth_connection = kwargs.get("auth_connection")
-
-
-    def create_tool(self,kwargs):
-        name = kwargs.get("name")
-        description = kwargs.get("description")
-        api_schema = kwargs.get("api_schema")
-        type = kwargs.get("type")
-        response_timeout_secs = kwargs.get("response_timeout_secs")
-        disable_interruptions = kwargs.get("disable_interruptions")
-        force_pre_tool_speech = kwargs.get("force_pre_tool_speech")
-        assignments = kwargs.get("assignments")
-        dynamic_variables = kwargs.get("dynamic_variables")
-        
         
 @dataclass
 class AsrConfig:
@@ -172,8 +170,8 @@ class TurnConfig:
 
 @dataclass
 class TtsConfig:
-    model_id: str = "eleven_turbo_v2"
-    voice_id: str = "21m00Tcm4TlvDq8ikWAM"
+    model_id: str = DEFAULT_MODEL_ELEVENLAB
+    voice_id: str = None
     agent_output_audio_format: str = "pcm_16000"
     optimize_streaming_latency: int = 3
     stability: float = 0.5
@@ -184,7 +182,7 @@ class TtsConfig:
 @dataclass
 class PromptConfig:
     prompt: str = "You are a helpful assistant"
-    llm: str = "gemini-2.0-flash"
+    llm: str = DEFAULT_LLM_ELEVENLAB
     temperature: float = 0.0
     max_tokens: int = -1
     tool_ids: List[str] = field(default_factory=list)
@@ -211,7 +209,7 @@ class ConversationConfig:
         return asdict(self)
 
 
-class ElevenLabsAgentCreator:
+class ElevenLabsAgentCRUD:
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or ELEVEN_API_KEY
         self.headers = {
@@ -225,21 +223,99 @@ class ElevenLabsAgentCreator:
         prompt: str,
         model: str,
         voice_id: str,
-        language: str
+        language: str,
+        selected_elevenlab_model: str,
+        first_message:str
     ) -> Dict[str, Any]:
-        # Build conversation config with overrides
-        config = ConversationConfig()
-        config.agent.prompt.prompt = prompt
-        config.agent.prompt.llm = model
-        config.agent.language = language
-        config.tts.voice_id = voice_id
 
-        payload = {
-            "name": name,
-            "conversation_config": config.to_dict()
-        }
+        try:
+            # Build conversation config with overrides
+            config = ConversationConfig()
+            config.agent.prompt.prompt = prompt
+            config.agent.prompt.llm = model
+            config.agent.language = language
+            config.tts.voice_id = voice_id
+            config.tts.model_id = selected_elevenlab_model
+            config.agent.first_message = first_message
 
-        resp = requests.post(BASE_URL+"/convai/agents/create", headers=self.headers, json=payload)
-        if resp.status_code != 200:
-            raise Exception(f"Failed to create agent: {resp.status_code} {resp.text}")
-        return resp.json()
+            payload = {
+                "name": name,
+                "conversation_config": config.to_dict()
+            }
+
+            resp = requests.post(BASE_URL+"/convai/agents/create", headers=self.headers, json=payload)
+            if resp.status_code != 200:
+                raise Exception(f"Failed to create agent: {resp.status_code} {resp.text}")
+            return resp.json()
+        except Exception as ex:
+            return {"error":"Error Occurred","exc":str(ex)}
+
+
+
+    def update_agent(
+        self,
+        agent_id: str,
+        name: Optional[str] = None,
+        prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        voice_id: Optional[str] = None,
+        language: Optional[str] = None,
+        selected_elevenlab_model: Optional[str] = None,
+        first_message: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Update an existing agent.
+        Only non-None parameters will override the current configuration.
+        """
+
+        try:
+            # Start with a blank ConversationConfig
+            config = ConversationConfig()
+
+            # Override only if provided
+            if prompt: 
+                config.agent.prompt.prompt = prompt
+            if model: 
+                config.agent.prompt.llm = model
+            if language: 
+                config.agent.language = language
+            if voice_id: 
+                config.tts.voice_id = voice_id
+            if selected_elevenlab_model: 
+                config.tts.model_id = selected_elevenlab_model
+            if first_message: 
+                config.agent.first_message = first_message
+
+            payload = {}
+            if name:
+                payload["name"] = name
+            if any([prompt, model, voice_id, language, selected_elevenlab_model, first_message]):
+                payload["conversation_config"] = config.to_dict()
+
+            url = f"{BASE_URL}/convai/agents/update"
+            resp = requests.post(url, headers=self.headers, json={"agent_id": agent_id, **payload})
+
+            if resp.status_code != 200:
+                raise Exception(f"Failed to update agent: {resp.status_code} {resp.text}")
+
+            return resp.json()
+        except Exception as ex:
+            return {"error": "Error Occurred", "exc": str(ex)}
+
+
+    def delete_agent(self, agent_id: str) -> Dict[str, Any]:
+            """
+            Delete an existing agent by agent_id
+            """
+            try:
+                url = f"{BASE_URL}/convai/agents/delete"
+                payload = {"agent_id": agent_id}
+
+                resp = requests.post(url, headers=self.headers, json=payload)
+
+                if resp.status_code != 200:
+                    raise Exception(f"Failed to delete agent: {resp.status_code} {resp.text}")
+
+                return resp.json()
+            except Exception as ex:
+                return {"error": "Error Occurred", "exc": str(ex)}
