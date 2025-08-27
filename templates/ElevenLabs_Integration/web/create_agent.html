@@ -34,7 +34,11 @@
                     <div class="d-flex align-items-center gap-2">
                         <div class="agent_select_box position-relative">
                             <select class="form-select" id="selected-model">
-                                <option {% if agent and agent.selected_model == "Gemini" %}selected{% endif %}>Gemini</option>
+                                {% for llm_model in llm_models %}
+                                    <option value="{{ llm_model.id }}" >
+                                        {{ llm_model.name }}
+                                    </option>
+                                {% endfor %}
                             </select>
                             <div class="agent_type_select_icon">
                                 <img src="{{ host }}/static/Web/images/ai-icon.svg" class="img-fluid">
@@ -44,44 +48,13 @@
                             </div>
                         </div>
                         <div class="agent_select_box position-relative">
-                            <select class="form-select" id="selected-voice" onchange="updateAgentVoice(this.value)">
+                            <select class="form-select" id="selected-voice">
                                 {% for voice in voices %}
-                                    <option value="{{ voice.id }}" 
-                                        {% if agent and agent.selected_voice == voice.id %}selected{% endif %}>
+                                    <option value="{{ voice.id }}" >
                                         {{ voice.voice_name }}
                                     </option>
                                 {% endfor %}
                             </select>                            
-                            <script>
-                            function updateAgentVoice(voice) {
-                                const currentUrl = new URL(window.location.href);
-                                const agentId = currentUrl.searchParams.get("agent_id");
-                                
-                                fetch( `${host}/api/update-agent`, {
-                                    method: "POST", 
-                                    headers: {
-                                        "Content-Type": "application/json",
-                                        "X-CSRFToken": getCSRFToken()
-                                    },
-                                    body: JSON.stringify({
-                                        agent_id: agentId,
-                                        selected_voice: voice
-                                    })
-                                })
-                                .then(response => response.json())
-                                .then(data => {
-                                    if(data.status === "success") {
-                                        toastr.success("Voice updated successfully");
-                                    } else {
-                                        toastr.error("Failed to update voice");
-                                    }
-                                })
-                                .catch(error => {
-                                    console.error("Error:", error);
-                                    toastr.error("Something went wrong!");
-                                });
-                            }
-                            </script>
                             <div class="agent_type_select_icon">
                                 <img src="{{ host }}/static/Web/images/jack-img.svg" class="img-fluid">
                             </div>
@@ -91,7 +64,11 @@
                         </div>
                         <div class="agent_select_box position-relative">
                             <select class="form-select" id = "selected-language">
-                                <option selected>English</option>
+                                {% for language in allowed_languages %}
+                                    <option value="{{ language.code }}">
+                                        {{ language.name }}
+                                    </option>
+                                {% endfor %}
                             </select>
                             <div class="agent_type_select_icon">
                                 <img src="{{ host }}/static/Web/images/lang-icon.svg" class="img-fluid">
@@ -106,8 +83,7 @@
                                         Select Knowledge Base
                                     </option>
                                     {% for knowledge_base in knowledge_bases %}
-                                        <option value="{{ knowledge_base.id }}"
-                                            {% if selected_knowledge and selected_knowledge.id == knowledge_base.id %}selected{% endif %}>
+                                        <option value="{{ knowledge_base.id }}">
                                             {{ knowledge_base.knowledge_base_name }}
                                         </option>
                                     {% endfor %}

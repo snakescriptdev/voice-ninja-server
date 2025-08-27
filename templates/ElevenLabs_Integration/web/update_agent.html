@@ -34,8 +34,13 @@
                 <div class="agent_type_dropdown d-flex align-items-center justify-content-between">
                     <div class="d-flex align-items-center gap-2">
                         <div class="agent_select_box position-relative">
-                            <select class="form-select" id="selected-model">
-                                <option {% if agent and agent.selected_model == "Gemini" %}selected{% endif %}>Gemini</option>
+                            <select class="form-select" id="selected-model" onchange="updateAgentSetting('selected_llm_model_id', this.value)">
+                                {% for llm_model in llm_models %}
+                                    <option value="{{ llm_model.id }}" 
+                                        {% if agent and agent.selected_model == llm_model.id %}selected{% endif %}>
+                                        {{ llm_model.name }}
+                                    </option>
+                                {% endfor %}
                             </select>
                             <div class="agent_type_select_icon">
                                 <img src="{{ host }}/static/Web/images/ai-icon.svg" class="img-fluid">
@@ -45,7 +50,7 @@
                             </div>
                         </div>
                         <div class="agent_select_box position-relative">
-                            <select class="form-select" id="selected-voice" onchange="updateAgentVoice(this.value)">
+                            <select class="form-select" id="selected-voice" onchange="updateAgentSetting('selected_voice_id', this.value)">
                                 {% for voice in voices %}
                                     <option value="{{ voice.id }}" 
                                         {% if agent and agent.selected_voice == voice.id %}selected{% endif %}>
@@ -53,36 +58,6 @@
                                     </option>
                                 {% endfor %}
                             </select>                            
-                            <script>
-                            function updateAgentVoice(voice) {
-                                const currentUrl = new URL(window.location.href);
-                                const agentId = currentUrl.searchParams.get("agent_id");
-                                
-                                fetch( `${host}/api/update-agent`, {
-                                    method: "POST", 
-                                    headers: {
-                                        "Content-Type": "application/json",
-                                        "X-CSRFToken": getCSRFToken()
-                                    },
-                                    body: JSON.stringify({
-                                        agent_id: agentId,
-                                        selected_voice: voice
-                                    })
-                                })
-                                .then(response => response.json())
-                                .then(data => {
-                                    if(data.status === "success") {
-                                        toastr.success("Voice updated successfully");
-                                    } else {
-                                        toastr.error("Failed to update voice");
-                                    }
-                                })
-                                .catch(error => {
-                                    console.error("Error:", error);
-                                    toastr.error("Something went wrong!");
-                                });
-                            }
-                            </script>
                             <div class="agent_type_select_icon">
                                 <img src="{{ host }}/static/Web/images/jack-img.svg" class="img-fluid">
                             </div>
@@ -91,8 +66,13 @@
                             </div>
                         </div>
                         <div class="agent_select_box position-relative">
-                            <select class="form-select" id = "selected-language">
-                                <option selected>English</option>
+                            <select class="form-select" id = "selected-language" onchange="updateAgentSetting('selected_language_code', this.value)">
+                                {% for language in allowed_languages %}
+                                    <option value="{{ language.code }}" 
+                                        {% if agent and agent.selected_language == language.code %}selected{% endif %}>
+                                        {{ language.name }}
+                                    </option>
+                                {% endfor %}
                             </select>
                             <div class="agent_type_select_icon">
                                 <img src="{{ host }}/static/Web/images/lang-icon.svg" class="img-fluid">
@@ -114,36 +94,35 @@
                                     {% endfor %}
                             </select>
                             <script>
-                            function updateKnowledgeBase(knowledgeBaseId) {
-                                const currentUrl = new URL(window.location.href);
-                                const agentId = currentUrl.searchParams.get("agent_id");
-                                
-                                fetch(`${host}/api/attach-knowledge-base`, {
-                                    method: "POST",
-                                    headers: {
-                                        "Content-Type": "application/json",
-                                        "X-CSRFToken": getCSRFToken()
-                                    },
-                                    body: JSON.stringify({
-                                        agent_id: agentId,
-                                        knowledge_base_id: knowledgeBaseId
+                                function updateKnowledgeBase(knowledgeBaseId) {
+                                    const currentUrl = new URL(window.location.href);
+                                    const agentId = currentUrl.searchParams.get("agent_id");
+                                    
+                                    fetch(`${host}/api/attach-knowledge-base`, {
+                                        method: "POST",
+                                        headers: {
+                                            "Content-Type": "application/json",
+                                            "X-CSRFToken": getCSRFToken()
+                                        },
+                                        body: JSON.stringify({
+                                            agent_id: agentId,
+                                            knowledge_base_id: knowledgeBaseId
+                                        })
                                     })
-                                })
-                                .then(response => response.json())
-                                .then(data => {
-                                    if(data.status === "success") {
-                                        toastr.success("Knowledge base updated successfully");
-                                    } else {
-                                        toastr.error("Failed to update knowledge base");
-                                    }
-                                })
-                                .catch(error => {
-                                    console.error("Error:", error);
-                                    toastr.error("Something went wrong!");
-                                });
-                            }
+                                    .then(response => response.json())
+                                    .then(data => {
+                                        if(data.status === "success") {
+                                            toastr.success("Knowledge base updated successfully");
+                                        } else {
+                                            toastr.error("Failed to update knowledge base");
+                                        }
+                                    })
+                                    .catch(error => {
+                                        console.error("Error:", error);
+                                        toastr.error("Something went wrong!");
+                                    });
+                                }
                             </script>
-
                             <div class="agent_type_select_icon">
                                 <img src="{{ host }}/static/Web/images/jack-img.svg" class="img-fluid">
                             </div>
@@ -152,19 +131,8 @@
                             </div>
                         </div>
                     </div>
-
-                    <div class="position-relative">
-                        <button class="variable-btn" onclick="toggleNoiseVariablesModal()" style="width:37px; height:37px;">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" fill="currentColor" class="bi bi-volume-down-fill" viewBox="0 0 16 16">
-                                <path d="M9 4a.5.5 0 0 0-.812-.39L5.825 5.5H3.5A.5.5 0 0 0 3 6v4a.5.5 0 0 0 .5.5h2.325l2.363 1.89A.5.5 0 0 0 9 12zm3.025 4a4.5 4.5 0 0 1-1.318 3.182L10 10.475A3.5 3.5 0 0 0 11.025 8 3.5 3.5 0 0 0 10 5.525l.707-.707A4.5 4.5 0 0 1 12.025 8"/>
-                              </svg>
-                        </button>  
-                        <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
-                            <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
-                        </div>                            
-                    </div>
-
-                    {% if request.url.path == '/update_agent' %}                    
+                 
+                    {% if request.url.path == '/elevenlabs/web/v1/update_agent' %}                    
                     <div class="agent_select_box position-relative d-flex align-items-center gap-2">
                         <div class="functions_dropdown">
                             <div class="nav-item dropdown">
@@ -1080,60 +1048,10 @@ document.addEventListener("DOMContentLoaded", function () {
 
             if (text !== "" && text !== initialValue) {  
                 saveAgentPrompt(agentId, text);
-                initialValue = text; // Update initial value after successful save
+                updateAgentSetting('prompt',promptText)
+                initialValue = text; 
             }
         });
-
-        function saveAgentPrompt(agentId, promptText) {
-            fetch("{{ host }}/api/save-agent-prompt", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-CSRFToken": getCSRFToken()  // If using Django
-                },
-                body: JSON.stringify({ agent_id: agentId, agent_prompt: promptText })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if(data.status == "success"){
-                    initialValue = promptText; // Update initial value
-                    dynamicVariables = data.dynamic_variables;
-                    const variableContainer = document.getElementById('dynamic-variables');
-                    variableContainer.innerHTML = '';
-                    Object.entries(dynamicVariables).forEach(([key, value]) => {
-                        const variableDiv = document.createElement('div');
-                        variableDiv.className = 'variable-modal-content-item mb-2';
-                        variableDiv.innerHTML = `
-                            <input type="text" class="form-control" value="${key}">
-                            <input type="text" class="form-control" value="${value}">
-                            <button class="dlt_btn bg-transparent border-0 p-0" onclick="removeVariable(this)">
-                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-12 w-12">
-                                    <path d="M3 6h18"></path>
-                                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-                                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-                                </svg>
-                            </button>
-                        `;
-                        variableContainer.appendChild(variableDiv);
-                    });
-                    toastr.success("Prompt saved successfully", { positionClass: "toast-top-right" });
-                } else if (data.status == "error"){
-                    toastr.error(data.message, { positionClass: "toast-top-right" });
-                }
-                else{
-                    toastr.error("Something went wrong!", { positionClass: "toast-top-right" });
-                }
-            })
-            .catch(error => {
-                if (error.message) {
-                    toastr.error(error.message, { positionClass: "toast-top-right" });
-                }
-                else{
-                    toastr.error("Something went wrong!", { positionClass: "toast-top-right" });
-                }
-                console.error("Error saving data:", error);
-            });
-        }
     }
 });
 
@@ -1197,7 +1115,7 @@ document.addEventListener("DOMContentLoaded", function () {
             selectBox.innerText = value;
             clearTimeout(saveTimeout);
             saveTimeout = setTimeout(() => {
-                saveWelcomeMessage(value);
+                updateAgentSetting('welcome_msg',message);
             }, 300);
             welcomeMessageInput.style.display = "none";
             selectBox.style.display = "block";
@@ -1208,33 +1126,6 @@ document.addEventListener("DOMContentLoaded", function () {
             return;
         }
     }
-
-    function saveWelcomeMessage(message) {
-        
-        const endpoint = agentId ? "{{ host }}/api/save-welcome-message" : "{{ host }}/api/save-welcome-message";
-        const data = agentId ? 
-            { welcome_msg: message, agent_id: agentId } : 
-            { welcome_msg: message };
-
-        fetch(endpoint, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRFToken": getCSRFToken()
-            },
-            body: JSON.stringify(data)
-        })
-        .then(response => response.json())
-        .then(data => {
-            console.log("Saved successfully:", data);
-            toastr.success("Welcome message saved successfully", { positionClass: "toast-top-right" });
-        })
-        .catch(error => {
-            console.error("Error saving data:", error);
-            toastr.error("Error saving welcome message", { positionClass: "toast-top-right" });
-        });
-    }
-
     function getCSRFToken() {
         return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
     }
@@ -1784,141 +1675,33 @@ function saveVariable() {
     </script>
 
     <script>
-        const currentUrl = new URL(window.location.href);
-        const agentId = currentUrl.searchParams.get("agent_id");
-         
-        function populateNoiseSettings(noiseData) {
-            const container = document.getElementById('noise-settings');
-            container.innerHTML = ''; // clear previous
+        function updateAgentSetting(field, value) {
+            const currentUrl = new URL(window.location.href);
+            const agentId = currentUrl.searchParams.get("agent_id");
         
-            for (const [key, item] of Object.entries(noiseData)) {
-                const div = document.createElement('div');
-                div.className = 'variable-modal-content-item mb-2';
-                div.style.position = 'relative';
-        
-                div.innerHTML = `
-                    <div class="variable_name" style="position: relative; display:flex; align-items:center;">
-                        <button type="button" 
-                                class="variable_description" 
-                                onclick="toggleDescription(this)" 
-                                style="background:none; border:none; cursor:pointer; color:#0d6efd; margin-right:5px; display:flex; align-items:center;">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-info-circle" viewBox="0 0 16 16">
-                              <path d="M8 15A7 7 0 1 0 8 1a7 7 0 0 0 0 14zm0 1A8 8 0 1 1 8 0a8 8 0 0 1 0 16z"/>
-                              <path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 .876-.252 1.02-.598l.088-.416c.076-.34.223-.466.45-.508l.088-.02.082-.38-.45-.083c-.294-.07-.352-.176-.288-.469l.738-3.468c.194-.897-.105-1.319-.808-1.319-.545 0-.876.252-1.02.598z"/>
-                              <circle cx="8" cy="4.5" r="1"/>
-                            </svg>
-                        </button>
-                        <input type="text" class="form-control" value="${key}" readonly style="flex:1;">
-                        <span class="description-text" 
-                              style="display:none; margin-left:5px;">
-                            ${item.description}
-                        </span>
-                    </div>
-                    <input type="text" class="form-control" 
-                           value="${item.value}" 
-                           style="background-color: ${item.is_default ? '#f0f0f0' : '#ffffff'}; margin-top:5px;">
-                    <button class="btn btn-info btn-sm" onclick="resetToDefault(this)" style="margin-top:5px;">
-                       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" class="bi bi-arrow-clockwise" viewBox="0 0 16 16">
-                        <path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2z"/>
-                        <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466"/>
-                        </svg>
-                    </button>
-                `;
-                container.appendChild(div);
-            }
-        }
-        
-        function toggleDescription(button) {
-            // Close all open descriptions first
-            document.querySelectorAll('.description-text').forEach(el => {
-                el.style.display = 'none';
-            });
-        
-            const description = button.parentElement.querySelector('.description-text');
-            if (description) {
-                description.style.display = (description.style.display === 'block') ? 'none' : 'block';
-            }
-        }
-        
-        async function toggleNoiseVariablesModal() {
-            const modal = document.getElementById('noise-settings-modal');
-        
-            if (modal.style.display === 'none') {
-                // Fetch noise variables from API
-                try {
-                    const response = await fetch(`/api/agents/${agentId}/noise-variables`);
-                    const result = await response.json();
-                    if (result.status === 'success') {
-                        populateNoiseSettings(result.data);
-                    } else {
-                        alert(result.message || "Failed to load noise variables");
-                    }
-                } catch (err) {
-                    console.error(err);
-                    alert("Error fetching noise variables");
-                }
-        
-                $("#noise-settings-modal").modal("show");
-            } else {
-                $("#noise-settings-modal").modal("hide");
-            }
-        }
-        
-        function resetToDefault(btn) {
-            const parent = btn.closest('.variable-modal-content-item');
-            const key = parent.querySelector('input[readonly]').value;
-        
-            fetch('/api/reset-noise-variables', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+            fetch(`${host}/elevenlabs/api/v1/edit_agent`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken()
+                },
                 body: JSON.stringify({
                     agent_id: agentId,
-                    variables: key ? [key] : null   // optional: reset specific key or all
+                    [field]: value   // dynamic key
                 })
             })
-            .then(res => res.json())
-            .then(data => {
-                parent.querySelector('input[type="text"]:not([readonly])').value = data.value;
-                parent.querySelector('input[type="text"]:not([readonly])').style.backgroundColor = '#f0f0f0';
-                toastr.success(`Reset ${key} to default`);
-            })
-            .catch(err => toastr.error('Error resetting variable: ' + err));
-        }
-
-        function saveNoiseVariabless() {
-            const items = document.querySelectorAll('#noise-settings .variable-modal-content-item');
-            const variables = {};
-
-            items.forEach(item => {
-                const key = item.querySelector('input[readonly]').value;
-                const value = item.querySelector('input[type="text"]:not([readonly])').value;
-                variables[key] = value;
-            });
-
-            fetch('/api/save-noise-variables', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ agent_id: agentId, variables })
-            })
-            .then(res => res.json())
+            .then(response => response.json())
             .then(data => {
                 if (data.status === "success") {
-                    toastr.success(data.message);
-                    // update background colors
-                    items.forEach(item => {
-                        const key = item.querySelector('input[readonly]').value;
-                        const isDefault = data.defaults?.includes(key);
-                        item.querySelector('input[type="text"]:not([readonly])').style.backgroundColor = isDefault ? '#f0f0f0' : '#ffffff';
-                    });
+                    toastr.success("Agent updated successfully");
                 } else {
-                    toastr.error("Error saving variables: " + JSON.stringify(data.errors || data.message));
+                    toastr.error(data.message || "Failed to update agent");
                 }
             })
-            .catch(err => toastr.error("Error saving variables: " + err));
-        }
-
-        function closeNoiseVariableModal(){
-            $("#noise-settings-modal").modal("hide");
+            .catch(error => {
+                console.error("Error:", error);
+                toastr.error("Something went wrong!");
+            });
         }
     </script>
 {% endblock %}

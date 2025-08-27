@@ -2,7 +2,7 @@ from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, Foreig
 from sqlalchemy.orm import relationship, joinedload
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
-from typing import Optional, List
+from typing import Optional, List,Dict
 from fastapi_sqlalchemy import db
 import bcrypt
 import os, shutil
@@ -280,12 +280,10 @@ class AgentModel(Base):
     id = Column(Integer, primary_key=True)
     created_by = Column(Integer, nullable=True,default=0)
     agent_name = Column(String, nullable=True,default="")
-    selected_model = Column(String, nullable=True,default="")
     selected_voice = Column(Integer, ForeignKey("custom_voices.id"), nullable=True)
     selected_voice_obj = relationship("VoiceModel", back_populates="agents",lazy="joined" )
     phone_number = Column(String, nullable=True,default="")
     agent_prompt = Column(String, nullable=True,default="")
-    selected_language = Column(String, nullable=True,default="")
     welcome_msg = Column(String, nullable=True,default="")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -311,6 +309,15 @@ class AgentModel(Base):
     daily_call_limit = relationship("DailyCallLimitModel", back_populates="agent", cascade="all, delete-orphan")
 
     elvn_lab_agent_id = Column(String, nullable=True,default="") #stores agent id of elevenlab agent.
+
+    # Reference to selected LLM model
+    selected_llm_model = Column(Integer, ForeignKey("llm_models.id"), nullable=True)
+    selected_llm_model_obj = relationship("LLMModel", back_populates="agents", lazy="joined")
+
+    selected_model_id = Column(Integer, ForeignKey("elevenlab_models.id"), nullable=True)
+    selected_model_obj = relationship("ElevenLabModel", back_populates="agents")
+    # Store selected language (like "en", "hi", etc.)
+    selected_language = Column(String, nullable=True)
 
     def __repr__(self):
         return f"<Agent(id={self.id}, agent_name={self.agent_name})>"
@@ -1644,10 +1651,8 @@ class VoiceModel(Base):
     user = relationship("UserModel", back_populates="voices")
 
     elevenlabs_voice_id = Column(String, nullable=True)
-    elevenlabs_error = Column(String, nullable=True)
-
     # Path to audio file for playback
-    audio_file = Column(String, nullable=True)
+    audio_file = Column(String, nullable=True)#only exists for custom voices.
     agents = relationship("AgentModel", back_populates="selected_voice_obj")
 
     def __repr__(self):
@@ -1681,7 +1686,7 @@ class VoiceModel(Base):
 
     @classmethod
     def create(cls, voice_name: str, is_custom_voice: bool = False, user_id: Optional[int] = None,
-               elevenlabs_voice_id: Optional[str] = None, elevenlabs_error: Optional[str] = None,
+               elevenlabs_voice_id: Optional[str] = None,
                audio_file: Optional[str] = None) -> "VoiceModel":
         with db():
             voice = cls(
@@ -1689,7 +1694,6 @@ class VoiceModel(Base):
                 is_custom_voice=is_custom_voice,
                 user_id=user_id,
                 elevenlabs_voice_id=elevenlabs_voice_id,
-                elevenlabs_error=elevenlabs_error,
                 audio_file=audio_file
             )
             db.session.add(voice)
@@ -1766,5 +1770,138 @@ class VoiceModel(Base):
                     db.session.add(voice)
                     logger.info(f"✅ Added default voice from Settings: {name}")
             db.session.commit()
+
+class LLMModel(Base):
+    __tablename__ = "llm_models"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    modified_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    agents = relationship("AgentModel", back_populates="selected_llm_model_obj")
+
+    def __repr__(self):
+        return f"<LLMModel(id={self.id}, name={self.name})>"
+
+    @classmethod
+    def get_by_id(cls, llm_id: int) -> Optional["LLMModel"]:
+        """Fetch LLM model by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == llm_id).first()
+
+    @classmethod
+    def get_by_name(cls, name: str) -> Optional["LLMModel"]:
+        """Fetch LLM model by name"""
+        with db():
+            return db.session.query(cls).filter(cls.name == name).first()
+
+    @classmethod
+    def create(cls, name: str) -> "LLMModel":
+        """Create new LLM model"""
+        with db():
+            llm = cls(name=name)
+            db.session.add(llm)
+            db.session.commit()
+            db.session.refresh(llm)
+            return llm
+
+    @classmethod
+    def update(cls, llm_id: int, new_name: str) -> Optional["LLMModel"]:
+        """Update existing LLM model name"""
+        with db():
+            llm = db.session.query(cls).filter(cls.id == llm_id).first()
+            if not llm:
+                return None
+            llm.name = new_name
+            db.session.commit()
+            db.session.refresh(llm)
+            return llm
+    
+    @classmethod
+    def get_all(cls) -> List["LLMModel"]:
+        """Fetch all LLM models"""
+        with db():
+            return db.session.query(cls).all()
+
+class ElevenLabModel(Base):
+    __tablename__ = "elevenlab_models"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    languages = Column(JSONB, nullable=False)  # [{code, name}, ...]
+
+    created_at = Column(DateTime, server_default=func.now())
+    modified_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    agents = relationship("AgentModel", back_populates="selected_model_obj")
+
+    def __repr__(self):
+        return f"<ElevenLabModel(id={self.id}, name={self.name})>"
+
+    def get_language_name(self, code: str) -> Optional[str]:
+        """Resolve language code → name"""
+        for lang in (self.languages or []):
+            if lang.get("code") == code:
+                return lang.get("name")
+        return None
+
+
+    @classmethod
+    def get_by_id(cls, model_id: int) -> Optional["ElevenLabModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.id == model_id).first()
+
+    @classmethod
+    def get_by_name(cls, name: str) -> Optional["ElevenLabModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.name == name).first()
+
+    @classmethod
+    def create(cls, name: str, languages: List[Dict[str, str]]) -> "ElevenLabModel":
+        """Create a new ElevenLabModel"""
+        with db():
+            entry = cls(name=name, languages=languages)
+            db.session.add(entry)
+            db.session.commit()
+            db.session.refresh(entry)
+            return entry
+
+    @classmethod
+    def update(
+        cls,
+        model_id: int,
+        new_name: Optional[str] = None,
+        new_languages: Optional[List[Dict[str, str]]] = None
+    ) -> Optional["ElevenLabModel"]:
+        """Update name and/or languages"""
+        with db():
+            entry = db.session.query(cls).filter(cls.id == model_id).first()
+            if not entry:
+                return None
+            if new_name:
+                entry.name = new_name
+            if new_languages is not None:
+                entry.languages = new_languages
+            db.session.commit()
+            db.session.refresh(entry)
+            return entry
+
+    @classmethod
+    def delete(cls, model_id: int) -> bool:
+        """Delete model by id"""
+        with db():
+            entry = db.session.query(cls).filter(cls.id == model_id).first()
+            if not entry:
+                return False
+            db.session.delete(entry)
+            db.session.commit()
+            return True
+
+    @classmethod
+    def get_all(cls) -> List["ElevenLabModel"]:
+        """Return all models"""
+        with db():
+            return db.session.query(cls).all()
 
 Base.metadata.create_all(engine)

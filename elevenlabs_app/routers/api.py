@@ -3,7 +3,7 @@ from app.core import logger
 from app.services import AudioStorage
 from starlette.responses import JSONResponse, RedirectResponse
 from app.databases.models import (
-    AudioRecordModel, UserModel,
+    AudioRecordModel, ElevenLabModel, LLMModel, UserModel,
     AgentModel, ResetPasswordModel, 
     AgentConnectionModel, PaymentModel, 
     AdminTokenModel, AudioRecordings, 
@@ -13,9 +13,15 @@ from app.databases.models import (
     OverallTokenLimitModel, VoiceModel
     )
 import json
-from elevenlabs_app.services.eleven_lab_agent_utils import ElevenLabsAgentCreator
+from elevenlabs_app.services.eleven_lab_agent_utils import ElevenLabsAgentCRUD
 from jinja2 import Environment, meta
 from fastapi_sqlalchemy import db
+from elevenlabs_app.elevenlabs_config import DEFAULT_LANGUAGE,DEFAULT_LLM_ELEVENLAB,DEFAULT_MODEL_ELEVENLAB,ELEVENLABS_MODELS,VALID_LLMS
+
+from sqlalchemy.orm import sessionmaker
+from app.databases.models import engine
+from sqlalchemy import insert, select,delete
+from app.databases.models import agent_knowledge_association
 
 ElevenLabsAPIRouter = APIRouter()
 
@@ -27,13 +33,27 @@ async def create_new_agent(request: Request):
         agent_name = data.get("agent_name")
         agent_prompt = data.get("agent_prompt")
         welcome_msg = data.get("welcome_msg")
-        selected_model = data.get("selected_model")
+        selected_model = data.get("selected_model")#seleted llm model by user 
         selected_voice = data.get("selected_voice")
         selected_language = data.get("selected_language")
         phone_number = data.get("phone_number", '+17752648387')
         selected_knowledge_base = data.get("selected_knowledge_base")
 
-        elevenlabs_voice_id = VoiceModel.get_by_id("selected_voice").elevenlabs_voice_id
+        elevenlabs_voice_id = VoiceModel.get_by_id(selected_voice).elevenlabs_voice_id
+        selected_llm_model_rec = LLMModel.get_by_id(selected_model)
+
+        selected_model_rec = ElevenLabModel.get_by_name(DEFAULT_MODEL_ELEVENLAB)
+        language_in_selected_model = [x for x in selected_model_rec.languages if x['code']==selected_language]
+        if not language_in_selected_model:
+            error_response = {
+                "status": "error", 
+                "error": f"Selected Language not aloowed.",
+                "status_code": 500
+            }   
+            return JSONResponse(
+                status_code=500,
+                content=error_response
+            )
 
         try:
             with db():
@@ -41,8 +61,9 @@ async def create_new_agent(request: Request):
                     created_by=user_id,
                     agent_name=agent_name,
                     agent_prompt=agent_prompt,
+                    selected_llm_model = selected_model,
+                    selected_model_id = selected_model_rec.id,
                     welcome_msg=welcome_msg,
-                    selected_model=selected_model,
                     selected_voice=selected_voice,
                     selected_language=selected_language,
                     phone_number=phone_number
@@ -53,20 +74,22 @@ async def create_new_agent(request: Request):
                 agent_connection = AgentConnectionModel(agent_id=agent.id)
                 db.session.add(agent_connection)
 
-                creator = ElevenLabsAgentCreator()
+                creator = ElevenLabsAgentCRUD()
                 api_response = creator.create_agent(
                     name=agent_name,
                     prompt=agent_prompt,
-                    model=selected_model,
+                    model=selected_llm_model_rec.name,
                     voice_id=elevenlabs_voice_id,
                     language=selected_language,
+                    selected_elevenlab_model = DEFAULT_MODEL_ELEVENLAB,
+                    first_message = welcome_msg
                 )
 
-                if not api_response or "id" not in api_response:
+                if not api_response or "agent_id" not in api_response:
                     raise Exception("Failed to create ElevenLabs agent")
 
-                agent.elvn_lab_agent_id = api_response["id"]
-
+                agent.elvn_lab_agent_id = api_response["agent_id"]
+                db.session.commit()
         except Exception as e:
             db.session.rollback()
             error_response = {
@@ -80,10 +103,6 @@ async def create_new_agent(request: Request):
             )
 
         if selected_knowledge_base:
-            from sqlalchemy.orm import sessionmaker
-            from app.databases.models import engine
-            from sqlalchemy import insert, select
-            from app.databases.models import agent_knowledge_association
             Session = sessionmaker(bind=engine)
             session = Session() 
             try:
@@ -125,47 +144,188 @@ async def create_new_agent(request: Request):
             content=error_response
         )
 
+# @ElevenLabsAPIRouter.post("/edit_agent",name='edit-agent')
+# async def edit_agent(request: Request):
+#     try:
+#         data = await request.json()
+#         agent_id = data.get("agent_id")
+#         agent_name = data.get("agent_name")
+#         agent_prompt = data.get("agent_prompt")
+#         welcome_msg = data.get("welcome_msg")
+#         selected_model = data.get("selected_model")
+#         selected_voice = data.get("selected_voice")
+#         selected_language = data.get("selected_language")
+#         phone_number = data.get("phone_number", '+17752648387')
+#         selected_knowledge_base = data.get("selected_knowledge_base")
+
+#         if not agent_id:
+#             return JSONResponse(
+#                 status_code=400,
+#                 content={"status": "error", "message": "Missing agent_id", "status_code": 400}
+#             )
+#         Session = sessionmaker(bind=engine)
+#         session = Session() 
+#         # Update Agent Details
+#         session.execute(
+#             AgentModel.__table__.update()
+#             .where(AgentModel.id == agent_id)
+#             .values(
+#                 agent_name=agent_name,
+#                 agent_prompt=agent_prompt,
+#                 welcome_msg=welcome_msg,
+#                 selected_model=selected_model,
+#                 selected_voice=selected_voice,
+#                 selected_language=selected_language,
+#                 phone_number=phone_number,
+#             )
+#         )
+#         session.commit()
+
+#         try:
+#             # Check if the association already exists
+#             query = select(agent_knowledge_association).where(
+#                 agent_knowledge_association.c.agent_id == agent_id
+#             )
+#             result = session.execute(query)
+#             existing_association = result.fetchone()
+
+#             # If the agent has a different knowledge base, delete the old one
+#             if existing_association and existing_association.knowledge_base_id != selected_knowledge_base:
+#                 delete_stmt = delete(agent_knowledge_association).where(
+#                     agent_knowledge_association.c.agent_id == agent_id
+#                 )
+#                 session.execute(delete_stmt)
+#                 session.commit()  # Ensure deletion is applied
+
+#             if selected_knowledge_base:
+#                 # If no association exists, insert a new one
+#                 if not existing_association or existing_association.knowledge_base_id != selected_knowledge_base:
+#                     stmt = insert(agent_knowledge_association).values(
+#                         agent_id=agent_id, 
+#                         knowledge_base_id=selected_knowledge_base
+#                     )
+#                     session.execute(stmt)
+#                     session.commit()
+
+#             return JSONResponse(
+#                 status_code=200,
+#                 content={"status": "success", "message": "Agent updated successfully", "status_code": 200}
+#             )
+
+#         except Exception as e:
+#             session.rollback()
+#             return JSONResponse(
+#                 status_code=500,
+#                 content={"status": "error", "message": f"Error updating agent: {str(e)}", "status_code": 500}
+#             )
+
+#     except Exception as e:
+#         return JSONResponse(
+#             status_code=500,
+#             content={"status": "error", "message": f"Error updating agent: {str(e)}", "status_code": 500}
+#         )
+
 @ElevenLabsAPIRouter.post("/edit_agent",name='edit-agent')
 async def edit_agent(request: Request):
     try:
         data = await request.json()
+        user_id = request.session.get("user").get("user_id")
         agent_id = data.get("agent_id")
         agent_name = data.get("agent_name")
-        agent_prompt = data.get("agent_prompt")
-        welcome_msg = data.get("welcome_msg")
-        selected_model = data.get("selected_model")
-        selected_voice = data.get("selected_voice")
-        selected_language = data.get("selected_language")
+
         phone_number = data.get("phone_number", '+17752648387')
         selected_knowledge_base = data.get("selected_knowledge_base")
+
+        selected_llm_model_id = data.get("selected_llm_model_id")
+        selected_voice_id = data.get("selected_voice_id")
+        selected_language_code = data.get("selected_language_code")
+        welcome_msg = data.get("welcome_msg")
+        prompt = data.get("prompt")
 
         if not agent_id:
             return JSONResponse(
                 status_code=400,
                 content={"status": "error", "message": "Missing agent_id", "status_code": 400}
             )
-        from sqlalchemy.orm import sessionmaker
-        from app.databases.models import engine
-        from sqlalchemy import insert, select, delete
-        from app.databases.models import agent_knowledge_association
+
+        agent_rec = AgentModel.get_by_id(agent_id)
+        if not agent_rec:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": "Agent not found"}
+            )
+
+        if agent_rec.created_by!=user_id:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": "Agent not owned by you."}
+            )
+
+        elevenlabs_voice_id = VoiceModel.get_by_id(selected_voice_id).elevenlabs_voice_id
+        selected_llm_model_rec = LLMModel.get_by_id(selected_llm_model_id)
+
+        selected_model_rec = ElevenLabModel.get_by_name(DEFAULT_MODEL_ELEVENLAB)
+        language_in_selected_model = [x for x in selected_model_rec.languages if x['code']==selected_language_code]
+        if not language_in_selected_model:
+            error_response = {
+                "status": "error", 
+                "error": f"Selected Language not aloowed.",
+                "status_code": 500
+            }   
+            return JSONResponse(
+                status_code=500,
+                content=error_response
+            )
+
+        try:
+            with db():
+                agent = AgentModel(
+                    created_by=user_id,
+                    agent_name=agent_name,
+                    agent_prompt=agent_prompt,
+                    selected_llm_model = selected_model,
+                    selected_model_id = selected_model_rec.id,
+                    welcome_msg=welcome_msg,
+                    selected_voice=selected_voice,
+                    selected_language=selected_language,
+                    phone_number=phone_number
+                )
+                db.session.add(agent)
+                db.session.flush()
+
+                agent_connection = AgentConnectionModel(agent_id=agent.id)
+                db.session.add(agent_connection)
+
+                creator = ElevenLabsAgentCRUD()
+                api_response = creator.create_agent(
+                    name=agent_name,
+                    prompt=agent_prompt,
+                    model=selected_llm_model_rec.name,
+                    voice_id=elevenlabs_voice_id,
+                    language=selected_language,
+                    selected_elevenlab_model = DEFAULT_MODEL_ELEVENLAB,
+                    first_message = welcome_msg
+                )
+
+                if not api_response or "agent_id" not in api_response:
+                    raise Exception("Failed to create ElevenLabs agent")
+
+                agent.elvn_lab_agent_id = api_response["agent_id"]
+                db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            error_response = {
+                "status": "error", 
+                "error": f"Error creating agent: {str(e)}",
+                "status_code": 500
+            }   
+            return JSONResponse(
+                status_code=500,
+                content=error_response
+            )
+
         Session = sessionmaker(bind=engine)
         session = Session() 
-        # Update Agent Details
-        session.execute(
-            AgentModel.__table__.update()
-            .where(AgentModel.id == agent_id)
-            .values(
-                agent_name=agent_name,
-                agent_prompt=agent_prompt,
-                welcome_msg=welcome_msg,
-                selected_model=selected_model,
-                selected_voice=selected_voice,
-                selected_language=selected_language,
-                phone_number=phone_number,
-            )
-        )
-        session.commit()
-
         try:
             # Check if the association already exists
             query = select(agent_knowledge_association).where(
@@ -210,89 +370,45 @@ async def edit_agent(request: Request):
             content={"status": "error", "message": f"Error updating agent: {str(e)}", "status_code": 500}
         )
 
-    
-@ElevenLabsAPIRouter.post("/save-agent-prompt", name="save-agent-prompt")
-async def save_agent_prompt(request: Request):
-    try:
-        data = await request.json()
-        agent_id = data.get("agent_id")
-        agent_prompt = data.get("agent_prompt")
+# @ElevenLabsAPIRouter.post("/save-agent-prompt", name="save-agent-prompt")
+# async def save_agent_prompt(request: Request):
+#     try:
+#         data = await request.json()
+#         agent_id = data.get("agent_id")
+#         agent_prompt = data.get("agent_prompt")
 
-        # Create Jinja2 environment
-        env = Environment()
+#         # Create Jinja2 environment
+#         env = Environment()
 
-        try:
-            # Parse the template
-            parsed_template = env.parse(agent_prompt)
-            # Get all variables used in the template
-            new_variables = meta.find_undeclared_variables(parsed_template)
-        except Exception as parse_error:
-            return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid template syntax! and Use {{_}} to add variables.", "error": str(parse_error)})
+#         try:
+#             # Parse the template
+#             parsed_template = env.parse(agent_prompt)
+#             # Get all variables used in the template
+#             new_variables = meta.find_undeclared_variables(parsed_template)
+#         except Exception as parse_error:
+#             return JSONResponse(status_code=400, content={"status": "error", "message": "Invalid template syntax! and Use {{_}} to add variables.", "error": str(parse_error)})
 
-        # Get existing dynamic variables if any
-        agent = AgentModel.get_by_id(agent_id) if agent_id else None
-        existing_variables = agent.dynamic_variable if agent and hasattr(agent, 'dynamic_variable') else {}
+#         # Get existing dynamic variables if any
+#         agent = AgentModel.get_by_id(agent_id) if agent_id else None
+#         existing_variables = agent.dynamic_variable if agent and hasattr(agent, 'dynamic_variable') else {}
 
-        # Merge existing and new variables
-        merged_variables = {**existing_variables, **{var: "" for var in new_variables if var not in existing_variables}}
+#         # Merge existing and new variables
+#         merged_variables = {**existing_variables, **{var: "" for var in new_variables if var not in existing_variables}}
         
-        # Save dynamic variables to agent model
-        if agent_id and merged_variables:
-            AgentModel.update_dynamic_variables(agent_id, merged_variables)
+#         # Save dynamic variables to agent model
+#         if agent_id and merged_variables:
+#             AgentModel.update_dynamic_variables(agent_id, merged_variables)
         
-        if agent_id:
-            if agent:
-                AgentModel.update_prompt(agent_id, agent_prompt)
-                return JSONResponse(status_code=200, content={"status": "success", "message": "Prompt saved successfully", "dynamic_variables": merged_variables})
-            else:
-                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
-        else:
-            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
-
-
-@ElevenLabsAPIRouter.post("/update-agent", name="update-agent")
-async def update_agent(request: Request):
-    try:
-        data = await request.json()
-        agent_id = data.get("agent_id")
-        selected_voice = data.get("selected_voice")
-        agent_name = data.get("agent_name")
-        if agent_id:
-            agent = AgentModel.get_by_id(agent_id)
-            if agent:
-                if agent_name:
-                    AgentModel.update_name(agent_id, agent_name)
-                if selected_voice:
-                    AgentModel.update_voice(agent_id, selected_voice)
-                return JSONResponse(status_code=200, content={"status": "success", "message": "Agent updated successfully"})
-            else:
-                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
-        else:
-            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
-
-
-@ElevenLabsAPIRouter.post("/save-welcome-message", name="save-welcome-message")
-async def save_agent_welcome_message(request: Request):
-    try:
-        data = await request.json()
-        agent_id = data.get("agent_id")
-        welcome_message = data.get("welcome_msg")
-        if agent_id:
-            agent = AgentModel.get_by_id(agent_id)
-            if agent:
-                AgentModel.update_welcome_message(agent_id, welcome_message)
-                return JSONResponse(status_code=200, content={"status": "success", "message": "Welcome message saved successfully"})
-            else:
-                return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
-        else:
-            return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
-    except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
-
+#         if agent_id:
+#             if agent:
+#                 AgentModel.update_prompt(agent_id, agent_prompt)
+#                 return JSONResponse(status_code=200, content={"status": "success", "message": "Prompt saved successfully", "dynamic_variables": merged_variables})
+#             else:
+#                 return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+#         else:
+#             return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
+#     except Exception as e:
+#         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
 # @ElevenLabsAPIRouter.post("/custom-functions", name="custom-functions")
 # async def custom_functions(request: Request):

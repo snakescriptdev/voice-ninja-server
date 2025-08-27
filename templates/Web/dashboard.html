@@ -94,7 +94,7 @@
                             </thead>
                             <tbody>
                                 {% for agent in page_obj.items %}
-                                <tr onclick="window.location.href='{{ url_for('update_agent') }}?agent_id={{ agent.id }}'" style="cursor: pointer;">
+                                <tr onclick="window.location.href='/elevenlabs/web/v1/update_agent?agent_id={{ agent.id }}'" style="cursor: pointer;">
                                     <td>
                                         <div class="d-flex align-items-center justify-content-center gap-2 agent_name_data">
                                             <span>
