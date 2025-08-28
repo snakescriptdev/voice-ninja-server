@@ -34,7 +34,6 @@ Supports **agents**, **function calling**, **knowledge bases**, **webhooks**, an
 
 This project enables users to **create AI agents** with configurable prompts, voices, knowledge bases, and integrations.  
 Agents can respond intelligently, call APIs via function calls, and use custom cloned voices.
-
 ---
 
 ## 🛠 Features
@@ -47,13 +46,14 @@ Agents can respond intelligently, call APIs via function calls, and use custom c
 - **Webhook events** for call start/end
 - **Function call management** (add, edit, remove)
 - **Knowledge base** with multiple file uploads
+- **Payments Page** User first needs to  purchase tokens then only he can do chat with bot.
 
 ---
 
 ## 👤 Agent Page
 
 - Create an **Agent**  
-- ⚠️ **Important:** Before chatting with the agent, configure settings (max token limit, etc.) in **Update Agent Page**   Because otherwise bot won't work as we have logic of deducting coins at backend.
+- ⚠️ **Important:** Before chatting with the agent, configure settings (max token limit, etc.) in **Update Agent Page**   Because otherwise bot won't work as we have logic of deducting coins at backend. And also Payment is important so that tokens appear to user's account.
 - Add approved domains  
 - Configure:
   - Prompt  
@@ -63,6 +63,8 @@ Agents can respond intelligently, call APIs via function calls, and use custom c
   - Webhooks
 
 ---
+- Payment Page:
+Right now its stage mode razorpay payment integration. Use any test card and make payment. after that tokens credited to  user's account. User can preview agent and talk to it now.
 
 ## 📝 Prompt, Dynamic Variables and Function Calling
 
