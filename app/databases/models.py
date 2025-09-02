@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum
 from sqlalchemy.orm import relationship, joinedload
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
@@ -305,6 +305,7 @@ class AgentModel(Base):
 
     calls = relationship("CallModel", back_populates="agent", cascade="all, delete")
     custom_functions = relationship("CustomFunctionModel", back_populates="agent", cascade="all, delete-orphan")
+    elevenlabs_webhook_tools = relationship("ElevenLabsWebhookToolModel", back_populates="agent", cascade="all, delete-orphan")
     overall_token_limit = relationship("OverallTokenLimitModel", back_populates="agent", cascade="all, delete-orphan")
     daily_call_limit = relationship("DailyCallLimitModel", back_populates="agent", cascade="all, delete-orphan")
 
@@ -650,6 +651,7 @@ class KnowledgeBaseModel(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     files = relationship("KnowledgeBaseFileModel", back_populates="knowledge_base")
+    # elevenlabs_files = relationship("ElevenLabKnowledgeBaseModel", back_populates="knowledge_base")
     vector_path = Column(String, nullable=True,default="")
     vector_id = Column(String, nullable=True,default="")
     url = Column(String, nullable=True,default="")
@@ -1100,6 +1102,9 @@ class KnowledgeBaseFileModel(Base):
     text_content = Column(String, nullable=True)
 
     knowledge_base = relationship("KnowledgeBaseModel", back_populates="files")
+    elevenlabs_doc_id = Column(String, nullable=True)
+    elevenlabs_doc_name = Column(String, nullable=True)
+    
 
     def __repr__(self):
         return f"<KnowledgeBaseFile(id={self.id}, file_name={self.file_name})>"
@@ -1117,10 +1122,10 @@ class KnowledgeBaseFileModel(Base):
             return db.session.query(cls).filter(cls.knowledge_base_id == knowledge_base_id).all()
 
     @classmethod
-    def create(cls, knowledge_base_id: int, file_name: str, file_path: str, text_content: str) -> "KnowledgeBaseFileModel":
+    def create(cls, knowledge_base_id: int, file_name: str, file_path: str, text_content: str, elevenlabs_doc_id: str, elevenlabs_doc_name: str) -> "KnowledgeBaseFileModel":
         """Create a new knowledge base file"""
         with db():
-            file = cls(knowledge_base_id=knowledge_base_id, file_name=file_name, file_path=file_path, text_content=text_content)
+            file = cls(knowledge_base_id=knowledge_base_id, file_name=file_name, file_path=file_path, text_content=text_content, elevenlabs_doc_id=elevenlabs_doc_id, elevenlabs_doc_name=elevenlabs_doc_name)
             db.session.add(file)
             db.session.commit()
             db.session.refresh(file)
@@ -1371,6 +1376,93 @@ class CustomFunctionModel(Base):
         """Get custom function by name"""
         with db():
             return db.session.query(cls).filter(cls.function_name == function_name, cls.agent_id == agent_id).first()
+
+
+class ElevenLabsWebhookToolModel(Base):
+    __tablename__ = "elevenlabs_webhook_tools"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey('agents.id', ondelete='CASCADE'))
+    tool_name = Column(String, nullable=False)
+    tool_description = Column(String, nullable=False)
+    elevenlabs_tool_id = Column(String, nullable=True)  # ID from ElevenLabs API
+    tool_config = Column(JSONB, nullable=False)  # Complete ElevenLabs tool_config
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    agent = relationship("AgentModel", back_populates="elevenlabs_webhook_tools")
+
+    def __repr__(self):
+        return f"<ElevenLabsWebhookTool(id={self.id}, tool_name={self.tool_name})>"
+    
+    @classmethod
+    def get_by_id(cls, id: int) -> Optional["ElevenLabsWebhookToolModel"]:
+        """Get webhook tool by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id).first()
+    
+    @classmethod
+    def get_all_by_agent(cls, agent_id: int) -> List["ElevenLabsWebhookToolModel"]:
+        """Get all webhook tools by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
+    
+    @classmethod
+    def get_by_name(cls, tool_name: str, agent_id: int) -> Optional["ElevenLabsWebhookToolModel"]:
+        """Get webhook tool by name and agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.tool_name == tool_name, cls.agent_id == agent_id).first()
+        
+    @classmethod
+    def create(
+        cls, 
+        agent_id: int, 
+        tool_name: str, 
+        tool_description: str, 
+        tool_config: dict,
+        elevenlabs_tool_id: Optional[str] = None
+    ) -> "ElevenLabsWebhookToolModel":
+        """Create a new webhook tool"""
+        with db():
+            tool = cls(
+                agent_id=agent_id, 
+                tool_name=tool_name, 
+                tool_description=tool_description, 
+                tool_config=tool_config,
+                elevenlabs_tool_id=elevenlabs_tool_id
+            )
+            db.session.add(tool)
+            db.session.commit()
+            db.session.refresh(tool)
+            return tool
+        
+    @classmethod
+    def delete(cls, id: int) -> bool:
+        """Delete a webhook tool"""
+        with db():
+            tool = db.session.query(cls).filter(cls.id == id).first()
+            if tool:
+                db.session.delete(tool)
+                db.session.commit()
+                return True
+            return False
+
+    @classmethod
+    def get_by_name(cls, tool_name: str, agent_id: int) -> Optional["ElevenLabsWebhookToolModel"]:
+        """Get webhook tool by name"""
+        with db():
+            return db.session.query(cls).filter(cls.tool_name == tool_name, cls.agent_id == agent_id).first()
+
+    @classmethod
+    def update_elevenlabs_tool_id(cls, id: int, elevenlabs_tool_id: str) -> Optional["ElevenLabsWebhookToolModel"]:
+        """Update the ElevenLabs tool ID after creation"""
+        with db():
+            tool = db.session.query(cls).filter(cls.id == id).first()
+            if tool:
+                tool.elevenlabs_tool_id = elevenlabs_tool_id
+                db.session.commit()
+                return tool
+            return None
 
 
 class ApprovedDomainModel(Base):

@@ -241,7 +241,7 @@ document.addEventListener('DOMContentLoaded', function() {
     document.getElementById('confirm-delete').addEventListener('click', function() {
         const agentId = this.getAttribute('data-agent-id');
         
-        fetch(`${host}/api/delete_agent/?agent_id=${agentId}`, {
+        fetch(`${host}/elevenlabs/api/v1/delete_agent/?agent_id=${agentId}`, {
             method: "DELETE",
             headers: {
                 'X-CSRFToken': '{{ csrf_token }}',
