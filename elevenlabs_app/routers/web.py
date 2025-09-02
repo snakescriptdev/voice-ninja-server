@@ -10,6 +10,7 @@ from app.databases.models import engine
 import os, shutil
 from dotenv import load_dotenv
 from fastapi import Query
+from app.databases.models import ElevenLabsWebhookToolModel
 
 from sqlalchemy.exc import SQLAlchemyError
 from app.routers.schemas.voice_schemas import (
@@ -73,7 +74,9 @@ async def update_agent(request: Request):
                 select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == knowledge_base_id)
             ).scalars().first()
         
-        custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
+        # custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
+      
+        custom_functions = ElevenLabsWebhookToolModel.get_all_by_agent(agent_id)
         daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id)
         overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id)
         voices = VoiceModel.get_allowed_voices(user_id=user_id)
