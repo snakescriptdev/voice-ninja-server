@@ -241,17 +241,20 @@ async def knowledge_base(request: Request, page: int = 1):
     formatted_knowledge_bases = []
     for knowledge_base in knowledge_bases:
         files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+        print(f"🔍 Debug: Loading files for knowledge base {knowledge_base.id} ({knowledge_base.knowledge_base_name})")
         files_data = []
         for file in files:
-            files_data.append(
-                {
-                    "id": file.id,
-                    "name": file.file_name,
-                    "size": "",  # You can add file size if available   
-                    "url": f"/media/{file.file_path}",
-                    "knowledge_base_id": knowledge_base.id
-                }   
-            )
+            file_data = {
+                "id": file.id,
+                "name": file.file_name,
+                "size": "",  # You can add file size if available   
+                "url": f"/media/{file.file_path}",
+                "knowledge_base_id": knowledge_base.id,
+                "elevenlabs_doc_id": file.elevenlabs_doc_id,
+                "elevenlabs_doc_name": file.elevenlabs_doc_name
+            }
+            print(f"🔍 Debug: File {file.file_name} - elevenlabs_doc_id: {file.elevenlabs_doc_id}")
+            files_data.append(file_data)
 
         formatted_knowledge_bases.append({
             "id": knowledge_base.id,

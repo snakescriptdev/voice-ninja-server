@@ -98,7 +98,7 @@
                                     const currentUrl = new URL(window.location.href);
                                     const agentId = currentUrl.searchParams.get("agent_id");
                                     
-                                    fetch(`${host}/api/attach-knowledge-base`, {
+                                    fetch(`${host}/elevenlabs/api/v1/attach-knowledge-base`, {
                                         method: "POST",
                                         headers: {
                                             "Content-Type": "application/json",
@@ -141,7 +141,7 @@
                                     <div id="function-list">
                                     {% for function in custom_functions %}
                                     <li class="dropdown-item gap-3 d-flex align-items-center justify-content-between mb-2" id="function-{{ function.id }}">
-                                        <div class="functionNameDivBlock">{{ function.function_name }}</div>
+                                        <div class="functionNameDivBlock">{{ function.tool_name }}</div>
                                         <div class="d-flex align-items-center gap-2">
                                             <button class="edit-function-btn bg-transparent border-0 p-0" onclick="editFunction(`{{ function.id }}`)"><img src="{{ host }}/static/Web/images/edit-icon.svg" class="img-fluid"></button>   
                                             <button class="delete-function-btn bg-transparent border-0 p-0" onclick="deleteFunction(`{{ function.id }}`)"><img src="{{ host }}/static/Web/images/black-dlt-icon.svg" class="img-fluid"></button>
@@ -401,6 +401,20 @@
                         </div>
                     </div>
                     
+                    <!-- Dynamic Variables Section -->
+                    <div class="dynamic_variables_box pt-4" id="dynamic-variables-section" style="display: none;">
+                        <label class="form-label">Dynamic Variables</label>
+                        <small class="text-muted d-block mb-2">Variables found in your prompt template. Set values to customize responses.</small>
+                        <div id="dynamic-variables">
+                            <!-- Variables will be populated dynamically -->
+                        </div>
+                        <div class="mt-2">
+                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addNewVariable()">
+                                <i class="fas fa-plus"></i> Add Variable
+                            </button>
+                        </div>
+                    </div>
+                    
                     </div>
                     {% if not agent %}
                     <div class="save_btn_box mt-3 text-center">
@@ -438,56 +452,200 @@
             </div>
         </div>
     </div> 
-<!--Custom Funtion Modal -->
+<!--Custom Function Modal - ElevenLabs Webhook Tool Config Format -->
 <div class="modal fade custom_function_modal" id="customFuntionModal" tabindex="-1" aria-labelledby="customFuntionModalLabel" aria-hidden="true">
-  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+  <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-xl">
     <div class="modal-content">
       <div class="modal-header">
         <h1 class="mb-0 d-flex align-items-center gap-2" id="customFuntionModalLabel">
         <span>
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4.33337 14.6667V10" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M4.33337 3.33398V1.33398" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M11.6666 14.666V12.666" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M11.6666 6.00065V1.33398" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.33337 4.66732V8.66732C6.33337 9.40065 6.00004 10.0007 5.00004 10.0007H3.66671C2.66671 10.0007 2.33337 9.40065 2.33337 8.66732V4.66732C2.33337 3.93398 2.66671 3.33398 3.66671 3.33398H5.00004C6.00004 3.33398 6.33337 3.93398 6.33337 4.66732Z" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M13.6666 7.33333V11.3333C13.6666 12.0667 13.3333 12.6667 12.3333 12.6667H11C9.99996 12.6667 9.66663 12.0667 9.66663 11.3333V7.33333C9.66663 6.6 9.99996 6 11 6H12.3333C13.3333 6 13.6666 6.6 13.6666 7.33333Z" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-        </span>Custom Funtion</h1>
+        </span>ElevenLabs Webhook Tool</h1>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
-        <form >
+        <form>
+            <!-- Basic Tool Information -->
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6 class="mb-0">Tool Configuration</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
             <div class="form_field mb-3">
-                <label for="function_name" class="form-label">Name</label>
-                <input type="text" class="form-control" id="function_name" placeholder="Enter function name">
+                                <label for="tool_name" class="form-label">Tool Name *</label>
+                                <input type="text" class="form-control" id="tool_name" placeholder="my_webhook_tool"  required>
+                                <small class="text-muted">Only letters, numbers, underscores, and hyphens. Max 64 characters.</small>
             </div>
+                        </div>
+                        <div class="col-md-6">
             <div class="form_field mb-3">
-                <label for="function_description" class="form-label">Description</label>
-                <textarea class="form-control" id="function_description" placeholder="Enter function description"></textarea>
+                                <label for="response_timeout" class="form-label">Response Timeout (seconds)</label>
+                                <input type="number" class="form-control" id="response_timeout" placeholder="20" value="20" min="5" max="120">
+                                <small class="text-muted">Between 5-120 seconds</small>
             </div>
+                        </div>
+                    </div>
+                    
             <div class="form_field mb-3">
-                <label for="function_url" class="form-label">Your URL</label>
-                <input type="text" class="form-control" id="function_url" placeholder="Enter function url">
+                        <label for="tool_description" class="form-label">Description *</label>
+                        <textarea class="form-control" id="tool_description" placeholder="Describe what this webhook tool does" rows="2" required></textarea>
             </div>
-            <div class="form_field mb-3">
-                <label for="" class="form-label">API Timeout (Optional)</label>
-                <div class="d-flex align-items-center gap-2">
-                    <input type="text" class="form-control" id="function-timeout" placeholder="120000">
-                    <small class="text-muted">milliseconds</small>
                 </div>
             </div>
-            <div class="form_field mb-3 parameters_field">
-                <label for="parameters" class="form-label mb-0">Parameters (Optional)</label>
-                <small class="text-muted">JSON schema that defines the format in which the LLM will return. Please refer to the docs.</small>
-                <textarea class="form-control my-2" id="parameters" placeholder="Enter function parameters"></textarea>
-                <div class="d-flex align-items-center gap-2">
-                    <button type="button" class="btn btn-secondary">example 1</button>
-                    <button type="button" class="btn btn-secondary">example 2</button>
-                    <button type="button" class="btn btn-secondary">example 3</button>
+
+            <!-- API Schema Configuration -->
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6 class="mb-0">API Schema</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-8">
+            <div class="form_field mb-3">
+                                <label for="api_url" class="form-label">Webhook URL *</label>
+                                <input type="url" class="form-control" id="api_url" placeholder="https://api.example.com/agents/{agent_id}" required>
+                                <small class="text-muted">May include path parameters like {agent_id}</small>
                 </div>
             </div>
-            <div class="format_json_btn_box mb-3">
-                <button type="button" onclick="formatJSON()" class="w-100">Format JSON</button>
+                        <div class="col-md-4">
+                            <div class="form_field mb-3">
+                                <label for="http_method" class="form-label">HTTP Method</label>
+                                <select class="form-select" id="http_method">
+                                    <option value="GET">GET</option>
+                                    <option value="POST" selected>POST</option>
+                                    <option value="PUT">PUT</option>
+                                    <option value="PATCH">PATCH</option>
+                                    <option value="DELETE">DELETE</option>
+                                </select>
+                </div>
+            </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Path Parameters -->
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Path Parameters</h6>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addPathParam()">+ Add Path Parameter</button>
+                </div>
+                <div class="card-body">
+                    <small class="text-muted mb-3 d-block">Define parameters that appear in the URL path (e.g., {agent_id} in /agents/{agent_id})</small>
+                    <div id="path_params_container">
+                        <!-- Path parameters will be added here dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Query Parameters -->
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Query Parameters</h6>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addQueryParam()">+ Add Query Parameter</button>
+                </div>
+                <div class="card-body">
+                    <small class="text-muted mb-3 d-block">Parameters that will be added to the URL as query params (?param=value)</small>
+                    <div id="query_params_container">
+                        <!-- Query parameters will be added here dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Request Body Schema -->
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Request Body Schema</h6>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addRequestBodyProperty()">+ Add Property</button>
+                </div>
+                <div class="card-body">
+                    <small class="text-muted mb-3 d-block">Define the JSON structure for POST/PUT/PATCH requests</small>
+                    <div class="form_field mb-3">
+                        <label for="body_description" class="form-label">Body Description</label>
+                        <input type="text" class="form-control" id="body_description" placeholder="Description of the request body">
+                    </div>
+                    <div id="request_body_properties_container">
+                        <!-- Request body properties will be added here dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Request Headers -->
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Request Headers</h6>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addRequestHeader()">+ Add Header</button>
+                </div>
+                <div class="card-body">
+                    <small class="text-muted mb-3 d-block">Headers to include in the webhook request</small>
+                    <div id="request_headers_container">
+                        <!-- Request headers will be added here dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dynamic Variables -->
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Dynamic Variables</h6>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addDynamicVariable()">+ Add Variable</button>
+                </div>
+                <div class="card-body">
+                    <small class="text-muted mb-3 d-block">Variables that can be used in the webhook configuration</small>
+                    <div id="dynamic_variables_container">
+                        <!-- Dynamic variables will be added here dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Response Assignments -->
+            <div class="card mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0">Response Assignments</h6>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addAssignment()">+ Add Assignment</button>
+                </div>
+                <div class="card-body">
+                    <small class="text-muted mb-3 d-block">Extract values from webhook response and assign to dynamic variables</small>
+                    <div id="assignments_container">
+                        <!-- Assignments will be added here dynamically -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- Advanced Options -->
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6 class="mb-0">Advanced Options</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="disable_interruptions">
+                                <label class="form-check-label" for="disable_interruptions">
+                                    Disable Interruptions
+                                </label>
+                                <small class="text-muted d-block">User cannot interrupt while tool is running</small>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-check mb-3">
+                                <input class="form-check-input" type="checkbox" id="force_pre_tool_speech">
+                                <label class="form-check-label" for="force_pre_tool_speech">
+                                    Force Pre-Tool Speech
+                                </label>
+                                <small class="text-muted d-block">Agent speaks before calling the tool</small>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </form>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn" data-bs-dismiss="modal">Close</button>
-        <button type="button" id="save-custom-function" class="btn save_btn">Save</button>
+        <button type="button" id="save-custom-function" class="btn save_btn">Create Webhook Tool</button>
       </div>
     </div>
   </div>
@@ -600,9 +758,53 @@
         const modal = document.getElementById('variable-modal');
         if(modal.style.display === 'none') {
             modal.style.display = 'block';
+            // Populate the modal with current dynamic variables
+            populateDynamicVariables();
         } else {
             modal.style.display = 'none';
         }
+    }
+
+    function populateDynamicVariables() {
+        const dynamicVariablesDiv = document.getElementById("dynamic-variables");
+        if (!dynamicVariablesDiv) return;
+        
+        // Clear existing content
+        dynamicVariablesDiv.innerHTML = '';
+        
+        // Get dynamic variables from the template context
+        const dynamicVariables = {{ dynamic_variables|tojson|safe }};
+        
+        if (dynamicVariables && Object.keys(dynamicVariables).length > 0) {
+            // Add existing variables
+            Object.entries(dynamicVariables).forEach(([key, value]) => {
+                addVariableToModal(key, value);
+            });
+        } else {
+            // Add a default empty row if no variables exist
+            addVariableToModal('', '');
+        }
+    }
+
+    function addVariableToModal(name, value) {
+        const dynamicVariablesDiv = document.getElementById("dynamic-variables");
+        if (!dynamicVariablesDiv) return;
+        
+        const variableDiv = document.createElement("div");
+        variableDiv.className = "variable-modal-content-item mb-2";
+        variableDiv.innerHTML = `
+            <input type="text" class="form-control" placeholder="Variable Name" value="${name}">
+            <input type="text" class="form-control" placeholder="Enter the value" value="${value}">
+            <button class="dlt_btn bg-transparent border-0 p-0" onclick="removeVariable(this)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-12 w-12">
+                    <path d="M3 6h18"></path>
+                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                </svg>
+            </button>
+        `;
+        
+        dynamicVariablesDiv.appendChild(variableDiv);
     }
 </script>
 <script>
@@ -691,6 +893,15 @@ let selectedIconUrl = "{{ host }}/static/Web/images/gif-icon-1.gif"; // Default 
         const selectBox = document.getElementById("welcome-msg");
         const optionsContainer = document.querySelector(".options");
         const options = document.querySelectorAll(".option");
+
+        // Check if elements exist
+        if (!selectBox || !optionsContainer) {
+            console.error("Welcome message elements not found:", {
+                selectBox: !!selectBox,
+                optionsContainer: !!optionsContainer
+            });
+            return;
+        }
 
         // Toggle dropdown
         selectBox.addEventListener("click", function() {
@@ -1037,9 +1248,9 @@ function changeTheme(primaryColor, secondaryColor, pulseColor) {
 document.addEventListener("DOMContentLoaded", function () {
     const textarea = document.getElementById("agent-prompt");
 
-    // Check if the URL matches the update-agent pattern
+    // Check if the URL matches the ElevenLabs update-agent pattern
     const currentUrl = new URL(window.location.href);
-    if (currentUrl.pathname === "/update_agent" && currentUrl.searchParams.has("agent_id")) {
+    if (currentUrl.pathname === "/elevenlabs/web/v1/update_agent" && currentUrl.searchParams.has("agent_id")) {
         const agentId = currentUrl.searchParams.get("agent_id");
         let initialValue = textarea.value.trim(); // Store the initial value
 
@@ -1048,7 +1259,7 @@ document.addEventListener("DOMContentLoaded", function () {
 
             if (text !== "" && text !== initialValue) {  
                 saveAgentPrompt(agentId, text);
-                updateAgentSetting('prompt',promptText)
+                updateAgentSetting('prompt',text)
                 initialValue = text; 
             }
         });
@@ -1064,6 +1275,16 @@ document.addEventListener("DOMContentLoaded", function () {
     const selectBox = document.getElementById("welcome-msg");
     const optionsContainer = document.querySelector(".options");
     const options = document.querySelectorAll(".options .option");
+
+    // Check if elements exist
+    if (!selectBox || !optionsContainer || !welcomeMessageInput) {
+        console.error("Required elements not found:", {
+            selectBox: !!selectBox,
+            optionsContainer: !!optionsContainer,
+            welcomeMessageInput: !!welcomeMessageInput
+        });
+        return;
+    }
 
     const currentUrl = new URL(window.location.href);
     const isUpdatePage = currentUrl.pathname === "/update_agent";
@@ -1088,10 +1309,46 @@ document.addEventListener("DOMContentLoaded", function () {
                 selectBox.style.display = "block";
                 optionsContainer.style.display = "none";
 
+                // Immediately save the welcome message when option is selected
                 saveWelcomeMessage(selectedText);
             }
         });
     });
+
+    // Function to save welcome message immediately
+    function saveWelcomeMessage(message) {
+        const currentUrl = new URL(window.location.href);
+        const agentId = currentUrl.searchParams.get("agent_id");
+        
+        console.log("🔍 Frontend Debug - Saving welcome message:", message);
+        
+        // Update both local database and ElevenLabs
+        fetch(`${host}/elevenlabs/api/v1/edit_agent`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCSRFToken()
+            },
+            body: JSON.stringify({
+                agent_id: agentId,
+                welcome_msg: message
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === "success") {
+                toastr.success("Welcome message updated successfully", { positionClass: "toast-top-right" });
+                console.log("🔍 Frontend Debug - Welcome message saved successfully");
+            } else {
+                toastr.error(data.message || "Failed to update welcome message");
+                console.log("🔍 Frontend Debug - Welcome message save failed:", data.message);
+            }
+        })
+        .catch(error => {
+            console.error("🔍 Frontend Debug - Error saving welcome message:", error);
+            toastr.error("Error updating welcome message");
+        });
+    }
 
     let saveTimeout;
 
@@ -1115,7 +1372,7 @@ document.addEventListener("DOMContentLoaded", function () {
             selectBox.innerText = value;
             clearTimeout(saveTimeout);
             saveTimeout = setTimeout(() => {
-                updateAgentSetting('welcome_msg',message);
+                saveWelcomeMessage(value);
             }, 300);
             welcomeMessageInput.style.display = "none";
             selectBox.style.display = "block";
@@ -1131,49 +1388,66 @@ document.addEventListener("DOMContentLoaded", function () {
     }
 });
 
+// Add the missing saveAgentPrompt function for ElevenLabs integration
+function saveAgentPrompt(agentId, promptText) {
+    fetch("{{ host }}/elevenlabs/api/v1/edit_agent", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRFToken()
+        },
+        body: JSON.stringify({ 
+            agent_id: agentId, 
+            prompt: promptText 
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if(data.status == "success"){
+            toastr.success("Prompt saved successfully", { positionClass: "toast-top-right" });
+        } else if (data.status == "error"){
+            toastr.error(data.message || "Error saving prompt", { positionClass: "toast-top-right" });
+        } else {
+            toastr.error("Something went wrong!", { positionClass: "toast-top-right" });
+        }
+    })
+    .catch(error => {
+        console.error("Error saving prompt:", error);
+        toastr.error("Error saving prompt", { positionClass: "toast-top-right" });
+    });
+}
+
 
 function addNewVariable() {
-    var dynamicVariablesDiv = document.getElementById("dynamic-variables");
-
-    // Create new variable input container
-    var newVariableDiv = document.createElement("div");
-    newVariableDiv.className = "variable-modal-content-item mb-2";
-    newVariableDiv.innerHTML = `
-        <input type="text" class="form-control" placeholder="Variable Name">
-        <input type="text" class="form-control" placeholder="Enter the value">
-        <button class="dlt_btn bg-transparent border-0 p-0" onclick="removeVariable(this)">
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="h-12 w-12">
-                <path d="M3 6h18"></path>
-                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
-                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
-            </svg>
-        </button>
-    `;
-
-    // Append the new variable div to dynamic-variables
-    dynamicVariablesDiv.appendChild(newVariableDiv);
+    // Use our new helper function to add an empty variable row
+    addVariableToModal('', '');
 }
 
 
 function removeVariable(button){
     var variableModalContentItemOuter = button.parentElement;
     variableModalContentItemOuter.remove();
-    const variableId = button.parentElement.querySelector('input[type="text"]').value;
-    const currentUrl = new URL(window.location.href);
-    const agentId = currentUrl.searchParams.get("agent_id");    
-    console.log(variableId, agentId);
-    $.ajax({
-        url: "{{ host }}/api/remove-variable",
-        type: 'DELETE',
-        contentType: 'application/json',
-        data: JSON.stringify({ variable_id: variableId, agent_id: agentId }),
-        success: function(response) {
-            toastr.success('Variable removed successfully');
-        },
-        error: function(xhr, status, error) {
-            toastr.error('Error removing variable: ' + error);
-        }
-    });
+    
+    // Only make API call if there's a variable name (not for empty rows)
+    const variableName = button.parentElement.querySelector('input[type="text"]').value;
+    if (variableName && variableName.trim()) {
+        const currentUrl = new URL(window.location.href);
+        const agentId = currentUrl.searchParams.get("agent_id");    
+        console.log('Removing variable:', variableName, 'from agent:', agentId);
+        
+        $.ajax({
+            url: "{{ host }}/api/remove-variable",
+            type: 'DELETE',
+            contentType: 'application/json',
+            data: JSON.stringify({ variable_id: variableName, agent_id: agentId }),
+            success: function(response) {
+                toastr.success('Variable removed successfully');
+            },
+            error: function(xhr, status, error) {
+                toastr.error('Error removing variable: ' + error);
+            }
+        });
+    }
 }
 
 function formatJSON(){
@@ -1187,99 +1461,62 @@ function copyJSON(){
     var formattedJSON = jsonTextarea.value;
     jsonTextarea.value = formattedJSON;
 }
-document.addEventListener('DOMContentLoaded', function() {
-    const example1Button = document.querySelector('.parameters_field .btn:nth-child(1)');
-    const parametersTextarea = document.getElementById('parameters');
 
-    example1Button.addEventListener('click', function() {
-        const exampleJSON = {
-            "type": "object", 
-            "properties": {
-                "appointment_available_ts": {
-                    "type": "string",
-                    "description": "The timestamp of the appointment that is available for booking."
-                }
-            },
-            "required": ["appointment_available_ts"]
-        };
+// Wait for the modal to be shown before attaching the event listener
+$('#customFuntionModal').on('shown.bs.modal', function () {
+    const saveButton = document.getElementById("save-custom-function");
+    if (saveButton && !saveButton.hasAttribute('data-listener-attached')) {
+        saveButton.setAttribute('data-listener-attached', 'true'); // Prevent multiple listeners
+        saveButton.addEventListener("click", function() {
+            const currentUrl = new URL(window.location.href);
+            const agentId = currentUrl.searchParams.get("agent_id");
 
-        parametersTextarea.value = JSON.stringify(exampleJSON, null, 2);
-    });
+            // Collect all form data including nested structures
+            let formData = collectWebhookFormData();
+            
+            // Check if form data collection failed
+            if (!formData) {
+                toastr.error('Failed to collect form data. Please check the console for errors.');
+                return;
+            }
 
-    const example2Button = document.querySelector('.parameters_field .btn:nth-child(2)');
-    example2Button.addEventListener('click', function() {
-        const exampleJSON = {
-                "type": "object",
-                "properties": {
-                    "city": {
-                    "type": "string",
-                    "description": "The city for which the weather is to be fetched."
+            // Frontend validation for ElevenLabs API compliance
+            if (!validateElevenLabsCompliance(formData.http_method, formData.body_description)) {
+                return; // Stop if validation fails
+            }
+
+            // Validate path parameters
+            if (formData.path_params && formData.path_params.length > 0) {
+                for (let i = 0; i < formData.path_params.length; i++) {
+                    const param = formData.path_params[i];
+                    if (!validatePathParameter(param.description, param.dynamic_variable, param.constant_value, i + 1)) {
+                        return; // Stop if validation fails
                     }
-                },
-                "required": ["city"]
                 }
+            }
 
-        parametersTextarea.value = JSON.stringify(exampleJSON, null, 2);
-    });
-
-    const example3Button = document.querySelector('.parameters_field .btn:nth-child(3)');
-    example3Button.addEventListener('click', function() {
-        const exampleJSON = {
-                "type": "object",
-                "properties": {
-                    "appointment_available_ts": {
-                    "type": "string",
-                    "description": "The timestamp of the appointment that is available for booking."
-                    },
-                    "doctor_name": {
-                    "type": "string",
-                    "description": "An optional field to specify the name of the doctor."
-                    }
-                },
-                "required": ["appointment_available_ts"]
-                }
-
-        parametersTextarea.value = JSON.stringify(exampleJSON, null, 2);
-    });
-});
-
-document.getElementById("save-custom-function").addEventListener("click", function(){
-    let functionName = document.getElementById("function_name").value;
-    let functionDescription = document.getElementById("function_description").value;
-    let functionUrl = document.getElementById("function_url").value;
-    let functionTimeout = document.getElementById("function-timeout").value;
-    let functionParameters = document.getElementById("parameters").value;
-    const currentUrl = new URL(window.location.href);
-    const agentId = currentUrl.searchParams.get("agent_id");
-
-    let data = {
-        function_name: functionName,
-        function_description: functionDescription,
-        function_url: functionUrl,
-        function_timeout: functionTimeout,
-        function_parameters: functionParameters,
-        agent_id: agentId
-    };
+            // Validate required fields
+            if (!formData.tool_name || !formData.api_url) {
+                toastr.error('Tool name and API URL are required');
+                return;
+            }
+            
+            console.log("Collected form data:", formData);
 
     $.ajax({
-        url: "{{ host }}/api/custom-functions",
+                url: "{{ host }}/elevenlabs/api/v1/custom-functions",
         type: 'POST',
         contentType: 'application/json',
-        data: JSON.stringify(data),
+                data: JSON.stringify({webhook_config: formData, agent_id: agentId}),
         success: function(response) {
             if(response.status == "success"){
-                toastr.success('Custom function saved successfully');
+                        toastr.success('ElevenLabs webhook tool created successfully');
                 $('#customFuntionModal').modal('hide');
-                // Clear form fields
-                document.getElementById("function_name").value = '';
-                document.getElementById("function_description").value = '';
-                document.getElementById("function_url").value = '';
-                document.getElementById("function-timeout").value = '';
-                document.getElementById("parameters").value = '';
+                        clearWebhookForm();
                 var functionData = response.data
                 $('#function-list').append(`
                     <li class="dropdown-item gap-3 d-flex align-items-center justify-content-between mb-2" id="function-${functionData.id}">
-                        <div class="functionNameDivBlock">${functionData.function_name}</div>
+                                <div class="functionNameDivBlock">${functionData.tool_name || formData.tool_name}</div>
                         <div class="d-flex align-items-center gap-2">
                             <button class="edit-function-btn bg-transparent border-0 p-0" onclick="editFunction(${functionData.id})"><img src="{{ url_for('static', path='/Web/images/edit-icon.svg') }}" class="img-fluid"></button>   
                             <button class="delete-function-btn bg-transparent border-0 p-0" onclick="deleteFunction(${functionData.id})"><img src="{{ url_for('static', path='/Web/images/black-dlt-icon.svg') }}" class="img-fluid"></button>
@@ -1293,10 +1530,484 @@ document.getElementById("save-custom-function").addEventListener("click", functi
         },
         error: function(xhr, status, error) {
             let errorMessage = xhr?.responseJSON?.message;
-            toastr.error(errorMessage || 'Error saving custom function: ' + error);
+                    toastr.error(errorMessage || 'Error creating webhook tool: ' + error);
+                }
+            });
+        });
+    }
+});
+
+// Function to collect all webhook form data including nested structures
+function collectWebhookFormData() {
+    try {
+        // Helper function to safely get element value
+        function getElementValue(id, defaultValue = "") {
+            const element = document.getElementById(id);
+            if (!element) {
+                console.error(`Element with id '${id}' not found`);
+                return defaultValue;
+            }
+            return element.value || defaultValue;
+        }
+        
+        // Helper function to safely get element checked state
+        function getElementChecked(id, defaultValue = false) {
+            const element = document.getElementById(id);
+            if (!element) {
+                console.error(`Element with id '${id}' not found`);
+                return defaultValue;
+            }
+            return element.checked || defaultValue;
+        }
+        
+        return {
+            // Basic tool configuration
+            tool_name: getElementValue("tool_name"),
+            tool_description: getElementValue("tool_description"),
+            response_timeout: getElementValue("response_timeout", "20"),
+            
+            // API schema
+            api_url: getElementValue("api_url"),
+            http_method: getElementValue("http_method", "POST"),
+            body_description: getElementValue("body_description"),
+            
+            // Advanced options
+            disable_interruptions: getElementChecked("disable_interruptions"),
+            force_pre_tool_speech: getElementChecked("force_pre_tool_speech"),
+            
+            // Nested arrays - these will be populated by dynamic form elements
+            path_params: collectPathParams(),
+            query_params: collectQueryParams(),
+            request_body_properties: collectRequestBodyProperties(),
+            request_headers: collectRequestHeaders(),
+            dynamic_variables: collectDynamicVariables(),
+            assignments: collectAssignments()
+        };
+    } catch (error) {
+        console.error("Error collecting webhook form data:", error);
+        toastr.error("Error collecting form data: " + error.message);
+        return null;
+    }
+}
+
+// Helper functions to collect nested form data
+function collectPathParams() {
+    const params = [];
+    const container = document.getElementById("path_params_container");
+    const paramElements = container.querySelectorAll('.param-item');
+    
+    paramElements.forEach(element => {
+        const name = element.querySelector('.param-name').value;
+        const type = element.querySelector('.param-type').value;
+        const description = element.querySelector('.param-description').value;
+        const required = element.querySelector('.param-required').checked;
+        const dynamicVar = element.querySelector('.param-dynamic-var').value;
+        const constantValue = element.querySelector('.param-constant-value').value;
+        
+        if (name) {
+            // Validate path parameter (only one of description, dynamic_variable, or constant_value)
+            if (!validatePathParameter(description, dynamicVar, constantValue, params.length + 1)) {
+                throw new Error(`Path parameter validation failed for parameter: ${name}`);
+            }
+            
+            params.push({
+                name, type, description, required, dynamic_variable: dynamicVar, constant_value: constantValue
+            });
         }
     });
-});
+    
+    // Validate path parameters against URL placeholders
+    const apiUrl = document.getElementById("api_url").value;
+    if (!validatePathParametersAgainstURL(apiUrl, params)) {
+        throw new Error("Path parameter validation against URL failed");
+    }
+    
+    return params;
+}
+
+function collectQueryParams() {
+    const params = [];
+    const container = document.getElementById("query_params_container");
+    const paramElements = container.querySelectorAll('.param-item');
+    
+    paramElements.forEach(element => {
+        const name = element.querySelector('.param-name').value;
+        const type = element.querySelector('.param-type').value;
+        const description = element.querySelector('.param-description').value;
+        const required = element.querySelector('.param-required').checked;
+        const dynamicVar = element.querySelector('.param-dynamic-var').value;
+        const constantValue = element.querySelector('.param-constant-value').value;
+        
+        if (name) {
+            params.push({
+                name, type, description, required, dynamic_variable: dynamicVar, constant_value: constantValue
+            });
+        }
+    });
+    return params;
+}
+
+function collectRequestBodyProperties() {
+    const properties = [];
+    const container = document.getElementById("request_body_properties_container");
+    const propElements = container.querySelectorAll('.property-item');
+    
+    propElements.forEach(element => {
+        const name = element.querySelector('.property-name').value;
+        const type = element.querySelector('.property-type').value;
+        const description = element.querySelector('.property-description').value;
+        const required = element.querySelector('.property-required').checked;
+        const dynamicVar = element.querySelector('.property-dynamic-var').value;
+        const constantValue = element.querySelector('.property-constant-value').value;
+        
+        if (name) {
+            properties.push({
+                name, type, description, required, dynamic_variable: dynamicVar, constant_value: constantValue
+            });
+        }
+    });
+    return properties;
+}
+
+function collectRequestHeaders() {
+    const headers = [];
+    const container = document.getElementById("request_headers_container");
+    const headerElements = container.querySelectorAll('.header-item');
+    
+    headerElements.forEach(element => {
+        const name = element.querySelector('.header-name').value;
+        const value = element.querySelector('.header-value').value;
+        const type = element.querySelector('.header-type').value;
+        
+        if (name && value) {
+            headers.push({ name, value, type });
+        }
+    });
+    return headers;
+}
+
+function collectDynamicVariables() {
+    const variables = [];
+    const container = document.getElementById("dynamic_variables_container");
+    const varElements = container.querySelectorAll('.variable-item');
+    
+    varElements.forEach(element => {
+        const name = element.querySelector('.variable-name').value;
+        const value = element.querySelector('.variable-value').value;
+        
+        if (name) {
+            variables.push({ name, value });
+        }
+    });
+    return variables;
+}
+
+function collectAssignments() {
+    const assignments = [];
+    const container = document.getElementById("assignments_container");
+    const assignmentElements = container.querySelectorAll('.assignment-item');
+    
+    assignmentElements.forEach(element => {
+        const dynamicVar = element.querySelector('.assignment-dynamic-var').value;
+        const valuePath = element.querySelector('.assignment-value-path').value;
+        const source = element.querySelector('.assignment-source').value;
+        
+        if (dynamicVar && valuePath) {
+            assignments.push({ dynamic_variable: dynamicVar, value_path: valuePath, source });
+        }
+    });
+    return assignments;
+}
+
+// Function to clear the webhook form
+function clearWebhookForm() {
+    // Clear basic fields
+    document.getElementById("tool_name").value = '';
+    document.getElementById("tool_description").value = '';
+    document.getElementById("api_url").value = '';
+    document.getElementById("http_method").value = 'POST';
+    document.getElementById("response_timeout").value = '20';
+    document.getElementById("body_description").value = '';
+    document.getElementById("disable_interruptions").checked = false;
+    document.getElementById("force_pre_tool_speech").checked = false;
+    
+    // Clear dynamic containers
+    document.getElementById("path_params_container").innerHTML = '';
+    document.getElementById("query_params_container").innerHTML = '';
+    document.getElementById("request_body_properties_container").innerHTML = '';
+    document.getElementById("request_headers_container").innerHTML = '';
+    document.getElementById("dynamic_variables_container").innerHTML = '';
+    document.getElementById("assignments_container").innerHTML = '';
+}
+
+// Dynamic form element creation functions
+function addPathParam() {
+    const container = document.getElementById("path_params_container");
+    const paramId = 'path_param_' + Date.now();
+    
+    const paramHtml = `
+        <div class="param-item border rounded p-3 mb-3" id="${paramId}">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Path Parameter</h6>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeElement('${paramId}')">Remove</button>
+            </div>
+            <div class="row">
+                <div class="col-md-3">
+                    <label class="form-label">Name *</label>
+                    <input type="text" class="form-control param-name" placeholder="agent_id" required>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Type</label>
+                    <select class="form-select param-type">
+                        <option value="string" selected>String</option>
+                        <option value="integer">Integer</option>
+                        <option value="number">Number</option>
+                        <option value="boolean">Boolean</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Description</label>
+                    <input type="text" class="form-control param-description" placeholder="Parameter description">
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check mt-4">
+                        <input class="form-check-input param-required" type="checkbox">
+                        <label class="form-check-label">Required</label>
+                    </div>
+                </div>
+            </div>
+            <div class="row mt-2">
+                <div class="col-md-6">
+                    <label class="form-label">Dynamic Variable</label>
+                    <input type="text" class="form-control param-dynamic-var" placeholder="user_id">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Constant Value</label>
+                    <input type="text" class="form-control param-constant-value" placeholder="12345">
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.insertAdjacentHTML('beforeend', paramHtml);
+    
+    // Initialize field states for the new row
+    const newRow = container.lastElementChild;
+    initializeRowFieldStates(newRow);
+}
+
+function addQueryParam() {
+    const container = document.getElementById("query_params_container");
+    const paramId = 'query_param_' + Date.now();
+    
+    const paramHtml = `
+        <div class="param-item border rounded p-3 mb-3" id="${paramId}">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Query Parameter</h6>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeElement('${paramId}')">Remove</button>
+            </div>
+            <div class="row">
+                <div class="col-md-3">
+                    <label class="form-label">Name *</label>
+                    <input type="text" class="form-control param-name" placeholder="limit" required>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Type</label>
+                    <select class="form-select param-type">
+                        <option value="string" selected>String</option>
+                        <option value="integer">Integer</option>
+                        <option value="number">Number</option>
+                        <option value="boolean">Boolean</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Description</label>
+                    <input type="text" class="form-control param-description" placeholder="Parameter description">
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check mt-4">
+                        <input class="form-check-input param-required" type="checkbox">
+                        <label class="form-check-label">Required</label>
+                    </div>
+                </div>
+            </div>
+            <div class="row mt-2">
+                <div class="col-md-6">
+                    <label class="form-label">Dynamic Variable</label>
+                    <input type="text" class="form-control param-dynamic-var" placeholder="user_id">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Constant Value</label>
+                    <input type="text" class="form-control param-constant-value" placeholder="10">
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.insertAdjacentHTML('beforeend', paramHtml);
+    
+    // Initialize field states for the new row
+    const newRow = container.lastElementChild;
+    initializeRowFieldStates(newRow);
+}
+
+function addRequestBodyProperty() {
+    const container = document.getElementById("request_body_properties_container");
+    const propId = 'property_' + Date.now();
+    
+    const propHtml = `
+        <div class="property-item border rounded p-3 mb-3" id="${propId}">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Request Body Property</h6>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeElement('${propId}')">Remove</button>
+            </div>
+            <div class="row">
+                <div class="col-md-3">
+                    <label class="form-label">Name *</label>
+                    <input type="text" class="form-control property-name" placeholder="message" required>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label">Type</label>
+                    <select class="form-select property-type">
+                        <option value="string" selected>String</option>
+                        <option value="integer">Integer</option>
+                        <option value="number">Number</option>
+                        <option value="boolean">Boolean</option>
+                        <option value="object">Object</option>
+                        <option value="array">Array</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Description</label>
+                    <input type="text" class="form-control property-description" placeholder="Property description">
+                </div>
+                <div class="col-md-3">
+                    <div class="form-check mt-4">
+                        <input class="form-check-input property-required" type="checkbox">
+                        <label class="form-check-label">Required</label>
+                    </div>
+                </div>
+            </div>
+            <div class="row mt-2">
+                <div class="col-md-6">
+                    <label class="form-label">Dynamic Variable</label>
+                    <input type="text" class="form-control property-dynamic-var" placeholder="user_message">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Constant Value</label>
+                    <input type="text" class="form-control property-constant-value" placeholder="Hello">
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.insertAdjacentHTML('beforeend', propHtml);
+    
+    // Initialize field states for the new row
+    const newRow = container.lastElementChild;
+    initializeRowFieldStates(newRow);
+}
+
+function addRequestHeader() {
+    const container = document.getElementById("request_headers_container");
+    const headerId = 'header_' + Date.now();
+    
+    const headerHtml = `
+        <div class="header-item border rounded p-3 mb-3" id="${headerId}">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Request Header</h6>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeElement('${headerId}')">Remove</button>
+            </div>
+            <div class="row">
+                <div class="col-md-3">
+                    <label class="form-label">Header Name *</label>
+                    <input type="text" class="form-control header-name" placeholder="Content-Type" required>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label">Type</label>
+                    <select class="form-select header-type">
+                        <option value="string" selected>String</option>
+                        <option value="secret">Secret</option>
+                        <option value="dynamic_variable">Dynamic Variable</option>
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Value *</label>
+                    <input type="text" class="form-control header-value" placeholder="application/json" required>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.insertAdjacentHTML('beforeend', headerHtml);
+}
+
+function addDynamicVariable() {
+    const container = document.getElementById("dynamic_variables_container");
+    const varId = 'variable_' + Date.now();
+    
+    const varHtml = `
+        <div class="variable-item border rounded p-3 mb-3" id="${varId}">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Dynamic Variable</h6>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeElement('${varId}')">Remove</button>
+            </div>
+            <div class="row">
+                <div class="col-md-6">
+                    <label class="form-label">Variable Name *</label>
+                    <input type="text" class="form-control variable-name" placeholder="user_id" required>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label">Value *</label>
+                    <input type="text" class="form-control variable-value" placeholder="12345" required>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.insertAdjacentHTML('beforeend', varHtml);
+}
+
+function addAssignment() {
+    const container = document.getElementById("assignments_container");
+    const assignmentId = 'assignment_' + Date.now();
+    
+    const assignmentHtml = `
+        <div class="assignment-item border rounded p-3 mb-3" id="${assignmentId}">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Response Assignment</h6>
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeElement('${assignmentId}')">Remove</button>
+            </div>
+            <div class="row">
+                <div class="col-md-4">
+                    <label class="form-label">Dynamic Variable *</label>
+                    <input type="text" class="form-control assignment-dynamic-var" placeholder="response_id" required>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Value Path *</label>
+                    <input type="text" class="form-control assignment-value-path" placeholder="data.id" required>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label">Source</label>
+                    <select class="form-select assignment-source">
+                        <option value="response" selected>Response</option>
+                        <option value="request">Request</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+    `;
+    
+    container.insertAdjacentHTML('beforeend', assignmentHtml);
+}
+
+// Helper function to remove elements
+function removeElement(elementId) {
+    const element = document.getElementById(elementId);
+    if (element) {
+        element.remove();
+    }
+}
 
 
 function updateFunctionElement(functionData) {
@@ -1310,37 +2021,182 @@ function updateFunctionElement(functionData) {
 
 
 function handleEditCustomFunction(functionId){
-    let functionName = document.getElementById("edit_function_name").value;
-    let functionDescription = document.getElementById("edit_function_description").value;
-    let functionUrl = document.getElementById("edit_function_url").value;
-    let functionTimeout = document.getElementById("edit_function_timeout").value;
+    console.log(`🔍 Debug: handleEditCustomFunction called with functionId: ${functionId}`);
+    
+    // Basic tool information
+    let toolName = document.getElementById("edit_tool_name").value;
+    let toolDescription = document.getElementById("edit_tool_description").value;
+    let responseTimeout = document.getElementById("edit_response_timeout").value;
+    let apiUrl = document.getElementById("edit_api_url").value;
+    let httpMethod = document.getElementById("edit_http_method").value;
+    let bodyDescription = document.getElementById("edit_body_description").value;
     let functionParameters = document.getElementById("edit-parameters").value;
+    
+    console.log(`🔍 Debug: Form data collected:`);
+    console.log(`🔍 Debug: - toolName: '${toolName}'`);
+    console.log(`🔍 Debug: - toolDescription: '${toolDescription}'`);
+    console.log(`🔍 Debug: - responseTimeout: '${responseTimeout}'`);
+    console.log(`🔍 Debug: - apiUrl: '${apiUrl}'`);
+    console.log(`🔍 Debug: - httpMethod: '${httpMethod}'`);
+    console.log(`🔍 Debug: - bodyDescription: '${bodyDescription}'`);
+    console.log(`🔍 Debug: - functionParameters: '${functionParameters}'`);
+    
+    // Advanced options
+    let disableInterruptions = document.getElementById("edit_disable_interruptions").checked;
+    let forcePreToolSpeech = document.getElementById("edit_force_pre_tool_speech").checked;
+    
+    // Frontend validation for ElevenLabs API compliance
+    if (!validateElevenLabsCompliance(httpMethod, bodyDescription)) {
+        return; // Stop if validation fails
+    }
+    
     const currentUrl = new URL(window.location.href);
     const agentId = currentUrl.searchParams.get("agent_id");
 
+    // Collect path parameters with validation
+    let pathParams = [];
+    document.querySelectorAll('#edit_path_params_container .path-param-row').forEach((row, index) => {
+        let name = row.querySelector('input[name="path_param_name"]').value;
+        let type = row.querySelector('select[name="path_param_type"]').value;
+        let description = row.querySelector('input[name="path_param_description"]').value;
+        let dynamicVariable = row.querySelector('input[name="path_param_dynamic_variable"]').value;
+        let constantValue = row.querySelector('input[name="path_param_constant_value"]').value;
+        
+        if (name) {
+            // Validate path parameter (only one of description, dynamic_variable, or constant_value)
+            if (!validatePathParameter(description, dynamicVariable, constantValue, index + 1)) {
+                return; // Stop if validation fails
+            }
+            
+            pathParams.push({ 
+                name, 
+                type, 
+                description, 
+                dynamic_variable: dynamicVariable,
+                constant_value: constantValue
+            });
+        }
+    });
+
+    // Validate path parameters against URL placeholders
+    if (!validatePathParametersAgainstURL(apiUrl, pathParams)) {
+        return; // Stop if validation fails
+    }
+
+    // Collect query parameters
+    let queryParams = [];
+    document.querySelectorAll('#edit_query_params_container .query-param-row').forEach((row, index) => {
+        let name = row.querySelector('input[name="query_param_name"]').value;
+        let type = row.querySelector('select[name="query_param_type"]').value;
+        let required = row.querySelector('input[name="query_param_required"]').checked;
+        let description = row.querySelector('input[name="query_param_description"]').value;
+        if (name) {
+            queryParams.push({ name, type, required, description });
+        }
+    });
+
+    // Collect request body properties
+    let requestBodyProperties = [];
+    document.querySelectorAll('#edit_request_body_properties_container .body-property-row').forEach((row, index) => {
+        let name = row.querySelector('input[name="body_property_name"]').value;
+        let type = row.querySelector('select[name="body_property_type"]').value;
+        let required = row.querySelector('input[name="body_property_required"]').checked;
+        let description = row.querySelector('input[name="body_property_description"]').value;
+        if (name) {
+            requestBodyProperties.push({ name, type, required, description });
+        }
+    });
+
+    // Collect request headers
+    let requestHeaders = [];
+    document.querySelectorAll('#edit_request_headers_container .header-row').forEach((row, index) => {
+        let name = row.querySelector('input[name="header_name"]').value;
+        let value = row.querySelector('input[name="header_value"]').value;
+        if (name && value) {
+            requestHeaders.push({ name, value });
+        }
+    });
+
+    // Collect dynamic variables
+    let dynamicVariables = [];
+    document.querySelectorAll('#edit_dynamic_variables_container .variable-row').forEach((row, index) => {
+        let name = row.querySelector('input[name="variable_name"]').value;
+        let value = row.querySelector('input[name="variable_value"]').value;
+        if (name && value) {
+            dynamicVariables.push({ name, value });
+        }
+    });
+
+    // Collect assignments
+    let assignments = [];
+    document.querySelectorAll('#edit_assignments_container .assignment-row').forEach((row, index) => {
+        let variable = row.querySelector('input[name="assignment_variable"]').value;
+        let path = row.querySelector('input[name="assignment_path"]').value;
+        if (variable && path) {
+            assignments.push({ variable, path });
+        }
+    });
+
+    // Parse JSON parameters if provided
+    let parsedParameters = {};
+    if (functionParameters) {
+        try {
+            parsedParameters = JSON.parse(functionParameters);
+        } catch (e) {
+            toastr.error('Invalid JSON format in parameters field');
+            return;
+        }
+    }
+
+    // Build comprehensive tool config
+    let toolConfig = {
+        api_url: apiUrl,
+        response_timeout_secs: parseInt(responseTimeout) || 20,
+        http_method: httpMethod,
+        body_description: bodyDescription,
+        path_params: pathParams,
+        query_params: queryParams,
+        request_body_properties: requestBodyProperties,
+        request_headers: requestHeaders,
+        dynamic_variables: dynamicVariables,
+        assignments: assignments,
+        disable_interruptions: disableInterruptions,
+        force_pre_tool_speech: forcePreToolSpeech,
+        ...parsedParameters
+    };
+
     let data = {
-        function_name: functionName,
-        function_description: functionDescription,
-        function_url: functionUrl,
-        function_timeout: functionTimeout,
-        function_parameters: functionParameters,
+        function_name: toolName,
+        function_description: toolDescription,
+        function_url: apiUrl,
+        function_timeout: parseInt(responseTimeout) || 20,
+        function_parameters: toolConfig,
         agent_id: agentId
     };
 
+    console.log(`🔍 Debug: Data being sent to backend:`, data);
+    console.log(`🔍 Debug: - function_name: '${data.function_name}'`);
+    console.log(`🔍 Debug: - function_description: '${data.function_description}'`);
+    console.log(`🔍 Debug: - function_url: '${data.function_url}'`);
+    console.log(`🔍 Debug: - function_timeout: ${data.function_timeout}`);
+    console.log(`🔍 Debug: - agent_id: ${data.agent_id}`);
+    console.log(`🔍 Debug: - function_parameters:`, data.function_parameters);
+
     $.ajax({
-        url: `{{ host }}/api/edit-custom-functions/${functionId}`,
+        url: `{{ host }}/elevenlabs/api/v1/edit-custom-functions/${functionId}`,
         type: 'PUT',
         contentType: 'application/json',
         data: JSON.stringify(data),
         success: function(response) {
+            console.log(`🔍 Debug: Edit response received:`, response);
             if(response.status == "success"){
                 toastr.success('Custom function saved successfully');
                 $('#customFunctionEditModal').modal('hide');
                 // Clear form fields
-                document.getElementById("edit_function_name").value = '';
-                document.getElementById("edit_function_description").value = '';
-                document.getElementById("edit_function_url").value = '';
-                document.getElementById("edit_function_timeout").value = '';
+                document.getElementById("edit_tool_name").value = '';
+                document.getElementById("edit_tool_description").value = '';
+                document.getElementById("edit_api_url").value = '';
+                document.getElementById("edit_response_timeout").value = '';
                 document.getElementById("edit-parameters").value = '';
                 var functionData = response.data
                 updateFunctionElement(functionData);
@@ -1356,24 +2212,186 @@ function handleEditCustomFunction(functionId){
     });
 }
 
+// Helper functions for generating HTML for edit modal
+function generatePathParamsHTML(pathParams) {
+    if (!pathParams || pathParams.length === 0) {
+        return '<p class="text-muted">No path parameters defined</p>';
+    }
+    return pathParams.map((param, index) => `
+        <div class="row mb-2 path-param-row" data-index="${index}">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="path_param_name" value="${param.name || ''}" placeholder="Parameter name">
+            </div>
+            <div class="col-md-3">
+                <select class="form-select" name="path_param_type">
+                    <option value="string" ${param.type === 'string' ? 'selected' : ''}>String</option>
+                    <option value="number" ${param.type === 'number' ? 'selected' : ''}>Number</option>
+                    <option value="boolean" ${param.type === 'boolean' ? 'selected' : ''}>Boolean</option>
+                </select>
+            </div>
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="path_param_description" value="${param.description || ''}" placeholder="Description">
+            </div>
+            <div class="col-md-1">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditPathParam(${index})">×</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function generateQueryParamsHTML(queryParams) {
+    if (!queryParams || queryParams.length === 0) {
+        return '<p class="text-muted">No query parameters defined</p>';
+    }
+    return queryParams.map((param, index) => `
+        <div class="row mb-2 query-param-row" data-index="${index}">
+            <div class="col-md-3">
+                <input type="text" class="form-control" name="query_param_name" value="${param.name || ''}" placeholder="Parameter name">
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" name="query_param_type">
+                    <option value="string" ${param.type === 'string' ? 'selected' : ''}>String</option>
+                    <option value="number" ${param.type === 'number' ? 'selected' : ''}>Number</option>
+                    <option value="boolean" ${param.type === 'boolean' ? 'selected' : ''}>Boolean</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="query_param_required" ${param.required ? 'checked' : ''}>
+                    <label class="form-check-label">Required</label>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="query_param_description" value="${param.description || ''}" placeholder="Description">
+            </div>
+            <div class="col-md-1">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditQueryParam(${index})">×</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function generateRequestBodyPropertiesHTML(properties) {
+    if (!properties || properties.length === 0) {
+        return '<p class="text-muted">No properties defined</p>';
+    }
+    return properties.map((prop, index) => `
+        <div class="row mb-2 body-property-row" data-index="${index}">
+            <div class="col-md-3">
+                <input type="text" class="form-control" name="body_property_name" value="${prop.name || ''}" placeholder="Property name">
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" name="body_property_type">
+                    <option value="string" ${prop.type === 'string' ? 'selected' : ''}>String</option>
+                    <option value="number" ${prop.type === 'number' ? 'selected' : ''}>Number</option>
+                    <option value="boolean" ${prop.type === 'boolean' ? 'selected' : ''}>Boolean</option>
+                    <option value="object" ${prop.type === 'object' ? 'selected' : ''}>Object</option>
+                    <option value="array" ${prop.type === 'array' ? 'selected' : ''}>Array</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="body_property_required" ${prop.required ? 'checked' : ''}>
+                    <label class="form-check-label">Required</label>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="body_property_description" value="${prop.description || ''}" placeholder="Description">
+            </div>
+            <div class="col-md-1">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditRequestBodyProperty(${index})">×</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function generateRequestHeadersHTML(headers) {
+    if (!headers || headers.length === 0) {
+        return '<p class="text-muted">No headers defined</p>';
+    }
+    return headers.map((header, index) => `
+        <div class="row mb-2 header-row" data-index="${index}">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="header_name" value="${header.name || ''}" placeholder="Header name">
+            </div>
+            <div class="col-md-6">
+                <input type="text" class="form-control" name="header_value" value="${header.value || ''}" placeholder="Header value">
+            </div>
+            <div class="col-md-2">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditRequestHeader(${index})">×</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function generateDynamicVariablesHTML(variables) {
+    if (!variables || variables.length === 0) {
+        return '<p class="text-muted">No dynamic variables defined</p>';
+    }
+    return variables.map((variable, index) => `
+        <div class="row mb-2 variable-row" data-index="${index}">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="variable_name" value="${variable.name || ''}" placeholder="Variable name">
+            </div>
+            <div class="col-md-6">
+                <input type="text" class="form-control" name="variable_value" value="${variable.value || ''}" placeholder="Variable value">
+            </div>
+            <div class="col-md-2">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditDynamicVariable(${index})">×</button>
+            </div>
+        </div>
+    `).join('');
+}
+
+function generateAssignmentsHTML(assignments) {
+    if (!assignments || assignments.length === 0) {
+        return '<p class="text-muted">No assignments defined</p>';
+    }
+    return assignments.map((assignment, index) => `
+        <div class="row mb-2 assignment-row" data-index="${index}">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="assignment_variable" value="${assignment.variable || ''}" placeholder="Variable name">
+            </div>
+            <div class="col-md-6">
+                <input type="text" class="form-control" name="assignment_path" value="${assignment.path || ''}" placeholder="JSON path (e.g., $.data.id)">
+            </div>
+            <div class="col-md-2">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditAssignment(${index})">×</button>
+            </div>
+        </div>
+    `).join('');
+}
+
 function editFunction(functionId) {
+    console.log(`🔍 Debug: editFunction called with functionId: ${functionId}`);
+    
     $.ajax({
-        url: "{{ host }}/api/get-custom-functions",
+        url: "{{ host }}/elevenlabs/api/v1/get-custom-functions",
         type: 'GET',
         data: { function_id: functionId },
         success: function(response) {
+            console.log(`🔍 Debug: get_custom_functions response:`, response);
+            
             if (!response.data) {
                 toastr.error('No function data found.');
                 return;
             }
 
             var functionData = response.data;
+            var toolConfig = functionData.function_parameters || {};
+            
+            console.log(`🔍 Debug: Function data received:`, functionData);
+            console.log(`🔍 Debug: - function_name: '${functionData.function_name}'`);
+            console.log(`🔍 Debug: - function_description: '${functionData.function_description}'`);
+            console.log(`🔍 Debug: - function_url: '${functionData.function_url}'`);
+            console.log(`🔍 Debug: - function_timeout: ${functionData.function_timeout}`);
+            console.log(`🔍 Debug: - toolConfig:`, toolConfig);
             var modal = `
                 <div class="modal fade custom_function_modal" id="customFunctionEditModal" tabindex="-1" aria-labelledby="customFunctionEditModalLabel">
-                    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+                    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-xl">
                         <div class="modal-content">
                             <div class="modal-header">
-                                <h1 class="mb-0 d-flex align-items-center gap-2" id="customFunctionModalLabel">
+                                <h1 class="mb-0 d-flex align-items-center gap-2" id="customFunctionEditModalLabel">
                                     <span>
                                         <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
                                             <path d="M4.33337 14.6667V10" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
@@ -1384,32 +2402,161 @@ function editFunction(functionId) {
                                             <path d="M13.6666 7.33333V11.3333C13.6666 12.0667 13.3333 12.6667 12.3333 12.6667H11C9.99996 12.6667 9.66663 12.0667 9.66663 11.3333V7.33333C9.66663 6.6 9.99996 6 11 6H12.3333C13.3333 6 13.6666 6.6 13.6666 7.33333Z" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
                                         </svg>
                                     </span>
-                                    Custom Function
+                                    Edit ElevenLabs Webhook Tool
                                 </h1>
                                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                             </div>
                             <div class="modal-body">
                                 <form id="editFunctionForm">
+                                    <!-- Basic Tool Information -->
+                                    <div class="card mb-3">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Tool Configuration</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-md-6">
                                     <div class="form_field mb-3">
-                                        <label for="function_name" class="form-label">Name</label>
-                                        <input type="text" class="form-control" id="edit_function_name" value="${functionData.function_name || ''}" placeholder="Enter function name">
+                                                        <label for="edit_tool_name" class="form-label">Tool Name *</label>
+                                                        <input type="text" class="form-control" id="edit_tool_name" value="${functionData.function_name || ''}" placeholder="my_webhook_tool" required>
+                                                        <small class="text-muted">Only letters, numbers, underscores, and hyphens. Max 64 characters.</small>
                                     </div>
+                                                </div>
+                                                <div class="col-md-6">
                                     <div class="form_field mb-3">
-                                        <label for="function_description" class="form-label">Description</label>
-                                        <textarea class="form-control" id="edit_function_description" placeholder="Enter function description">${functionData.function_description || ''}</textarea>
+                                                        <label for="edit_response_timeout" class="form-label">Response Timeout (seconds)</label>
+                                                        <input type="number" class="form-control" id="edit_response_timeout" value="${functionData.function_timeout || 20}" placeholder="20" min="5" max="120">
+                                                        <small class="text-muted">Between 5-120 seconds</small>
                                     </div>
+                                                </div>
+                                            </div>
+                                            
                                     <div class="form_field mb-3">
-                                        <label for="function_url" class="form-label">Your URL</label>
-                                        <input type="text" class="form-control" id="edit_function_url" value="${functionData.function_url || ''}" placeholder="Enter function URL">
+                                                <label for="edit_tool_description" class="form-label">Description *</label>
+                                                <textarea class="form-control" id="edit_tool_description" placeholder="Describe what this webhook tool does" rows="2" required>${functionData.function_description || ''}</textarea>
                                     </div>
-                                    <div class="form_field mb-3">
-                                        <label for="function_timeout" class="form-label">API Timeout (Optional)</label>
-                                        <div class="d-flex align-items-center gap-2">
-                                            <input type="text" class="form-control" id="edit_function_timeout" value="${functionData.function_timeout || ''}" placeholder="120000">
-                                            <small class="text-muted">milliseconds</small>
                                         </div>
                                     </div>
-                                    <div class="form_field mb-3 parameters_field">
+
+                                    <!-- API Schema Configuration -->
+                                    <div class="card mb-3">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">API Schema</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-md-8">
+                                    <div class="form_field mb-3">
+                                                        <label for="edit_api_url" class="form-label">Webhook URL *</label>
+                                                        <input type="url" class="form-control" id="edit_api_url" value="${functionData.function_url || ''}" placeholder="https://api.example.com/agents/{agent_id}" required>
+                                                        <small class="text-muted">May include path parameters like {agent_id}</small>
+                                        </div>
+                                    </div>
+                                                <div class="col-md-4">
+                                                    <div class="form_field mb-3">
+                                                        <label for="edit_http_method" class="form-label">HTTP Method</label>
+                                                        <select class="form-select" id="edit_http_method">
+                                                            <option value="GET" ${toolConfig.http_method === 'GET' ? 'selected' : ''}>GET</option>
+                                                            <option value="POST" ${toolConfig.http_method === 'POST' || !toolConfig.http_method ? 'selected' : ''}>POST</option>
+                                                            <option value="PUT" ${toolConfig.http_method === 'PUT' ? 'selected' : ''}>PUT</option>
+                                                            <option value="PATCH" ${toolConfig.http_method === 'PATCH' ? 'selected' : ''}>PATCH</option>
+                                                            <option value="DELETE" ${toolConfig.http_method === 'DELETE' ? 'selected' : ''}>DELETE</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Path Parameters -->
+                                    <div class="card mb-3">
+                                        <div class="card-header d-flex justify-content-between align-items-center">
+                                            <h6 class="mb-0">Path Parameters</h6>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditPathParam()">+ Add Path Parameter</button>
+                                        </div>
+                                        <div class="card-body">
+                                            <small class="text-muted mb-3 d-block">Define parameters that appear in the URL path (e.g., {agent_id} in /agents/{agent_id})</small>
+                                            <div id="edit_path_params_container">
+                                                ${generatePathParamsHTML(toolConfig.path_params || [])}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Query Parameters -->
+                                    <div class="card mb-3">
+                                        <div class="card-header d-flex justify-content-between align-items-center">
+                                            <h6 class="mb-0">Query Parameters</h6>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditQueryParam()">+ Add Query Parameter</button>
+                                        </div>
+                                        <div class="card-body">
+                                            <small class="text-muted mb-3 d-block">Parameters that will be added to the URL as query params (?param=value)</small>
+                                            <div id="edit_query_params_container">
+                                                ${generateQueryParamsHTML(toolConfig.query_params || [])}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Request Body Schema -->
+                                    <div class="card mb-3">
+                                        <div class="card-header d-flex justify-content-between align-items-center">
+                                            <h6 class="mb-0">Request Body Schema</h6>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditRequestBodyProperty()">+ Add Property</button>
+                                        </div>
+                                        <div class="card-body">
+                                            <small class="text-muted mb-3 d-block">Define the JSON structure for POST/PUT/PATCH requests</small>
+                                            <div class="form_field mb-3">
+                                                <label for="edit_body_description" class="form-label">Body Description</label>
+                                                <input type="text" class="form-control" id="edit_body_description" value="${toolConfig.body_description || ''}" placeholder="Description of the request body">
+                                            </div>
+                                            <div id="edit_request_body_properties_container">
+                                                ${generateRequestBodyPropertiesHTML(toolConfig.request_body_properties || [])}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Request Headers -->
+                                    <div class="card mb-3">
+                                        <div class="card-header d-flex justify-content-between align-items-center">
+                                            <h6 class="mb-0">Request Headers</h6>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditRequestHeader()">+ Add Header</button>
+                                        </div>
+                                        <div class="card-body">
+                                            <small class="text-muted mb-3 d-block">Headers to include in the webhook request</small>
+                                            <div id="edit_request_headers_container">
+                                                ${generateRequestHeadersHTML(toolConfig.request_headers || [])}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Dynamic Variables -->
+                                    <div class="card mb-3">
+                                        <div class="card-header d-flex justify-content-between align-items-center">
+                                            <h6 class="mb-0">Dynamic Variables</h6>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditDynamicVariable()">+ Add Variable</button>
+                                        </div>
+                                        <div class="card-body">
+                                            <small class="text-muted mb-3 d-block">Variables that can be used in the webhook configuration</small>
+                                            <div id="edit_dynamic_variables_container">
+                                                ${generateDynamicVariablesHTML(toolConfig.dynamic_variables || [])}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Response Assignments -->
+                                    <div class="card mb-3">
+                                        <div class="card-header d-flex justify-content-between align-items-center">
+                                            <h6 class="mb-0">Response Assignments</h6>
+                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditAssignment()">+ Add Assignment</button>
+                                        </div>
+                                        <div class="card-body">
+                                            <small class="text-muted mb-3 d-block">Extract values from webhook response and assign to dynamic variables</small>
+                                            <div id="edit_assignments_container">
+                                                ${generateAssignmentsHTML(toolConfig.assignments || [])}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                                                        <div class="form_field mb-3 parameters_field">
                                         <label for="parameters" class="form-label mb-0">Parameters (Optional)</label>
                                         <small class="text-muted">JSON schema that defines the format in which the LLM will return. Please refer to the docs.</small>
                                         <textarea class="form-control my-2" id="edit-parameters" placeholder="Enter function parameters">${JSON.stringify(functionData.function_parameters, null, 2) || ''}</textarea>
@@ -1422,11 +2569,40 @@ function editFunction(functionId) {
                                     <div class="format_json_btn_box mb-3">
                                         <button type="button" onclick="EditformatJSON()" class="w-100">Format JSON</button>
                                     </div>
+
+                                    <!-- Advanced Options -->
+                                    <div class="card mb-3">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Advanced Options</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    <div class="form-check mb-3">
+                                                        <input class="form-check-input" type="checkbox" id="edit_disable_interruptions" ${toolConfig.disable_interruptions ? 'checked' : ''}>
+                                                        <label class="form-check-label" for="edit_disable_interruptions">
+                                                            Disable Interruptions
+                                                        </label>
+                                                        <small class="text-muted d-block">User cannot interrupt while tool is running</small>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="form-check mb-3">
+                                                        <input class="form-check-input" type="checkbox" id="edit_force_pre_tool_speech" ${toolConfig.force_pre_tool_speech ? 'checked' : ''}>
+                                                        <label class="form-check-label" for="edit_force_pre_tool_speech">
+                                                            Force Pre-Tool Speech
+                                                        </label>
+                                                        <small class="text-muted d-block">Agent speaks before calling the tool</small>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </form>
                             </div>
                             <div class="modal-footer">
                                 <button type="button" class="btn" data-bs-dismiss="modal">Close</button>
-                                <button type="button" id="save-edit-custom-function" class="btn save_btn" onclick="handleEditCustomFunction('${functionId}')">Save</button>
+                                <button type="button" id="save-edit-custom-function" class="btn save_btn" onclick="handleEditCustomFunction('${functionId}')">Update Webhook Tool</button>
                             </div>
                         </div>
                     </div>
@@ -1455,6 +2631,218 @@ function editFunction(functionId) {
         }
     });
 }
+
+// Edit modal helper functions
+function addEditPathParam() {
+    const container = document.getElementById('edit_path_params_container');
+    const index = container.children.length;
+    const html = `
+        <div class="row mb-2 path-param-row" data-index="${index}">
+            <div class="col-md-3">
+                <input type="text" class="form-control" name="path_param_name" placeholder="Parameter name">
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" name="path_param_type">
+                    <option value="string">String</option>
+                    <option value="number">Number</option>
+                    <option value="boolean">Boolean</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="path_param_description" placeholder="Description">
+            </div>
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="path_param_dynamic_variable" placeholder="Dynamic Variable">
+            </div>
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="path_param_constant_value" placeholder="Constant Value">
+            </div>
+            <div class="col-md-1">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditPathParam(${index})">×</button>
+            </div>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', html);
+    
+    // Initialize field states for the new row
+    const newRow = container.lastElementChild;
+    initializeRowFieldStates(newRow);
+}
+
+function removeEditPathParam(index) {
+    const row = document.querySelector(`#edit_path_params_container .path-param-row[data-index="${index}"]`);
+    if (row) row.remove();
+}
+
+function addEditQueryParam() {
+    const container = document.getElementById('edit_query_params_container');
+    const index = container.children.length;
+    const html = `
+        <div class="row mb-2 query-param-row" data-index="${index}">
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="query_param_name" placeholder="Parameter name">
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" name="query_param_type">
+                    <option value="string">String</option>
+                    <option value="number">Number</option>
+                    <option value="boolean">Boolean</option>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="query_param_required">
+                    <label class="form-check-label">Required</label>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="query_param_description" placeholder="Description">
+            </div>
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="query_param_dynamic_variable" placeholder="Dynamic Variable">
+            </div>
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="query_param_constant_value" placeholder="Constant Value">
+            </div>
+            <div class="col-md-1">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditQueryParam(${index})">×</button>
+            </div>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', html);
+    
+    // Initialize field states for the new row
+    const newRow = container.lastElementChild;
+    initializeRowFieldStates(newRow);
+}
+
+function removeEditQueryParam(index) {
+    const row = document.querySelector(`#edit_query_params_container .query-param-row[data-index="${index}"]`);
+    if (row) row.remove();
+}
+
+function addEditRequestBodyProperty() {
+    const container = document.getElementById('edit_request_body_properties_container');
+    const index = container.children.length;
+    const html = `
+        <div class="row mb-2 body-prop-row" data-index="${index}">
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="body_prop_name" placeholder="Property name">
+            </div>
+            <div class="col-md-2">
+                <select class="form-select" name="body_prop_type">
+                    <option value="string">String</option>
+                    <option value="number">Number</option>
+                    <option value="boolean">Boolean</option>
+                    <option value="object">Object</option>
+                    <option value="array">Array</option>
+                </select>
+            </div>
+            <div class="col-md-1">
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="body_prop_required">
+                    <label class="form-check-label">Required</label>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="body_prop_description" placeholder="Description">
+            </div>
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="body_prop_dynamic_variable" placeholder="Dynamic Variable">
+            </div>
+            <div class="col-md-2">
+                <input type="text" class="form-control" name="body_prop_constant_value" placeholder="Constant Value">
+            </div>
+            <div class="col-md-1">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditRequestBodyProperty(${index})">×</button>
+            </div>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', html);
+    
+    // Initialize field states for the new row
+    const newRow = container.lastElementChild;
+    initializeRowFieldStates(newRow);
+}
+
+function removeEditRequestBodyProperty(index) {
+    const row = document.querySelector(`#edit_request_body_properties_container .body-prop-row[data-index="${index}"]`);
+    if (row) row.remove();
+}
+
+function addEditRequestHeader() {
+    const container = document.getElementById('edit_request_headers_container');
+    const index = container.children.length;
+    const html = `
+        <div class="row mb-2 header-row" data-index="${index}">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="header_name" placeholder="Header name">
+            </div>
+            <div class="col-md-6">
+                <input type="text" class="form-control" name="header_value" placeholder="Header value">
+            </div>
+            <div class="col-md-2">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditRequestHeader(${index})">×</button>
+            </div>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', html);
+}
+
+function removeEditRequestHeader(index) {
+    const row = document.querySelector(`#edit_request_headers_container .header-row[data-index="${index}"]`);
+    if (row) row.remove();
+}
+
+function addEditDynamicVariable() {
+    const container = document.getElementById('edit_dynamic_variables_container');
+    const index = container.children.length;
+    const html = `
+        <div class="row mb-2 variable-row" data-index="${index}">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="variable_name" placeholder="Variable name">
+            </div>
+            <div class="col-md-6">
+                <input type="text" class="form-control" name="variable_value" placeholder="Variable value">
+            </div>
+            <div class="col-md-2">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditDynamicVariable(${index})">×</button>
+            </div>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', html);
+}
+
+function removeEditDynamicVariable(index) {
+    const row = document.querySelector(`#edit_dynamic_variables_container .variable-row[data-index="${index}"]`);
+    if (row) row.remove();
+}
+
+function addEditAssignment() {
+    const container = document.getElementById('edit_assignments_container');
+    const index = container.children.length;
+    const html = `
+        <div class="row mb-2 assignment-row" data-index="${index}">
+            <div class="col-md-4">
+                <input type="text" class="form-control" name="assignment_variable" placeholder="Variable name">
+            </div>
+            <div class="col-md-6">
+                <input type="text" class="form-control" name="assignment_path" placeholder="JSON path (e.g., $.data.id)">
+            </div>
+            <div class="col-md-2">
+                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditAssignment(${index})">×</button>
+            </div>
+        </div>
+    `;
+    container.insertAdjacentHTML('beforeend', html);
+}
+
+function removeEditAssignment(index) {
+    const row = document.querySelector(`#edit_assignments_container .assignment-row[data-index="${index}"]`);
+    if (row) row.remove();
+}
+
+
 
 function setExampleJSON(exampleId) {
     const examples = {
@@ -1509,7 +2897,7 @@ function EditformatJSON(){
 
 function deleteFunction(functionId){
     $.ajax({
-        url:  "{{ host }}/api/delete-custom-functions",
+        url:  "{{ host }}/elevenlabs/api/v1/delete-custom-functions",
         type: 'DELETE',
         contentType: 'application/json',
         data: JSON.stringify({ function_id: functionId }),
@@ -1551,7 +2939,7 @@ function saveVariable() {
 
     // Save variables via AJAX
     $.ajax({
-        url: "{{ host }}/api/save-variables",
+        url: "{{ host }}/elevenlabs/api/v1/save-variables",
         type: 'POST',
         contentType: 'application/json',
         data: JSON.stringify({
@@ -1703,5 +3091,282 @@ function saveVariable() {
                 toastr.error("Something went wrong!");
             });
         }
+
+        // Function to show dynamic variables when detected
+        function showDynamicVariables(variables) {
+            const dynamicVarsSection = document.getElementById("dynamic-variables-section");
+            const dynamicVarsDiv = document.getElementById("dynamic-variables");
+            
+            if (!variables || Object.keys(variables).length === 0) {
+                dynamicVarsSection.style.display = "none";
+                return;
+            }
+            
+            // Show the section
+            dynamicVarsSection.style.display = "block";
+            
+            // Clear existing variables
+            dynamicVarsDiv.innerHTML = "";
+            
+            // Add each variable
+            Object.entries(variables).forEach(([varName, varValue]) => {
+                const varDiv = document.createElement("div");
+                varDiv.className = "variable-modal-content-item mb-2";
+                varDiv.innerHTML = `
+                    <input type="text" class="form-control" value="${varName}" readonly>
+                    <input type="text" class="form-control" value="${varValue}" placeholder="Enter value" onchange="updateVariableValue('${varName}', this.value)">
+                    <button class="dlt_btn bg-transparent border-0 p-0" onclick="removeVariable(this)">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M3 6h18"></path>
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-1V6"></path>
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                `;
+                dynamicVarsDiv.appendChild(varDiv);
+            });
+        }
+
+        // Function to update variable value
+        function updateVariableValue(varName, value) {
+            const currentUrl = new URL(window.location.href);
+            const agentId = currentUrl.searchParams.get("agent_id");
+            
+            console.log("🔍 Frontend Debug - Updating variable:", varName, "to:", value);
+            
+            // Update the variable in the backend
+            fetch(`${host}/elevenlabs/api/v1/edit_agent`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken()
+                },
+                body: JSON.stringify({
+                    agent_id: agentId,
+                    dynamic_variable_update: {
+                        [varName]: value
+                    }
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "success") {
+                    toastr.success(`Variable ${varName} updated successfully`, { positionClass: "toast-top-right" });
+                } else {
+                    toastr.error(data.message || "Failed to update variable");
+                }
+            })
+            .catch(error => {
+                console.error("Error updating variable:", error);
+                toastr.error("Error updating variable");
+            });
+        }
+
+        // ElevenLabs API Compliance Validation Functions
+        function validateElevenLabsCompliance(httpMethod, bodyDescription) {
+            // Rule 1: Request body schema only allowed for POST/PUT/PATCH methods
+            if (httpMethod && !['POST', 'PUT', 'PATCH'].includes(httpMethod.toUpperCase())) {
+                if (bodyDescription && bodyDescription.trim() !== '') {
+                    toastr.error(`Request body description is not allowed for ${httpMethod} method. Only POST, PUT, and PATCH methods support request body schemas.`);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // Function to validate path parameters against URL placeholders
+        function validatePathParametersAgainstURL(apiUrl, pathParams) {
+            const urlPlaceholders = apiUrl.match(/\{([^}]+)\}/g) || [];
+            const urlParamNames = urlPlaceholders.map(placeholder => placeholder.slice(1, -1));
+            
+            for (const param of pathParams) {
+                const paramName = param.name?.trim();
+                if (paramName && !urlParamNames.includes(paramName)) {
+                    toastr.error(`Path parameter "${paramName}" is defined but the URL doesn't contain the placeholder "{${paramName}}". Please either:\n1. Add {${paramName}} to the URL, or\n2. Remove this path parameter.`);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function validatePathParameter(description, dynamicVariable, constantValue, paramIndex) {
+            // Rule 2: Path parameters can only have one of: description, dynamic_variable, or constant_value
+            let filledFields = 0;
+            if (description && description.trim() !== '') filledFields++;
+            if (dynamicVariable && dynamicVariable.trim() !== '') filledFields++;
+            if (constantValue && constantValue.trim() !== '') filledFields++;
+
+            if (filledFields > 1) {
+                toastr.error(`Path Parameter ${paramIndex}: You can only set one of Description, Dynamic Variable, or Constant Value. Please clear the other fields.`);
+                return false;
+            }
+            return true;
+        }
+
+        // Add real-time validation to form fields
+        function addElevenLabsValidation() {
+            // Add validation to HTTP method changes (both create and edit forms)
+            const httpMethodSelects = ['http_method', 'edit_http_method'];
+            httpMethodSelects.forEach(selectId => {
+                const httpMethodSelect = document.getElementById(selectId);
+                if (httpMethodSelect) {
+                    httpMethodSelect.addEventListener('change', function() {
+                        const method = this.value;
+                        const bodyDescriptionFieldId = selectId === 'edit_http_method' ? 'edit_body_description' : 'body_description';
+                        const bodyDescriptionField = document.getElementById(bodyDescriptionFieldId);
+                        
+                        if (bodyDescriptionField && !['POST', 'PUT', 'PATCH'].includes(method.toUpperCase())) {
+                            // Clear body description for GET/DELETE methods
+                            if (bodyDescriptionField.value.trim() !== '') {
+                                bodyDescriptionField.value = '';
+                                toastr.warning('Request body description cleared for ' + method + ' method');
+                            }
+                        }
+                    });
+                }
+            });
+
+            // Add validation to parameter fields with enable/disable functionality
+            document.addEventListener('input', function(e) {
+                if (e.target.matches('input[name="path_param_description"], input[name="path_param_dynamic_variable"], input[name="path_param_constant_value"], input[name="query_param_description"], input[name="query_param_dynamic_variable"], input[name="query_param_constant_value"], input[name="body_prop_description"], input[name="body_prop_dynamic_variable"], input[name="body_prop_constant_value"], .param-description, .param-dynamic-var, .param-constant-value, .property-description, .property-dynamic-var, .property-constant-value')) {
+                    const row = e.target.closest('.path-param-row, .query-param-row, .body-prop-row, .param-item, .property-item');
+                    if (row) {
+                        // Determine parameter type and get appropriate field selectors
+                        let descriptionField, dynamicVarField, constantValField;
+                        
+                        if (row.classList.contains('path-param-row')) {
+                            descriptionField = row.querySelector('input[name="path_param_description"]');
+                            dynamicVarField = row.querySelector('input[name="path_param_dynamic_variable"]');
+                            constantValField = row.querySelector('input[name="path_param_constant_value"]');
+                        } else if (row.classList.contains('query-param-row')) {
+                            descriptionField = row.querySelector('input[name="query_param_description"]');
+                            dynamicVarField = row.querySelector('input[name="query_param_dynamic_variable"]');
+                            constantValField = row.querySelector('input[name="query_param_constant_value"]');
+                        } else if (row.classList.contains('body-prop-row')) {
+                            descriptionField = row.querySelector('input[name="body_prop_description"]');
+                            dynamicVarField = row.querySelector('input[name="body_prop_dynamic_variable"]');
+                            constantValField = row.querySelector('input[name="body_prop_constant_value"]');
+                        } else if (row.classList.contains('param-item')) {
+                            descriptionField = row.querySelector('.param-description');
+                            dynamicVarField = row.querySelector('.param-dynamic-var');
+                            constantValField = row.querySelector('.param-constant-value');
+                        } else if (row.classList.contains('property-item')) {
+                            descriptionField = row.querySelector('.property-description');
+                            dynamicVarField = row.querySelector('.property-dynamic-var');
+                            constantValField = row.querySelector('.property-constant-value');
+                        }
+                        
+                        if (descriptionField && dynamicVarField && constantValField) {
+                            const description = descriptionField.value.trim();
+                            const dynamicVar = dynamicVarField.value.trim();
+                            const constantVal = constantValField.value.trim();
+                            
+                            // Function to enable/disable fields
+                            function updateFieldStates(activeField) {
+                                const fields = [
+                                    { field: descriptionField, name: 'description' },
+                                    { field: dynamicVarField, name: 'dynamic_variable' },
+                                    { field: constantValField, name: 'constant_value' }
+                                ];
+                                
+                                fields.forEach(({ field, name }) => {
+                                    if (name === activeField) {
+                                        // Enable the active field
+                                        field.disabled = false;
+                                        field.style.backgroundColor = '#ffffff';
+                                        field.style.opacity = '1';
+                                    } else {
+                                        // Disable other fields if any field has content
+                                        const hasContent = description || dynamicVar || constantVal;
+                                        field.disabled = hasContent;
+                                        field.style.backgroundColor = hasContent ? '#f8f9fa' : '#ffffff';
+                                        field.style.opacity = hasContent ? '0.6' : '1';
+                                        
+                                        // Clear disabled fields
+                                        if (hasContent && field.value.trim() !== '') {
+                                            field.value = '';
+                                        }
+                                    }
+                                });
+                            }
+                            
+                            // Determine which field is active and update states
+                            if (description) {
+                                updateFieldStates('description');
+                            } else if (dynamicVar) {
+                                updateFieldStates('dynamic_variable');
+                            } else if (constantVal) {
+                                updateFieldStates('constant_value');
+                            } else {
+                                // No fields have content, enable all
+                                updateFieldStates(null);
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Function to initialize field states for existing data
+        function initializeFieldStates() {
+            // Initialize all parameter rows
+            const allParamRows = document.querySelectorAll('.path-param-row, .query-param-row, .body-prop-row, .param-item, .property-item');
+            allParamRows.forEach(row => {
+                initializeRowFieldStates(row);
+            });
+        }
+
+        // Function to initialize field states for a specific row
+        function initializeRowFieldStates(row) {
+            let descriptionField, dynamicVarField, constantValField;
+            
+            // Check for edit modal fields first
+            if (row.classList.contains('path-param-row')) {
+                descriptionField = row.querySelector('input[name="path_param_description"]');
+                dynamicVarField = row.querySelector('input[name="path_param_dynamic_variable"]');
+                constantValField = row.querySelector('input[name="path_param_constant_value"]');
+            } else if (row.classList.contains('query-param-row')) {
+                descriptionField = row.querySelector('input[name="query_param_description"]');
+                dynamicVarField = row.querySelector('input[name="query_param_dynamic_variable"]');
+                constantValField = row.querySelector('input[name="query_param_constant_value"]');
+            } else if (row.classList.contains('body-prop-row')) {
+                descriptionField = row.querySelector('input[name="body_prop_description"]');
+                dynamicVarField = row.querySelector('input[name="body_prop_dynamic_variable"]');
+                constantValField = row.querySelector('input[name="body_prop_constant_value"]');
+            }
+            // Check for create modal fields
+            else if (row.classList.contains('param-item')) {
+                descriptionField = row.querySelector('.param-description');
+                dynamicVarField = row.querySelector('.param-dynamic-var');
+                constantValField = row.querySelector('.param-constant-value');
+            } else if (row.classList.contains('property-item')) {
+                descriptionField = row.querySelector('.property-description');
+                dynamicVarField = row.querySelector('.property-dynamic-var');
+                constantValField = row.querySelector('.property-constant-value');
+            }
+            
+            if (descriptionField && dynamicVarField && constantValField) {
+                const description = descriptionField.value.trim();
+                const dynamicVar = dynamicVarField.value.trim();
+                const constantVal = constantValField.value.trim();
+                
+                // Apply initial field states
+                const hasContent = description || dynamicVar || constantVal;
+                const fields = [descriptionField, dynamicVarField, constantValField];
+                
+                fields.forEach(field => {
+                    field.disabled = hasContent && field.value.trim() === '';
+                    field.style.backgroundColor = field.disabled ? '#f8f9fa' : '#ffffff';
+                    field.style.opacity = field.disabled ? '0.6' : '1';
+                });
+            }
+        }
+
+        // Initialize validation when DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            addElevenLabsValidation();
+            // Initialize field states after a short delay to ensure all content is loaded
+            setTimeout(initializeFieldStates, 100);
+        });
     </script>
 {% endblock %}
