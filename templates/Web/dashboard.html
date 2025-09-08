@@ -106,12 +106,10 @@
                                         </div>
                                     </td>
                                     <td>
-                                        <div class="max-content">
-                                            {% if agent.selected_model %}
-                                                {{ agent.selected_model }}
-                                            {% else %}
-                                                -
-                                            {% endif %}
+                                        <div class="max-content" 
+                                             data-llm-id="{{ agent.selected_llm_model if agent.selected_llm_model else '' }}"
+                                             data-selected-model="{{ agent.selected_model if agent.selected_model else '' }}">
+                                            -
                                         </div>
                                     </td>
                                     <td>
@@ -211,9 +209,53 @@
     </div>
 </div>
 
-
-
 <script>
+(async () => {
+  const cells = Array.from(document.querySelectorAll('[data-llm-id]'));
+  const ids = [...new Set(cells.map(c => c.getAttribute('data-llm-id')).filter(Boolean))];
+  // If no ids, try to fall back to data-selected-model
+  if (!ids.length) {
+    cells.forEach(c => {
+      const fallback = c.getAttribute('data-selected-model');
+      if (fallback) c.textContent = fallback; else c.textContent = '-';
+    });
+    return;
+  }
+
+  try {
+    // Try API to fetch names by ids if available
+    const res = await fetch(`/elevenlabs/api/v1/llm_models?ids=${ids.join(',')}`);
+    if (res.ok) {
+      const data = await res.json();
+      const nameMap = (data && data.models) || {};
+      cells.forEach(c => {
+        const id = c.getAttribute('data-llm-id');
+        const fallback = c.getAttribute('data-selected-model');
+        if (id && nameMap[id]) c.textContent = nameMap[id];
+        else if (fallback) c.textContent = fallback;
+        else if (id) c.textContent = `ID ${id}`;
+        else c.textContent = '-';
+      });
+      return;
+    }
+  } catch (e) {
+    // Ignore and use fallback
+  }
+
+  // Fallback: just show selected_model or id
+  cells.forEach(c => {
+    const fallback = c.getAttribute('data-selected-model');
+    const id = c.getAttribute('data-llm-id');
+    if (fallback) c.textContent = fallback;
+    else if (id) c.textContent = `ID ${id}`;
+    else c.textContent = '-';
+  });
+})();
+
+
+
+
+
     let host = "{{ host }}";
 // Add this JavaScript code to your file
 document.addEventListener('DOMContentLoaded', function() {

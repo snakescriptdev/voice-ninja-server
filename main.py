@@ -3,11 +3,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from app.routers import APISRouter, WebRouter, WebSocketRouter, AdminRouter
-from elevenlabs_app.routers import ElevenLabsAPIRouter, ElevenLabsWebRouter
+from app.routers import APISRouter, WebRouter,  AdminRouter ,WebSocketRouter
+from elevenlabs_app.routers import (
+    ElevenLabsAPIRouter,
+    ElevenLabsWebRouter,
+    ElevenLabsWebSocketRouter,
+    ElevenLabsLiveRouter,
+)
 from fastapi_sqlalchemy import DBSessionMiddleware,db
 from app.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 import os
 from config import MEDIA_DIR 
 from app.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
@@ -61,12 +69,15 @@ security = HTTPBasic()
 # Include Voice Ninja app routers (existing)
 app.include_router(APISRouter, prefix="")
 app.include_router(WebRouter, prefix="")
-app.include_router(WebSocketRouter, prefix="/ws")
+# app.include_router(WebSocketRouter, prefix="/ws")
+app.include_router(ElevenLabsWebSocketRouter, prefix="/ws")
 app.include_router(AdminRouter, prefix="/admin")
 
 # Include ElevenLabs Integration app routers (new)
 app.include_router(ElevenLabsAPIRouter, prefix="/elevenlabs/api/v1")
 app.include_router(ElevenLabsWebRouter, prefix="/elevenlabs/web/v1")
+# Live browser streaming WS
+app.include_router(ElevenLabsLiveRouter, prefix="")
 # app.include_router(ElevenLabsAdminRouter, prefix="/elevenlabs/admin")
 
 @app.on_event("startup")

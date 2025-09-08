@@ -310,6 +310,7 @@ class AgentModel(Base):
     daily_call_limit = relationship("DailyCallLimitModel", back_populates="agent", cascade="all, delete-orphan")
 
     elvn_lab_agent_id = Column(String, nullable=True,default="") #stores agent id of elevenlab agent.
+    elvn_lab_knowledge_base = Column(JSONB, nullable=True, default={}) #stores elevenlabs knowledge base information
 
     # Reference to selected LLM model
     selected_llm_model = Column(Integer, ForeignKey("llm_models.id"), nullable=True)
@@ -535,6 +536,20 @@ class AgentModel(Base):
             agent = db.session.query(cls).filter(cls.id == agent_id).first()
             if agent:
                 agent.noise_setting_variable = noise_settings
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+    
+    @classmethod
+    def update_elevenlabs_knowledge_base(cls, agent_id: int, knowledge_base_data: dict) -> "AgentModel":
+        """
+        Update an agent's ElevenLabs knowledge base information
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.elvn_lab_knowledge_base = knowledge_base_data
                 db.session.commit()
                 db.session.refresh(agent)
                 return agent

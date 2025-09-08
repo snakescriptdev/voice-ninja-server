@@ -26,7 +26,7 @@ from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
 from sqlalchemy import insert, select, delete, func
 from app.databases.models import agent_knowledge_association
-from config import MEDIA_DIR  # ✅ Import properly
+from config import MEDIA_DIR  # Import properly
 from app.utils.helper import extract_text_from_file, is_valid_url
 from app.utils.langchain_integration import get_splits, convert_to_vectorstore
 
@@ -34,6 +34,26 @@ from app.utils.langchain_integration import get_splits, convert_to_vectorstore
 
 
 ElevenLabsAPIRouter = APIRouter()
+
+# Lightweight helper for dashboard: return LLM model names by comma-separated ids
+@ElevenLabsAPIRouter.get("/llm_models")
+async def get_llm_models(request: Request):
+    try:
+        ids_str = request.query_params.get("ids", "")
+        if not ids_str:
+            return {"models": {}}
+        id_list = []
+        for x in ids_str.split(','):
+            try:
+                id_list.append(int(x))
+            except Exception:
+                continue
+        if not id_list:
+            return {"models": {}}
+        rows = db.session.query(LLMModel.id, LLMModel.name).filter(LLMModel.id.in_(id_list)).all()
+        return {"models": {row.id: row.name for row in rows}}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": str(e)})
 
 @ElevenLabsAPIRouter.post("/create_new_agent",name='create-new-agent')
 async def create_new_agent(request: Request):
@@ -1217,15 +1237,20 @@ async def create_custom_function(request: Request):
                 "message": "Failed to get tool ID from ElevenLabs response"
             })
         
-        # Step 2: Get existing tools for the agent and add the new tool
+        # Step 2: Get existing tools from agent's conversation config and add the new tool
         print(f"🔍 Debug: Getting existing tools for agent {eleven_agent_id}")
-        existing_tools_result = ElevenLabsAgentCRUD().get_agent_tools(eleven_agent_id)
+        existing_agent_result = ElevenLabsAgentCRUD().get_agent(eleven_agent_id)
         
         existing_tool_ids = []
-        if "error" not in existing_tools_result:
-            existing_tools = existing_tools_result.get("tools", [])
-            existing_tool_ids = [tool.get("id") for tool in existing_tools if tool.get("id")]
-            print(f"🔍 Debug: Found {len(existing_tool_ids)} existing tools: {existing_tool_ids}")
+        if "error" not in existing_agent_result:
+            # Extract tool_ids from agent's conversation config
+            conversation_config = existing_agent_result.get("conversation_config", {})
+            agent_config = conversation_config.get("agent", {})
+            prompt_config = agent_config.get("prompt", {})
+            existing_tool_ids = prompt_config.get("tool_ids", [])
+            print(f"🔍 Debug: Found {len(existing_tool_ids)} existing tools in agent config: {existing_tool_ids}")
+        else:
+            print(f"⚠️ Warning: Failed to get agent config: {existing_agent_result}")
         
         # Add the new tool to the existing tools list
         all_tool_ids = existing_tool_ids + [elevenlabs_tool_id]
@@ -1309,6 +1334,22 @@ def build_elevenlabs_tool_config(form_data):
     
     # Build path_params_schema (ElevenLabs expects flat dictionary, not JSON Schema)
     path_params_schema = {}
+    
+    # First, extract all placeholders from the URL
+    import re
+    url_placeholders = re.findall(r'\{([^}]+)\}', api_url)
+    print(f"🔍 Debug: Found URL placeholders: {url_placeholders}")
+    
+    # Add placeholders from URL to path_params_schema with default values
+    for placeholder in url_placeholders:
+        if placeholder not in path_params_schema:
+            path_params_schema[placeholder] = {
+                "type": "string",
+                "description": f"Path parameter {placeholder}"
+            }
+            print(f"🔍 Debug: Added default path parameter: {placeholder}")
+    
+    # Then process explicitly defined path parameters
     if path_params:
         for param in path_params:
             param_name = param.get("name", "")
@@ -1322,20 +1363,24 @@ def build_elevenlabs_tool_config(form_data):
                 # Check if the URL contains a placeholder for this parameter
                 placeholder = f"{{{param_name}}}"
                 if placeholder in api_url:
-                    path_params_schema[param_name] = {
-                        "type": param_type
-                    }
+                    # Create the property object with type
+                    property_obj = {"type": param_type}
                     
-                    # ElevenLabs API: Can only set one of description, dynamic_variable, or constant_value
-                    if param_dynamic_var:
-                        path_params_schema[param_name]["dynamic_variable"] = param_dynamic_var
+                    # Add the appropriate value field based on what's provided
+                    if param_description:
+                        property_obj["description"] = param_description
+                    elif param_dynamic_var:
+                        property_obj["dynamic_variable"] = param_dynamic_var
                     elif param_constant_value:
-                        path_params_schema[param_name]["constant_value"] = param_constant_value
-                    else:
-                        # Default to description if neither dynamic_variable nor constant_value is set
-                        path_params_schema[param_name]["description"] = param_description
+                        property_obj["constant_value"] = param_constant_value
+                    
+                    # Update the existing entry or create new one
+                    path_params_schema[param_name] = property_obj
+                    print(f"🔍 Debug: Updated path parameter: {param_name}")
                 else:
                     print(f"⚠️ Warning: Path parameter '{param_name}' defined but URL doesn't contain placeholder '{placeholder}'. Skipping this parameter.")
+    
+    print(f"🔍 Debug: Final path_params_schema: {path_params_schema}")
     
     # Build query_params_schema
     query_params_schema = None
@@ -1354,50 +1399,60 @@ def build_elevenlabs_tool_config(form_data):
             param_constant_value = param.get("constant_value", "")
             
             if param_name:
-                query_params_schema["properties"][param_name] = {
-                    "type": param_type,
-                    "description": param_description
-                }
-                if param_dynamic_var:
-                    query_params_schema["properties"][param_name]["dynamic_variable"] = param_dynamic_var
-                if param_constant_value:
-                    query_params_schema["properties"][param_name]["constant_value"] = param_constant_value
+                # Create the property object with type
+                property_obj = {"type": param_type}
+                
+                # Add the appropriate value field based on what's provided
+                if param_description:
+                    property_obj["description"] = param_description
+                elif param_dynamic_var:
+                    property_obj["dynamic_variable"] = param_dynamic_var
+                elif param_constant_value:
+                    property_obj["constant_value"] = param_constant_value
+                
+                query_params_schema["properties"][param_name] = property_obj
+                
                 if param_required:
                     query_params_schema["required"].append(param_name)
     
     # Build request_body_schema (only for POST/PUT/PATCH methods)
     request_body_schema = None
     if http_method in ["POST", "PUT", "PATCH"]:
-        if request_body_properties or body_description:
-            request_body_schema = {
-                "type": "object",
-                "description": body_description,
-                "properties": {},
-                "required": []
-            }
+        # ElevenLabs expects a simple object schema for request body
+        request_body_schema = {
+            "type": "object",
+            "description": body_description or "",
+            "properties": {},
+            "required": []
+        }
+        
+        # Add properties if any are defined
+        for prop in request_body_properties:
+            prop_name = prop.get("name", "")
+            prop_type = prop.get("type", "string")
+            prop_description = prop.get("description", "")
+            prop_required = prop.get("required", False)
+            prop_dynamic_var = prop.get("dynamic_variable", "")
+            prop_constant_value = prop.get("constant_value", "")
             
-            for prop in request_body_properties:
-                prop_name = prop.get("name", "")
-                prop_type = prop.get("type", "string")
-                prop_description = prop.get("description", "")
-                prop_required = prop.get("required", False)
-                prop_dynamic_var = prop.get("dynamic_variable", "")
-                prop_constant_value = prop.get("constant_value", "")
+            if prop_name:
+                # Create property object matching ElevenLabs format
+                property_obj = {
+                    "type": prop_type,
+                    "description": prop_description
+                }
                 
-                if prop_name:
-                    request_body_schema["properties"][prop_name] = {
-                        "type": prop_type,
-                        "description": prop_description
-                    }
-                    if prop_dynamic_var:
-                        request_body_schema["properties"][prop_name]["dynamic_variable"] = prop_dynamic_var
-                    if prop_constant_value:
-                        request_body_schema["properties"][prop_name]["constant_value"] = prop_constant_value
-                    if prop_required:
-                        request_body_schema["required"].append(prop_name)
-        else:
-            # ElevenLabs requires a request_body_schema for POST/PUT/PATCH, even if empty
-            request_body_schema = {"type": "object", "properties": {}}
+                # Add dynamic variable or constant value if provided
+                if prop_dynamic_var:
+                    property_obj["dynamic_variable"] = prop_dynamic_var
+                elif prop_constant_value:
+                    property_obj["constant_value"] = prop_constant_value
+                
+                request_body_schema["properties"][prop_name] = property_obj
+                
+                # Add to required list if marked as required
+                if prop_required:
+                    request_body_schema["required"].append(prop_name)
     
     # Build request_headers
     request_headers_dict = {}

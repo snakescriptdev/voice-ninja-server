@@ -74,6 +74,51 @@ async def update_agent(request: Request):
                 select(KnowledgeBaseModel).where(KnowledgeBaseModel.id == knowledge_base_id)
             ).scalars().first()
         
+        # Sync ElevenLabs knowledge base information if agent has ElevenLabs ID
+        if agent.elvn_lab_agent_id and not agent.elvn_lab_knowledge_base:
+            try:
+                from elevenlabs_app.services.eleven_lab_agent_utils import ElevenLabsAgentCRUD
+                elevenlabs_crud = ElevenLabsAgentCRUD()
+                elevenlabs_agent = elevenlabs_crud.get_agent(agent.elvn_lab_agent_id)
+                
+                if "error" not in elevenlabs_agent:
+                    # Extract knowledge base information from ElevenLabs
+                    kb_files = []
+                    if (elevenlabs_agent.get("conversation_config") and 
+                        elevenlabs_agent["conversation_config"].get("agent") and 
+                        elevenlabs_agent["conversation_config"]["agent"].get("prompt") and 
+                        elevenlabs_agent["conversation_config"]["agent"]["prompt"].get("knowledge_base")):
+                        
+                        kb_files = elevenlabs_agent["conversation_config"]["agent"]["prompt"]["knowledge_base"]
+                        print(f"🔍 Debug: Found {len(kb_files)} knowledge base files in ElevenLabs for agent {agent.elvn_lab_agent_id}")
+                        
+                        # Save knowledge base information to agent model
+                        from datetime import datetime
+                        kb_data = {
+                            "files": kb_files,
+                            "last_synced": str(datetime.now()),
+                            "source": "elevenlabs"
+                        }
+                        AgentModel.update_elevenlabs_knowledge_base(agent_id, kb_data)
+                        print(f"✅ Success: Saved ElevenLabs knowledge base info to agent {agent_id}")
+                        
+            except Exception as e:
+                print(f"⚠️ Warning: Failed to sync ElevenLabs knowledge base: {str(e)}")
+        
+        # Check if agent has ElevenLabs knowledge base data but no local association
+        if agent.elvn_lab_knowledge_base and not selected_knowledge:
+            kb_files = agent.elvn_lab_knowledge_base.get("files", [])
+            if kb_files:
+                # Create a virtual knowledge base for display
+                class VirtualKnowledgeBase:
+                    def __init__(self, files):
+                        self.id = "elevenlabs_virtual"
+                        self.knowledge_base_name = f"ElevenLabs KB ({len(files)} files)"
+                        self.files = files
+                
+                selected_knowledge = VirtualKnowledgeBase(kb_files)
+                print(f"🔍 Debug: Using stored ElevenLabs knowledge base info: {selected_knowledge.knowledge_base_name}")
+        
         # custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
       
         custom_functions = ElevenLabsWebhookToolModel.get_all_by_agent(agent_id)
@@ -135,3 +180,83 @@ async def create_agent(request: Request):
             "host": os.getenv("HOST")
         }
     )
+
+@ElevenLabsWebRouter.get("/preview_agent")
+@check_session_expiry_redirect
+async def elevenlabs_preview_agent(request: Request):
+    """
+    ElevenLabs Agent Preview - Uses ElevenLabs SDK for voice conversation
+    """
+    try:
+        agent_id = request.query_params.get("agent_id")
+        user_id = request.session.get("user", {}).get("user_id")
+        scheme = request.url.scheme
+        host = f"{scheme}://{request.headers.get('host')}"
+        
+        if not agent_id or not user_id:
+            return templates.TemplateResponse(
+                "ElevenLabs_Integration/web/error.html",
+                {
+                    "request": request,
+                    "error_message": "Missing agent_id or user session",
+                    "host": host
+                }
+            )
+        
+        # Get agent details using dynamic_id instead of id
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        agent_result = session.execute(select(AgentModel).where(AgentModel.dynamic_id == agent_id))
+        agent = agent_result.scalars().first()
+        
+        if not agent:
+            return templates.TemplateResponse(
+                "ElevenLabs_Integration/web/error.html",
+                {
+                    "request": request,
+                    "error_message": "Agent not found",
+                    "host": host
+                }
+            )
+        
+        # Check if ElevenLabs API key is configured
+        elevenlabs_api_key = os.getenv("ELEVENLABS_API_KEY")
+        if not elevenlabs_api_key:
+            return templates.TemplateResponse(
+                "ElevenLabs_Integration/web/error.html",
+                {
+                    "request": request,
+                    "error_message": "ElevenLabs API key not configured. Please set ELEVENLABS_API_KEY environment variable.",
+                    "host": host
+                }
+            )
+        
+        # Get agent's ElevenLabs ID or use a default one
+        elevenlabs_agent_id = agent.elvn_lab_agent_id or "agent_0701k4ctqt62e6wa39y34y02p281"
+        
+        context = {
+            "request": request,
+            "agent_id": agent_id,  # This is the dynamic_id
+            "agent_db_id": agent.id,  # This is the actual database ID
+            "elevenlabs_agent_id": elevenlabs_agent_id,
+            "agent_name": agent.agent_name,
+            "welcome_msg": agent.welcome_msg or "Hello! How can I help you today?",
+            "system_instruction": agent.agent_prompt or "You are a helpful AI assistant.",  # Use agent_prompt instead of system_instruction
+            "host": host,
+            "elevenlabs_api_key_configured": bool(elevenlabs_api_key)
+        }
+        
+        return templates.TemplateResponse(
+            "ElevenLabs_Integration/web/elevenlabs_preview.html",
+            context
+        )
+        
+    except Exception as e:
+        return templates.TemplateResponse(
+            "ElevenLabs_Integration/web/error.html",
+            {
+                "request": request,
+                "error_message": f"Error loading preview: {str(e)}",
+                "host": host
+            }
+        )
