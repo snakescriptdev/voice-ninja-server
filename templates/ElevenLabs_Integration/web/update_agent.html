@@ -2381,9 +2381,9 @@ function addRequestBodyProperty() {
             <div class="row mt-2">
                 <div class="col-12">
                     <div class="property-value-container" id="${propId}_value_container">
-                        <label class="form-label">Description</label>
-                        <textarea class="form-control property-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript."></textarea>
-                        <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.</small>
+                        <label class="form-label">Description *</label>
+                        <textarea class="form-control property-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript." required></textarea>
+                        <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript. <strong>Required for LLM Prompt type.</strong></small>
                     </div>
                 </div>
             </div>
@@ -2927,7 +2927,7 @@ function generateDynamicVariablesHTML(variables) {
                 <input type="text" class="form-control" name="variable_name" value="${variable.name || ''}" placeholder="Variable name">
             </div>
             <div class="col-md-6">
-                <input type="text" class="form-control" name="variable_value" value="${variable.value || ''}" placeholder="Variable value">
+                <input type="text" class="form-control" name="variable_description" value="${variable.description || ''}" placeholder="Variable description">
             </div>
             <div class="col-md-2">
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditDynamicVariable(${index})">×</button>
@@ -2943,16 +2943,118 @@ function generateAssignmentsHTML(assignments) {
     return assignments.map((assignment, index) => `
         <div class="row mb-2 assignment-row" data-index="${index}">
             <div class="col-md-4">
-                <input type="text" class="form-control" name="assignment_variable" value="${assignment.variable || ''}" placeholder="Variable name">
+                <input type="text" class="form-control" name="assignment_variable" value="${assignment.variable_name || ''}" placeholder="Variable name">
             </div>
             <div class="col-md-6">
-                <input type="text" class="form-control" name="assignment_path" value="${assignment.path || ''}" placeholder="JSON path (e.g., $.data.id)">
+                <input type="text" class="form-control" name="assignment_path" value="${assignment.response_path || ''}" placeholder="JSON path (e.g., $.data.id)">
             </div>
             <div class="col-md-2">
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditAssignment(${index})">×</button>
             </div>
         </div>
     `).join('');
+}
+
+// Helper function to extract and flatten tool configuration for edit modal
+function extractToolConfigForEdit(rawToolConfig) {
+    console.log(`🔍 Debug: extractToolConfigForEdit called with:`, rawToolConfig);
+    
+    // Initialize the flattened structure
+    var toolConfig = {
+        http_method: 'POST',
+        body_description: '',
+        path_params: [],
+        query_params: [],
+        request_body_properties: [],
+        request_headers: [],
+        dynamic_variables: [],
+        assignments: [],
+        disable_interruptions: false,
+        force_pre_tool_speech: false
+    };
+    
+    // Check if we have the nested structure
+    if (rawToolConfig && rawToolConfig.tool_config) {
+        var innerConfig = rawToolConfig.tool_config;
+        var apiSchema = innerConfig.api_schema || {};
+        
+        // Extract basic info
+        toolConfig.http_method = apiSchema.method || 'POST';
+        toolConfig.body_description = apiSchema.request_body_schema?.description || '';
+        toolConfig.disable_interruptions = innerConfig.disable_interruptions || false;
+        toolConfig.force_pre_tool_speech = innerConfig.force_pre_tool_speech || false;
+        
+        // Extract path parameters
+        if (apiSchema.path_params_schema && apiSchema.path_params_schema.properties) {
+            toolConfig.path_params = Object.entries(apiSchema.path_params_schema.properties).map(([name, config]) => ({
+                name: name,
+                type: config.type || 'string',
+                required: apiSchema.path_params_schema.required?.includes(name) || false,
+                description: config.description || '',
+                value_type: config.value_type || 'llm_prompt',
+                constant_value: config.constant_value || '',
+                dynamic_variable: config.dynamic_variable || ''
+            }));
+        }
+        
+        // Extract query parameters
+        if (apiSchema.query_params_schema && apiSchema.query_params_schema.properties) {
+            toolConfig.query_params = Object.entries(apiSchema.query_params_schema.properties).map(([name, config]) => ({
+                name: name,
+                type: config.type || 'string',
+                required: apiSchema.query_params_schema.required?.includes(name) || false,
+                description: config.description || '',
+                value_type: config.value_type || 'llm_prompt',
+                constant_value: config.constant_value || '',
+                dynamic_variable: config.dynamic_variable || ''
+            }));
+        }
+        
+        // Extract request body properties
+        if (apiSchema.request_body_schema && apiSchema.request_body_schema.properties) {
+            toolConfig.request_body_properties = Object.entries(apiSchema.request_body_schema.properties).map(([name, config]) => ({
+                name: name,
+                type: config.type || 'string',
+                required: apiSchema.request_body_schema.required?.includes(name) || false,
+                description: config.description || '',
+                value_type: config.value_type || 'llm_prompt',
+                constant_value: config.constant_value || '',
+                dynamic_variable: config.dynamic_variable || ''
+            }));
+        }
+        
+        // Extract request headers
+        if (apiSchema.request_headers) {
+            toolConfig.request_headers = Object.entries(apiSchema.request_headers).map(([name, value]) => ({
+                name: name,
+                value: value,
+                value_type: 'constant_value'
+            }));
+        }
+        
+        // Extract dynamic variables
+        if (innerConfig.dynamic_variables && innerConfig.dynamic_variables.dynamic_variable_placeholders) {
+            toolConfig.dynamic_variables = Object.entries(innerConfig.dynamic_variables.dynamic_variable_placeholders).map(([name, config]) => ({
+                name: name,
+                description: config.description || '',
+                value_type: config.value_type || 'llm_prompt',
+                constant_value: config.constant_value || '',
+                dynamic_variable: config.dynamic_variable || ''
+            }));
+        }
+        
+        // Extract assignments
+        if (innerConfig.assignments) {
+            toolConfig.assignments = innerConfig.assignments.map(assignment => ({
+                response_path: assignment.response_path || '',
+                variable_name: assignment.variable_name || '',
+                description: assignment.description || ''
+            }));
+        }
+    }
+    
+    console.log(`🔍 Debug: Extracted toolConfig:`, toolConfig);
+    return toolConfig;
 }
 
 function editFunction(functionId) {
@@ -2971,14 +3073,18 @@ function editFunction(functionId) {
             }
 
             var functionData = response.data;
-            var toolConfig = functionData.function_parameters || {};
+            var rawToolConfig = functionData.function_parameters || {};
             
             console.log(`🔍 Debug: Function data received:`, functionData);
             console.log(`🔍 Debug: - function_name: '${functionData.function_name}'`);
             console.log(`🔍 Debug: - function_description: '${functionData.function_description}'`);
             console.log(`🔍 Debug: - function_url: '${functionData.function_url}'`);
             console.log(`🔍 Debug: - function_timeout: ${functionData.function_timeout}`);
-            console.log(`🔍 Debug: - toolConfig:`, toolConfig);
+            console.log(`🔍 Debug: - rawToolConfig:`, rawToolConfig);
+            
+            // Extract and flatten the tool configuration for the edit modal
+            var toolConfig = extractToolConfigForEdit(rawToolConfig);
+            console.log(`🔍 Debug: - flattened toolConfig:`, toolConfig);
             var modal = `
                 <div class="modal fade custom_function_modal" id="customFunctionEditModal" tabindex="-1" aria-labelledby="customFunctionEditModalLabel">
                     <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-xl">
@@ -3093,7 +3199,7 @@ function editFunction(functionId) {
                                     </div>
 
                                     <!-- Request Body Schema -->
-                                    <div class="card mb-3" id="edit_request_body_schema_section" style="display: none;">
+                                    <div class="card mb-3" id="edit_request_body_schema_section" style="display: ${['POST', 'PUT', 'PATCH'].includes(toolConfig.http_method) ? 'block' : 'none'};">
                                         <div class="card-header d-flex justify-content-between align-items-center">
                                             <h6 class="mb-0">Request Body Schema</h6>
                                             <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditRequestBodyProperty()">+ Add Property</button>
@@ -3493,9 +3599,9 @@ function addEditRequestBodyProperty() {
             <div class="row mt-2">
                 <div class="col-12">
                     <div class="property-value-container" id="${propId}_value_container">
-                        <label class="form-label">Description</label>
-                        <textarea class="form-control property-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript."></textarea>
-                        <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.</small>
+                        <label class="form-label">Description *</label>
+                        <textarea class="form-control property-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript." required></textarea>
+                        <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript. <strong>Required for LLM Prompt type.</strong></small>
                     </div>
                 </div>
             </div>
