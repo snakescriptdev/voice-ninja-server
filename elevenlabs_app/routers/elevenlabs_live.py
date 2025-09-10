@@ -136,6 +136,10 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                 websocket.send_json({"type": "user_transcript", "text": t, "ts": datetime.utcnow().isoformat()}),
                 loop,
             ),
+            callback_latency_measurement=lambda latency_ms: asyncio.run_coroutine_threadsafe(
+                websocket.send_json({"type": "latency_measurement", "latency_ms": latency_ms, "ts": datetime.utcnow().isoformat()}),
+                loop,
+            ),
         )
 
         conversation.start_session()

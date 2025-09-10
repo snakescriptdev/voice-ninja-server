@@ -240,6 +240,7 @@ class ElevenLabsAgentCRUD:
     def get_agent_tools(self, agent_id: str) -> Dict[str, Any]:
         """
         Get all tools for an agent from ElevenLabs API
+        DEPRECATED: Use get_agent() and extract tools from the response instead
         """
         try:
             url = f"{BASE_URL}/convai/agents/{agent_id}/tools"
@@ -251,6 +252,7 @@ class ElevenLabsAgentCRUD:
                 return {"error": "Failed to get agent tools", "exc": f"Status: {resp.status_code}, Response: {resp.text}"}
         except Exception as ex:
             return {"error": "Error occurred", "exc": str(ex)}
+    
 
     def create_agent(
         self,
@@ -293,12 +295,17 @@ class ElevenLabsAgentCRUD:
         """
         try:
             url = f"{BASE_URL}/convai/tools"
-            print(f"🔍 Debug: Creating webhook function at: {url}")
-            print(f"🔍 Debug: Webhook config: {json.dumps(webhook_config, indent=2)}")
             
-            resp = requests.post(url, headers=self.headers, json=webhook_config)
-            print(f"🔍 Debug: ElevenLabs response status: {resp.status_code}")
-            print(f"🔍 Debug: ElevenLabs response: {resp.text}")
+            # The payload should be: {"tool_config": <config>}
+            payload = {"tool_config": webhook_config}
+            
+            print(f"Debug: Creating webhook function at: {url}")
+            print(f"Debug: Payload: {json.dumps(payload, indent=2)}")
+            
+            resp = requests.post(url, headers=self.headers, json=payload)
+            
+            print(f"Debug: ElevenLabs response status: {resp.status_code}")
+            print(f"Debug: ElevenLabs response: {resp.text}")
             
             if resp.status_code == 200:
                 return resp.json()
