@@ -2,6 +2,8 @@ import os
 import re
 import shutil
 import uuid
+import requests
+from bs4 import BeautifulSoup
 from fastapi import APIRouter,Request, Response
 from app.core import logger
 from app.services import AudioStorage
@@ -86,6 +88,24 @@ async def create_new_agent(request: Request):
             )
 
         try:
+            # First create agent in ElevenLabs
+            creator = ElevenLabsAgentCRUD()
+            api_response = creator.create_agent(
+                name=agent_name,
+                prompt=agent_prompt,
+                model=selected_llm_model_rec.name,
+                voice_id=elevenlabs_voice_id,
+                language=selected_language,
+                selected_elevenlab_model = DEFAULT_MODEL_ELEVENLAB,
+                first_message = welcome_msg
+            )
+
+            # Check if ElevenLabs agent creation was successful
+            if not api_response or "agent_id" not in api_response or "error" in api_response:
+                error_msg = api_response.get("error", "Unknown error") if api_response else "No response from ElevenLabs"
+                raise Exception(f"Failed to create ElevenLabs agent: {error_msg}")
+
+            # Only create local agent if ElevenLabs was successful
             with db():
                 agent = AgentModel(
                     created_by=user_id,
@@ -96,29 +116,14 @@ async def create_new_agent(request: Request):
                     welcome_msg=welcome_msg,
                     selected_voice=selected_voice,
                     selected_language=selected_language,
-                    phone_number=phone_number
+                    phone_number=phone_number,
+                    elvn_lab_agent_id=api_response["agent_id"]  # Set ElevenLabs ID immediately
                 )
                 db.session.add(agent)
                 db.session.flush()
 
                 agent_connection = AgentConnectionModel(agent_id=agent.id)
                 db.session.add(agent_connection)
-
-                creator = ElevenLabsAgentCRUD()
-                api_response = creator.create_agent(
-                    name=agent_name,
-                    prompt=agent_prompt,
-                    model=selected_llm_model_rec.name,
-                    voice_id=elevenlabs_voice_id,
-                    language=selected_language,
-                    selected_elevenlab_model = DEFAULT_MODEL_ELEVENLAB,
-                    first_message = welcome_msg
-                )
-
-                if not api_response or "agent_id" not in api_response:
-                    raise Exception("Failed to create ElevenLabs agent")
-
-                agent.elvn_lab_agent_id = api_response["agent_id"]
                 db.session.commit()
         except Exception as e:
             db.session.rollback()
@@ -175,6 +180,7 @@ async def create_new_agent(request: Request):
         )
 
 @ElevenLabsAPIRouter.delete("/delete_agent",name='delete-agent')
+@ElevenLabsAPIRouter.delete("/delete_agent/",name='delete-agent-trailing')
 async def delete_agent(request: Request):
     try:
         agent_id = request.query_params.get("agent_id")
@@ -1141,8 +1147,8 @@ async def create_custom_function(request: Request):
             return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook configuration is required"})
         
         eleven_agent_id = agent.elvn_lab_agent_id
-        print(f"🔍 Debug: Local agent ID: {agent_id}")
-        print(f"🔍 Debug: ElevenLabs agent ID: '{eleven_agent_id}' (type: {type(eleven_agent_id)})")
+        print(f"Debug: Local agent ID: {agent_id}")
+        print(f"Debug: ElevenLabs agent ID: '{eleven_agent_id}' (type: {type(eleven_agent_id)})")
         
         if not eleven_agent_id:
             return JSONResponse(status_code=400, content={"status": "error", "message": "ElevenLabs agent ID is required. Please ensure the agent is properly created in ElevenLabs."})
@@ -1151,9 +1157,9 @@ async def create_custom_function(request: Request):
         tool_name = form_data.get("tool_name", "")
         tool_description = form_data.get("tool_description", "")
         
-        print(f"🔍 Debug: Received form_data: {form_data}")
-        print(f"🔍 Debug: tool_name: '{tool_name}' (type: {type(tool_name)})")
-        print(f"🔍 Debug: tool_description: '{tool_description}' (type: {type(tool_description)})")
+        print(f"Debug: Received form_data: {form_data}")
+        print(f"Debug: tool_name: '{tool_name}' (type: {type(tool_name)})")
+        print(f"Debug: tool_description: '{tool_description}' (type: {type(tool_description)})")
         
         if not tool_name or not tool_description:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Tool name and description are required"})
@@ -1178,43 +1184,33 @@ async def create_custom_function(request: Request):
                 "message": f"A webhook tool with the name '{tool_name}' already exists for this agent."
             })
         
-        # Check if tool name already exists in ElevenLabs for this agent
+        # Check if tool name already exists in our database for this agent
         try:
-            elevenlabs_tools = ElevenLabsAgentCRUD().get_agent_tools(eleven_agent_id)
-            if "error" not in elevenlabs_tools:
-                existing_elevenlabs_tools = elevenlabs_tools.get("tools", [])
-                for tool in existing_elevenlabs_tools:
-                    if tool.get("name") == tool_name:
-                        return JSONResponse(status_code=400, content={
-                            "status": "error", 
-                            "message": f"A webhook tool with the name '{tool_name}' already exists in ElevenLabs for this agent."
-                        })
+            existing_tool = ElevenLabsWebhookToolModel.get_by_name(tool_name, agent_id)
+            if existing_tool:
+                return JSONResponse(status_code=400, content={
+                    "status": "error", 
+                    "message": f"A webhook tool with the name '{tool_name}' already exists for this agent."
+                })
         except Exception as e:
-            print(f"⚠️ Warning: Could not check existing ElevenLabs tools: {e}")
+            print(f"Warning: Could not check existing tools in database: {e}")
             # Continue with creation - this is not a critical error
         
-        # Build complete ElevenLabs tool_config structure
+        # Build ElevenLabs tool_config structure using the fixed function
         tool_config = build_elevenlabs_tool_config(form_data)
         
-        print(f"🔍 Debug: Built ElevenLabs tool_config: {json.dumps(tool_config, indent=2)}")
+        print(f"Debug: Built ElevenLabs tool_config: {json.dumps(tool_config, indent=2)}")
         
-        # Check if request_body_schema is properly set for POST requests
-        api_schema = tool_config.get("tool_config", {}).get("api_schema", {})
+        # Validate that POST/PUT/PATCH methods have request_body_schema if needed
+        api_schema = tool_config.get("api_schema", {})
         http_method = api_schema.get("method", "")
         request_body_schema = api_schema.get("request_body_schema")
         
-        print(f"🔍 Debug: HTTP method: '{http_method}'")
-        print(f"🔍 Debug: Request body schema: {request_body_schema}")
+        print(f"Debug: HTTP method: '{http_method}'")
+        print(f"Debug: Request body schema exists: {request_body_schema is not None}")
         
-        if http_method in ["POST", "PUT", "PATCH"] and request_body_schema is None:
-            print("🚨 Error: POST/PUT/PATCH method requires request_body_schema but got None")
-            return JSONResponse(status_code=400, content={
-                "status": "error", 
-                "message": "POST/PUT/PATCH methods require a request body schema. Please add request body properties."
-            })
-        
-        # Step 1: Create the tool in ElevenLabs (without agent_id)
-        result = ElevenLabsAgentCRUD().create_webhook_function(tool_config)
+        # Create the tool in ElevenLabs
+        result = ElevenLabsAgentCRUD().create_webhook_function(tool_config)  # Pass tool_config directly
         
         if "error" in result:
             return JSONResponse(status_code=500, content={
@@ -1223,13 +1219,9 @@ async def create_custom_function(request: Request):
             })
         
         # Extract ElevenLabs tool ID from result
-        elevenlabs_tool_id = None
-        if isinstance(result, dict) and "id" in result:
-            elevenlabs_tool_id = result["id"]
-        elif isinstance(result, dict) and "tool_id" in result:
-            elevenlabs_tool_id = result["tool_id"]
+        elevenlabs_tool_id = result.get("id") or result.get("tool_id")
         
-        print(f"🔍 Debug: Created tool in ElevenLabs with ID: {elevenlabs_tool_id}")
+        print(f"Debug: Created tool in ElevenLabs with ID: {elevenlabs_tool_id}")
         
         if not elevenlabs_tool_id:
             return JSONResponse(status_code=500, content={
@@ -1237,8 +1229,8 @@ async def create_custom_function(request: Request):
                 "message": "Failed to get tool ID from ElevenLabs response"
             })
         
-        # Step 2: Get existing tools from agent's conversation config and add the new tool
-        print(f"🔍 Debug: Getting existing tools for agent {eleven_agent_id}")
+        # Get existing tools from agent's conversation config and add the new tool
+        print(f"Debug: Getting existing tools for agent {eleven_agent_id}")
         existing_agent_result = ElevenLabsAgentCRUD().get_agent(eleven_agent_id)
         
         existing_tool_ids = []
@@ -1248,20 +1240,18 @@ async def create_custom_function(request: Request):
             agent_config = conversation_config.get("agent", {})
             prompt_config = agent_config.get("prompt", {})
             existing_tool_ids = prompt_config.get("tool_ids", [])
-            print(f"🔍 Debug: Found {len(existing_tool_ids)} existing tools in agent config: {existing_tool_ids}")
+            print(f"Debug: Found {len(existing_tool_ids)} existing tools in agent config: {existing_tool_ids}")
         else:
-            print(f"⚠️ Warning: Failed to get agent config: {existing_agent_result}")
+            print(f"Warning: Failed to get agent config: {existing_agent_result}")
         
         # Add the new tool to the existing tools list
         all_tool_ids = existing_tool_ids + [elevenlabs_tool_id]
-        print(f"🔍 Debug: Updating agent {eleven_agent_id} with all tools: {all_tool_ids}")
+        print(f"Debug: Updating agent {eleven_agent_id} with all tools: {all_tool_ids}")
         
         update_result = ElevenLabsAgentCRUD().update_agent_tools(eleven_agent_id, all_tool_ids)
         
         if "error" in update_result:
-            # If agent update fails, we should clean up the created tool
-            print(f"⚠️ Warning: Failed to attach tool to agent: {update_result.get('exc')}")
-            # Note: We could add tool deletion here, but for now we'll continue
+            print(f"Warning: Failed to attach tool to agent: {update_result.get('exc')}")
             # The tool exists in ElevenLabs but isn't attached to the agent
         
         # Save to local database
@@ -1270,11 +1260,11 @@ async def create_custom_function(request: Request):
                 agent_id=agent_id,
                 tool_name=tool_name,
                 tool_description=tool_description,
-                tool_config=tool_config,
+                tool_config={"tool_config": tool_config},  # Wrap for local storage
                 elevenlabs_tool_id=elevenlabs_tool_id
             )
             
-            print(f"✅ Success: Saved webhook tool to local database with ID: {local_tool.id}")
+            print(f"Success: Saved webhook tool to local database with ID: {local_tool.id}")
             
             # Prepare response data
             response_data = {
@@ -1292,7 +1282,7 @@ async def create_custom_function(request: Request):
             })
             
         except Exception as db_error:
-            print(f"❌ Error: Failed to save to local database: {str(db_error)}")
+            print(f"Error: Failed to save to local database: {str(db_error)}")
             # Even if local save fails, we still return success since ElevenLabs creation succeeded
             return JSONResponse(status_code=200, content={
                 "status": "success", 
@@ -1303,232 +1293,490 @@ async def create_custom_function(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
-def build_elevenlabs_tool_config(form_data):
-    """
-    Build the complete ElevenLabs tool_config structure from form data.
-    Handles all nested fields properly according to the WebhookToolConfig schema.
-    """
+# def build_elevenlabs_tool_config(form_data):
+#     """
+#     Build the complete ElevenLabs tool_config structure from form data.
+#     Handles all nested fields properly according to the WebhookToolConfig schema.
+#     """
     
-    print(f"🔍 Debug: build_elevenlabs_tool_config received: {form_data}")
+#     print(f"🔍 Debug: build_elevenlabs_tool_config received: {form_data}")
     
-    # Extract basic fields with None safety
-    tool_name = form_data.get("tool_name") or ""
-    tool_description = form_data.get("tool_description") or ""
-    api_url = form_data.get("api_url") or ""
-    http_method = form_data.get("http_method") or "POST"
+#     # Extract basic fields with None safety
+#     tool_name = form_data.get("tool_name") or ""
+#     tool_description = form_data.get("tool_description") or ""
+#     api_url = form_data.get("api_url") or ""
+#     http_method = form_data.get("http_method") or "POST"
+#     try:
+#         response_timeout = int(form_data.get("response_timeout") or 20)
+#     except (ValueError, TypeError):
+#         response_timeout = 20
+#     body_description = form_data.get("body_description") or ""
+    
+#     print(f"🔍 Debug: Extracted fields - tool_name: '{tool_name}', api_url: '{api_url}'")
+    
+#     # Extract nested arrays from form data
+#     path_params = form_data.get("path_params", [])
+#     query_params = form_data.get("query_params", [])
+#     request_body_properties = form_data.get("request_body_properties", [])
+#     request_headers = form_data.get("request_headers", [])
+#     dynamic_variables = form_data.get("dynamic_variables", [])
+#     assignments = form_data.get("assignments", [])
+    
+#     # Build path_params_schema (ElevenLabs expects direct dictionary mapping)
+#     path_params_schema = {"type": "object", "properties": {}}
+    
+#     # First, extract all placeholders from the URL
+#     import re
+#     url_placeholders = re.findall(r'\{([^}]+)\}', api_url)
+#     print(f"🔍 Debug: Found URL placeholders: {url_placeholders}")
+    
+#     # Add placeholders from URL to path_params_schema with default values
+#     for placeholder in url_placeholders:
+#         if placeholder not in path_params_schema:
+#             path_params_schema[placeholder] = {
+#                 "type": "string",
+#                 "description": f"Path parameter {placeholder}"
+#             }
+#             print(f"🔍 Debug: Added default path parameter: {placeholder}")
+    
+#     # Then process explicitly defined path parameters
+#     if path_params:
+#         for param in path_params:
+#             param_name = param.get("name", "")
+#             param_type = param.get("type", "string")
+#             param_description = param.get("description", "")
+#             param_required = param.get("required", False)
+#             param_dynamic_var = param.get("dynamic_variable", "")
+#             param_constant_value = param.get("constant_value", "")
+            
+#             if param_name:
+#                 # Check if the URL contains a placeholder for this parameter
+#                 placeholder = f"{{{param_name}}}"
+#                 if placeholder in api_url:
+#                     # Create the property object with type
+#                     property_obj = {"type": param_type}
+                    
+#                     # Add the appropriate value field based on what's provided
+#                     if param_description:
+#                         property_obj["description"] = param_description
+#                     elif param_dynamic_var:
+#                         property_obj["dynamic_variable"] = param_dynamic_var
+#                     elif param_constant_value:
+#                         property_obj["constant_value"] = param_constant_value
+                    
+#                     # Update the existing entry or create new one
+#                     path_params_schema[param_name] = property_obj
+#                     print(f"🔍 Debug: Updated path parameter: {param_name}")
+#                 else:
+#                     print(f"⚠️ Warning: Path parameter '{param_name}' defined but URL doesn't contain placeholder '{placeholder}'. Skipping this parameter.")
+    
+#     print(f"🔍 Debug: Final path_params_schema: {path_params_schema}")
+    
+#     # Build query_params_schema (ElevenLabs expects direct dictionary when empty, object with properties when populated)
+#     # Default empty schemas
+    
+#     query_params_schema = {"type": "object", "properties": {}}
+
+#     if query_params:
+#         valid_params = {}
+#         for param in query_params:
+#             param_name = param.get("name", "")
+#             param_type = param.get("type", "string")
+#             param_description = param.get("description", "")
+#             param_required = param.get("required", False)
+#             param_dynamic_var = param.get("dynamic_variable", "")
+#             param_constant_value = param.get("constant_value", "")
+            
+#             if param_name:
+#                 # Check if we have at least one of the required fields
+#                 if param_description or param_dynamic_var or param_constant_value:
+#                     # Create the property object with type
+#                     property_obj = {"type": param_type}
+                    
+#                     # Add the appropriate value field based on what's provided
+#                     if param_description:
+#                         property_obj["description"] = param_description
+#                     elif param_dynamic_var:
+#                         property_obj["dynamic_variable"] = param_dynamic_var
+#                     elif param_constant_value:
+#                         property_obj["constant_value"] = param_constant_value
+                    
+#                     valid_params[param_name] = property_obj
+#                 else:
+#                     print(f"⚠️ Warning: Skipping query parameter '{param_name}' - no valid description, dynamic_variable, or constant_value provided")
+        
+#         # Only use object format with properties if we have valid parameters
+#         if valid_params:
+#             query_params_schema["properties"] = valid_params
+
+    
+#     # Build request_body_schema (only for POST/PUT/PATCH methods)
+#     request_body_schema = None
+#     if http_method in ["POST", "PUT", "PATCH"]:
+#         # ElevenLabs expects standard JSON Schema format
+#         request_body_schema = {
+#             "type": "object",
+#             "description": body_description or "",
+#             "properties": {},
+#             "required": []
+#         }
+        
+#         # Add properties if any are defined
+#         for prop in request_body_properties:
+#             prop_name = prop.get("name", "")
+#             prop_type = prop.get("type", "string")
+#             prop_description = prop.get("description", "")
+#             prop_required = prop.get("required", False)
+#             prop_dynamic_var = prop.get("dynamic_variable", "")
+#             prop_constant_value = prop.get("constant_value", "")
+            
+#             if prop_name:
+#                 # Create property object matching ElevenLabs format
+#                 property_obj = {
+#                     "type": prop_type
+#                 }
+                
+#                 # ElevenLabs requires at least one of: description, dynamic_variable, or constant_value
+#                 has_valid_content = False
+                
+#                 # Add description if provided and not empty
+#                 if prop_description and prop_description.strip():
+#                     property_obj["description"] = prop_description.strip()
+#                     has_valid_content = True
+                
+#                 # Add dynamic variable or constant value if provided
+#                 if prop_dynamic_var and prop_dynamic_var.strip():
+#                     property_obj["dynamic_variable"] = prop_dynamic_var.strip()
+#                     has_valid_content = True
+#                 elif prop_constant_value and prop_constant_value.strip():
+#                     property_obj["constant_value"] = prop_constant_value.strip()
+#                     has_valid_content = True
+                
+#                 # Only add property if it has valid content
+#                 if has_valid_content:
+#                     request_body_schema["properties"][prop_name] = property_obj
+#                 else:
+#                     print(f"⚠️ Warning: Skipping property '{prop_name}' - no valid description, dynamic_variable, or constant_value provided")
+                
+#                 # Add to required list if marked as required
+#                 if prop_required:
+#                     request_body_schema["required"].append(prop_name)
+    
+#     # Build request_headers
+#     request_headers_dict = {}
+#     for header in request_headers:
+#         header_name = header.get("name", "")
+#         header_value = header.get("value", "")
+#         header_type = header.get("type", "string")  # "string", "secret", "dynamic_variable"
+        
+#         if header_name and header_value:
+#             if header_type == "secret":
+#                 request_headers_dict[header_name] = {
+#                     "type": "secret",
+#                     "secret_id": header_value
+#                 }
+#             elif header_type == "dynamic_variable":
+#                 request_headers_dict[header_name] = {
+#                     "variable_name": header_value
+#                 }
+#             else:
+#                 request_headers_dict[header_name] = header_value
+    
+#     # Build dynamic_variables
+#     dynamic_variable_placeholders = {}
+#     for var in dynamic_variables:
+#         var_name = var.get("name", "")
+#         var_value = var.get("value", "")
+#         if var_name:
+#             # Try to parse as number/boolean, otherwise keep as string
+#             try:
+#                 if var_value.lower() in ['true', 'false']:
+#                     dynamic_variable_placeholders[var_name] = var_value.lower() == 'true'
+#                 elif '.' in var_value:
+#                     dynamic_variable_placeholders[var_name] = float(var_value)
+#                 else:
+#                     dynamic_variable_placeholders[var_name] = int(var_value)
+#             except (ValueError, AttributeError):
+#                 dynamic_variable_placeholders[var_name] = var_value
+    
+#     # Build assignments
+#     assignments_list = []
+#     for assignment in assignments:
+#         dynamic_var = assignment.get("dynamic_variable", "")
+#         value_path = assignment.get("value_path", "")
+#         source = assignment.get("source", "response")
+        
+#         if dynamic_var and value_path:
+#             assignments_list.append({
+#                 "dynamic_variable": dynamic_var,
+#                 "value_path": value_path,
+#                 "source": source
+#             })
+    
+#     # Build the complete tool_config
+    # tool_config = {
+    #     "tool_config": {
+    #         "type": "webhook",
+    #         "name": tool_name,
+    #         "description": tool_description,
+    #         "response_timeout_secs": response_timeout,
+    #         "disable_interruptions": form_data.get("disable_interruptions", False),
+    #         "force_pre_tool_speech": form_data.get("force_pre_tool_speech", False),
+    #         "api_schema": {
+    #             "url": api_url,
+    #             "method": http_method,
+    #             "path_params_schema": path_params_schema,
+    #             "query_params_schema": query_params_schema,
+    #             "request_body_schema": request_body_schema,
+    #             "request_headers": request_headers_dict if request_headers_dict else {},
+    #             "auth_connection": None
+    #         },
+    #         "dynamic_variables": {
+    #             "dynamic_variable_placeholders": dynamic_variable_placeholders
+    #         },
+    #         "assignments": assignments_list
+    #     }
+    # }
+    
+#     return tool_config
+def build_elevenlabs_tool_config(form_data: dict) -> dict:
+    """
+    Build a WebhookToolConfig that matches ElevenLabs expected format exactly.
+    Fixed based on actual API validation errors.
+    """
+    import re
+    from typing import Any, Dict
+
+    # Extract basic fields
+    tool_name = form_data.get("tool_name", "")
+    tool_description = form_data.get("tool_description", "")
+    api_url = form_data.get("api_url", "")
+    http_method = form_data.get("http_method", "POST").upper()
+    
     try:
-        response_timeout = int(form_data.get("response_timeout") or 20)
+        response_timeout = int(form_data.get("response_timeout", 20))
     except (ValueError, TypeError):
         response_timeout = 20
-    body_description = form_data.get("body_description") or ""
     
-    print(f"🔍 Debug: Extracted fields - tool_name: '{tool_name}', api_url: '{api_url}'")
-    
-    # Extract nested arrays from form data
-    path_params = form_data.get("path_params", [])
-    query_params = form_data.get("query_params", [])
-    request_body_properties = form_data.get("request_body_properties", [])
-    request_headers = form_data.get("request_headers", [])
-    dynamic_variables = form_data.get("dynamic_variables", [])
-    assignments = form_data.get("assignments", [])
-    
-    # Build path_params_schema (ElevenLabs expects flat dictionary, not JSON Schema)
+    # Build path_params_schema - ElevenLabs expects a DICTIONARY, not array
     path_params_schema = {}
-    
-    # First, extract all placeholders from the URL
-    import re
-    url_placeholders = re.findall(r'\{([^}]+)\}', api_url)
-    print(f"🔍 Debug: Found URL placeholders: {url_placeholders}")
-    
-    # Add placeholders from URL to path_params_schema with default values
-    for placeholder in url_placeholders:
-        if placeholder not in path_params_schema:
-            path_params_schema[placeholder] = {
-                "type": "string",
-                "description": f"Path parameter {placeholder}"
+    path_params = form_data.get("path_params", [])
+    for param in path_params:
+        param_name = param.get("name", "")
+        param_type = param.get("type", "string")
+        param_description = param.get("description", "")
+        param_dynamic_var = param.get("dynamic_variable", "")
+        param_constant_value = param.get("constant_value", "")
+        param_required = param.get("required", False)
+        
+        if param_name:
+            param_obj = {
+                "type": param_type,
+                "description": param_description or f"Path parameter {param_name}"
             }
-            print(f"🔍 Debug: Added default path parameter: {placeholder}")
-    
-    # Then process explicitly defined path parameters
-    if path_params:
-        for param in path_params:
-            param_name = param.get("name", "")
-            param_type = param.get("type", "string")
-            param_description = param.get("description", "")
-            param_required = param.get("required", False)
-            param_dynamic_var = param.get("dynamic_variable", "")
-            param_constant_value = param.get("constant_value", "")
             
-            if param_name:
-                # Check if the URL contains a placeholder for this parameter
-                placeholder = f"{{{param_name}}}"
-                if placeholder in api_url:
-                    # Create the property object with type
-                    property_obj = {"type": param_type}
-                    
-                    # Add the appropriate value field based on what's provided
-                    if param_description:
-                        property_obj["description"] = param_description
-                    elif param_dynamic_var:
-                        property_obj["dynamic_variable"] = param_dynamic_var
-                    elif param_constant_value:
-                        property_obj["constant_value"] = param_constant_value
-                    
-                    # Update the existing entry or create new one
-                    path_params_schema[param_name] = property_obj
-                    print(f"🔍 Debug: Updated path parameter: {param_name}")
-                else:
-                    print(f"⚠️ Warning: Path parameter '{param_name}' defined but URL doesn't contain placeholder '{placeholder}'. Skipping this parameter.")
+            # Add dynamic_variable or constant_value if provided
+            if param_dynamic_var:
+                param_obj["dynamic_variable"] = param_dynamic_var
+            elif param_constant_value:
+                param_obj["constant_value"] = param_constant_value
+                
+            path_params_schema[param_name] = param_obj
     
-    print(f"🔍 Debug: Final path_params_schema: {path_params_schema}")
-    
-    # Build query_params_schema
+    # Build query_params_schema - ElevenLabs expects properties as DICTIONARY, not array
+    # And "type" field is not allowed at root level
     query_params_schema = None
-    if query_params:
-        query_params_schema = {
-            "type": "object",
-            "properties": {},
-            "required": []
-        }
-        for param in query_params:
-            param_name = param.get("name", "")
-            param_type = param.get("type", "string")
-            param_description = param.get("description", "")
-            param_required = param.get("required", False)
-            param_dynamic_var = param.get("dynamic_variable", "")
-            param_constant_value = param.get("constant_value", "")
+    query_params_properties = {}
+    
+    query_params = form_data.get("query_params", [])
+    for param in query_params:
+        param_name = param.get("name", "")
+        param_type = param.get("type", "string")
+        param_description = param.get("description", "")
+        param_dynamic_var = param.get("dynamic_variable", "")
+        param_constant_value = param.get("constant_value", "")
+        param_required = param.get("required", False)
+        
+        if param_name:
+            param_obj = {
+                "type": param_type,
+                "description": param_description or f"Query parameter {param_name}"
+            }
             
-            if param_name:
-                # Create the property object with type
-                property_obj = {"type": param_type}
+            # Add dynamic_variable or constant_value if provided
+            if param_dynamic_var:
+                param_obj["dynamic_variable"] = param_dynamic_var
+            elif param_constant_value:
+                param_obj["constant_value"] = param_constant_value
                 
-                # Add the appropriate value field based on what's provided
-                if param_description:
-                    property_obj["description"] = param_description
-                elif param_dynamic_var:
-                    property_obj["dynamic_variable"] = param_dynamic_var
-                elif param_constant_value:
-                    property_obj["constant_value"] = param_constant_value
-                
-                query_params_schema["properties"][param_name] = property_obj
-                
-                if param_required:
-                    query_params_schema["required"].append(param_name)
+            query_params_properties[param_name] = param_obj
+    
+    # Only create query_params_schema if there are actual query parameters
+    if query_params_properties:
+        query_params_schema = {"properties": query_params_properties}
+        print(f"🔍 Debug: Created query_params_schema with {len(query_params_properties)} properties")
+    else:
+        print(f"🔍 Debug: No query parameters found, query_params_schema will be None")
     
     # Build request_body_schema (only for POST/PUT/PATCH methods)
     request_body_schema = None
     if http_method in ["POST", "PUT", "PATCH"]:
-        # ElevenLabs expects a simple object schema for request body
-        request_body_schema = {
-            "type": "object",
-            "description": body_description or "",
-            "properties": {},
-            "required": []
-        }
+        request_body_properties = form_data.get("request_body_properties", [])
+        body_description = form_data.get("body_description", "")
         
-        # Add properties if any are defined
-        for prop in request_body_properties:
-            prop_name = prop.get("name", "")
-            prop_type = prop.get("type", "string")
-            prop_description = prop.get("description", "")
-            prop_required = prop.get("required", False)
-            prop_dynamic_var = prop.get("dynamic_variable", "")
-            prop_constant_value = prop.get("constant_value", "")
+        if request_body_properties or body_description:
+            # Build properties as DICTIONARY, not array
+            properties_dict = {}
+            required_fields = []
             
-            if prop_name:
-                # Create property object matching ElevenLabs format
-                property_obj = {
-                    "type": prop_type,
-                    "description": prop_description
-                }
+            for prop in request_body_properties:
+                prop_name = prop.get("name", "")
+                prop_type = prop.get("type", "string")
+                prop_description = prop.get("description", "")
+                prop_required = prop.get("required", False)
+                prop_dynamic_var = prop.get("dynamic_variable", "")
+                prop_constant_value = prop.get("constant_value", "")
                 
-                # Add dynamic variable or constant value if provided
-                if prop_dynamic_var:
-                    property_obj["dynamic_variable"] = prop_dynamic_var
-                elif prop_constant_value:
-                    property_obj["constant_value"] = prop_constant_value
-                
-                request_body_schema["properties"][prop_name] = property_obj
-                
-                # Add to required list if marked as required
-                if prop_required:
-                    request_body_schema["required"].append(prop_name)
+                if prop_name:
+                    prop_obj = {
+                        "type": prop_type,
+                        "description": prop_description or f"Property {prop_name}"
+                    }
+                    
+                    # Add dynamic_variable or constant_value if provided
+                    if prop_dynamic_var:
+                        prop_obj["dynamic_variable"] = prop_dynamic_var
+                    elif prop_constant_value:
+                        prop_obj["constant_value"] = prop_constant_value
+                    
+                    properties_dict[prop_name] = prop_obj
+                    
+                    if prop_required:
+                        required_fields.append(prop_name)
+            
+            # Build request_body_schema without extra fields
+            request_body_schema = {
+                "type": "object",
+                "description": body_description or "Request body",
+                "properties": properties_dict,
+                "required": required_fields  # This should be a LIST, not boolean
+            }
     
-    # Build request_headers
-    request_headers_dict = {}
-    for header in request_headers:
+    # Build request_headers - ElevenLabs expects DICTIONARY, not array
+    request_headers = {}
+    headers_data = form_data.get("request_headers", [])
+    for header in headers_data:
         header_name = header.get("name", "")
         header_value = header.get("value", "")
-        header_type = header.get("type", "string")  # "string", "secret", "dynamic_variable"
+        header_type = header.get("type", "string")
         
         if header_name and header_value:
             if header_type == "secret":
-                request_headers_dict[header_name] = {
+                request_headers[header_name] = {
                     "type": "secret",
                     "secret_id": header_value
                 }
             elif header_type == "dynamic_variable":
-                request_headers_dict[header_name] = {
+                request_headers[header_name] = {
                     "variable_name": header_value
                 }
             else:
-                request_headers_dict[header_name] = header_value
+                request_headers[header_name] = header_value
     
     # Build dynamic_variables
     dynamic_variable_placeholders = {}
-    for var in dynamic_variables:
+    dynamic_vars = form_data.get("dynamic_variables", [])
+    for var in dynamic_vars:
         var_name = var.get("name", "")
         var_value = var.get("value", "")
         if var_name:
-            # Try to parse as number/boolean, otherwise keep as string
+            # Try to parse as appropriate type
             try:
-                if var_value.lower() in ['true', 'false']:
-                    dynamic_variable_placeholders[var_name] = var_value.lower() == 'true'
-                elif '.' in var_value:
-                    dynamic_variable_placeholders[var_name] = float(var_value)
+                if isinstance(var_value, str):
+                    if var_value.lower() in ['true', 'false']:
+                        dynamic_variable_placeholders[var_name] = var_value.lower() == 'true'
+                    elif '.' in var_value:
+                        dynamic_variable_placeholders[var_name] = float(var_value)
+                    elif var_value.isdigit():
+                        dynamic_variable_placeholders[var_name] = int(var_value)
+                    else:
+                        dynamic_variable_placeholders[var_name] = var_value
                 else:
-                    dynamic_variable_placeholders[var_name] = int(var_value)
+                    dynamic_variable_placeholders[var_name] = var_value
             except (ValueError, AttributeError):
                 dynamic_variable_placeholders[var_name] = var_value
     
     # Build assignments
-    assignments_list = []
-    for assignment in assignments:
+    assignments = []
+    assignments_data = form_data.get("assignments", [])
+    for assignment in assignments_data:
         dynamic_var = assignment.get("dynamic_variable", "")
         value_path = assignment.get("value_path", "")
         source = assignment.get("source", "response")
         
         if dynamic_var and value_path:
-            assignments_list.append({
+            assignments.append({
                 "dynamic_variable": dynamic_var,
                 "value_path": value_path,
                 "source": source
             })
     
-    # Build the complete tool_config
+    # Handle force_pre_tool_speech - convert string values to boolean if needed
+    force_pre_tool_speech = form_data.get("force_pre_tool_speech", False)
+    if isinstance(force_pre_tool_speech, str):
+        if force_pre_tool_speech.lower() in ['true', '1', 'yes', 'on']:
+            force_pre_tool_speech = True
+        else:
+            force_pre_tool_speech = False
+    print(f"🔍 Debug: force_pre_tool_speech: {force_pre_tool_speech} (type: {type(force_pre_tool_speech)})")
+    
+    # Handle disable_interruptions - convert string values to boolean if needed  
+    disable_interruptions = form_data.get("disable_interruptions", False)
+    if isinstance(disable_interruptions, str):
+        if disable_interruptions.lower() in ['true', '1', 'yes', 'on']:
+            disable_interruptions = True
+        else:
+            disable_interruptions = False
+    print(f"🔍 Debug: disable_interruptions: {disable_interruptions} (type: {type(disable_interruptions)})")
+    
+    # Build the tool_config matching ElevenLabs exact format
     tool_config = {
-        "tool_config": {
-            "type": "webhook",
-            "name": tool_name,
-            "description": tool_description,
-            "response_timeout_secs": response_timeout,
-            "disable_interruptions": form_data.get("disable_interruptions", False),
-            "force_pre_tool_speech": form_data.get("force_pre_tool_speech", False),
-            "api_schema": {
-                "url": api_url,
-                "method": http_method,
-                "path_params_schema": path_params_schema if path_params_schema else {},
-                "query_params_schema": query_params_schema,
-                "request_body_schema": request_body_schema,
-                "request_headers": request_headers_dict if request_headers_dict else {},
-                "auth_connection": None
-            },
-            "dynamic_variables": {
-                "dynamic_variable_placeholders": dynamic_variable_placeholders
-            },
-            "assignments": assignments_list
-        }
+        "type": "webhook",
+        "name": tool_name,
+        "description": tool_description,
+        "api_schema": {
+            "url": api_url,
+            "method": http_method,
+            "request_headers": request_headers,
+            "auth_connection": form_data.get("auth_connection")  # Can be null
+        },
+        "response_timeout_secs": response_timeout,
+        "dynamic_variables": {
+            "dynamic_variable_placeholders": dynamic_variable_placeholders
+        },
+        "assignments": assignments,
+        "disable_interruptions": disable_interruptions,
+        "force_pre_tool_speech": force_pre_tool_speech
     }
+    
+    # Only add path_params_schema if it has content
+    if path_params_schema:
+        tool_config["api_schema"]["path_params_schema"] = path_params_schema
+    
+    # Only add query_params_schema if it has actual parameters
+    if query_params_schema and query_params_schema.get("properties") and len(query_params_schema.get("properties", {})) > 0:
+        print(f"🔍 Debug: Adding query_params_schema to tool_config with {len(query_params_schema.get('properties', {}))} properties")
+        tool_config["api_schema"]["query_params_schema"] = query_params_schema
+    else:
+        print(f"🔍 Debug: Not adding query_params_schema - query_params_schema: {query_params_schema}")
+    
+    # Only add request_body_schema if it exists
+    if request_body_schema:
+        tool_config["api_schema"]["request_body_schema"] = request_body_schema
+    
+    print(f"🔍 Debug: Final tool_config api_schema keys: {list(tool_config['api_schema'].keys())}")
+    if 'query_params_schema' in tool_config['api_schema']:
+        print(f"🔍 Debug: query_params_schema in final config: {tool_config['api_schema']['query_params_schema']}")
     
     return tool_config
 
@@ -1557,10 +1805,13 @@ async def delete_custom_functions(request: Request):
         else:
             # Step 1: Remove tool from agent's tool list in ElevenLabs
             try:
-                existing_tools_result = ElevenLabsAgentCRUD().get_agent_tools(agent.elvn_lab_agent_id)
-                if "error" not in existing_tools_result:
-                    existing_tools = existing_tools_result.get("tools", [])
-                    existing_tool_ids = [t.get("id") for t in existing_tools if t.get("id")]
+                elevenlabs_agent = ElevenLabsAgentCRUD().get_agent(agent.elvn_lab_agent_id)
+                if "error" not in elevenlabs_agent:
+                    # Extract tool IDs from agent response
+                    conversation_config = elevenlabs_agent.get("conversation_config", {})
+                    agent_config = conversation_config.get("agent", {})
+                    prompt_config = agent_config.get("prompt", {})
+                    existing_tool_ids = prompt_config.get("tool_ids", [])
                     
                     # Remove the tool ID from the list
                     updated_tool_ids = [tid for tid in existing_tool_ids if tid != tool.elevenlabs_tool_id]
@@ -1629,8 +1880,17 @@ async def get_custom_functions(request: Request):
             
             # Extract api_url and timeout from tool_config
             tool_config = function.tool_config or {}
-            api_url = tool_config.get('api_url', '')
-            response_timeout = tool_config.get('response_timeout_secs', 30)
+            
+            # Check if tool_config has nested structure
+            if 'tool_config' in tool_config:
+                inner_config = tool_config['tool_config']
+                api_schema = inner_config.get('api_schema', {})
+                api_url = api_schema.get('url', '')
+                response_timeout = inner_config.get('response_timeout_secs', 30)
+            else:
+                # Direct structure fallback
+                api_url = tool_config.get('api_url', '')
+                response_timeout = tool_config.get('response_timeout_secs', 30)
             
             function_data = {
                 "id": function.id,
@@ -1696,20 +1956,53 @@ async def edit_custom_functions(function_id: int, request: Request):
             if not agent or not agent.elvn_lab_agent_id:
                 return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found or not linked to ElevenLabs"})
         
-        # Update function_parameters with the new values
-        function_parameters.update({
-            "api_url": function_url,
-            "response_timeout_secs": function_timeout or 20,
-            "http_method": function_parameters.get("http_method", "POST")
-        })
+        # Extract the existing tool configuration to get the current structure
+        existing_tool_config = function.tool_config or {}
         
-        # Build ElevenLabs tool config using existing function
-        full_tool_config = build_elevenlabs_tool_config(function_parameters)
+        # Handle nested structure - extract the inner tool_config if it exists
+        if 'tool_config' in existing_tool_config:
+            inner_config = existing_tool_config['tool_config']
+            # Extract existing parameters for merging
+            existing_api_schema = inner_config.get('api_schema', {})
+            existing_params = {
+                'tool_name': function_name,
+                'tool_description': function_description,
+                'api_url': function_url,
+                'http_method': existing_api_schema.get('method', 'POST'),
+                'response_timeout': function_timeout or 20,
+                'body_description': existing_api_schema.get('request_body_schema', {}).get('description', ''),
+                'request_body_properties': [],
+                'query_params': [],
+                'path_params': [],
+                'request_headers': [],
+                'dynamic_variables': [],
+                'assignments': []
+            }
+            
+            # Extract request body properties if they exist
+            request_body_schema = existing_api_schema.get('request_body_schema', {})
+            if request_body_schema and 'properties' in request_body_schema:
+                for prop_name, prop_config in request_body_schema['properties'].items():
+                    existing_params['request_body_properties'].append({
+                        'name': prop_name,
+                        'type': prop_config.get('type', 'string'),
+                        'description': prop_config.get('description', ''),
+                        'required': prop_name in request_body_schema.get('required', []),
+                        'dynamic_variable': prop_config.get('dynamic_variable', ''),
+                        'constant_value': prop_config.get('constant_value', '')
+                    })
+        else:
+            # Direct structure - use function_parameters as is but update with new values
+            existing_params = function_parameters.copy()
+            existing_params.update({
+                'tool_name': function_name,
+                'tool_description': function_description,
+                'api_url': function_url,
+                'response_timeout': function_timeout or 20
+            })
         
-        # Extract the inner tool_config and update name/description
-        tool_config = full_tool_config["tool_config"]
-        tool_config["name"] = function_name
-        tool_config["description"] = function_description
+        # Build ElevenLabs tool config using the merged parameters
+        tool_config = build_elevenlabs_tool_config(existing_params)
         
         # Update tool in ElevenLabs using ElevenLabsAgentCRUD
         try:
@@ -1759,7 +2052,8 @@ async def edit_custom_functions(function_id: int, request: Request):
             
             function.tool_name = function_name
             function.tool_description = function_description
-            function.tool_config = function_parameters
+            # Store in the same nested structure as creation for consistency
+            function.tool_config = {"tool_config": tool_config}
             
             print(f"🔍 Debug: Database changes:")
             print(f"🔍 Debug: - tool_name: '{old_name}' → '{function.tool_name}'")
@@ -1788,13 +2082,24 @@ async def edit_custom_functions(function_id: int, request: Request):
             print(f"🔍 Debug: Function object deleted: {db.session.deleted}")
             
             # Prepare response data using the verification function
+            # Extract URL and timeout from the stored nested structure
+            stored_config = verification_function.tool_config or {}
+            if 'tool_config' in stored_config:
+                inner_config = stored_config['tool_config']
+                api_schema = inner_config.get('api_schema', {})
+                response_url = api_schema.get('url', function_url)
+                response_timeout = inner_config.get('response_timeout_secs', function_timeout or 20)
+            else:
+                response_url = function_url
+                response_timeout = function_timeout or 20
+                
             function_data = {
                 "id": verification_function.id,
                 "function_name": verification_function.tool_name,
                 "function_description": verification_function.tool_description,
-                "function_url": function_parameters.get('api_url', ''),
-                "function_timeout": function_parameters.get('response_timeout_secs', 20),
-                "function_parameters": function_parameters
+                "function_url": response_url,
+                "function_timeout": response_timeout,
+                "function_parameters": verification_function.tool_config
             }
         
         print(f"🔍 Debug: Response data being sent to frontend:")
@@ -1813,4 +2118,217 @@ async def edit_custom_functions(function_id: int, request: Request):
         return JSONResponse(status_code=200, content=response)
         
     except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+@ElevenLabsAPIRouter.post("/add_url", name="add_url")
+async def add_url(request: Request):
+    temp_file_path = None
+    knowledge_base = None
+    try:
+        data = await request.json()
+        url = data.get("url")
+        name = data.get("name")
+        
+        if not url:
+            return JSONResponse(
+                status_code=400, content={"status": "error", "message": "No url uploaded."}
+            )
+
+        user = request.session.get("user")
+
+        # Check if Knowledge Base already exists
+        knowledge_base = KnowledgeBaseModel.get_by_name(name, user.get("user_id"))
+
+        if not knowledge_base:
+            knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=name, url=url)
+        
+        temp_file_name = f"{name}_{uuid.uuid4()}.txt"
+        temp_file_path = os.path.join(MEDIA_DIR, "knowledge_base_files", temp_file_name)
+
+        if not os.path.exists(temp_file_path):
+            os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
+            with open(temp_file_path, "w") as file:
+                file.write("")
+
+
+
+        from elevenlabs import ElevenLabs
+        client = ElevenLabs(
+            api_key=os.getenv("ELEVENLABS_API_KEY"),
+        )
+        resp = client.conversational_ai.knowledge_base.documents.create_from_url(
+            url=url,
+            name=name
+        )
+        
+
+        # Check if ElevenLabs document creation was successful
+        if not resp or "error" in resp:
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": f"Failed to create document in ElevenLabs: {resp.get('error', 'Unknown error')}"}
+            )
+
+        elevenlabs_doc_id = resp.id
+        elevenlabs_doc_name = resp.name
+
+        # Check if we got valid document ID and name from ElevenLabs
+        if not elevenlabs_doc_id or not elevenlabs_doc_name or not str(elevenlabs_doc_id).strip() or not str(elevenlabs_doc_name).strip():
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "ElevenLabs returned invalid document ID or name - no local file will be saved"}
+            )
+        
+        # Only proceed with text extraction and database save if ElevenLabs document creation was successful
+        base_url = "https://api.elevenlabs.io/v1/convai/knowledge-base"
+        url = f"{base_url}/{elevenlabs_doc_id}"
+
+        headers = {
+                "xi-api-key": os.getenv("ELEVENLABS_API_KEY"),
+                "Content-Type": "application/json"
+            }
+
+        response = requests.get(url, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            print("✅ Successfully fetched document data!")
+            html_content = data["extracted_inner_html"]
+    
+            # Clean it with BeautifulSoup
+            soup = BeautifulSoup(html_content, "html.parser")
+            clean_text = soup.get_text(separator="\n", strip=True)
+            
+            print("🧹 Cleaned Text:\n")
+            print(clean_text)
+
+            # Save cleaned text to the temp file that was created earlier
+            with open(temp_file_path, "w", encoding="utf-8") as f:
+                f.write(clean_text)
+            
+            # Save to database with ElevenLabs document details
+            KnowledgeBaseFileModel.create(
+                knowledge_base_id=knowledge_base.id,
+                file_name=name,
+                file_path=temp_file_path,
+                text_content=clean_text,
+                elevenlabs_doc_id=elevenlabs_doc_id,
+                elevenlabs_doc_name=elevenlabs_doc_name
+            )
+            
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success", 
+                    "message": "URL added to knowledge base successfully", 
+                    "document_id": elevenlabs_doc_id,
+                    "file_name": name
+                }
+            )
+        else:
+            print("❌ Error fetching document data:")
+            print("Response:", response.text)
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": f"Failed to extract text from URL: {response.text}"}
+            )
+
+    except Exception as e:
+        # Cleanup on error
+        if knowledge_base:
+            files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+            for file in files:
+                KnowledgeBaseFileModel.delete(file.id)
+            KnowledgeBaseModel.delete(knowledge_base.id)
+        
+        # Cleanup temp file on error
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+        
+        print("Error:", str(e))
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@ElevenLabsAPIRouter.post("/create_text", name="create_text")
+async def create_text(request: Request):
+    try:
+        data = await request.json()
+        title = data.get("title")
+        content = data.get("content")
+        if not title or not content:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Title and content are required"})
+        user = request.session.get("user")
+        # Check if Knowledge Base already exists
+        knowledge_base = KnowledgeBaseModel.get_by_name(title, user.get("user_id"))
+
+        if not knowledge_base:
+            knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=title)
+
+        file_path = os.path.join(MEDIA_DIR, f"knowledge_base_files/{title}_{uuid.uuid4()}.txt")
+
+        from elevenlabs import ElevenLabs
+
+        client = ElevenLabs(
+            api_key=os.getenv("ELEVENLABS_API_KEY"),
+        )
+        resp = client.conversational_ai.knowledge_base.documents.create_from_text(
+            text=content,
+            name=title
+        )
+        if not resp or "error" in resp:
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": f"Failed to create document in ElevenLabs: {resp.get('error', 'Unknown error')}"}
+            )
+        
+        elevenlabs_doc_id = resp.id
+        elevenlabs_doc_name = resp.name
+
+        # Check if we got valid document ID and name from ElevenLabs
+        if not elevenlabs_doc_id or not elevenlabs_doc_name or not str(elevenlabs_doc_id).strip() or not str(elevenlabs_doc_name).strip():
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "ElevenLabs returned invalid document ID or name - no local file will be saved"}
+            )
+
+        # Only create local file if ElevenLabs was successful
+        with open(file_path, "w") as file:
+            file.write(content)
+
+        # Save file details to database with ElevenLabs document details
+        KnowledgeBaseFileModel.create(
+            knowledge_base_id=knowledge_base.id,
+            file_name=title,
+            file_path=file_path,
+            text_content=content,
+            elevenlabs_doc_id=elevenlabs_doc_id,
+            elevenlabs_doc_name=elevenlabs_doc_name
+        )
+        content_list = []
+        content_list.append({
+                "file_path": file_path,
+                "text_content": content
+            })
+
+        splits = get_splits(content_list)
+        vector_id = str(uuid.uuid4())
+        if splits:
+            status, vector_path =convert_to_vectorstore(splits, vector_id)
+            KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
+        return JSONResponse(
+            status_code=200,
+            content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "file_path": file_path}
+        )
+
+    except Exception as e:
+        knowledge_base = KnowledgeBaseModel.get_by_name(title, user.get("user_id"))
+        if knowledge_base:
+            files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+            for file in files:
+                KnowledgeBaseFileModel.delete(file.id)
+            KnowledgeBaseModel.delete(knowledge_base.id)
+        # Cleanup any saved files on error
+        if file_path:
+            os.remove(file_path)    
+
+        print("Error:", str(e))
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
