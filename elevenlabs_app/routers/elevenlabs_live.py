@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import uuid
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
@@ -8,6 +9,7 @@ import os
 from elevenlabs.client import ElevenLabs
 from elevenlabs.conversational_ai.conversation import Conversation, AudioInterface
 from app.databases.models import AgentModel
+from elevenlabs_app.services.elevenlabs_post_call_recorder import elevenlabs_post_call_recorder
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -29,26 +31,45 @@ class BrowserAudioInterface(AudioInterface):
     Bridges ElevenLabs Conversation audio with a browser WebSocket.
     - output(audio): send PCM s16le 16k mono chunks to browser as base64
     - start(input_callback): store callback and accept user mic chunks from WS
+    - Includes call recording integration
     """
 
-    def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop):
+    def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, call_id: str = None):
         self.websocket = websocket
         self.loop = loop
+        self.call_id = call_id or f"browser_{uuid.uuid4().hex[:12]}"
         self._input_cb = None
         self._started = False
+        self.recording_enabled = True
 
     def start(self, input_callback):
         self._input_cb = input_callback
         self._started = True
-        logger.info("BrowserAudioInterface started")
+        logger.info(f"✅ BrowserAudioInterface started by ElevenLabs for call_id: {self.call_id}")
+        # Send signal to browser that we're truly ready
+        try:
+            if self.websocket.client_state.name == "CONNECTED":
+                message = {
+                    "type": "audio_interface_ready",
+                    "message": "Audio interface is now active",
+                    "ts": datetime.utcnow().isoformat()
+                }
+                asyncio.run_coroutine_threadsafe(self.websocket.send_json(message), self.loop)
+        except Exception as e:
+            logger.error(f"Error sending audio_interface_ready signal: {e}")
 
     def stop(self):
         self._started = False
-        logger.info("BrowserAudioInterface stopped")
+        logger.info(f"BrowserAudioInterface stopped for call_id: {self.call_id}")
 
     def output(self, audio: bytes):
         try:
             if self.websocket.client_state.name == "CONNECTED":
+                # Record agent audio if recording is enabled
+                if self.recording_enabled:
+                    # Audio is recorded by ElevenLabs directly
+                    pass
+                
                 message = {
                     "type": "audio_chunk",
                     "sample_rate": 16000,
@@ -59,7 +80,7 @@ class BrowserAudioInterface(AudioInterface):
                 }
                 asyncio.run_coroutine_threadsafe(self.websocket.send_json(message), self.loop)
         except Exception as e:
-            logger.error(f"Error sending audio to browser: {e}")
+            logger.error(f"Error sending audio to browser for call_id {self.call_id}: {e}")
 
     def interrupt(self):
         # Browser should stop playback locally
@@ -69,15 +90,33 @@ class BrowserAudioInterface(AudioInterface):
     def push_user_audio(self, audio: bytes):
         if self._started and self._input_cb:
             try:
+                # Validate audio data
+                if len(audio) == 0:
+                    logger.warning(f"Empty audio data received for call_id {self.call_id}")
+                    return
+                
+                # Record user audio if recording is enabled
+                if self.recording_enabled:
+                    # Audio is recorded by ElevenLabs directly
+                    pass
+                
+                # Send audio to ElevenLabs
                 self._input_cb(audio)
+                logger.debug(f"Successfully sent {len(audio)} bytes to ElevenLabs for call_id {self.call_id}")
             except Exception as e:
-                logger.error(f"Error delivering browser audio to input_callback: {e}")
+                logger.error(f"Error delivering browser audio to input_callback for call_id {self.call_id}: {e}")
+                logger.error(f"Audio data length: {len(audio) if audio else 'None'}")
+        else:
+            logger.warning(f"Cannot push audio - started: {self._started}, callback: {bool(self._input_cb)} for call_id {self.call_id}")
 
 
 @ElevenLabsLiveRouter.websocket("/ws/{agent_dynamic_id}")
 async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
     await websocket.accept()
     logger.info(f"Browser connected for live stream: {agent_dynamic_id}")
+
+    # Generate unique call ID for this session
+    call_id = f"browser_{agent_dynamic_id}_{uuid.uuid4().hex[:8]}"
 
     # Lookup ElevenLabs agent id from DB via dynamic_id
     agent: Optional[AgentModel] = AgentModel.get_by_dynamic_id(agent_dynamic_id)
@@ -87,22 +126,49 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
 
     elevenlabs_agent_id = agent.elvn_lab_agent_id
 
-    # reject if an active session already exists for this agent
+    # Enhanced session management - close existing session if any
     if ACTIVE_SESSIONS.get(agent_dynamic_id):
+        logger.warning(f"Existing session found for agent {agent_dynamic_id}, clearing it")
+        ACTIVE_SESSIONS.pop(agent_dynamic_id, None)
+        
+        # Send notification about session replacement
         await websocket.send_json({
-            "type": "error",
-            "message": "An active session already exists for this agent. Please stop the other preview first.",
+            "type": "session_replaced",
+            "message": "Previous session replaced by new connection",
         })
-        await websocket.close()
-        return
 
     # Init ElevenLabs conversation
     loop = asyncio.get_running_loop()
-    audio_if = BrowserAudioInterface(websocket, loop)
+    audio_if = BrowserAudioInterface(websocket, loop, call_id)
     conversation = None
+
+    # Call metadata for recording
+    call_metadata = {
+        "agent_dynamic_id": agent_dynamic_id,
+        "elevenlabs_agent_id": elevenlabs_agent_id,
+        "call_type": "browser_live",
+        "start_time": datetime.utcnow().isoformat()
+    }
 
     try:
         ACTIVE_SESSIONS[agent_dynamic_id] = True
+        
+        # Track session metadata for post-call retrieval
+        session_metadata = {
+            'platform': 'browser',
+            'timestamp': datetime.now().isoformat(),
+            'agent_dynamic_id': agent_dynamic_id
+        }
+        
+        # Register session for post-call data retrieval
+        elevenlabs_post_call_recorder.register_conversation_session(
+            call_id=call_id,
+            agent_dynamic_id=agent_dynamic_id,
+            elevenlabs_agent_id=elevenlabs_agent_id,
+            call_type="browser_live",
+            metadata=session_metadata
+        )
+        
         api_key = os.getenv("ELEVENLABS_API_KEY")
         client = ElevenLabs(api_key=api_key if api_key else None)
 
@@ -128,21 +194,33 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
             elevenlabs_agent_id,
             requires_auth=bool(api_key),
             audio_interface=audio_if,
-            callback_agent_response=lambda r: asyncio.run_coroutine_threadsafe(
-                websocket.send_json({"type": "agent_response", "text": r, "ts": datetime.utcnow().isoformat()}),
-                loop,
-            ),
-            callback_user_transcript=lambda t: asyncio.run_coroutine_threadsafe(
-                websocket.send_json({"type": "user_transcript", "text": t, "ts": datetime.utcnow().isoformat()}),
-                loop,
-            ),
+            callback_agent_response=lambda r: handle_agent_response_live(call_id, r, websocket, loop),
+            callback_user_transcript=lambda t: handle_user_transcript_live(call_id, t, websocket, loop),
             callback_latency_measurement=lambda latency_ms: asyncio.run_coroutine_threadsafe(
                 websocket.send_json({"type": "latency_measurement", "latency_ms": latency_ms, "ts": datetime.utcnow().isoformat()}),
                 loop,
             ),
         )
 
+        # Start the conversation session
+        logger.info(f"Starting ElevenLabs conversation session for call_id: {call_id}")
         conversation.start_session()
+        
+        # Wait for the conversation to be fully initialized
+        logger.info(f"Waiting for ElevenLabs conversation to initialize for call_id: {call_id}")
+        await asyncio.sleep(0.5)  # Increased delay
+        
+        # Check if audio interface has been started by ElevenLabs
+        if not audio_if._started:
+            logger.warning(f"Audio interface not started after delay for call_id: {call_id}")
+        
+        # Send ready signal to browser
+        logger.info(f"Sending conversation_ready signal for call_id: {call_id}")
+        await websocket.send_json({
+            "type": "conversation_ready",
+            "message": "ElevenLabs conversation is ready",
+            "ts": datetime.utcnow().isoformat()
+        })
 
         # Receive mic audio from browser
         while True:
@@ -161,13 +239,22 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                     continue
                 try:
                     audio_bytes = base64.b64decode(b64)
+                    # Validate audio data format
+                    if len(audio_bytes) == 0:
+                        logger.warning(f"Empty audio chunk received for call_id {call_id}")
+                        continue
+                    
+                    # Log audio chunk info for debugging
+                    logger.debug(f"Processing audio chunk: {len(audio_bytes)} bytes for call_id {call_id}")
                     audio_if.push_user_audio(audio_bytes)
                 except Exception as e:
-                    logger.error(f"Failed to process user audio chunk: {e}")
+                    logger.error(f"Error sending user audio chunk: {e}")
+                    logger.error(f"Failed to process user audio chunk for call_id {call_id}: {e}")
             elif msg_type == "end":
                 break
             else:
-                # Ignore unknown message types
+                # Log unknown message types for debugging
+                logger.debug(f"Ignoring unknown message type: {msg_type} for call_id {call_id}")
                 pass
 
     except Exception as e:
@@ -179,8 +266,63 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                 conversation.wait_for_session_end()
         except Exception:
             pass
-        ACTIVE_SESSIONS.pop(agent_dynamic_id, None)
+        
+        # Mark conversation as ended for post-call retrieval
+        try:
+            # Get the ElevenLabs conversation ID if available
+            elevenlabs_conversation_id = None
+            if conversation and hasattr(conversation, 'conversation_id'):
+                elevenlabs_conversation_id = conversation.conversation_id
+            
+            # Mark conversation as ended to trigger post-call data retrieval
+            elevenlabs_post_call_recorder.mark_conversation_ended(
+                call_id=call_id,
+                elevenlabs_conversation_id=elevenlabs_conversation_id
+            )
+            logger.info(f"Post-call data retrieval marked for call_id: {call_id}")
+        except Exception as e:
+            logger.error(f"Error marking conversation ended for call_id {call_id}: {e}")
+        
+        # Clean up active session
+        try:
+            ACTIVE_SESSIONS.pop(agent_dynamic_id, None)
+            logger.info(f"Cleaned up active session for agent: {agent_dynamic_id}")
+        except Exception as e:
+            logger.error(f"Error cleaning up active session for {agent_dynamic_id}: {e}")
+        
         await websocket.close()
         logger.info("Live stream socket closed")
+
+
+def handle_agent_response_live(call_id: str, response: str, websocket: WebSocket, loop: asyncio.AbstractEventLoop):
+    """Handle agent response for live browser sessions"""
+    try:
+        # Add to recording transcript
+        # Transcript is handled by ElevenLabs directly
+        pass
+        
+        # Send to browser
+        asyncio.run_coroutine_threadsafe(
+            websocket.send_json({"type": "agent_response", "text": response, "ts": datetime.utcnow().isoformat()}),
+            loop,
+        )
+    except Exception as e:
+        logger.error(f"Error handling agent response for call_id {call_id}: {e}")
+
+
+def handle_user_transcript_live(call_id: str, transcript: str, websocket: WebSocket, loop: asyncio.AbstractEventLoop):
+    """Handle user transcript for live browser sessions"""
+    try:
+        # Add to recording transcript
+        # Transcript is handled by ElevenLabs directly
+        pass
+        
+        # Send to browser
+        asyncio.run_coroutine_threadsafe(
+            websocket.send_json({"type": "user_transcript", "text": transcript, "ts": datetime.utcnow().isoformat()}),
+            loop,
+        )
+    except Exception as e:
+        logger.error(f"Error handling user transcript for call_id {call_id}: {e}")
 
 

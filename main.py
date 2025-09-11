@@ -10,6 +10,9 @@ from elevenlabs_app.routers import (
     ElevenLabsWebSocketRouter,
     ElevenLabsLiveRouter,
 )
+from elevenlabs_app.routers.recording_api import ElevenLabsRecordingRouter
+from elevenlabs_app.routers.web_integration import ElevenLabsWebRouter as ElevenLabsWebIntegrationRouter
+from elevenlabs_app.services.elevenlabs_post_call_recorder import elevenlabs_post_call_recorder
 from fastapi_sqlalchemy import DBSessionMiddleware,db
 from app.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
@@ -78,6 +81,10 @@ app.include_router(ElevenLabsAPIRouter, prefix="/elevenlabs/api/v1")
 app.include_router(ElevenLabsWebRouter, prefix="/elevenlabs/web/v1")
 # Live browser streaming WS
 app.include_router(ElevenLabsLiveRouter, prefix="")
+# Recording management API
+app.include_router(ElevenLabsRecordingRouter, prefix="")
+# Web integration (preview system)
+app.include_router(ElevenLabsWebIntegrationRouter, prefix="")
 # app.include_router(ElevenLabsAdminRouter, prefix="/elevenlabs/admin")
 
 @app.on_event("startup")
@@ -86,4 +93,14 @@ async def startup_event():
     AdminTokenModel.ensure_default_exists()
     TokensToConsume.ensure_default_exists()
     VoiceModel.ensure_default_voices()
+    
+    # Start ElevenLabs post-call recording service
+    await elevenlabs_post_call_recorder.start_retrieval_service()
+    
     print("Voice Ninja + ElevenLabs Integration started successfully!")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Stop ElevenLabs post-call recording service
+    await elevenlabs_post_call_recorder.stop_retrieval_service()
+    print("Voice Ninja + ElevenLabs Integration shutdown complete!")
