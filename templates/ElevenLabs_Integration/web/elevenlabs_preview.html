@@ -2,625 +2,161 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Agent Preview - {{ agent_name }}</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .preview-container {
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-            padding: 40px;
-            max-width: 700px;
-            width: 90%;
-            text-align: center;
-        }
-
-        .preview-header {
-            margin-bottom: 30px;
-        }
-
-        .preview-header h1 {
-            color: #333;
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-        }
-
-        .preview-header h2 {
-            color: #666;
-            font-size: 1.3rem;
-            font-weight: normal;
-        }
-
-        .agent-info {
-            background: #f8f9fa;
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 30px;
-            text-align: left;
-        }
-
-        .agent-info h3 {
-            color: #333;
-            margin-bottom: 15px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .agent-info p {
-            color: #666;
-            margin-bottom: 10px;
-        }
-
-        .status-indicator {
-            display: inline-flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 20px;
-            border-radius: 25px;
-            margin-bottom: 30px;
-            font-weight: 500;
-        }
-
-        .status-ready {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-
-        .status-connecting {
-            background: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeaa7;
-        }
-
-        .status-error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-
-        .preview-controls {
-            margin-bottom: 30px;
-        }
-
-        .btn {
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            border-radius: 25px;
-            font-size: 1.1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            margin: 0 10px;
-            min-width: 150px;
-        }
-
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
-        }
-
-        .btn:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
-        }
-
-        .btn-danger {
-            background: linear-gradient(45deg, #ff6b6b, #ee5a52);
-        }
-
-        .btn-secondary {
-            background: linear-gradient(45deg, #6c757d, #5a6268);
-        }
-
-        .conversation-log {
-            background: #f8f9fa;
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 20px;
-            max-height: 300px;
-            overflow-y: auto;
-            text-align: left;
-        }
-
-        .conversation-log h3 {
-            color: #333;
-            margin-bottom: 15px;
-            text-align: center;
-        }
-
-        .message {
-            margin-bottom: 15px;
-            padding: 10px 15px;
-            border-radius: 10px;
-            animation: fadeIn 0.3s ease;
-        }
-
-        .message.user {
-            background: #e3f2fd;
-            margin-left: 20px;
-        }
-
-        .message.agent {
-            background: #f3e5f5;
-            margin-right: 20px;
-        }
-
-        .message.system {
-            background: #fff3e0;
-            text-align: center;
-            font-style: italic;
-        }
-
-        .message.error {
-            background: #ffebee;
-            color: #c62828;
-        }
-
-        .message-header {
-            font-weight: 600;
-            margin-bottom: 5px;
-            font-size: 0.9rem;
-        }
-
-        .message-content {
-            color: #333;
-        }
-
-        .message-time {
-            font-size: 0.8rem;
-            color: #666;
-            margin-top: 5px;
-        }
-
-        .loading-spinner {
-            display: inline-block;
-            width: 20px;
-            height: 20px;
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-right: 10px;
-        }
-
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(10px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-
-        .instructions {
-            background: #e8f4fd;
-            border: 1px solid #bee5eb;
-            border-radius: 10px;
-            padding: 20px;
-            margin-bottom: 20px;
-        }
-
-        .instructions h4 {
-            color: #0c5460;
-            margin-bottom: 10px;
-        }
-
-        .instructions ul {
-            color: #0c5460;
-            text-align: left;
-            margin-left: 20px;
-        }
-
-        .instructions li {
-            margin-bottom: 5px;
-        }
-
-        .hidden {
-            display: none;
-        }
-
-        .error-message {
-            background: #f8d7da;
-            color: #721c24;
-            padding: 15px;
-            border-radius: 10px;
-            margin-bottom: 20px;
-            border: 1px solid #f5c6cb;
-        }
-
-        .back-button {
-            position: absolute;
-            top: 20px;
-            left: 20px;
-            background: rgba(255, 255, 255, 0.9);
-            border: none;
-            padding: 10px 20px;
-            border-radius: 25px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-
-        .back-button:hover {
-            background: white;
-            transform: translateY(-2px);
-        }
-    </style>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ host }}/static/Web/css/bot_style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ElevenLabs Agent Preview</title>
 </head>
 <body>
-    <div class="preview-container">
-        <div class="preview-header">
-            <h1><i class="fas fa-robot"></i> Agent Preview</h1>
-            <h2>{{ agent_name }}</h2>
-        </div>
+    <script src="{{ host }}/elevenlabs/web/chatbot-script.js/{{ agent_id }}"></script>
+    <script src="{{ host }}/static/js/elevenlabs_websocket.js"></script>
+    <input hidden id="username" placeholder="Username" value="admin">
+    <input hidden id="password" placeholder="Password" value="admin123">
+    <input hidden id="elevenlabs-agent-id" value="{{ agent_id }}">
 
-        <div class="agent-info">
-            <h3><i class="fas fa-info-circle"></i> Agent Information</h3>
-            <p><strong>Agent Dynamic ID:</strong> {{ agent_id }}</p>
-            <p><strong>Agent DB ID:</strong> {{ agent_db_id }}</p>
-            <p><strong>ElevenLabs Agent ID:</strong> {{ elevenlabs_agent_id }}</p>
-            <p><strong>Welcome Message:</strong> {{ welcome_msg }}</p>
-            <p><strong>System Instruction:</strong> {{ system_instruction }}</p>
-        </div>
-
-        <div id="status-indicator" class="status-indicator status-ready">
-            <i class="fas fa-check-circle"></i>
-            <span>Ready to start</span>
-        </div>
-
-        <div class="instructions">
-            <h4><i class="fas fa-info-circle"></i> How to use:</h4>
-            <ul>
-                <li>Click "Start Preview" to begin the voice conversation</li>
-                <li>Allow microphone access when prompted</li>
-                <li>Speak naturally - the AI will respond with voice</li>
-                <li>Click "Stop Preview" to end the conversation</li>
-                <li>Check the console/terminal for the actual voice conversation</li>
-            </ul>
-        </div>
-
-        <div class="preview-controls">
-            <button id="start-btn" class="btn" onclick="startPreview()">
-                <i class="fas fa-play"></i> Start Preview
-            </button>
-            <button id="stop-btn" class="btn btn-danger hidden" onclick="stopPreview()">
-                <i class="fas fa-stop"></i> Stop Preview
-            </button>
-        </div>
-
-        <div id="conversation-log" class="conversation-log hidden">
-            <h3><i class="fas fa-comments"></i> Conversation Log</h3>
-            <div id="messages-container"></div>
-        </div>
-
-        <div id="error-container"></div>
-    </div>
-
-    <script>
-        let isPreviewActive = false;
-        let conversationLog = [];
-
-      
-
-        function updateStatus(status, message, icon = null) {
-            const statusEl = document.getElementById('status-indicator');
-            statusEl.className = `status-indicator status-${status}`;
-            
-            if (icon) {
-                statusEl.innerHTML = `<i class="${icon}"></i><span>${message}</span>`;
-            } else {
-                statusEl.innerHTML = `<span>${message}</span>`;
-            }
+    <style>
+        #visual-panel {
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            margin-top: 20px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
         }
-
-        function addMessage(type, content, timestamp = null) {
-            const messagesContainer = document.getElementById('messages-container');
-            const messageEl = document.createElement('div');
-            messageEl.className = `message ${type}`;
-            
-            const time = timestamp || new Date().toLocaleTimeString();
-            const header = type === 'user' ? '👤 You' : type === 'agent' ? '🤖 Agent' : type === 'system' ? 'ℹ️ System' : '❌ Error';
-            
-            messageEl.innerHTML = `
-                <div class="message-header">${header}</div>
-                <div class="message-content">${content}</div>
-                <div class="message-time">${time}</div>
-            `;
-            
-            messagesContainer.appendChild(messageEl);
-            messagesContainer.scrollTop = messagesContainer.scrollHeight;
-            
-            conversationLog.push({ type, content, timestamp: time });
+        
+        .visual-indicator {
+            font-size: 14px;
+            margin: 5px 0;
         }
-
-        function showError(message) {
-            const errorContainer = document.getElementById('error-container');
-            errorContainer.innerHTML = `
-                <div class="error-message">
-                    <i class="fas fa-exclamation-triangle"></i> ${message}
-                </div>
-            `;
+        
+        .status-connected { color: #00ff00; }
+        .status-disconnected { color: #ff0000; }
+        .status-listening { color: #00bfff; }
+        .status-speaking { color: #ffa500; }
+        .status-waiting { color: #ffff00; }
+        
+        #audio-queue-info {
+            font-size: 11px;
+            color: #cccccc;
+            margin-top: 8px;
         }
-
-        function clearError() {
-            document.getElementById('error-container').innerHTML = '';
-        }
-
-        async function startPreview() {
-            try {
-                if (isPreviewActive) return; // guard against double start
-                clearError();
-                updateStatus('connecting', 'Connecting to ElevenLabs...', 'fas fa-spinner fa-spin');
-                
-                document.getElementById('start-btn').disabled = true;
-                document.getElementById('conversation-log').classList.remove('hidden');
-                
-                // Add initial system message
-                addMessage('system', 'Starting ElevenLabs agent preview...');
-                
-                // Start live WS to stream audio to/from browser ONLY (do not call /elevenlabs/preview/test)
-                await startLiveWebSocket("{{ agent_id }}");
-                updateStatus('ready', 'Preview streaming - audio should play in browser', 'fas fa-check-circle');
-                addMessage('system', 'Live streaming started. You should hear audio in the browser.');
-                
-                isPreviewActive = true;
-                document.getElementById('stop-btn').classList.remove('hidden');
-                
-            } catch (error) {
-                console.error('Error starting preview:', error);
-                updateStatus('error', 'Failed to start preview', 'fas fa-exclamation-triangle');
-                showError(`Failed to start preview: ${error.message}`);
-                document.getElementById('start-btn').disabled = false;
-            }
-        }
-
-        // ===== Live browser streaming =====
-        const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-        let wsLive;
-        let micStream;
-        let micSource;
-        let micProcessor;
-        let muteNode;
-        let playhead = 0;            // scheduled timeline in seconds
-        const MAX_DRIFT = 0.05;      // resync threshold
-        // Strict queue to serialize chunks (play next only after previous ends)
-        let audioQueue = [];
-        let currentSource = null;
-        let isPlaying = false;
-        // Chunk aggregator to coalesce tiny chunks (reduce overlap/stutter)
-        let pcmStash = [];
-        let pcmStashSamples = 0;
-        const TARGET_CHUNK_SAMPLES = 0; // disable aggregation for lowest latency
-
-        function int16ToFloat32(int16) {
-            const out = new Float32Array(int16.length);
-            for (let i = 0; i < int16.length; i++) out[i] = Math.max(-1, int16[i] / 32768);
-            return out;
-        }
-
-        async function playPcmScheduled(int16) {
-            if (audioCtx.state === 'suspended') await audioCtx.resume();
-            const f32 = int16ToFloat32(int16);
-            const buf = audioCtx.createBuffer(1, f32.length, 16000);
-            buf.copyToChannel(f32, 0);
-            const src = audioCtx.createBufferSource();
-            src.buffer = buf;
-            src.connect(audioCtx.destination);
-
-            if (playhead < audioCtx.currentTime) playhead = audioCtx.currentTime;
-            if (playhead - audioCtx.currentTime > MAX_DRIFT) playhead = audioCtx.currentTime + 0.02;
-
-            src.start(playhead);
-            playhead += buf.duration;
-            src.onended = () => {
-                if (playhead < audioCtx.currentTime) playhead = audioCtx.currentTime;
-            };
-        }
-
-        function decodeBase64PCM(b64) {
-            const bin = atob(b64);
-            const len = bin.length >>> 1;
-            const arr = new Int16Array(len);
-            for (let i = 0; i < len; i++) {
-                const lo = bin.charCodeAt(2*i) & 0xff;
-                const hi = bin.charCodeAt(2*i+1) & 0xff;
-                arr[i] = (hi << 8) | lo;
-            }
-            return arr;
-        }
-
-        function playNextInQueue() {
-            if (isPlaying) return;
-            const pcm = audioQueue.shift();
-            if (!pcm) return;
-            isPlaying = true;
-            if (audioCtx.state === 'suspended') audioCtx.resume();
-            const f32 = int16ToFloat32(pcm);
-            const buf = audioCtx.createBuffer(1, f32.length, 16000);
-            buf.copyToChannel(f32, 0);
-            const src = audioCtx.createBufferSource();
-            currentSource = src;
-            src.buffer = buf;
-            src.connect(audioCtx.destination);
-            src.onended = () => {
-                isPlaying = false;
-                currentSource = null;
-                // play the next piece immediately
-                playNextInQueue();
-            };
-            src.start();
-        }
-
-        function enqueueAudio(pcm) {
-            audioQueue.push(pcm);
-            // kick the player if idle
-            playNextInQueue();
-        }
-
-        // Downsample Float32 PCM from any sampleRate to exactly 16000 Hz, mono
-        function downsampleTo16k(float32, srcRate) {
-            if (srcRate === 16000) return float32;
-            const ratio = srcRate / 16000;
-            const newLen = Math.floor(float32.length / ratio);
-            const out = new Float32Array(newLen);
-            // Simple decimation with averaging (cheap and acceptable for voice)
-            let idx = 0;
-            let acc = 0;
-            let count = 0;
-            let o = 0;
-            for (let i = 0; i < float32.length; i++) {
-                acc += float32[i];
-                count += 1;
-                if ((i + 1) / ratio >= (o + 1)) {
-                    out[o++] = acc / count;
-                    acc = 0; count = 0;
-                }
-            }
-            return out.subarray(0, o);
-        }
-
-        async function startLiveWebSocket(agentDynamicId) {
-            if (audioCtx.state === 'suspended') await audioCtx.resume();
-            const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-            if (wsLive && (wsLive.readyState === 0 || wsLive.readyState === 1)) {
-                try { wsLive.close(); } catch {}
-            }
-            wsLive = new WebSocket(`${proto}://${location.host}/elevenlabs/live/ws/${agentDynamicId}`);
-            wsLive.onopen = () => {
-                addMessage('system', 'Live WS connected');
-                document.getElementById('start-btn').disabled = true;
-            };
-            wsLive.onclose = () => {
-                addMessage('system', 'Live WS disconnected');
-                wsLive = null;
-                isPreviewActive = false;
-                document.getElementById('start-btn').disabled = false;
-            };
-            wsLive.onerror = () => addMessage('error', 'Live WS error');
-            wsLive.onmessage = async (ev) => {
-                try {
-                    const msg = JSON.parse(ev.data);
-                    if (msg.type === 'audio_chunk' && msg.format === 'pcm_s16le') {
-                        const pcm = decodeBase64PCM(msg.data_b64);
-                        // Aggregate into ~320ms packets before enqueueing
-                        pcmStash.push(pcm);
-                        pcmStashSamples += pcm.length;
-                        if (pcmStashSamples >= TARGET_CHUNK_SAMPLES) {
-                            // Concatenate into one Int16Array
-                            let merged = new Int16Array(pcmStashSamples);
-                            let offset = 0;
-                            for (const part of pcmStash) {
-                                merged.set(part, offset);
-                                offset += part.length;
-                            }
-                            enqueueAudio(merged);
-                            pcmStash = [];
-                            pcmStashSamples = 0;
-                        }
-                    } else if (msg.type === 'agent_response') {
-                        addMessage('agent', msg.text);
-                    } else if (msg.type === 'user_transcript') {
-                        addMessage('user', msg.text);
+        
+        .queue-pending { color: #ffa500; }
+        .queue-playing { color: #00ff00; }
+    </style>    <script>
+        // Wait for ElevenLabs client to be initialized before setting up toggle
+        function waitForElevenLabsClient() {
+            return new Promise((resolve) => {
+                const checkClient = () => {
+                    if (window.elevenLabsClient && window.elevenLabsClient.setInterruptionSensitivity) {
+                        console.log('ElevenLabs client is ready');
+                        resolve(window.elevenLabsClient);
+                    } else {
+                        console.log('Waiting for ElevenLabs client...');
+                        setTimeout(checkClient, 500);
                     }
-                } catch (e) {}
-            };
-
-            // Capture mic and send to server (mono 16k, 16-bit PCM)
-            micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            micSource = audioCtx.createMediaStreamSource(micStream);
-            micProcessor = audioCtx.createScriptProcessor(1024, 1, 1);
-            micSource.connect(micProcessor);
-            // prevent local loopback
-            muteNode = audioCtx.createGain();
-            muteNode.gain.value = 0;
-            micProcessor.connect(muteNode);
-            muteNode.connect(audioCtx.destination);
-            micProcessor.onaudioprocess = (e) => {
-                if (!wsLive || wsLive.readyState !== 1) return;
-                const input = e.inputBuffer.getChannelData(0);
-                // Resample to 16k
-                const resampled = downsampleTo16k(input, audioCtx.sampleRate);
-                // Float32 [-1,1] -> Int16 PCM @16k
-                const int16 = new Int16Array(resampled.length);
-                for (let i = 0; i < resampled.length; i++) {
-                    let s = Math.max(-1, Math.min(1, resampled[i]));
-                    int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-                }
-                const bytes = new Uint8Array(int16.buffer);
-                let binary = '';
-                for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-                const b64 = btoa(binary);
-                wsLive.send(JSON.stringify({ type: 'user_audio_chunk', data_b64: b64 }));
-            };
+                };
+                checkClient();
+            });
         }
 
-        function stopPreview() {
+        async function toggleVoiceInterruption(isEnabled) {
             try {
-                // Close WS and stop mic
-                if (wsLive && wsLive.readyState === 1) {
-                    wsLive.send(JSON.stringify({ type: 'end' }));
-                    wsLive.close();
+                // Wait for ElevenLabs client to be available
+                const client = await waitForElevenLabsClient();
+                
+                if (isEnabled) {
+                    // Enable voice interruption with default sensitivity
+                    client.setInterruptionSensitivity(0.01, 5);
+                    console.log('✅ Voice interruption enabled (threshold: 0.01, frames: 5)');
+                    
+                    // Load chatbot script when toggle is enabled
+                    await loadChatbotScript();
+                } else {
+                    // Disable voice interruption by setting very high threshold
+                    client.setInterruptionSensitivity(1.0, 100);
+                    console.log('❌ Voice interruption disabled (threshold: 1.0, frames: 100)');
+                    
+                    // Remove chatbot elements when disabled
+                    removeChatbotElements();
                 }
-                if (micProcessor) { micProcessor.disconnect(); micProcessor.onaudioprocess = null; }
-                if (muteNode) { muteNode.disconnect(); }
-                if (micSource) { micSource.disconnect(); }
-                if (micStream) {
-                    micStream.getTracks().forEach(t => t.stop());
-                }
-
-                updateStatus('ready', 'Preview stopped', 'fas fa-stop-circle');
-                addMessage('system', 'Preview stopped by user.');
-                isPreviewActive = false;
-                document.getElementById('start-btn').disabled = false;
-                document.getElementById('stop-btn').classList.add('hidden');
-                // reset playback timeline
-                playhead = audioCtx.currentTime;
-                // clear queue/timer
-                audioQueue = [];
-                if (currentSource) { try { currentSource.stop(0); } catch(e){} currentSource = null; }
-                isPlaying = false;
-                audioQueue = [];
-                pcmStash = [];
-                pcmStashSamples = 0;
+                
             } catch (error) {
-                console.error('Error stopping preview:', error);
-                showError(`Error stopping preview: ${error.message}`);
+                console.error("❌ Error toggling voice interruption:", error);
             }
         }
-
-        // Check if ElevenLabs live route is healthy
-        window.addEventListener('load', async () => {
+        
+        async function loadChatbotScript() {
             try {
-                const response = await fetch('/elevenlabs/live/health');
-                const data = await response.json();
-                updateStatus('ready', data.requires_auth ? 'Ready (auth required)' : 'Ready to start', 'fas fa-check-circle');
+                // Get agent ID from URL parameters
+                const urlParams = new URLSearchParams(window.location.search);
+                const agentId = urlParams.get('agent_id');
+                
+                if (!agentId) {
+                    console.error('Agent ID not found in URL parameters');
+                    return;
+                }
+                
+                // Fetch and execute the chatbot script
+                const scriptUrl = `/chatbot-script.js/${agentId}`;
+                const response = await fetch(scriptUrl);
+                
+                if (response.ok) {
+                    const scriptContent = await response.text();
+                    
+                    // Create script element and execute
+                    const scriptElement = document.createElement('script');
+                    scriptElement.textContent = scriptContent;
+                    scriptElement.id = 'chatbot-script'; // Add ID for later removal
+                    document.head.appendChild(scriptElement);
+                    
+                    console.log('✅ Chatbot script loaded successfully');
+                } else {
+                    console.error('Failed to load chatbot script:', response.statusText);
+                }
             } catch (error) {
-                console.error('Health check failed:', error);
-                updateStatus('error', 'Connection failed', 'fas fa-exclamation-triangle');
-                showError('Unable to connect to ElevenLabs live service.');
-                document.getElementById('start-btn').disabled = true;
+                console.error('Error loading chatbot script:', error);
+            }
+        }
+        
+        function removeChatbotElements() {
+            // Remove chatbot-related elements when toggle is disabled
+            const elementsToRemove = [
+                '.voice_icon',
+                '.recorder-controls', 
+                '.popup',
+                '.phone_numder_outer',
+                '.micro'
+            ];
+            
+            elementsToRemove.forEach(selector => {
+                const elements = document.querySelectorAll(selector);
+                elements.forEach(element => element.remove());
+            });
+            
+            // Remove the chatbot script itself
+            const chatbotScript = document.getElementById('chatbot-script');
+            if (chatbotScript) {
+                chatbotScript.remove();
+            }
+            
+            console.log('🗑️ Chatbot elements removed');
+        }
+
+        // Initialize ElevenLabs preview when page loads
+        document.addEventListener('DOMContentLoaded', async function() {
+            console.log('🎙️ ElevenLabs preview page loaded');
+            
+            // Wait for client and enable features automatically
+            try {
+                await waitForElevenLabsClient();
+                // Automatically load chatbot script on page load
+                await loadChatbotScript();
+                console.log('✅ ElevenLabs preview initialized successfully');
+            } catch (error) {
+                console.error('Error initializing ElevenLabs preview:', error);
             }
         });
     </script>
