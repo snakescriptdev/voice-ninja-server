@@ -30,7 +30,7 @@ from sqlalchemy import insert, select, delete, func
 from app.databases.models import agent_knowledge_association
 from config import MEDIA_DIR  # Import properly
 from app.utils.helper import extract_text_from_file, is_valid_url
-from app.utils.langchain_integration import get_splits, convert_to_vectorstore
+# from app.utils.langchain_integration import get_splits, convert_to_vectorstore  # Removed - using ElevenLabs knowledge base directly
 
 
 
@@ -239,19 +239,19 @@ def update_agent_database(agent_rec, update_data, agent_id):
             for field, value in update_data.items():
                 if value is not None and hasattr(current_agent, field):
                     setattr(current_agent, field, value)
-                    print(f"🔍 Debug: Updated {field} to: {value}")
+                    # print(f"🔍 Debug: Updated {field} to: {value}")
             
             # Update the updated_at timestamp
             current_agent.updated_at = func.now()
             
-            print(f"🔍 Debug: About to commit changes to database...")
+            # print(f"🔍 Debug: About to commit changes to database...")
             db.session.commit()
-            print(f"🔍 Debug: Database commit successful!")
+            # print(f"🔍 Debug: Database commit successful!")
             
             # Refresh the object to ensure we have latest values
             db.session.refresh(current_agent)
-            print(f"🔍 Debug: After refresh - agent_prompt: {current_agent.agent_prompt}")
-            print(f"🔍 Debug: After refresh - selected_language: {current_agent.selected_language}")
+            # print(f"🔍 Debug: After refresh - agent_prompt: {current_agent.agent_prompt}")
+            # print(f"🔍 Debug: After refresh - selected_language: {current_agent.selected_language}")
             
             # Verify by direct database query
             from sqlalchemy import text
@@ -260,12 +260,12 @@ def update_agent_database(agent_rec, update_data, agent_id):
                 {"agent_id": agent_id}
             )
             row = result.fetchone()
-            print(f"🔍 Debug: Direct DB query - agent_prompt: {row[0] if row else 'None'}, selected_language: {row[1] if row else 'None'}, welcome_msg: {row[2] if row else 'None'}")
+            # print(f"🔍 Debug: Direct DB query - agent_prompt: {row[0] if row else 'None'}, selected_language: {row[1] if row else 'None'}, welcome_msg: {row[2] if row else 'None'}")
             
             return True, None, current_agent
             
     except Exception as e:
-        print(f"🔍 Debug: Database update error: {str(e)}")
+        # print(f"🔍 Debug: Database update error: {str(e)}")
         return False, str(e), None
 
 
@@ -360,20 +360,20 @@ async def edit_agent(request: Request):
                 # Extract dynamic variables from the prompt
                 from jinja2 import meta
                 new_variables = meta.find_undeclared_variables(parsed_template)
-                print(f"🔍 Debug: Dynamic variables found in prompt: {list(new_variables)}")
+                # print(f"🔍 Debug: Dynamic variables found in prompt: {list(new_variables)}")
                 
                 # Get existing dynamic variables if any
                 existing_variables = agent_rec.dynamic_variable if hasattr(agent_rec, 'dynamic_variable') else {}
-                print(f"🔍 Debug: Existing dynamic variables: {existing_variables}")
+                # print(f"🔍 Debug: Existing dynamic variables: {existing_variables}")
                 
                 # Merge existing and new variables
                 merged_variables = {**existing_variables, **{var: "" for var in new_variables if var not in existing_variables}}
-                print(f"🔍 Debug: Merged dynamic variables: {merged_variables}")
+                # print(f"🔍 Debug: Merged dynamic variables: {merged_variables}")
                 
                 # Add dynamic variables to update data
                 if merged_variables:
                     update_data['dynamic_variable'] = merged_variables
-                    print(f"🔍 Debug: Added dynamic_variable to update data")
+                    # print(f"🔍 Debug: Added dynamic_variable to update data")
                 
             except Exception as parse_error:
                 return JSONResponse(
@@ -403,11 +403,11 @@ async def edit_agent(request: Request):
         if phone_number:
             update_data['phone_number'] = phone_number
 
-        print(f"🔍 Debug: Fields to update: {list(update_data.keys())}")
-        if 'welcome_msg' in update_data:
-            print(f"🔍 Debug: Welcome message to update: {update_data['welcome_msg']}")
-        if 'dynamic_variable' in update_data:
-            print(f"🔍 Debug: Dynamic variables to update: {update_data['dynamic_variable']}")
+        # print(f"🔍 Debug: Fields to update: {list(update_data.keys())}")
+        # if 'welcome_msg' in update_data:
+            # print(f"🔍 Debug: Welcome message to update: {update_data['welcome_msg']}")
+        # if 'dynamic_variable' in update_data:
+            # print(f"🔍 Debug: Dynamic variables to update: {update_data['dynamic_variable']}")
         
         # Update local database using the dedicated function
         db_success, db_error, updated_agent = update_agent_database(agent_rec, update_data, agent_id)
@@ -424,22 +424,22 @@ async def edit_agent(request: Request):
 
         # Update ElevenLabs agent if we have an existing ElevenLabs agent ID
         if agent_rec.elvn_lab_agent_id:
-            print(f"🔍 Debug: About to call ElevenLabs update_agent:")
-            print(f"  - agent_id: {agent_rec.elvn_lab_agent_id}")
-            print(f"  - name: {agent_name if agent_name else None}")
-            print(f"  - prompt: {prompt if prompt else None}")
-            print(f"  - model: {selected_llm_model_rec.name if selected_llm_model_rec else None}")
-            print(f"  - voice_id: {elevenlabs_voice_id if elevenlabs_voice_id else None}")
-            print(f"  - language: {selected_language_code if selected_language_code else None}")
-            print(f"  - selected_elevenlab_model: {DEFAULT_MODEL_ELEVENLAB if DEFAULT_MODEL_ELEVENLAB else None}")
-            print(f"  - first_message: {welcome_msg if welcome_msg else None}")
-            if welcome_msg:
-                print(f"🔍 Debug: ElevenLabs will receive welcome message: {welcome_msg}")
+            # print(f"🔍 Debug: About to call ElevenLabs update_agent:")
+            # print(f"  - agent_id: {agent_rec.elvn_lab_agent_id}")
+            # print(f"  - name: {agent_name if agent_name else None}")
+            # print(f"  - prompt: {prompt if prompt else None}")
+            # print(f"  - model: {selected_llm_model_rec.name if selected_llm_model_rec else None}")
+            # print(f"  - voice_id: {elevenlabs_voice_id if elevenlabs_voice_id else None}")
+            # print(f"  - language: {selected_language_code if selected_language_code else None}")
+            # print(f"  - selected_elevenlab_model: {DEFAULT_MODEL_ELEVENLAB if DEFAULT_MODEL_ELEVENLAB else None}")
+            # print(f"  - first_message: {welcome_msg if welcome_msg else None}")
+            # if welcome_msg:
+            #     print(f"🔍 Debug: ElevenLabs will receive welcome message: {welcome_msg}")
             
             # Get dynamic variables from update data if available
             dynamic_vars = update_data.get('dynamic_variable')
-            if dynamic_vars:
-                print(f"🔍 Debug: ElevenLabs will receive dynamic variables: {dynamic_vars}")
+            # if dynamic_vars:
+            #     print(f"🔍 Debug: ElevenLabs will receive dynamic variables: {dynamic_vars}")
             
             try:
                 creator = ElevenLabsAgentCRUD()
@@ -483,9 +483,9 @@ async def edit_agent(request: Request):
             # Save dynamic variables to local database if they exist
             if update_data.get('dynamic_variable'):
                 try:
-                    print(f"🔍 Debug: Saving dynamic variables to local database: {update_data['dynamic_variable']}")
+                    # print(f"🔍 Debug: Saving dynamic variables to local database: {update_data['dynamic_variable']}")
                     AgentModel.update_dynamic_variables(agent_id, update_data['dynamic_variable'])
-                    print(f"✅ Success: Dynamic variables saved to local database")
+                    # print(f"✅ Success: Dynamic variables saved to local database")
                 except Exception as e:
                     print(f"⚠️ Warning: Failed to save dynamic variables to local database: {str(e)}")
 
@@ -536,11 +536,11 @@ async def save_variables(request: Request):
         # Now append variables to prompt and update agent (mimicking edit agent approach)
         if agent.elvn_lab_agent_id:
             try:
-                print(f"🔍 Debug: Updating agent {agent.elvn_lab_agent_id} with new variables")
+                # print(f"🔍 Debug: Updating agent {agent.elvn_lab_agent_id} with new variables")
                 
                 # Get the current prompt from the agent record
                 current_prompt = agent.agent_prompt or ""
-                print(f"🔍 Debug: Current prompt: {current_prompt}")
+                # print(f"🔍 Debug: Current prompt: {current_prompt}")
                 
                 # Remove existing variable placeholders from the prompt
                 import re
@@ -555,7 +555,7 @@ async def save_variables(request: Request):
                 
                 if new_variables_text:
                     updated_prompt = base_prompt + new_variables_text
-                    print(f"🔍 Debug: Updated prompt with variables: {updated_prompt}")
+                    # print(f"🔍 Debug: Updated prompt with variables: {updated_prompt}")
                     
                     # Update the agent with the new prompt (mimicking edit agent approach)
                     update_result = ElevenLabsAgentCRUD().update_agent(
@@ -565,13 +565,14 @@ async def save_variables(request: Request):
                     )
                     
                     if "error" in update_result:
-                        print(f"❌ Error: Failed to update agent: {update_result}")
+                        # print(f"❌ Error: Failed to update agent: {update_result}")
                         return JSONResponse(status_code=500, content={
                             "status": "error", 
                             "message": f"Failed to update ElevenLabs agent: {update_result.get('exc', 'Unknown error')}"
                         })
                     else:
-                        print(f"✅ Success: Agent updated with new prompt and variables")
+                        # print(f"✅ Success: Agent updated with new prompt and variables")
+                        pass
                         
                         # Also update the local agent record with the new prompt
                         try:
@@ -581,9 +582,10 @@ async def save_variables(request: Request):
                             # Use the proper update_prompt method
                             LocalAgentModel.update_prompt(agent_id, updated_prompt)
                             
-                            print(f"✅ Success: Local agent prompt updated with variables")
+                            # print(f"✅ Success: Local agent prompt updated with variables")
                         except Exception as local_update_error:
-                            print(f"⚠️ Warning: Failed to update local agent prompt: {str(local_update_error)}")
+                            # print(f"⚠️ Warning: Failed to update local agent prompt: {str(local_update_error)}")
+                            pass
                 else:
                     print(f"ℹ️ Info: No new variables to append to prompt")
             except Exception as e:
@@ -634,9 +636,9 @@ async def upload_file(request: Request):
                 content={"status": "error", "message": f"No readable text found in {file.filename}."}
             )
         #Add files to ElevenLabs
-        print(f"🔍 Debug: Uploading file to ElevenLabs: {file.filename}")
+        # print(f"🔍 Debug: Uploading file to ElevenLabs: {file.filename}")
         file_info = ElevenLabsAgentCRUD().upload_file_to_knowledge_base(file_path, name=file.filename)
-        print(f"🔍 Debug: ElevenLabs response: {file_info}")
+        # print(f"🔍 Debug: ElevenLabs response: {file_info}")
         
         elevenlabs_doc_id = file_info.get("id")
         elevenlabs_doc_name = file_info.get("name")
@@ -661,7 +663,7 @@ async def upload_file(request: Request):
                 result = db.session.execute(query)
                 agent_relations = result.fetchall()  # Get ALL agents
             
-            print(f"🔍 Debug: Found {len(agent_relations)} agents using this knowledge base")
+            # print(f"🔍 Debug: Found {len(agent_relations)} agents using this knowledge base")
             
             if agent_relations:
                 # Process each agent
@@ -670,7 +672,7 @@ async def upload_file(request: Request):
                     agent = AgentModel.get_by_id(agent_id)
                     
                     if agent and hasattr(agent, 'elvn_lab_agent_id') and agent.elvn_lab_agent_id:
-                        print(f"🔍 Debug: Updating agent {agent.elvn_lab_agent_id} with new file")
+                        # print(f"🔍 Debug: Updating agent {agent.elvn_lab_agent_id} with new file")
                         
                         # Just add the new file to the agent's knowledge base
                         new_file_data = {
@@ -690,11 +692,11 @@ async def upload_file(request: Request):
                                 old_xi_kb_files["conversation_config"]["agent"]["prompt"].get("knowledge_base")):
                                 
                                 existing_kb_files = old_xi_kb_files["conversation_config"]["agent"]["prompt"]["knowledge_base"]
-                                print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} has {len(existing_kb_files)} existing knowledge base files")
+                                # print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} has {len(existing_kb_files)} existing knowledge base files")
                             
                             # Add the new file to existing files
                             combined_kb_files = existing_kb_files + [new_file_data]
-                            print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} combined knowledge base files: {combined_kb_files}")
+                            # print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} combined knowledge base files: {combined_kb_files}")
                             
                             # Update the agent with all files
                             update_result = ElevenLabsAgentCRUD().update_agent(
@@ -738,12 +740,12 @@ async def delete_file(request: Request):
             })
         
         # Debug logging
-        print(f"🔍 Debug: Deleting file - file_id: {file_id}, knowledge_base_id: {knowledge_base_id}, elevenlabs_doc_id: {elevenlabs_doc_id}")
+        # print(f"🔍 Debug: Deleting file - file_id: {file_id}, knowledge_base_id: {knowledge_base_id}, elevenlabs_doc_id: {elevenlabs_doc_id}")
         
         file = KnowledgeBaseFileModel.get_by_id(file_id)
         if file:
             if file.knowledge_base_id == knowledge_base_id:
-                print(f"🔍 Debug: Found file in database - file_id: {file_id}, knowledge_base_id: {knowledge_base_id}")
+                # print(f"🔍 Debug: Found file in database - file_id: {file_id}, knowledge_base_id: {knowledge_base_id}")
                                 # Get all files for this knowledge base
                 files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base_id)
 
@@ -758,7 +760,7 @@ async def delete_file(request: Request):
                         result = db.session.execute(query)
                         agent_relations = result.fetchall()  # Get ALL agents
                     
-                    print(f"🔍 Debug: Found {len(agent_relations)} agents using this knowledge base")
+                    # print(f"🔍 Debug: Found {len(agent_relations)} agents using this knowledge base")
                     
                     if agent_relations:
                         # Process each agent
@@ -767,7 +769,7 @@ async def delete_file(request: Request):
                             agent = AgentModel.get_by_id(agent_id)
                             
                             if agent and hasattr(agent, 'elvn_lab_agent_id') and agent.elvn_lab_agent_id:
-                                print(f"🔍 Debug: Removing file from agent {agent.elvn_lab_agent_id}")
+                                # print(f"🔍 Debug: Removing file from agent {agent.elvn_lab_agent_id}")
                                 
                                 # Get current agent details from ElevenLabs
                                 agent_details = ElevenLabsAgentCRUD().get_agent(agent.elvn_lab_agent_id)
@@ -781,11 +783,11 @@ async def delete_file(request: Request):
                                         agent_details["conversation_config"]["agent"]["prompt"].get("knowledge_base")):
                                         
                                         existing_kb_files = agent_details["conversation_config"]["agent"]["prompt"]["knowledge_base"]
-                                        print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} has {len(existing_kb_files)} existing knowledge base files")
+                                        # print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} has {len(existing_kb_files)} existing knowledge base files")
                                     
                                     # Remove the file we're deleting
                                     updated_kb_files = [kb_file for kb_file in existing_kb_files if kb_file.get("id") != elevenlabs_doc_id]
-                                    print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} updated KB files (removed {elevenlabs_doc_id}): {updated_kb_files}")
+                                    # print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} updated KB files (removed {elevenlabs_doc_id}): {updated_kb_files}")
                                     
                                     # Update the agent with the updated knowledge base
                                     update_result = ElevenLabsAgentCRUD().update_agent(
@@ -811,7 +813,7 @@ async def delete_file(request: Request):
                     raise e
                 
                 # Now delete the file from ElevenLabs KB
-                print(f"🔍 Debug: Attempting to delete file from ElevenLabs with doc_id: {elevenlabs_doc_id}")
+                # print(f"🔍 Debug: Attempting to delete file from ElevenLabs with doc_id: {elevenlabs_doc_id}")
                 elevenlabs_result = ElevenLabsAgentCRUD().delete_file_from_knowledge_base(elevenlabs_doc_id)
                 
                 # Check if ElevenLabs deletion was successful
@@ -826,7 +828,7 @@ async def delete_file(request: Request):
                 
                 # Only delete from local storage if ElevenLabs deletion was successful
                 try:
-                    print(f"🔍 Debug: Deleting file from local storage with file_id: {file_id}")
+                    # print(f"🔍 Debug: Deleting file from local storage with file_id: {file_id}")
                     KnowledgeBaseFileModel.delete(file_id)
                     print(f"✅ Success: File deleted from local storage successfully")
                 except Exception as local_delete_error:
@@ -837,7 +839,7 @@ async def delete_file(request: Request):
                 # If this was the last file, delete the knowledge base too
                 if len(files) == 1:  # Only had 1 file which we just deleted
                     try:
-                        print(f"🔍 Debug: Deleting knowledge base with id: {knowledge_base_id}")
+                        # print(f"🔍 Debug: Deleting knowledge base with id: {knowledge_base_id}")
                         KnowledgeBaseModel.delete(knowledge_base_id)
                         print(f"✅ Success: Knowledge base deleted successfully")
                         return JSONResponse(status_code=200, content={
@@ -896,11 +898,11 @@ async def attach_knowledge_base(request: Request):
                     for file in knowledge_base_files:
                         if file.elevenlabs_doc_id and file.elevenlabs_doc_id.strip():
                             elevenlabs_kb_ids.append(file.elevenlabs_doc_id)
-                            print(f"🔍 Debug: Found file '{file.file_name}' with ElevenLabs doc_id: {file.elevenlabs_doc_id}")
+                            # print(f"🔍 Debug: Found file '{file.file_name}' with ElevenLabs doc_id: {file.elevenlabs_doc_id}")
                     
-                    print(f"🔍 Debug: Total files found for KB {knowledge_base_id}: {len(knowledge_base_files)}")
-                    print(f"🔍 Debug: Valid ElevenLabs doc_ids: {len(elevenlabs_kb_ids)}")
-                    print(f"🔍 Debug: ElevenLabs doc_ids: {elevenlabs_kb_ids}")
+                    # print(f"🔍 Debug: Total files found for KB {knowledge_base_id}: {len(knowledge_base_files)}")
+                    # print(f"🔍 Debug: Valid ElevenLabs doc_ids: {len(elevenlabs_kb_ids)}")
+                    # print(f"🔍 Debug: ElevenLabs doc_ids: {elevenlabs_kb_ids}")
                     
                     if not elevenlabs_kb_ids:
                         return JSONResponse(status_code=400, content={
@@ -908,7 +910,7 @@ async def attach_knowledge_base(request: Request):
                             "message": f"No valid ElevenLabs files found in knowledge base {knowledge_base_id}"
                         })
                     
-                    print(f"🔍 Debug: Will attach {len(elevenlabs_kb_ids)} files to agent {agent_id}")
+                    # print(f"🔍 Debug: Will attach {len(elevenlabs_kb_ids)} files to agent {agent_id}")
                     
                 except Exception as kb_error:
                     print(f"❌ Error: Failed to get ElevenLabs KB IDs: {str(kb_error)}")
@@ -930,7 +932,7 @@ async def attach_knowledge_base(request: Request):
                                     "type": "file"
                                 })
                         
-                        print(f"🔍 Debug: Formatted knowledge base data for ElevenLabs: {knowledge_base_data}")
+                        # print(f"🔍 Debug: Formatted knowledge base data for ElevenLabs: {knowledge_base_data}")
                         
                         elevenlabs_result = ElevenLabsAgentCRUD().update_agent(
                             agent_id=agent.elvn_lab_agent_id,
@@ -978,7 +980,7 @@ async def attach_knowledge_base(request: Request):
                         )
                         session.execute(delete_stmt)
                         session.commit()  # Ensure deletion is applied
-                        print(f"🔍 Debug: Removed old knowledge base association for agent {agent_id}")
+                        # print(f"🔍 Debug: Removed old knowledge base association for agent {agent_id}")
 
                     if knowledge_base_id:
                         # If no association exists, insert a new one
@@ -989,7 +991,7 @@ async def attach_knowledge_base(request: Request):
                             )
                             session.execute(stmt)
                             session.commit()
-                            print(f"🔍 Debug: Created new knowledge base association for agent {agent_id}")
+                            # print(f"🔍 Debug: Created new knowledge base association for agent {agent_id}")
 
                     session.close()
                     
@@ -1091,11 +1093,13 @@ async def upload_knowledge_base(request: Request):
             })
             uploaded_files.append(attachment.filename)
 
-        splits = get_splits(content_list)
-        vector_id = str(uuid.uuid4())
-        if splits:
-            status, vector_path =convert_to_vectorstore(splits, vector_id)
-            KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
+        # Local vector store creation removed - using ElevenLabs knowledge base directly
+        # splits = get_splits(content_list)
+        # vector_id = str(uuid.uuid4())
+        # if splits:
+        #     status, vector_path =convert_to_vectorstore(splits, vector_id)
+        #     KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
+        
         return JSONResponse(
             status_code=200,
             content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "uploaded_files": uploaded_files}
@@ -1147,8 +1151,8 @@ async def create_custom_function(request: Request):
             return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook configuration is required"})
         
         eleven_agent_id = agent.elvn_lab_agent_id
-        print(f"Debug: Local agent ID: {agent_id}")
-        print(f"Debug: ElevenLabs agent ID: '{eleven_agent_id}' (type: {type(eleven_agent_id)})")
+        # print(f"Debug: Local agent ID: {agent_id}")
+        # print(f"Debug: ElevenLabs agent ID: '{eleven_agent_id}' (type: {type(eleven_agent_id)})")
         
         if not eleven_agent_id:
             return JSONResponse(status_code=400, content={"status": "error", "message": "ElevenLabs agent ID is required. Please ensure the agent is properly created in ElevenLabs."})
@@ -1157,9 +1161,9 @@ async def create_custom_function(request: Request):
         tool_name = form_data.get("tool_name", "")
         tool_description = form_data.get("tool_description", "")
         
-        print(f"Debug: Received form_data: {form_data}")
-        print(f"Debug: tool_name: '{tool_name}' (type: {type(tool_name)})")
-        print(f"Debug: tool_description: '{tool_description}' (type: {type(tool_description)})")
+        # print(f"Debug: Received form_data: {form_data}")
+        # print(f"Debug: tool_name: '{tool_name}' (type: {type(tool_name)})")
+        # print(f"Debug: tool_description: '{tool_description}' (type: {type(tool_description)})")
         
         if not tool_name or not tool_description:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Tool name and description are required"})
@@ -1199,15 +1203,15 @@ async def create_custom_function(request: Request):
         # Build ElevenLabs tool_config structure using the fixed function
         tool_config = build_elevenlabs_tool_config(form_data)
         
-        print(f"Debug: Built ElevenLabs tool_config: {json.dumps(tool_config, indent=2)}")
+        # print(f"Debug: Built ElevenLabs tool_config: {json.dumps(tool_config, indent=2)}")
         
         # Validate that POST/PUT/PATCH methods have request_body_schema if needed
         api_schema = tool_config.get("api_schema", {})
         http_method = api_schema.get("method", "")
         request_body_schema = api_schema.get("request_body_schema")
         
-        print(f"Debug: HTTP method: '{http_method}'")
-        print(f"Debug: Request body schema exists: {request_body_schema is not None}")
+        # print(f"Debug: HTTP method: '{http_method}'")
+        # print(f"Debug: Request body schema exists: {request_body_schema is not None}")
         
         # Create the tool in ElevenLabs
         result = ElevenLabsAgentCRUD().create_webhook_function(tool_config)  # Pass tool_config directly
@@ -1221,7 +1225,7 @@ async def create_custom_function(request: Request):
         # Extract ElevenLabs tool ID from result
         elevenlabs_tool_id = result.get("id") or result.get("tool_id")
         
-        print(f"Debug: Created tool in ElevenLabs with ID: {elevenlabs_tool_id}")
+        # print(f"Debug: Created tool in ElevenLabs with ID: {elevenlabs_tool_id}")
         
         if not elevenlabs_tool_id:
             return JSONResponse(status_code=500, content={
@@ -1230,7 +1234,7 @@ async def create_custom_function(request: Request):
             })
         
         # Get existing tools from agent's conversation config and add the new tool
-        print(f"Debug: Getting existing tools for agent {eleven_agent_id}")
+        # print(f"Debug: Getting existing tools for agent {eleven_agent_id}")
         existing_agent_result = ElevenLabsAgentCRUD().get_agent(eleven_agent_id)
         
         existing_tool_ids = []
@@ -1240,13 +1244,13 @@ async def create_custom_function(request: Request):
             agent_config = conversation_config.get("agent", {})
             prompt_config = agent_config.get("prompt", {})
             existing_tool_ids = prompt_config.get("tool_ids", [])
-            print(f"Debug: Found {len(existing_tool_ids)} existing tools in agent config: {existing_tool_ids}")
+            # print(f"Debug: Found {len(existing_tool_ids)} existing tools in agent config: {existing_tool_ids}")
         else:
             print(f"Warning: Failed to get agent config: {existing_agent_result}")
         
         # Add the new tool to the existing tools list
         all_tool_ids = existing_tool_ids + [elevenlabs_tool_id]
-        print(f"Debug: Updating agent {eleven_agent_id} with all tools: {all_tool_ids}")
+        # print(f"Debug: Updating agent {eleven_agent_id} with all tools: {all_tool_ids}")
         
         update_result = ElevenLabsAgentCRUD().update_agent_tools(eleven_agent_id, all_tool_ids)
         
@@ -1293,252 +1297,7 @@ async def create_custom_function(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
-# def build_elevenlabs_tool_config(form_data):
-#     """
-#     Build the complete ElevenLabs tool_config structure from form data.
-#     Handles all nested fields properly according to the WebhookToolConfig schema.
-#     """
-    
-#     print(f"🔍 Debug: build_elevenlabs_tool_config received: {form_data}")
-    
-#     # Extract basic fields with None safety
-#     tool_name = form_data.get("tool_name") or ""
-#     tool_description = form_data.get("tool_description") or ""
-#     api_url = form_data.get("api_url") or ""
-#     http_method = form_data.get("http_method") or "POST"
-#     try:
-#         response_timeout = int(form_data.get("response_timeout") or 20)
-#     except (ValueError, TypeError):
-#         response_timeout = 20
-#     body_description = form_data.get("body_description") or ""
-    
-#     print(f"🔍 Debug: Extracted fields - tool_name: '{tool_name}', api_url: '{api_url}'")
-    
-#     # Extract nested arrays from form data
-#     path_params = form_data.get("path_params", [])
-#     query_params = form_data.get("query_params", [])
-#     request_body_properties = form_data.get("request_body_properties", [])
-#     request_headers = form_data.get("request_headers", [])
-#     dynamic_variables = form_data.get("dynamic_variables", [])
-#     assignments = form_data.get("assignments", [])
-    
-#     # Build path_params_schema (ElevenLabs expects direct dictionary mapping)
-#     path_params_schema = {"type": "object", "properties": {}}
-    
-#     # First, extract all placeholders from the URL
-#     import re
-#     url_placeholders = re.findall(r'\{([^}]+)\}', api_url)
-#     print(f"🔍 Debug: Found URL placeholders: {url_placeholders}")
-    
-#     # Add placeholders from URL to path_params_schema with default values
-#     for placeholder in url_placeholders:
-#         if placeholder not in path_params_schema:
-#             path_params_schema[placeholder] = {
-#                 "type": "string",
-#                 "description": f"Path parameter {placeholder}"
-#             }
-#             print(f"🔍 Debug: Added default path parameter: {placeholder}")
-    
-#     # Then process explicitly defined path parameters
-#     if path_params:
-#         for param in path_params:
-#             param_name = param.get("name", "")
-#             param_type = param.get("type", "string")
-#             param_description = param.get("description", "")
-#             param_required = param.get("required", False)
-#             param_dynamic_var = param.get("dynamic_variable", "")
-#             param_constant_value = param.get("constant_value", "")
-            
-#             if param_name:
-#                 # Check if the URL contains a placeholder for this parameter
-#                 placeholder = f"{{{param_name}}}"
-#                 if placeholder in api_url:
-#                     # Create the property object with type
-#                     property_obj = {"type": param_type}
-                    
-#                     # Add the appropriate value field based on what's provided
-#                     if param_description:
-#                         property_obj["description"] = param_description
-#                     elif param_dynamic_var:
-#                         property_obj["dynamic_variable"] = param_dynamic_var
-#                     elif param_constant_value:
-#                         property_obj["constant_value"] = param_constant_value
-                    
-#                     # Update the existing entry or create new one
-#                     path_params_schema[param_name] = property_obj
-#                     print(f"🔍 Debug: Updated path parameter: {param_name}")
-#                 else:
-#                     print(f"⚠️ Warning: Path parameter '{param_name}' defined but URL doesn't contain placeholder '{placeholder}'. Skipping this parameter.")
-    
-#     print(f"🔍 Debug: Final path_params_schema: {path_params_schema}")
-    
-#     # Build query_params_schema (ElevenLabs expects direct dictionary when empty, object with properties when populated)
-#     # Default empty schemas
-    
-#     query_params_schema = {"type": "object", "properties": {}}
 
-#     if query_params:
-#         valid_params = {}
-#         for param in query_params:
-#             param_name = param.get("name", "")
-#             param_type = param.get("type", "string")
-#             param_description = param.get("description", "")
-#             param_required = param.get("required", False)
-#             param_dynamic_var = param.get("dynamic_variable", "")
-#             param_constant_value = param.get("constant_value", "")
-            
-#             if param_name:
-#                 # Check if we have at least one of the required fields
-#                 if param_description or param_dynamic_var or param_constant_value:
-#                     # Create the property object with type
-#                     property_obj = {"type": param_type}
-                    
-#                     # Add the appropriate value field based on what's provided
-#                     if param_description:
-#                         property_obj["description"] = param_description
-#                     elif param_dynamic_var:
-#                         property_obj["dynamic_variable"] = param_dynamic_var
-#                     elif param_constant_value:
-#                         property_obj["constant_value"] = param_constant_value
-                    
-#                     valid_params[param_name] = property_obj
-#                 else:
-#                     print(f"⚠️ Warning: Skipping query parameter '{param_name}' - no valid description, dynamic_variable, or constant_value provided")
-        
-#         # Only use object format with properties if we have valid parameters
-#         if valid_params:
-#             query_params_schema["properties"] = valid_params
-
-    
-#     # Build request_body_schema (only for POST/PUT/PATCH methods)
-#     request_body_schema = None
-#     if http_method in ["POST", "PUT", "PATCH"]:
-#         # ElevenLabs expects standard JSON Schema format
-#         request_body_schema = {
-#             "type": "object",
-#             "description": body_description or "",
-#             "properties": {},
-#             "required": []
-#         }
-        
-#         # Add properties if any are defined
-#         for prop in request_body_properties:
-#             prop_name = prop.get("name", "")
-#             prop_type = prop.get("type", "string")
-#             prop_description = prop.get("description", "")
-#             prop_required = prop.get("required", False)
-#             prop_dynamic_var = prop.get("dynamic_variable", "")
-#             prop_constant_value = prop.get("constant_value", "")
-            
-#             if prop_name:
-#                 # Create property object matching ElevenLabs format
-#                 property_obj = {
-#                     "type": prop_type
-#                 }
-                
-#                 # ElevenLabs requires at least one of: description, dynamic_variable, or constant_value
-#                 has_valid_content = False
-                
-#                 # Add description if provided and not empty
-#                 if prop_description and prop_description.strip():
-#                     property_obj["description"] = prop_description.strip()
-#                     has_valid_content = True
-                
-#                 # Add dynamic variable or constant value if provided
-#                 if prop_dynamic_var and prop_dynamic_var.strip():
-#                     property_obj["dynamic_variable"] = prop_dynamic_var.strip()
-#                     has_valid_content = True
-#                 elif prop_constant_value and prop_constant_value.strip():
-#                     property_obj["constant_value"] = prop_constant_value.strip()
-#                     has_valid_content = True
-                
-#                 # Only add property if it has valid content
-#                 if has_valid_content:
-#                     request_body_schema["properties"][prop_name] = property_obj
-#                 else:
-#                     print(f"⚠️ Warning: Skipping property '{prop_name}' - no valid description, dynamic_variable, or constant_value provided")
-                
-#                 # Add to required list if marked as required
-#                 if prop_required:
-#                     request_body_schema["required"].append(prop_name)
-    
-#     # Build request_headers
-#     request_headers_dict = {}
-#     for header in request_headers:
-#         header_name = header.get("name", "")
-#         header_value = header.get("value", "")
-#         header_type = header.get("type", "string")  # "string", "secret", "dynamic_variable"
-        
-#         if header_name and header_value:
-#             if header_type == "secret":
-#                 request_headers_dict[header_name] = {
-#                     "type": "secret",
-#                     "secret_id": header_value
-#                 }
-#             elif header_type == "dynamic_variable":
-#                 request_headers_dict[header_name] = {
-#                     "variable_name": header_value
-#                 }
-#             else:
-#                 request_headers_dict[header_name] = header_value
-    
-#     # Build dynamic_variables
-#     dynamic_variable_placeholders = {}
-#     for var in dynamic_variables:
-#         var_name = var.get("name", "")
-#         var_value = var.get("value", "")
-#         if var_name:
-#             # Try to parse as number/boolean, otherwise keep as string
-#             try:
-#                 if var_value.lower() in ['true', 'false']:
-#                     dynamic_variable_placeholders[var_name] = var_value.lower() == 'true'
-#                 elif '.' in var_value:
-#                     dynamic_variable_placeholders[var_name] = float(var_value)
-#                 else:
-#                     dynamic_variable_placeholders[var_name] = int(var_value)
-#             except (ValueError, AttributeError):
-#                 dynamic_variable_placeholders[var_name] = var_value
-    
-#     # Build assignments
-#     assignments_list = []
-#     for assignment in assignments:
-#         dynamic_var = assignment.get("dynamic_variable", "")
-#         value_path = assignment.get("value_path", "")
-#         source = assignment.get("source", "response")
-        
-#         if dynamic_var and value_path:
-#             assignments_list.append({
-#                 "dynamic_variable": dynamic_var,
-#                 "value_path": value_path,
-#                 "source": source
-#             })
-    
-#     # Build the complete tool_config
-    # tool_config = {
-    #     "tool_config": {
-    #         "type": "webhook",
-    #         "name": tool_name,
-    #         "description": tool_description,
-    #         "response_timeout_secs": response_timeout,
-    #         "disable_interruptions": form_data.get("disable_interruptions", False),
-    #         "force_pre_tool_speech": form_data.get("force_pre_tool_speech", False),
-    #         "api_schema": {
-    #             "url": api_url,
-    #             "method": http_method,
-    #             "path_params_schema": path_params_schema,
-    #             "query_params_schema": query_params_schema,
-    #             "request_body_schema": request_body_schema,
-    #             "request_headers": request_headers_dict if request_headers_dict else {},
-    #             "auth_connection": None
-    #         },
-    #         "dynamic_variables": {
-    #             "dynamic_variable_placeholders": dynamic_variable_placeholders
-    #         },
-    #         "assignments": assignments_list
-    #     }
-    # }
-    
-#     return tool_config
 def build_elevenlabs_tool_config(form_data: dict) -> dict:
     """
     Build a WebhookToolConfig that matches ElevenLabs expected format exactly.
@@ -1614,9 +1373,10 @@ def build_elevenlabs_tool_config(form_data: dict) -> dict:
     # Only create query_params_schema if there are actual query parameters
     if query_params_properties:
         query_params_schema = {"properties": query_params_properties}
-        print(f"🔍 Debug: Created query_params_schema with {len(query_params_properties)} properties")
+        # print(f"🔍 Debug: Created query_params_schema with {len(query_params_properties)} properties")
     else:
-        print(f"🔍 Debug: No query parameters found, query_params_schema will be None")
+        # print(f"🔍 Debug: No query parameters found, query_params_schema will be None")
+        pass
     
     # Build request_body_schema (only for POST/PUT/PATCH methods)
     request_body_schema = None
@@ -1728,7 +1488,7 @@ def build_elevenlabs_tool_config(form_data: dict) -> dict:
             force_pre_tool_speech = True
         else:
             force_pre_tool_speech = False
-    print(f"🔍 Debug: force_pre_tool_speech: {force_pre_tool_speech} (type: {type(force_pre_tool_speech)})")
+    # print(f"🔍 Debug: force_pre_tool_speech: {force_pre_tool_speech} (type: {type(force_pre_tool_speech)})")
     
     # Handle disable_interruptions - convert string values to boolean if needed  
     disable_interruptions = form_data.get("disable_interruptions", False)
@@ -1737,7 +1497,7 @@ def build_elevenlabs_tool_config(form_data: dict) -> dict:
             disable_interruptions = True
         else:
             disable_interruptions = False
-    print(f"🔍 Debug: disable_interruptions: {disable_interruptions} (type: {type(disable_interruptions)})")
+    # print(f"🔍 Debug: disable_interruptions: {disable_interruptions} (type: {type(disable_interruptions)})")
     
     # Build the tool_config matching ElevenLabs exact format
     tool_config = {
@@ -1765,18 +1525,20 @@ def build_elevenlabs_tool_config(form_data: dict) -> dict:
     
     # Only add query_params_schema if it has actual parameters
     if query_params_schema and query_params_schema.get("properties") and len(query_params_schema.get("properties", {})) > 0:
-        print(f"🔍 Debug: Adding query_params_schema to tool_config with {len(query_params_schema.get('properties', {}))} properties")
+        # print(f"🔍 Debug: Adding query_params_schema to tool_config with {len(query_params_schema.get('properties', {}))} properties")
         tool_config["api_schema"]["query_params_schema"] = query_params_schema
     else:
-        print(f"🔍 Debug: Not adding query_params_schema - query_params_schema: {query_params_schema}")
+        # print(f"🔍 Debug: Not adding query_params_schema - query_params_schema: {query_params_schema}")
+        pass
     
     # Only add request_body_schema if it exists
     if request_body_schema:
         tool_config["api_schema"]["request_body_schema"] = request_body_schema
     
-    print(f"🔍 Debug: Final tool_config api_schema keys: {list(tool_config['api_schema'].keys())}")
+    # print(f"🔍 Debug: Final tool_config api_schema keys: {list(tool_config['api_schema'].keys())}")
     if 'query_params_schema' in tool_config['api_schema']:
-        print(f"🔍 Debug: query_params_schema in final config: {tool_config['api_schema']['query_params_schema']}")
+        # print(f"🔍 Debug: query_params_schema in final config: {tool_config['api_schema']['query_params_schema']}")
+        pass
     
     return tool_config
 
@@ -1796,7 +1558,7 @@ async def delete_custom_functions(request: Request):
         if not tool:
             return JSONResponse(status_code=404, content={"status": "error", "message": "Webhook tool not found"})
         
-        print(f"🔍 Debug: Deleting tool {function_id} with ElevenLabs ID: {tool.elevenlabs_tool_id}")
+        # print(f"🔍 Debug: Deleting tool {function_id} with ElevenLabs ID: {tool.elevenlabs_tool_id}")
         
         # Get the agent to get the ElevenLabs agent ID
         agent = AgentModel.get_by_id(tool.agent_id)
@@ -1816,7 +1578,7 @@ async def delete_custom_functions(request: Request):
                     # Remove the tool ID from the list
                     updated_tool_ids = [tid for tid in existing_tool_ids if tid != tool.elevenlabs_tool_id]
                     
-                    print(f"🔍 Debug: Updating agent {agent.elvn_lab_agent_id} with tools: {updated_tool_ids}")
+                    # print(f"🔍 Debug: Updating agent {agent.elvn_lab_agent_id} with tools: {updated_tool_ids}")
                     
                     # Update agent with remaining tools
                     update_result = ElevenLabsAgentCRUD().update_agent_tools(agent.elvn_lab_agent_id, updated_tool_ids)
@@ -1872,11 +1634,11 @@ async def get_custom_functions(request: Request):
         
         function = ElevenLabsWebhookToolModel.get_by_id(function_id)
         if function:
-            print(f"🔍 Debug: get_custom_functions - Raw database values:")
-            print(f"🔍 Debug: - function.tool_name: '{function.tool_name}'")
-            print(f"🔍 Debug: - function.tool_description: '{function.tool_description}'")
-            print(f"🔍 Debug: - function.tool_config type: {type(function.tool_config)}")
-            print(f"🔍 Debug: - function.tool_config: {function.tool_config}")
+            # print(f"🔍 Debug: get_custom_functions - Raw database values:")
+            # print(f"🔍 Debug: - function.tool_name: '{function.tool_name}'")
+            # print(f"🔍 Debug: - function.tool_description: '{function.tool_description}'")
+            # print(f"🔍 Debug: - function.tool_config type: {type(function.tool_config)}")
+            # print(f"🔍 Debug: - function.tool_config: {function.tool_config}")
             
             # Extract api_url and timeout from tool_config
             tool_config = function.tool_config or {}
@@ -1901,13 +1663,13 @@ async def get_custom_functions(request: Request):
                 "function_parameters": function.tool_config
             }
             
-            print(f"🔍 Debug: get_custom_functions returning data for function_id {function_id}:")
-            print(f"🔍 Debug: - id: {function_data['id']}")
-            print(f"🔍 Debug: - function_name: '{function_data['function_name']}'")
-            print(f"🔍 Debug: - function_description: '{function_data['function_description']}'")
-            print(f"🔍 Debug: - function_url: '{function_data['function_url']}'")
-            print(f"🔍 Debug: - function_timeout: {function_data['function_timeout']}")
-            print(f"🔍 Debug: - function_parameters keys: {list(function_data['function_parameters'].keys()) if function_data['function_parameters'] else 'None'}")
+            # print(f"🔍 Debug: get_custom_functions returning data for function_id {function_id}:")
+            # print(f"🔍 Debug: - id: {function_data['id']}")
+            # print(f"🔍 Debug: - function_name: '{function_data['function_name']}'")
+            # print(f"🔍 Debug: - function_description: '{function_data['function_description']}'")
+            # print(f"🔍 Debug: - function_url: '{function_data['function_url']}'")
+            # print(f"🔍 Debug: - function_timeout: {function_data['function_timeout']}")
+            # print(f"🔍 Debug: - function_parameters keys: {list(function_data['function_parameters'].keys()) if function_data['function_parameters'] else 'None'}")
             
             response = {
                 "status": "success",
@@ -2040,10 +1802,10 @@ async def edit_custom_functions(function_id: int, request: Request):
             if not function:
                 return JSONResponse(status_code=404, content={"status": "error", "message": "Custom function not found"})
             
-            print(f"🔍 Debug: Updating local database with:")
-            print(f"🔍 Debug: - function_name: '{function_name}'")
-            print(f"🔍 Debug: - function_description: '{function_description}'")
-            print(f"🔍 Debug: - function_parameters: {function_parameters}")
+            # print(f"🔍 Debug: Updating local database with:")
+            # print(f"🔍 Debug: - function_name: '{function_name}'")
+            # print(f"🔍 Debug: - function_description: '{function_description}'")
+            # print(f"🔍 Debug: - function_parameters: {function_parameters}")
             
             # Store old values for comparison
             old_name = function.tool_name
@@ -2055,31 +1817,31 @@ async def edit_custom_functions(function_id: int, request: Request):
             # Store in the same nested structure as creation for consistency
             function.tool_config = {"tool_config": tool_config}
             
-            print(f"🔍 Debug: Database changes:")
-            print(f"🔍 Debug: - tool_name: '{old_name}' → '{function.tool_name}'")
-            print(f"🔍 Debug: - tool_description: '{old_description}' → '{function.tool_description}'")
-            print(f"🔍 Debug: - tool_config changed: {old_config != function.tool_config}")
+            # print(f"🔍 Debug: Database changes:")
+            # print(f"🔍 Debug: - tool_name: '{old_name}' → '{function.tool_name}'")
+            # print(f"🔍 Debug: - tool_description: '{old_description}' → '{function.tool_description}'")
+            # print(f"🔍 Debug: - tool_config changed: {old_config != function.tool_config}")
             
             # Explicitly add the object to the session to ensure it's tracked
             db.session.add(function)
-            print(f"🔍 Debug: Object added to session")
+            # print(f"🔍 Debug: Object added to session")
             
             # Commit the changes
             db.session.commit()
-            print(f"✅ Debug: Database commit successful")
+            # print(f"✅ Debug: Database commit successful")
             
             # Force a flush to ensure changes are written to database
             db.session.flush()
-            print(f"✅ Debug: Database flush completed")
+            # print(f"✅ Debug: Database flush completed")
             
             # Verify the data was actually saved by reading it back
             verification_function = ElevenLabsWebhookToolModel.get_by_id(function_id)
-            print(f"🔍 Debug: Verification read - tool_description: '{verification_function.tool_description}'")
+            # print(f"🔍 Debug: Verification read - tool_description: '{verification_function.tool_description}'")
             
             # Also check if the object is dirty (has uncommitted changes)
-            print(f"🔍 Debug: Function object dirty: {db.session.dirty}")
-            print(f"🔍 Debug: Function object new: {db.session.new}")
-            print(f"🔍 Debug: Function object deleted: {db.session.deleted}")
+            # print(f"🔍 Debug: Function object dirty: {db.session.dirty}")
+            # print(f"🔍 Debug: Function object new: {db.session.new}")
+            # print(f"🔍 Debug: Function object deleted: {db.session.deleted}")
             
             # Prepare response data using the verification function
             # Extract URL and timeout from the stored nested structure
@@ -2102,12 +1864,12 @@ async def edit_custom_functions(function_id: int, request: Request):
                 "function_parameters": verification_function.tool_config
             }
         
-        print(f"🔍 Debug: Response data being sent to frontend:")
-        print(f"🔍 Debug: - id: {function_data['id']}")
-        print(f"🔍 Debug: - function_name: '{function_data['function_name']}'")
-        print(f"🔍 Debug: - function_description: '{function_data['function_description']}'")
-        print(f"🔍 Debug: - function_url: '{function_data['function_url']}'")
-        print(f"🔍 Debug: - function_timeout: {function_data['function_timeout']}")
+        # print(f"🔍 Debug: Response data being sent to frontend:")
+        # print(f"🔍 Debug: - id: {function_data['id']}")
+        # print(f"🔍 Debug: - function_name: '{function_data['function_name']}'")
+        # print(f"🔍 Debug: - function_description: '{function_data['function_description']}'")
+        # print(f"🔍 Debug: - function_url: '{function_data['function_url']}'")
+        # print(f"🔍 Debug: - function_timeout: {function_data['function_timeout']}")
         
         response = {
             "status": "success",
@@ -2309,11 +2071,13 @@ async def create_text(request: Request):
                 "text_content": content
             })
 
-        splits = get_splits(content_list)
-        vector_id = str(uuid.uuid4())
-        if splits:
-            status, vector_path =convert_to_vectorstore(splits, vector_id)
-            KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
+        # Local vector store creation removed - using ElevenLabs knowledge base directly
+        # splits = get_splits(content_list)
+        # vector_id = str(uuid.uuid4())
+        # if splits:
+        #     status, vector_path =convert_to_vectorstore(splits, vector_id)
+        #     KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
+        
         return JSONResponse(
             status_code=200,
             content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "file_path": file_path}
@@ -2332,3 +2096,740 @@ async def create_text(request: Request):
 
         print("Error:", str(e))
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+
+# =====================================================
+# CALL HISTORY ENDPOINTS
+# =====================================================
+
+# DISABLED: Problematic duplicate endpoint that causes foreign key constraint errors
+# @ElevenLabsAPIRouter.delete("/delete_audio_recording", name="delete_audio_recording")
+# async def delete_audio_recording(request: Request):
+#     """Delete an audio recording"""
+#     try:
+#         audio_recording_id = request.query_params.get("audio_recording_id")
+#         if not audio_recording_id:
+#             return JSONResponse(
+#                 status_code=400, 
+#                 content={"status": "error", "message": "Audio recording ID is required"}
+#             )
+#         
+#         # Get the audio recording to check ownership
+#         recording = AudioRecordings.get_by_id(audio_recording_id)
+#         if not recording:
+#             return JSONResponse(
+#                 status_code=404,
+#                 content={"status": "error", "message": "Audio recording not found"}
+#             )
+#         
+#         # Check if user has access to this recording through agent ownership
+#         agent = AgentModel.get_by_id(recording.agent_id)
+#         user = request.session.get("user")
+#         if not user or (agent and agent.created_by != user.get("user_id")):
+#             return JSONResponse(
+#                 status_code=403,
+#                 content={"status": "error", "message": "Access denied"}
+#             )
+#         
+#         # Delete the file if it exists
+#         if recording.audio_file and os.path.exists(recording.audio_file):
+#             try:
+#                 os.remove(recording.audio_file)
+#             except Exception as e:
+#                 logger.warning(f"Could not delete audio file {recording.audio_file}: {str(e)}")
+#         
+#         # Delete the database record
+#         AudioRecordings.delete(audio_recording_id)
+#         
+#         return JSONResponse(
+#             status_code=200, 
+#             content={"status": "success", "message": "Audio recording deleted successfully"}
+#         )
+#     
+#     except Exception as e:
+#         logger.error(f"Error deleting audio recording: {str(e)}")
+#         return JSONResponse(
+#             status_code=500, 
+#             content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+#         )
+
+
+
+@ElevenLabsAPIRouter.get("/debug/call_data")
+async def debug_call_data(request: Request):
+    """Debug endpoint to check call data structure"""
+    try:
+        user = request.session.get("user")
+        if not user:
+            return JSONResponse(status_code=401, content={"error": "Not authenticated"})
+        
+        with db():
+            # Get sample data
+            recordings = db.session.query(AudioRecordings).limit(3).all()
+            calls = db.session.query(CallModel).limit(3).all()
+            conversations = db.session.query(ConversationModel).limit(3).all()
+            
+            debug_data = {
+                "audio_recordings": [
+                    {
+                        "id": r.id,
+                        "call_id": r.call_id,
+                        "audio_file": r.audio_file,
+                        "created_at": str(r.created_at)
+                    } for r in recordings
+                ],
+                "call_models": [
+                    {
+                        "id": c.id,
+                        "call_id": c.call_id,
+                        "variables": c.variables,
+                        "variables_type": str(type(c.variables))
+                    } for c in calls
+                ],
+                "conversations": [
+                    {
+                        "id": conv.id,
+                        "audio_recording_id": conv.audio_recording_id,
+                        "transcript_type": str(type(conv.transcript)),
+                        "transcript_length": len(conv.transcript) if conv.transcript else 0,
+                        "first_transcript_item": conv.transcript[0] if conv.transcript and len(conv.transcript) > 0 else None,
+                        "summary": conv.summary
+                    } for conv in conversations
+                ]
+            }
+            
+            return JSONResponse(status_code=200, content=debug_data)
+            
+    except Exception as e:
+        logger.error(f"Debug endpoint error: {str(e)}")
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+
+@ElevenLabsAPIRouter.post("/call_details", name="call_details")
+async def call_details(request: Request):
+    """Get detailed information about a specific call"""
+    try:
+        transcript, summary = None, None
+        data = await request.json()
+        call_id = data.get("call_id")
+        
+        if not call_id:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Call ID is required"}
+            )
+        
+        # Get the audio recording
+        call = AudioRecordings.get_by_id(call_id)
+        if not call:
+            return JSONResponse(
+                status_code=404,
+                content={"status": "error", "message": "Call not found"}
+            )
+        
+        # Check if user has access to this call through agent ownership
+        agent = AgentModel.get_by_id(call.agent_id)
+        user = request.session.get("user")
+        if not user or (agent and agent.created_by != user.get("user_id")):
+            return JSONResponse(
+                status_code=403,
+                content={"status": "error", "message": "Access denied"}
+            )
+        
+        # Get conversation transcript
+        conversation = ConversationModel.get_by_audio_recording_id(call_id)
+        if conversation:
+            raw_transcript = conversation.transcript
+            
+            # Format transcript for frontend display
+            formatted_transcript = []
+            if raw_transcript and isinstance(raw_transcript, list):
+                for msg in raw_transcript:
+                    if isinstance(msg, dict):
+                        # Handle different transcript formats
+                        if 'speaker' in msg and 'text' in msg:
+                            # Format: {speaker: "user|agent", text: "message"}
+                            formatted_transcript.append({
+                                "role": "assistant" if msg.get("speaker") == "agent" else "user",
+                                "content": msg.get("text", ""),
+                                "timestamp": msg.get("timestamp", ""),
+                                "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                            })
+                        elif 'role' in msg and 'message' in msg:
+                            # Format: {role: "user|assistant", message: "text"}
+                            formatted_transcript.append({
+                                "role": msg.get("role", "user"),
+                                "content": msg.get("message", ""),
+                                "timestamp": msg.get("timestamp", ""),
+                                "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                            })
+                        elif 'role' in msg and 'text' in msg:
+                            # Format: {role: "user|assistant", text: "message"}
+                            formatted_transcript.append({
+                                "role": msg.get("role", "user"),
+                                "content": msg.get("text", ""),
+                                "timestamp": msg.get("timestamp", ""),
+                                "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                            })
+                        else:
+                            # Fallback: try to extract any text content
+                            text_content = msg.get("content") or msg.get("message") or msg.get("text") or str(msg)
+                            if text_content and text_content.strip():
+                                formatted_transcript.append({
+                                    "role": "user",
+                                    "content": text_content,
+                                    "timestamp": msg.get("timestamp", ""),
+                                    "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                                })
+            
+            transcript = formatted_transcript
+            
+            # Get or generate summary
+            if conversation.summary:
+                summary = conversation.summary
+            else:
+                # Generate summary if not available
+                try:
+                    from app.utils.helper import generate_summary
+                    summary = generate_summary(transcript)
+                    ConversationModel.update_summary(conversation.id, summary)
+                except ImportError:
+                    summary = "Summary not available"
+        
+        # Get call details from CallModel
+        call_details = CallModel.get_by_call_id(call.call_id) if hasattr(call, 'call_id') else None
+        
+        # Get dynamic variables and show only essential call information
+        dynamic_variables = call_details.variables if call_details else (agent.dynamic_variable if agent else {})
+        filtered_variables = {}
+        
+        if dynamic_variables and isinstance(dynamic_variables, dict):
+            # Only show specific fields: start time, end time, conversation ID
+            for key, value in dynamic_variables.items():
+                if key == 'elevenlabs_conversation_id':
+                    filtered_variables['Conversation ID'] = value
+                elif key == 'created_timestamp':
+                    filtered_variables['Start Time'] = value
+                elif key == 'updated_timestamp':
+                    filtered_variables['End Time'] = value
+                elif 'start' in key.lower() and ('time' in key.lower() or 'timestamp' in key.lower()):
+                    filtered_variables[key.replace('_', ' ').title()] = value
+                elif 'end' in key.lower() and ('time' in key.lower() or 'timestamp' in key.lower()):
+                    filtered_variables[key.replace('_', ' ').title()] = value
+
+        return JSONResponse(
+            status_code=200, 
+            content={
+                "status": "success", 
+                "message": "Call details fetched successfully",
+                "call": {
+                    "id": call.id,
+                    "internal_call_id": call_details.id if call_details else None,
+                    "audio_file": call.audio_file,
+                    "created_at": str(call.created_at) if hasattr(call, 'created_at') else None,
+                    "agent_name": agent.agent_name if agent else "Unknown",
+                    "duration": getattr(call, 'duration', 0) or 0
+                },
+                "transcript": transcript,
+                "summary": summary,
+                "dynamic_variable": filtered_variables
+            }
+        )
+    
+    except Exception as e:
+        logger.error(f"Error getting call details: {str(e)}")
+        return JSONResponse(
+            status_code=500, 
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+        )
+
+
+# ===============================
+# CALL HISTORY API ENDPOINTS 
+# ===============================
+
+@ElevenLabsAPIRouter.delete("/delete_audio_recording/")
+async def delete_audio_recording(request: Request, audio_recording_id: int = None):
+    """Delete an audio recording and associated data - ElevenLabs version"""
+    try:
+        # Get audio_recording_id from query params if not in path
+        if audio_recording_id is None:
+            audio_recording_id = request.query_params.get("audio_recording_id")
+            if audio_recording_id:
+                audio_recording_id = int(audio_recording_id)
+        
+        if not audio_recording_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Audio recording ID is required"})
+        
+        # Get current user
+        user = request.session.get("user")
+        if not user:
+            return JSONResponse(status_code=401, content={"status": "error", "message": "User not authenticated"})
+        
+        user_id = user.get("user_id")
+        
+        with db():
+            # Get audio recording with agent relationship
+            audio_recording = (db.session.query(AudioRecordings)
+                             .join(AgentModel, AudioRecordings.agent_id == AgentModel.id)
+                             .filter(AudioRecordings.id == audio_recording_id)
+                             .filter(AgentModel.created_by == user_id)
+                             .first())
+            
+            if not audio_recording:
+                return JSONResponse(status_code=404, content={"status": "error", "message": "Audio recording not found or access denied"})
+            
+            # Get the call_id and audio_file path before any deletions
+            call_id = audio_recording.call_id
+            audio_file_path = audio_recording.audio_file
+            audio_recording_id_for_deletion = audio_recording.id
+            
+            # Delete ALL associated conversations first (to avoid foreign key constraint)
+            conversations = db.session.query(ConversationModel).filter(
+                ConversationModel.audio_recording_id == audio_recording.id
+            ).all()
+            
+            for conversation in conversations:
+                db.session.delete(conversation)
+            
+            # Delete the audio recording (while still in the same transaction)
+            db.session.delete(audio_recording)
+            
+            # Delete the main call record if it exists
+            if call_id:
+                call_record = CallModel.get_by_call_id(call_id)
+                if call_record:
+                    db.session.delete(call_record)
+                else:
+                    logger.warning(f"⚠️ Call record not found for call_id: {call_id}")
+            
+            # Commit all database deletions in one transaction
+            db.session.commit()
+            
+            # Delete audio file after successful database commit
+            if audio_file_path and audio_file_path.strip():
+                try:
+                    import os
+                    # Convert relative path to absolute path
+                    if audio_file_path.startswith('/audio/'):
+                        # Remove /audio/ prefix and construct full path
+                        relative_path = audio_file_path[7:]  # Remove '/audio/' prefix
+                        file_path = os.path.join("audio_storage", relative_path)
+                    else:
+                        file_path = audio_file_path
+                    
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        logger.info(f"🗑️ Deleted audio file: {file_path}")
+                    else:
+                        logger.warning(f"⚠️ Audio file not found: {file_path}")
+                except Exception as e:
+                    logger.warning(f"⚠️ Could not delete audio file: {e}")
+            
+            return JSONResponse(status_code=200, content={"status": "success", "message": "Call history and audio deleted successfully"})
+    
+    except Exception as e:
+        logger.error(f"Error deleting audio recording: {str(e)}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to delete audio recording"})
+
+
+@ElevenLabsAPIRouter.post("/call_details")
+async def call_details(request: Request):
+    """Get call details including transcript and summary - ElevenLabs version"""
+    try:
+        data = await request.json()
+        call_id = data.get("call_id")
+        
+        if not call_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Call ID is required"})
+        
+        # Get current user
+        user = request.session.get("user")
+        if not user:
+            return JSONResponse(status_code=401, content={"status": "error", "message": "User not authenticated"})
+        
+        user_id = user.get("user_id")
+        
+        with db():
+            # Get call details with related data
+            call_query = (db.session.query(CallModel, AgentModel, AudioRecordings, ConversationModel)
+                         .join(AgentModel, CallModel.agent_id == AgentModel.id)
+                         .outerjoin(AudioRecordings, CallModel.call_id == AudioRecordings.call_id)
+                         .outerjoin(ConversationModel, AudioRecordings.id == ConversationModel.audio_recording_id)
+                         .filter(CallModel.call_id == call_id)
+                         .filter(AgentModel.created_by == user_id)
+                         .first())
+            
+            if not call_query:
+                return JSONResponse(status_code=404, content={"status": "error", "message": "Call not found or access denied"})
+            
+            call, agent, audio_recording, conversation = call_query
+            
+            # Build call details response
+            call_info = {
+                "call_id": call.call_id,
+                "agent_name": agent.agent_name,
+                "created_at": call.created_at.strftime('%Y-%m-%d %H:%M:%S') if call.created_at else None,
+                "duration": getattr(audio_recording, 'duration', 0) if audio_recording else 0,
+                "status": "completed"
+            }
+            
+            # Extract transcript messages if available
+            transcript = []
+            summary = None
+            
+            if conversation and conversation.transcript:
+                try:
+                    # Handle both string and list formats
+                    if isinstance(conversation.transcript, str):
+                        import json
+                        transcript_data = json.loads(conversation.transcript)
+                    else:
+                        transcript_data = conversation.transcript
+                    
+                    # Convert to expected format
+                    if isinstance(transcript_data, list):
+                        for msg in transcript_data:
+                            if isinstance(msg, dict):
+                                transcript.append({
+                                    "role": msg.get("role", "user"),
+                                    "content": msg.get("content", ""),
+                                    "time_in_call_secs": msg.get("time_in_call_secs")
+                                })
+                    
+                    summary = conversation.summary
+                    
+                except Exception as transcript_error:
+                    logger.warning(f"Error parsing transcript: {transcript_error}")
+            
+            response_data = {
+                "status": "success",
+                "call": call_info,
+                "transcript": transcript,
+                "summary": summary
+            }
+            
+            return JSONResponse(status_code=200, content=response_data)
+    
+    except Exception as e:
+        logger.error(f"Error fetching call details: {str(e)}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to fetch call details"})
+
+
+@ElevenLabsAPIRouter.get("/call_history")
+async def get_call_history(request: Request):
+    """Get call history for the current user with pagination and filtering"""
+    try:
+        user = request.session.get("user")
+        if not user:
+            return JSONResponse(status_code=401, content={"status": "error", "message": "User not authenticated"})
+        
+        # Get query parameters
+        page = int(request.query_params.get("page", 1))
+        limit = min(int(request.query_params.get("limit", 20)), 100)  # Max 100 per page
+        agent_id = request.query_params.get("agent_id")
+        start_date = request.query_params.get("start_date")  # Format: YYYY-MM-DD
+        end_date = request.query_params.get("end_date")      # Format: YYYY-MM-DD
+        
+        offset = (page - 1) * limit
+        
+        with db():
+            # Base query - get calls for user's agents
+            query = (db.session.query(CallModel, AgentModel, AudioRecordings, ConversationModel)
+                    .join(AgentModel, CallModel.agent_id == AgentModel.id)
+                    .outerjoin(AudioRecordings, CallModel.call_id == AudioRecordings.call_id)
+                    .outerjoin(ConversationModel, AudioRecordings.id == ConversationModel.audio_recording_id)
+                    .filter(AgentModel.created_by == user.get("user_id")))
+            
+            # Apply filters
+            if agent_id:
+                query = query.filter(CallModel.agent_id == int(agent_id))
+            
+            if start_date:
+                from datetime import datetime
+                start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+                query = query.filter(CallModel.created_at >= start_dt)
+            
+            if end_date:
+                from datetime import datetime
+                end_dt = datetime.strptime(f"{end_date} 23:59:59", "%Y-%m-%d %H:%M:%S")
+                query = query.filter(CallModel.created_at <= end_dt)
+            
+            # Get total count
+            total_calls = query.count()
+            
+            # Get paginated results
+            results = (query.order_by(CallModel.created_at.desc())
+                      .offset(offset)
+                      .limit(limit)
+                      .all())
+            
+            call_history = []
+            for call, agent, audio_recording, conversation in results:
+                call_data = {
+                    "call_id": call.call_id,
+                    "agent_name": agent.agent_name,
+                    "agent_id": agent.id,
+                    "created_at": call.created_at.isoformat() if call.created_at else None,
+                    "has_audio": audio_recording is not None,
+                    "has_transcript": conversation is not None,
+                    "duration": None,
+                    "summary": conversation.summary if conversation else None
+                }
+                
+                # If audio recording exists, get duration
+                if audio_recording:
+                    call_data["audio_name"] = audio_recording.audio_name
+                    call_data["audio_file"] = audio_recording.audio_file
+                
+                call_history.append(call_data)
+            
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "data": call_history,
+                    "pagination": {
+                        "page": page,
+                        "limit": limit,
+                        "total": total_calls,
+                        "total_pages": (total_calls + limit - 1) // limit
+                    }
+                }
+            )
+    
+    except Exception as e:
+        logger.error(f"Error fetching call history: {str(e)}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to fetch call history"})
+
+
+@ElevenLabsAPIRouter.get("/call_details/{call_id}")
+async def get_call_details(call_id: str, request: Request):
+    """Get detailed information about a specific call"""
+    try:
+        user = request.session.get("user")
+        if not user:
+            return JSONResponse(status_code=401, content={"status": "error", "message": "User not authenticated"})
+        
+        with db():
+            # Get call with all related data
+            result = (db.session.query(CallModel, AgentModel, AudioRecordings, ConversationModel)
+                     .join(AgentModel, CallModel.agent_id == AgentModel.id)
+                     .outerjoin(AudioRecordings, CallModel.call_id == AudioRecordings.call_id)
+                     .outerjoin(ConversationModel, AudioRecordings.id == ConversationModel.audio_recording_id)
+                     .filter(CallModel.call_id == call_id)
+                     .filter(AgentModel.created_by == user.get("user_id"))
+                     .first())
+            
+            if not result:
+                return JSONResponse(status_code=404, content={"status": "error", "message": "Call not found"})
+            
+            call, agent, audio_recording, conversation = result
+            
+            call_details = {
+                "call_id": call.call_id,
+                "agent": {
+                    "id": agent.id,
+                    "name": agent.agent_name,
+                    "phone_number": agent.phone_number,
+                    "voice_id": agent.selected_voice
+                },
+                "created_at": call.created_at.isoformat() if call.created_at else None,
+                "elevenlabs_conversation_id": call.variables.get("elevenlabs_conversation_id") if call.variables else None,
+                "audio_recording": None,
+                "conversation": None
+            }
+            
+            # Add audio recording details
+            if audio_recording:
+                call_details["audio_recording"] = {
+                    "id": audio_recording.id,
+                    "name": audio_recording.audio_name,
+                    "file": audio_recording.audio_file,
+                    "created_at": audio_recording.created_at.isoformat() if audio_recording.created_at else None
+                }
+            
+            # Add conversation details
+            if conversation:
+                call_details["conversation"] = {
+                    "id": conversation.id,
+                    "transcript": conversation.transcript,
+                    "summary": conversation.summary,
+                    "created_at": conversation.created_at.isoformat() if conversation.created_at else None
+                }
+            
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "data": call_details
+                }
+            )
+    
+    except Exception as e:
+        logger.error(f"Error fetching call details: {str(e)}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to fetch call details"})
+
+
+@ElevenLabsAPIRouter.get("/call_analytics")
+async def get_call_analytics(request: Request):
+    """Get call analytics and statistics for the current user"""
+    try:
+        user = request.session.get("user")
+        if not user:
+            return JSONResponse(status_code=401, content={"status": "error", "message": "User not authenticated"})
+        
+        # Get date range from query params
+        days = int(request.query_params.get("days", 30))  # Default last 30 days
+        agent_id = request.query_params.get("agent_id")
+        
+        from datetime import datetime, timedelta
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=days)
+        
+        with db():
+            # Base query for user's calls
+            base_query = (db.session.query(CallModel)
+                         .join(AgentModel, CallModel.agent_id == AgentModel.id)
+                         .filter(AgentModel.created_by == user.get("user_id"))
+                         .filter(CallModel.created_at >= start_date)
+                         .filter(CallModel.created_at <= end_date))
+            
+            if agent_id:
+                base_query = base_query.filter(CallModel.agent_id == int(agent_id))
+            
+            # Total calls
+            total_calls = base_query.count()
+            
+            # Calls with audio recordings
+            calls_with_audio = (base_query
+                               .join(AudioRecordings, CallModel.call_id == AudioRecordings.call_id)
+                               .count())
+            
+            # Calls with transcripts
+            calls_with_transcripts = (base_query
+                                    .join(AudioRecordings, CallModel.call_id == AudioRecordings.call_id)
+                                    .join(ConversationModel, AudioRecordings.id == ConversationModel.audio_recording_id)
+                                    .count())
+            
+            # Calls by agent
+            agent_stats = (db.session.query(AgentModel.agent_name, AgentModel.id, func.count(CallModel.id).label('call_count'))
+                          .join(CallModel, AgentModel.id == CallModel.agent_id)
+                          .filter(AgentModel.created_by == user.get("user_id"))
+                          .filter(CallModel.created_at >= start_date)
+                          .filter(CallModel.created_at <= end_date))
+            
+            if agent_id:
+                agent_stats = agent_stats.filter(AgentModel.id == int(agent_id))
+            
+            agent_stats = agent_stats.group_by(AgentModel.id, AgentModel.agent_name).all()
+            
+            # Daily call counts for the chart
+            daily_calls = (db.session.query(
+                              func.date(CallModel.created_at).label('call_date'),
+                              func.count(CallModel.id).label('call_count')
+                          )
+                          .join(AgentModel, CallModel.agent_id == AgentModel.id)
+                          .filter(AgentModel.created_by == user.get("user_id"))
+                          .filter(CallModel.created_at >= start_date)
+                          .filter(CallModel.created_at <= end_date))
+            
+            if agent_id:
+                daily_calls = daily_calls.filter(CallModel.agent_id == int(agent_id))
+            
+            daily_calls = daily_calls.group_by(func.date(CallModel.created_at)).order_by(func.date(CallModel.created_at)).all()
+            
+            analytics_data = {
+                "summary": {
+                    "total_calls": total_calls,
+                    "calls_with_audio": calls_with_audio,
+                    "calls_with_transcripts": calls_with_transcripts,
+                    "audio_completion_rate": round((calls_with_audio / total_calls * 100), 2) if total_calls > 0 else 0,
+                    "transcript_completion_rate": round((calls_with_transcripts / total_calls * 100), 2) if total_calls > 0 else 0,
+                    "date_range": {
+                        "start": start_date.isoformat(),
+                        "end": end_date.isoformat(),
+                        "days": days
+                    }
+                },
+                "agent_breakdown": [
+                    {
+                        "agent_id": agent_id,
+                        "agent_name": agent_name,
+                        "call_count": call_count
+                    }
+                    for agent_name, agent_id, call_count in agent_stats
+                ],
+                "daily_calls": [
+                    {
+                        "date": call_date.isoformat(),
+                        "count": call_count
+                    }
+                    for call_date, call_count in daily_calls
+                ]
+            }
+            
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "data": analytics_data
+                }
+            )
+    
+    except Exception as e:
+        logger.error(f"Error fetching call analytics: {str(e)}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to fetch call analytics"})
+
+
+@ElevenLabsAPIRouter.delete("/call_history/{call_id}")
+async def delete_call_record(call_id: str, request: Request):
+    """Delete a call record and its associated data"""
+    try:
+        user = request.session.get("user")
+        if not user:
+            return JSONResponse(status_code=401, content={"status": "error", "message": "User not authenticated"})
+        
+        with db():
+            # Find the call and verify ownership
+            call_result = (db.session.query(CallModel, AgentModel)
+                          .join(AgentModel, CallModel.agent_id == AgentModel.id)
+                          .filter(CallModel.call_id == call_id)
+                          .filter(AgentModel.created_by == user.get("user_id"))
+                          .first())
+            
+            if not call_result:
+                return JSONResponse(status_code=404, content={"status": "error", "message": "Call not found"})
+            
+            call, agent = call_result
+            
+            # Delete related audio recording and conversation
+            audio_recording = AudioRecordings.get_by_call_id(call_id)
+            if audio_recording:
+                # Delete conversation if exists
+                conversation = ConversationModel.get_by_audio_recording_id(audio_recording.id)
+                if conversation:
+                    ConversationModel.delete(conversation.id)
+                
+                # Delete audio file from filesystem
+                if audio_recording.audio_file and os.path.exists(audio_recording.audio_file):
+                    try:
+                        os.remove(audio_recording.audio_file)
+                    except Exception as e:
+                        logger.warning(f"Could not delete audio file: {e}")
+                
+                # Delete audio recording from database
+                db.session.delete(audio_recording)
+            
+            # Delete the call record
+            db.session.delete(call)
+            db.session.commit()
+            
+            return JSONResponse(
+                status_code=200,
+                content={"status": "success", "message": "Call record deleted successfully"}
+            )
+    
+    except Exception as e:
+        logger.error(f"Error deleting call record: {str(e)}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to delete call record"})

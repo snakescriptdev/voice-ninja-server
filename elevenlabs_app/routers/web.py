@@ -260,3 +260,38 @@ async def elevenlabs_preview_agent(request: Request):
                 "host": host
             }
         )
+
+
+@ElevenLabsWebRouter.get("/call_history")
+@check_session_expiry_redirect
+async def call_history(request: Request, page: int = 1):
+    from app.databases.models import AudioRecordings, VoiceModel
+    agent_id = request.query_params.get("agent_id")
+    audio_recordings = AudioRecordings.get_all_by_agent(agent_id)
+    audio_recordings = sorted(audio_recordings, key=lambda x: x.created_at, reverse=True)
+    items_per_page = 10
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    paginator = Paginator(audio_recordings, page, items_per_page, start, end)
+    agent = AgentModel.get_by_id(agent_id)
+    final_response = paginator.items
+
+    # Get voice name instead of voice ID
+    voice_name = "Unknown"
+    if agent and agent.selected_voice:
+        voice = VoiceModel.get_by_id(agent.selected_voice)
+        if voice:
+            voice_name = voice.voice_name
+
+    return templates.TemplateResponse(
+        "Web/call_history.html",
+        {
+            "request": request,
+            "audio_recordings": final_response,  
+            "page_obj": paginator,
+            "agent_name": agent.agent_name,
+            "selected_voice": voice_name,  # Now passing voice name instead of ID
+            "agent_id": agent_id,
+            "host": os.getenv("HOST")
+        }
+    )

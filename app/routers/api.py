@@ -1908,7 +1908,51 @@ async def call_details(request: Request):
         if call:
             conversation = ConversationModel.get_by_audio_recording_id(call_id)
             if conversation:
-                transcript = conversation.transcript
+                raw_transcript = conversation.transcript
+                
+                # Format transcript for frontend display
+                formatted_transcript = []
+                if raw_transcript and isinstance(raw_transcript, list):
+                    for msg in raw_transcript:
+                        if isinstance(msg, dict):
+                            # Handle different transcript formats
+                            if 'speaker' in msg and 'text' in msg:
+                                # Format: {speaker: "user|agent", text: "message"}
+                                formatted_transcript.append({
+                                    "role": "assistant" if msg.get("speaker") == "agent" else "user",
+                                    "content": msg.get("text", ""),
+                                    "timestamp": msg.get("timestamp", ""),
+                                    "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                                })
+                            elif 'role' in msg and 'message' in msg:
+                                # Format: {role: "user|assistant", message: "text"}
+                                formatted_transcript.append({
+                                    "role": msg.get("role", "user"),
+                                    "content": msg.get("message", ""),
+                                    "timestamp": msg.get("timestamp", ""),
+                                    "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                                })
+                            elif 'role' in msg and 'text' in msg:
+                                # Format: {role: "user|assistant", text: "message"}
+                                formatted_transcript.append({
+                                    "role": msg.get("role", "user"),
+                                    "content": msg.get("text", ""),
+                                    "timestamp": msg.get("timestamp", ""),
+                                    "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                                })
+                            else:
+                                # Fallback: try to extract any text content
+                                text_content = msg.get("content") or msg.get("message") or msg.get("text") or str(msg)
+                                if text_content and text_content.strip():
+                                    formatted_transcript.append({
+                                        "role": "user",
+                                        "content": text_content,
+                                        "timestamp": msg.get("timestamp", ""),
+                                        "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                                    })
+                
+                transcript = formatted_transcript
+                
                 if conversation.summary:
                     summary = conversation.summary
                 else:
@@ -1916,6 +1960,16 @@ async def call_details(request: Request):
                     ConversationModel.update_summary(conversation.id, summary)
             agent = AgentModel.get_by_id(call.agent_id)
             call_details = CallModel.get_by_call_id(call.call_id)
+            
+            # Get dynamic variables and filter out sensitive/internal fields
+            dynamic_variables = call_details.variables if call_details else agent.dynamic_variable
+            if dynamic_variables and isinstance(dynamic_variables, dict):
+                # Remove only the most sensitive fields that shouldn't be shown to users
+                filtered_variables = {k: v for k, v in dynamic_variables.items() 
+                                    if k not in ['client_ip', 'agent_id', 'platform', 'elevenlabs_agent_id', 
+                                               'query_user_id', 'user_id', 'elevenlabs_user_id']}
+            else:
+                filtered_variables = {}
 
             return JSONResponse(status_code=200, content={
                 "status": "success", 
@@ -1927,7 +1981,7 @@ async def call_details(request: Request):
                 },
                 "transcript": transcript,
                 "summary": summary,
-                "dynamic_variable": call_details.variables if call_details else agent.dynamic_variable
+                "dynamic_variable": filtered_variables
             })
         else:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Call not found"})

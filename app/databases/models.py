@@ -832,25 +832,65 @@ class AudioRecordings(Base):
             audio_model = db.session.query(cls).filter(cls.call_id == call_id).first()
             return audio_model
     
-    @classmethod    
+    @classmethod
     def delete(cls, recording_id: int) -> bool:
         """Delete an audio recording by ID and remove the file from directory"""
         try:
             with db():
                 recording = db.session.query(cls).filter(cls.id == recording_id).first()
-                if recording:
-                    # Remove the audio file from directory
-                    audio_file_path = recording.audio_file
-                    if os.path.exists(audio_file_path):
-                        os.remove(audio_file_path)
-                    
-                    # Delete record from database
-                    db.session.delete(recording)
+                if not recording:
+                    print(f"No recording found with ID: {recording_id}")
+                    return False
+                
+                print(f"Found recording: {recording.id}, audio_file: {recording.audio_file}")
+                
+                # First delete associated conversations to avoid foreign key constraint
+                from app.databases.models import ConversationModel
+                conversations = db.session.query(ConversationModel).filter(
+                    ConversationModel.audio_recording_id == recording_id
+                ).all()
+                
+                print(f"Found {len(conversations)} conversations to delete for recording {recording_id}")
+                
+                # Delete conversations first
+                for conversation in conversations:
+                    print(f"Deleting conversation: {conversation.id}")
+                    db.session.delete(conversation)
+                
+                # Commit conversation deletions first
+                if conversations:
                     db.session.commit()
-                    return True
-            return False
+                    print(f"Committed deletion of {len(conversations)} conversations")
+                
+                # Remove the audio file from directory
+                audio_file_path = recording.audio_file
+                if audio_file_path:
+                    # Convert URL path to actual file path for deletion
+                    if audio_file_path.startswith('/audio/'):
+                        # Convert /audio/elevenlabs_conversations/filename.wav to actual file path
+                        filename = audio_file_path.replace('/audio/elevenlabs_conversations/', '')
+                        actual_file_path = os.path.join(os.getcwd(), 'audio_storage', 'elevenlabs_conversations', filename)
+                    else:
+                        actual_file_path = audio_file_path
+                    
+                    print(f"Attempting to delete file: {actual_file_path}")
+                    if os.path.exists(actual_file_path):
+                        os.remove(actual_file_path)
+                        print(f"Deleted audio file: {actual_file_path}")
+                    else:
+                        print(f"Audio file not found: {actual_file_path}")
+                
+                # Now delete the audio recording
+                db.session.delete(recording)
+                db.session.commit()
+                print(f"Deleted audio recording: {recording_id}")
+                return True
+                
         except Exception as e:
-            print(f"Error deleting audio recording: {str(e)}")
+            print(f"Error deleting audio recording {recording_id}: {str(e)}")
+            if db.session:
+                db.session.rollback()
+            return False
             return False
 
     

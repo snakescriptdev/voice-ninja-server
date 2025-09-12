@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBasic
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from app.routers import APISRouter, WebRouter,  AdminRouter ,WebSocketRouter
+# from app.routers import APISRouter, WebRouter,  AdminRouter ,WebSocketRouter
+from app.routers import APISRouter, WebRouter, AdminRouter
 from elevenlabs_app.routers import (
     ElevenLabsAPIRouter,
     ElevenLabsWebRouter,
@@ -62,7 +63,7 @@ app.add_middleware(
 app.add_middleware(
     DBSessionMiddleware,
     db_url=VoiceSettings.DB_URL,
-    engine_args={"pool_pre_ping": True, "pool_size": 20, "max_overflow": 0}
+    engine_args={"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10}
 )
 
 app.add_middleware(SessionMiddleware, secret_key=VoiceSettings.SECRET_KEY)
@@ -89,18 +90,27 @@ app.include_router(ElevenLabsWebIntegrationRouter, prefix="")
 
 @app.on_event("startup")
 async def startup_event():
-    # Ensure default models exists
-    AdminTokenModel.ensure_default_exists()
-    TokensToConsume.ensure_default_exists()
-    VoiceModel.ensure_default_voices()
+    # Start essential database models check in background
+    import asyncio
     
-    # Start ElevenLabs post-call recording service
-    await elevenlabs_post_call_recorder.start_retrieval_service()
+    async def init_background_tasks():
+        # Ensure default models exists
+        AdminTokenModel.ensure_default_exists()
+        TokensToConsume.ensure_default_exists()
+        VoiceModel.ensure_default_voices()
+        
+        # Start ElevenLabs post-call recording service
+        await elevenlabs_post_call_recorder.start_retrieval_service()
+        
+        print("🚀 Background initialization complete!")
     
-    print("Voice Ninja + ElevenLabs Integration started successfully!")
+    # Start background tasks without blocking startup
+    asyncio.create_task(init_background_tasks())
+    
+    print("Voice Ninja started successfully!")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     # Stop ElevenLabs post-call recording service
     await elevenlabs_post_call_recorder.stop_retrieval_service()
-    print("Voice Ninja + ElevenLabs Integration shutdown complete!")
+    print("Voice Ninja shutdown complete!")

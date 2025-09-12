@@ -7,9 +7,10 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, HTTPException
 from loguru import logger
 import os
 from elevenlabs.client import ElevenLabs
-from elevenlabs.conversational_ai.conversation import Conversation, AudioInterface
+from elevenlabs.conversational_ai.conversation import Conversation, AudioInterface, ConversationInitiationData
 from app.databases.models import AgentModel
 from elevenlabs_app.services.elevenlabs_post_call_recorder import elevenlabs_post_call_recorder
+from elevenlabs_app.services.conversation_storage import elevenlabs_conversation_storage
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -37,7 +38,7 @@ class BrowserAudioInterface(AudioInterface):
     def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, call_id: str = None):
         self.websocket = websocket
         self.loop = loop
-        self.call_id = call_id or f"browser_{uuid.uuid4().hex[:12]}"
+        self.call_id = call_id or f"call_{uuid.uuid4().hex[:12]}"
         self._input_cb = None
         self._started = False
         self.recording_enabled = True
@@ -102,7 +103,8 @@ class BrowserAudioInterface(AudioInterface):
                 
                 # Send audio to ElevenLabs
                 self._input_cb(audio)
-                logger.debug(f"Successfully sent {len(audio)} bytes to ElevenLabs for call_id {self.call_id}")
+                # Removed verbose audio logging to reduce log noise
+                # logger.debug(f"Successfully sent {len(audio)} bytes to ElevenLabs for call_id {self.call_id}")
             except Exception as e:
                 logger.error(f"Error delivering browser audio to input_callback for call_id {self.call_id}: {e}")
                 logger.error(f"Audio data length: {len(audio) if audio else 'None'}")
@@ -115,14 +117,27 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
     await websocket.accept()
     logger.info(f"Browser connected for live stream: {agent_dynamic_id}")
 
+    # Extract user_id from query parameters if provided
+    query_params = dict(websocket.query_params)
+    user_id = query_params.get('user_id')
+
     # Generate unique call ID for this session
-    call_id = f"browser_{agent_dynamic_id}_{uuid.uuid4().hex[:8]}"
+    call_id = f"call_{agent_dynamic_id}_{uuid.uuid4().hex[:8]}"
 
     # Lookup ElevenLabs agent id from DB via dynamic_id
     agent: Optional[AgentModel] = AgentModel.get_by_dynamic_id(agent_dynamic_id)
     if not agent or not agent.elvn_lab_agent_id:
         await websocket.close(code=1003)
         raise HTTPException(status_code=404, detail="Agent or ElevenLabs agent_id not found")
+
+    # Create user_id for ElevenLabs tracking
+    elevenlabs_user_id = None
+    if user_id:
+        elevenlabs_user_id = f"user_{user_id}"
+    elif agent.created_by:
+        elevenlabs_user_id = f"agent_owner_{agent.created_by}"
+    else:
+        elevenlabs_user_id = f"anonymous_{call_id}"
 
     elevenlabs_agent_id = agent.elvn_lab_agent_id
 
@@ -157,7 +172,9 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
         session_metadata = {
             'platform': 'browser',
             'timestamp': datetime.now().isoformat(),
-            'agent_dynamic_id': agent_dynamic_id
+            'agent_dynamic_id': agent_dynamic_id,
+            'elevenlabs_user_id': elevenlabs_user_id,
+            'query_user_id': user_id
         }
         
         # Register session for post-call data retrieval
@@ -165,7 +182,6 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
             call_id=call_id,
             agent_dynamic_id=agent_dynamic_id,
             elevenlabs_agent_id=elevenlabs_agent_id,
-            call_type="browser_live",
             metadata=session_metadata
         )
         
@@ -189,11 +205,26 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                 })
                 await websocket.close()
                 return
+        
+        # Create conversation initiation data with user_id and dynamic variables
+        conversation_config = ConversationInitiationData(
+            user_id=elevenlabs_user_id,
+            dynamic_variables={
+                "user_id": elevenlabs_user_id,
+                "call_id": call_id,
+                "agent_dynamic_id": agent_dynamic_id,
+                "client_type": "browser_live",
+                "session_start": datetime.utcnow().isoformat()
+            }
+        )
+        
         conversation = Conversation(
             client,
             elevenlabs_agent_id,
+            user_id=elevenlabs_user_id,  # Pass user_id directly to conversation
             requires_auth=bool(api_key),
             audio_interface=audio_if,
+            config=conversation_config,  # Include conversation initiation data
             callback_agent_response=lambda r: handle_agent_response_live(call_id, r, websocket, loop),
             callback_user_transcript=lambda t: handle_user_transcript_live(call_id, t, websocket, loop),
             callback_latency_measurement=lambda latency_ms: asyncio.run_coroutine_threadsafe(
@@ -202,12 +233,34 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
             ),
         )
 
+        # Create initial call record in database
+        try:
+            call_record = elevenlabs_conversation_storage.create_call_record(
+                agent_id=agent.id,
+                conversation_id=call_id,  # Using our call_id as conversation identifier
+                user_id=agent.created_by,  # Pass the actual agent owner's user_id to database
+                session_metadata={
+                    "elevenlabs_agent_id": elevenlabs_agent_id,
+                    "elevenlabs_user_id": elevenlabs_user_id,  # ElevenLabs user identifier
+                    "query_user_id": user_id,  # Original user_id from query params
+                    "platform": "elevenlabs_live",
+                    "client_ip": websocket.client.host if websocket.client else "unknown"
+                }
+            )
+            if call_record:
+                logger.info(f"📞 Created call record in database for call_id: {call_id}, user: {elevenlabs_user_id}, record_id: {call_record.id}")
+            else:
+                logger.error(f"❌ Call record creation returned None for call_id: {call_id}")
+        except Exception as e:
+            logger.error(f"❌ Failed to create call record: {e}", exc_info=True)
+            # Continue anyway - don't fail the conversation
+
         # Start the conversation session
-        logger.info(f"Starting ElevenLabs conversation session for call_id: {call_id}")
+        logger.info(f"🚀 Starting ElevenLabs conversation session for call_id: {call_id}, user: {elevenlabs_user_id}")
         conversation.start_session()
         
         # Wait for the conversation to be fully initialized
-        logger.info(f"Waiting for ElevenLabs conversation to initialize for call_id: {call_id}")
+        logger.info(f"⏳ Waiting for ElevenLabs conversation to initialize for call_id: {call_id}")
         await asyncio.sleep(0.5)  # Increased delay
         
         # Check if audio interface has been started by ElevenLabs
@@ -223,6 +276,8 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
         })
 
         # Receive mic audio from browser
+        audio_chunk_count = 0
+        
         while True:
             try:
                 data = await websocket.receive_json()
@@ -244,8 +299,9 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                         logger.warning(f"Empty audio chunk received for call_id {call_id}")
                         continue
                     
-                    # Log audio chunk info for debugging
-                    logger.debug(f"Processing audio chunk: {len(audio_bytes)} bytes for call_id {call_id}")
+                    # Process audio chunk
+                    audio_chunk_count += 1
+                    
                     audio_if.push_user_audio(audio_bytes)
                 except Exception as e:
                     logger.error(f"Error sending user audio chunk: {e}")
@@ -273,6 +329,20 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
             elevenlabs_conversation_id = None
             if conversation and hasattr(conversation, 'conversation_id'):
                 elevenlabs_conversation_id = conversation.conversation_id
+            
+            # Update call status in database
+            try:
+                elevenlabs_conversation_storage.update_call_status(
+                    conversation_id=call_id,
+                    status="completed",
+                    end_metadata={
+                        "elevenlabs_conversation_id": elevenlabs_conversation_id,
+                        "end_reason": "normal_disconnect"
+                    }
+                )
+                logger.info(f"📞 Updated call status to completed for call_id: {call_id}")
+            except Exception as e:
+                logger.warning(f"⚠️ Failed to update call status: {e}")
             
             # Mark conversation as ended to trigger post-call data retrieval
             elevenlabs_post_call_recorder.mark_conversation_ended(

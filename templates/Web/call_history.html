@@ -81,14 +81,14 @@
                             </thead>
                             <tbody style="overflow-y: hidden;">
                                 {% for audio_recording in page_obj.items %}
-                                    <tr data-id="{{ audio_recording.id }}" onclick="openOffcanvas(this)" data-bs-toggle="offcanvas" data-bs-target="#offcanvasRight" aria-controls="offcanvasRight">
-                                        <td>{{ agent_name }}</td>
-                                        <td>{{ selected_voice }}</td>
-                                        <td>{{ audio_recording.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td> 
-                                        <td>
+                                    <tr data-id="{{ audio_recording.id }}" data-bs-toggle="offcanvas" data-bs-target="#offcanvasRight" aria-controls="offcanvasRight">
+                                        <td class="clickable-cell">{{ agent_name }}</td>
+                                        <td class="clickable-cell">{{ selected_voice }}</td>
+                                        <td class="clickable-cell">{{ audio_recording.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td> 
+                                        <td class="clickable-cell">
                                             <div class="max-content audio_player">
                                                 {% if audio_recording.audio_file %}
-                                                    <audio controls>
+                                                    <audio controls onclick="event.stopPropagation();">
                                                         <source src="{{ audio_recording.audio_file }}" type="audio/ogg">
                                                         Your browser does not support the audio element.
                                                     </audio>
@@ -98,11 +98,12 @@
                                             </div>
                                         </td>
                                         <td>
-                                            <div class="max-content" onclick="event.stopPropagation();">
+                                            <div class="max-content">
                                                 <button class="delete-btn btn btn-danger" 
                                                         data-bs-toggle="modal" 
                                                         data-bs-target="#deleteModal" 
                                                         data-audio-recording-id="{{ audio_recording.id }}" 
+                                                        onclick="event.stopPropagation();"
                                                         aria-label="Delete audio recording {{ audio_recording.id }}">
                                                     <img src="{{ host }}/static/Web/images/delete-icon.svg" 
                                                         alt="Delete" 
@@ -234,16 +235,32 @@
 const host = "{{ host }}";  
 // Add this JavaScript code to your file
 document.addEventListener('DOMContentLoaded', function() {
+    // Handle clickable cells for opening offcanvas (excluding delete button area)
+    const clickableCells = document.querySelectorAll('.clickable-cell');
+    clickableCells.forEach(cell => {
+        cell.addEventListener('click', function(event) {
+            // Don't trigger if clicking on audio controls
+            if (event.target.tagName === 'AUDIO') {
+                return;
+            }
+            const row = this.parentElement;
+            openOffcanvas(row);
+        });
+        
+        // Add cursor pointer style to indicate clickable
+        cell.style.cursor = 'pointer';
+    });
+    
     // Select all delete buttons
     const deleteButtons = document.querySelectorAll('.delete-btn');
     
     // Add click event listener to each delete button
     deleteButtons.forEach(button => {
-        button.addEventListener('click', function() {
-            // Get agent ID and name from data attributes
+        button.addEventListener('click', function(event) {
+            // Get audio recording ID from data attributes
             const audioRecordingId = this.getAttribute('data-audio-recording-id');
             
-            // Store the agent ID in the confirm delete button
+            // Store the audio recording ID in the confirm delete button
             document.getElementById('confirm-delete').setAttribute('data-audio-recording-id', audioRecordingId);
         });
     });
@@ -254,7 +271,7 @@ document.addEventListener('DOMContentLoaded', function() {
 document.getElementById('confirm-delete').addEventListener('click', function() {
     const audioRecordingId = this.getAttribute('data-audio-recording-id');
     const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
-    fetch(`${host}/api/delete_audio_recording/?audio_recording_id=${audioRecordingId}`, {
+    fetch(`${host}/elevenlabs/api/v1/delete_audio_recording/?audio_recording_id=${audioRecordingId}`, {
         method: 'DELETE',
         headers: { "X-CSRFToken": '{{ csrf_token }}' }, 
     })
@@ -311,7 +328,7 @@ window.openOffcanvas = function(element) {
     `;
     document.body.appendChild(fullScreenLoader);
 
-    fetch(`${host}/api/call_details`, {
+    fetch(`${host}/elevenlabs/api/v1/call_details`, {
         method: 'POST',
         headers: { 
             "X-CSRFToken": '{{ csrf_token }}',
@@ -325,6 +342,10 @@ window.openOffcanvas = function(element) {
     .then(data => {
         if (data.status === "success") {
             try {
+                console.log("Call details received:", data); // Debug log
+                console.log("Dynamic variables:", data.dynamic_variable); // Debug log
+                console.log("Transcript:", data.transcript); // Debug log
+                
                 // Format timestamp
                 const createdAt = new Date(data.call.created_at);
                 const formattedDate = createdAt.toLocaleString();
@@ -374,33 +395,66 @@ window.openOffcanvas = function(element) {
                 `;
                 document.getElementById('durationScript').appendChild(durationScript);
 
-                const dynamic_variable = data.dynamic_variable;
+                const dynamic_variable = data.dynamic_variable || {};
                 dynamicVariablesContainer.innerHTML = '';
 
-                for (const [key, value] of Object.entries(dynamic_variable)) {
-                    const variableItem = document.createElement('div');
-                    variableItem.classList.add('card', 'mb-2', 'shadow-sm');
-                    variableItem.innerHTML = `
-                        <div class="card-body">
-                            <p class="text-muted mb-1">${key}</p>
-                            <p class="fw-medium">${value}</p>
+                console.log("Processing dynamic variables:", dynamic_variable); // Debug log
+
+                // Only show essential call information: start time, end time, conversation ID
+                const visibleVariables = Object.entries(dynamic_variable).filter(([key, value]) => {
+                    const keyLower = key.toLowerCase();
+                    return keyLower.includes('conversation id') || 
+                           keyLower.includes('start time') || 
+                           keyLower.includes('end time') ||
+                           (keyLower.includes('start') && keyLower.includes('time')) ||
+                           (keyLower.includes('end') && keyLower.includes('time'));
+                });
+
+                if (visibleVariables.length === 0) {
+                    dynamicVariablesContainer.innerHTML = `
+                        <div class="card shadow-sm">
+                            <div class="card-body text-center text-muted">
+                                <p class="mb-0">No additional data collected during this call</p>
+                            </div>
                         </div>
                     `;
-                    dynamicVariablesContainer.appendChild(variableItem);
+                } else {
+                    for (const [key, value] of visibleVariables) {
+                        console.log(`Processing variable: ${key} = ${value}`); // Debug log
+                        
+                        const variableItem = document.createElement('div');
+                        variableItem.classList.add('card', 'mb-2', 'shadow-sm');
+                        
+                        // Handle different value types
+                        let displayValue = value;
+                        if (typeof value === 'object' && value !== null) {
+                            displayValue = JSON.stringify(value);
+                        } else if (typeof value !== 'string') {
+                            displayValue = String(value);
+                        }
+                        
+                        variableItem.innerHTML = `
+                            <div class="card-body">
+                                <p class="text-muted mb-1">${key}</p>
+                                <p class="fw-medium">${displayValue}</p>
+                            </div>
+                        `;
+                        dynamicVariablesContainer.appendChild(variableItem);
+                    }
                 }
 
                 // Update conversation history section
                 conversationSection.innerHTML = `
                     <h6 class="mb-3">Conversation Transcript</h6>
                     <div class="conversation_history_item mb-3 p-3 rounded">
-                        ${data.transcript && data.transcript.map(msg => `
+                        ${data.transcript && Array.isArray(data.transcript) ? data.transcript.map(msg => `
                             <div class="d-flex mb-3 ${msg.role === 'assistant' ? 'justify-content-start' : 'justify-content-end'}">
                                 <div class="p-3 rounded ${msg.role === 'assistant' ? 'bg-light' : 'bg-primary text-white'}" style="max-width: 75%;">
                                     <p class="mb-1 small ${msg.role === 'assistant' ? 'text-muted' : 'text-white'}">${msg.role === 'assistant' ? 'Assistant' : 'User'}</p>
-                                    <p class="mb-0">${msg.content}</p>
+                                    <p class="mb-0">${typeof msg.content === 'string' ? msg.content : (typeof msg.content === 'object' ? JSON.stringify(msg.content) : String(msg.content))}</p>
                                 </div>
                             </div>
-                        `).join('') || 'No transcript available'}
+                        `).join('') : 'No transcript available'}
                     </div>
                 `;
 
