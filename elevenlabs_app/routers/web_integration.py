@@ -1,5 +1,5 @@
-from fastapi import APIRouter, Request, HTTPException
-from fastapi.responses import HTMLResponse, Response
+from fastapi import APIRouter, Request, HTTPException, Depends
+from fastapi.responses import HTMLResponse, Response, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from app.databases.models import (
     AgentModel, 
@@ -7,15 +7,124 @@ from app.databases.models import (
     ApprovedDomainModel,
     DailyCallLimitModel,
     OverallTokenLimitModel,
-    AgentConnectionModel
+    AgentConnectionModel,
+    AudioRecordings,
+    CallModel,
+    ConversationModel
 )
+from sqlalchemy.orm import joinedload
+from sqlalchemy import desc, and_
+from fastapi_sqlalchemy import db
 import os
+import math
 from loguru import logger
 
 ElevenLabsWebRouter = APIRouter(prefix="/elevenlabs/web", tags=["elevenlabs-web"])
 
 # Setup templates
 templates = Jinja2Templates(directory="templates")
+
+
+# Helper function for authentication (simplified for ElevenLabs)
+def get_current_user(request: Request):
+    """Get current user from session"""
+    if not hasattr(request, 'session') or not request.session.get("user"):
+        raise HTTPException(status_code=302, detail="Not authenticated", headers={"Location": "/login"})
+    return request.session.get("user")
+
+
+# Pagination class
+class Paginator:
+    def __init__(self, query, per_page, page):
+        self.query = query
+        self.per_page = per_page
+        self.page = page
+        self.total = query.count()
+        self.pages = math.ceil(self.total / per_page) if per_page > 0 else 1
+        self.has_previous = page > 1
+        self.has_next = page < self.pages
+        self.previous_page_number = page - 1 if self.has_previous else None
+        self.next_page_number = page + 1 if self.has_next else None
+        self.page_range = list(range(1, self.pages + 1))
+
+    def get_page(self):
+        offset = (self.page - 1) * self.per_page
+        return self.query.offset(offset).limit(self.per_page).all()
+
+
+@ElevenLabsWebRouter.get("/call_history", response_class=HTMLResponse)
+async def elevenlabs_call_history(request: Request, page: int = 1, agent_id: str = None):
+    """ElevenLabs call history page with pagination and agent filtering"""
+    try:
+        # Get current user
+        user = get_current_user(request)
+        user_id = user.get("user_id")
+        
+        # Get user's agents
+        user_agents = db.session.query(AgentModel).filter(AgentModel.created_by == user_id).all()
+        agent_ids = [agent.id for agent in user_agents]
+        
+        if not agent_ids:
+            # No agents found - return empty page
+            context = {
+                "request": request,
+                "user": user,
+                "audio_recordings": [],
+                "page_obj": Paginator(db.session.query(AudioRecordings).filter(False), 10, 1),  # Empty paginator
+                "agents": [],
+                "agent_id": agent_id,
+                "host": f"{request.url.scheme}://{request.headers.get('host')}"
+            }
+            return templates.TemplateResponse("ElevenLabs_Integration/web/call_history.html", context)
+        
+        # Build query for call history
+        query = db.session.query(AudioRecordings).options(
+            joinedload(AudioRecordings.call_relation),
+            joinedload(AudioRecordings.agent)
+        ).filter(
+            AudioRecordings.agent_id.in_(agent_ids)
+        )
+        
+        # Filter by specific agent if requested
+        if agent_id:
+            try:
+                agent_id_int = int(agent_id)
+                if agent_id_int in agent_ids:  # Ensure user owns this agent
+                    query = query.filter(AudioRecordings.agent_id == agent_id_int)
+                else:
+                    # User doesn't own this agent - redirect to general call history
+                    return RedirectResponse(url="/elevenlabs/call_history", status_code=302)
+            except ValueError:
+                # Invalid agent_id format - ignore filter
+                pass
+        
+        # Order by creation date (newest first)
+        query = query.order_by(desc(AudioRecordings.created_at))
+        
+        # Paginate results
+        paginator = Paginator(query, 10, page)
+        audio_recordings = paginator.get_page()
+        
+        # Prepare context
+        context = {
+            "request": request,
+            "user": user,
+            "audio_recordings": audio_recordings,
+            "page_obj": paginator,
+            "agents": user_agents,
+            "agent_id": agent_id,
+            "host": f"{request.url.scheme}://{request.headers.get('host')}"
+        }
+        
+        return templates.TemplateResponse("ElevenLabs_Integration/web/call_history.html", context)
+        
+    except HTTPException as he:
+        if he.status_code == 302:
+            return RedirectResponse(url="/login", status_code=302)
+        raise he
+    except Exception as e:
+        logger.error(f"Error in ElevenLabs call history: {e}")
+        raise HTTPException(status_code=500, detail="Failed to load call history")
 
 
 @ElevenLabsWebRouter.get("/preview_agent", response_class=HTMLResponse)
@@ -485,7 +594,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                     <img src="https://snakescript.com/svg_ai_voice_agent/close_msg.svg" class="img-fluid" style="cursor: pointer;" onclick="document.getElementById('messageBox').style.display='none'">
                                 </div>
                                 <h2><span>Hello 👋</span>
-                                I am your ElevenLabs AI agent.
+                                I am your AI agent.
                                 <span>Let's Talk!</span>
                                 </h2>
                             </div>
@@ -511,7 +620,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                 <div class="popup-header">
                                     <div class="app-title">
                                         <img src="https://snakescript.com/images_ai_voice_agent/user.png" alt="ElevenLabs AI" style="height:38px" />
-                                        ElevenLabs AI
+                                        Voice Ninja
                                     </div>
                                     <button type="button" id="closePopup" class="close-btn">
                                         <svg fill="#ffffff" height="15px" width="15px" version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 490 490">
@@ -547,18 +656,18 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                         document.getElementById('elevenLabsStartCall').addEventListener('click', function() {{
                             document.getElementById('callPopup').style.display = 'block';
                             
-                            // Initialize ElevenLabs client when user first clicks
+                            // Initialize AI Agent client when user first clicks
                             if (!window.elevenLabsClient && window.elevenLabsAgentId) {{
-                                console.log("Creating ElevenLabs client for agent:", window.elevenLabsAgentId);
+                                
                                 window.elevenLabsClient = new ElevenLabsWebSocketClient(window.elevenLabsAgentId);
                             }}
                             
-                            // Start ElevenLabs connection when popup opens
+                            // Start AI Agent connection when popup opens
                             if (window.elevenLabsClient) {{
-                                console.log("Starting ElevenLabs connection...");
+                                
                                 window.elevenLabsClient.connect().catch(err => {{
-                                    console.error("Failed to connect to ElevenLabs:", err);
-                                    alert("Failed to connect to ElevenLabs: " + err.message);
+                                    console.error("Failed to connect to AI Agent:", err);
+                                    alert("Failed to connect to AI Agent: " + err.message);
                                 }});
                             }}
                         }});

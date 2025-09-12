@@ -1,6 +1,7 @@
 import os
 import json
 import asyncio
+import requests
 from datetime import datetime, timezone
 from typing import Dict, Optional, List, Any
 from pathlib import Path
@@ -9,6 +10,8 @@ from loguru import logger
 from elevenlabs import ElevenLabs
 import time
 
+from elevenlabs_app.services.conversation_storage import elevenlabs_conversation_storage
+
 
 @dataclass
 class ElevenLabsCallRecord:
@@ -16,14 +19,10 @@ class ElevenLabsCallRecord:
     conversation_id: str
     agent_dynamic_id: str
     elevenlabs_agent_id: str
-    call_type: str
     start_time: datetime
     end_time: Optional[datetime] = None
     duration_seconds: Optional[float] = None
     conversation_data: Optional[Dict] = None
-    audio_file_path: Optional[str] = None
-    transcript_file_path: Optional[str] = None
-    metadata_file_path: Optional[str] = None
     retrieval_status: str = "pending"  # pending, completed, failed
     error_message: Optional[str] = None
 
@@ -39,8 +38,13 @@ class ElevenLabsPostCallRecorder:
     """
     
     def __init__(self, storage_path: str = None):
-        self.storage_path = storage_path or "/Users/apple/Desktop/Voice Ninja/voice_ninja/audio_storage"
-        self.recordings_path = Path(self.storage_path) / "elevenlabs_api_recordings"
+        if storage_path is None:
+            # Use absolute path from current working directory
+            import os
+            self.storage_path = Path(os.getcwd()) / "audio_storage"
+        else:
+            self.storage_path = Path(storage_path)
+        self.recordings_path = Path(self.storage_path) / "elevenlabs_conversations"  # Changed from elevenlabs_api_recordings
         self.recordings_path.mkdir(parents=True, exist_ok=True)
         
         # ElevenLabs client
@@ -54,7 +58,7 @@ class ElevenLabsPostCallRecorder:
         self.retrieval_task = None
         self.running = False
         
-        logger.info(f"ElevenLabsPostCallRecorder initialized with storage: {self.recordings_path}")
+        # logger.info(f"ElevenLabsPostCallRecorder initialized with storage: {self.recordings_path}")
 
     async def start_retrieval_service(self):
         """Start the background service for post-call data retrieval"""
@@ -64,7 +68,7 @@ class ElevenLabsPostCallRecorder:
         
         self.running = True
         self.retrieval_task = asyncio.create_task(self._retrieval_loop())
-        logger.info("📡 ElevenLabs post-call retrieval service started")
+        # logger.info("📡 ElevenLabs post-call retrieval service started")
 
     async def stop_retrieval_service(self):
         """Stop the background retrieval service"""
@@ -81,7 +85,6 @@ class ElevenLabsPostCallRecorder:
                                     call_id: str, 
                                     agent_dynamic_id: str, 
                                     elevenlabs_agent_id: str,
-                                    call_type: str = "browser_live",
                                     metadata: Dict = None) -> bool:
         """
         Register a conversation session for post-call retrieval
@@ -92,7 +95,6 @@ class ElevenLabsPostCallRecorder:
                 conversation_id=call_id,  # We'll update this with actual ElevenLabs conversation ID later
                 agent_dynamic_id=agent_dynamic_id,
                 elevenlabs_agent_id=elevenlabs_agent_id,
-                call_type=call_type,
                 start_time=datetime.now(timezone.utc)
             )
             
@@ -176,6 +178,18 @@ class ElevenLabsPostCallRecorder:
                 )
                 if elevenlabs_conversation_id:
                     record.conversation_id = elevenlabs_conversation_id
+                    
+                    # Update the database with the ElevenLabs conversation ID
+                    try:
+                        from app.databases.models import CallModel
+                        call_record = CallModel.get_by_call_id(call_id)
+                        if call_record:
+                            variables = call_record.variables or {}
+                            variables["elevenlabs_conversation_id"] = elevenlabs_conversation_id
+                            CallModel.update(call_record.id, variables=variables)
+                            logger.info(f"📝 Updated database with ElevenLabs conversation ID: {elevenlabs_conversation_id}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to update database with conversation ID: {e}")
                 else:
                     logger.warning(f"Could not find ElevenLabs conversation ID for {call_id}")
                     record.retrieval_status = "failed"
@@ -191,33 +205,109 @@ class ElevenLabsPostCallRecorder:
             
             record.conversation_data = conversation_data
             
-            # Create export directory
-            timestamp = record.start_time.strftime("%Y%m%d_%H%M%S")
-            export_dir = self.recordings_path / f"{call_id}_{timestamp}"
-            export_dir.mkdir(exist_ok=True)
+            # Store conversation data in database
+            from app.databases.models import CallModel, ConversationModel, AudioRecordings
+            logger.info(f"🔍 Looking for call record with call_id: {call_id}")
             
-            # Save conversation metadata
-            metadata_file = export_dir / "conversation_metadata.json"
-            await self._save_conversation_metadata(record, metadata_file)
-            record.metadata_file_path = str(metadata_file)
-            
-            # Save transcript
-            transcript_file = export_dir / "transcript.json"
-            await self._save_transcript(conversation_data, transcript_file)
-            record.transcript_file_path = str(transcript_file)
-            
-            # Download and save audio if available
-            if conversation_data.get("has_audio"):
-                audio_file = export_dir / "conversation_audio.wav"
-                success = await self._download_conversation_audio(record.conversation_id, audio_file)
-                if success:
-                    record.audio_file_path = str(audio_file)
-            
+            call_record = CallModel.get_by_call_id(call_id)
+            if call_record:
+                logger.info(f"✅ Found call record: {call_record.id} for call_id: {call_id}")
+                
+                # Extract essential information from conversation data
+                start_time = None
+                end_time = None
+                duration = 0
+                
+                # Extract timing information
+                if conversation_data.get("metadata"):
+                    metadata = conversation_data["metadata"]
+                    start_unix = metadata.get("start_time_unix_secs")
+                    duration = metadata.get("call_duration_secs", 0)
+                    
+                    if start_unix:
+                        start_time = datetime.fromtimestamp(start_unix, tz=timezone.utc).isoformat()
+                        end_time = datetime.fromtimestamp(start_unix + duration, tz=timezone.utc).isoformat()
+                
+                # Extract summary from analysis
+                summary = ""
+                if conversation_data.get("analysis"):
+                    analysis = conversation_data["analysis"]
+                    summary = analysis.get("transcript_summary", "") or analysis.get("call_summary_title", "")
+                
+                # Update call record with essential information only (no full conversation_data)
+                variables = call_record.variables or {}
+                variables.update({
+                    "status": "completed",
+                    "has_audio": conversation_data.get("has_audio", False),
+                    "call_duration_secs": duration,
+                    "retrieved_at": datetime.now(timezone.utc).isoformat()
+                })
+                
+                # Add timing information if available
+                if start_time:
+                    variables["Start Time"] = start_time
+                if end_time:
+                    variables["End Time"] = end_time
+                    
+                # Note: Conversation ID will be set later after creating the ConversationModel record
+                # CallModel.update will be called after setting the Conversation ID
+                
+                # Download and store audio if available
+                audio_file_path = ""
+                if conversation_data.get("has_audio"):
+                    audio_file_path = await self._download_conversation_audio(record.conversation_id, call_id)
+                
+                # Create AudioRecordings record for call history display
+                audio_record = AudioRecordings.create(
+                    agent_id=call_record.agent_id,
+                    audio_file=audio_file_path,  # Use downloaded audio file path
+                    audio_name=f"ElevenLabs Call {call_id}",
+                    created_at=call_record.created_at,
+                    call_id=call_id
+                )
+                
+                # Store transcript in ConversationModel table for proper organization
+                if conversation_data.get("transcript"):
+                    transcript_data = self._format_transcript_for_db(conversation_data["transcript"])
+                    
+                    # Extract summary from analysis section (already extracted above)
+                    # Use the summary variable that was extracted earlier
+                    
+                    # Use conversation storage service to store transcript
+                    conversation = elevenlabs_conversation_storage.store_conversation_transcript(
+                        audio_recording_id=audio_record.id,  # Use audio_record.id as audio_recording_id
+                        transcript_data=transcript_data,
+                        summary=summary  # Use the summary extracted from analysis
+                    )
+                    
+                    # Update variables with the database conversation ID instead of ElevenLabs ID
+                    if conversation:
+                        variables["Conversation ID"] = conversation.id  # Use database conversation ID
+                        # Update the call record with the conversation ID
+                        CallModel.update(call_record.id, variables=variables)
+                        logger.info(f"💾 Stored transcript in ConversationModel for call_id: {call_id}, conversation_id: {conversation.id}")
+                    else:
+                        logger.error(f"❌ Failed to store transcript for call_id: {call_id}")
+                else:
+                    # If no transcript, still store the conversation ID as the call record ID
+                    variables["Conversation ID"] = call_record.id
+                    # Update the call record with the variables
+                    CallModel.update(call_record.id, variables=variables)
+                    
+                    if conversation:
+                        logger.info(f"💾 Stored transcript in ConversationModel for call_id: {call_id}")
+                    else:
+                        logger.error(f"❌ Failed to store transcript for call_id: {call_id}")
+                
+                logger.info(f"💾 Updated call record with conversation data for call_id: {call_id}")
+            else:
+                logger.warning(f"⚠️ Could not find call record for call_id: {call_id}")
+
             # Mark as completed
             record.retrieval_status = "completed"
             self.completed_recordings[call_id] = record
             del self.pending_retrievals[call_id]
-            
+
             logger.info(f"✅ Successfully retrieved conversation data: {call_id}")
             
         except Exception as e:
@@ -260,143 +350,117 @@ class ElevenLabsPostCallRecorder:
             return None
 
     async def _get_conversation_details(self, conversation_id: str) -> Optional[Dict]:
-        """Get detailed conversation data from ElevenLabs"""
+        """Get detailed conversation data from ElevenLabs using REST API"""
         try:
-            conversation = self.client.conversational_ai.conversations.get(conversation_id)
+            import requests
             
-            # Process transcript messages
-            transcript_messages = []
-            if conversation.transcript:
-                for msg in conversation.transcript:
-                    message_data = {
-                        "role": msg.role,
-                        "message": msg.message,
-                        "time_in_call_secs": msg.time_in_call_secs,
-                        "source_medium": msg.source_medium,
-                        "interrupted": msg.interrupted
-                    }
-                    
-                    # Add metrics if available
-                    if hasattr(msg, 'conversation_turn_metrics') and msg.conversation_turn_metrics:
-                        metrics = {}
-                        for metric_name, metric_record in msg.conversation_turn_metrics.metrics.items():
-                            metrics[metric_name] = metric_record.elapsed_time
-                        message_data["metrics"] = metrics
-                    
-                    transcript_messages.append(message_data)
+            logger.info(f"📥 Retrieving conversation details for: {conversation_id}")
             
-            # Process analysis
-            analysis_data = {}
-            if conversation.analysis:
-                analysis_data = {
-                    "call_successful": conversation.analysis.call_successful,
-                    "transcript_summary": conversation.analysis.transcript_summary,
-                    "call_summary_title": conversation.analysis.call_summary_title,
-                    "evaluation_criteria_results": conversation.analysis.evaluation_criteria_results,
-                    "data_collection_results": conversation.analysis.data_collection_results
-                }
-            
-            # Process metadata
-            metadata_data = {}
-            if conversation.metadata:
-                metadata_data = {
-                    "start_time_unix_secs": conversation.metadata.start_time_unix_secs,
-                    "call_duration_secs": conversation.metadata.call_duration_secs,
-                    "cost": conversation.metadata.cost,
-                    "termination_reason": conversation.metadata.termination_reason,
-                    "main_language": conversation.metadata.main_language,
-                    "text_only": conversation.metadata.text_only
-                }
-            
-            return {
-                "conversation_id": conversation.conversation_id,
-                "user_id": conversation.user_id,
-                "agent_id": conversation.agent_id,
-                "status": conversation.status,
-                "has_audio": conversation.has_audio,
-                "has_user_audio": conversation.has_user_audio,
-                "has_response_audio": conversation.has_response_audio,
-                "transcript": transcript_messages,
-                "analysis": analysis_data,
-                "metadata": metadata_data
+            # Use ElevenLabs REST API to get conversation details
+            url = f"https://api.elevenlabs.io/v1/convai/conversations/{conversation_id}"
+            headers = {
+                "xi-api-key": os.getenv("ELEVENLABS_API_KEY")
             }
+            
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                conversation_data = response.json()
+                logger.info(f"✅ Retrieved conversation details for: {conversation_id}")
+                
+                # Format the transcript for our database
+                formatted_transcript = []
+                if conversation_data.get("transcript"):
+                    for msg in conversation_data["transcript"]:
+                        formatted_message = {
+                            "role": msg.get("role", "unknown"),
+                            "message": msg.get("message", ""),
+                            "time_in_call_secs": msg.get("time_in_call_secs", 0),
+                            "source_medium": msg.get("source_medium"),
+                            "interrupted": msg.get("interrupted", False),
+                            "llm_usage": msg.get("llm_usage"),
+                            "conversation_turn_metrics": msg.get("conversation_turn_metrics", {})
+                        }
+                        formatted_transcript.append(formatted_message)
+                
+                # Return the full conversation data with formatted transcript
+                return {
+                    "conversation_id": conversation_data.get("conversation_id"),
+                    "agent_id": conversation_data.get("agent_id"),
+                    "user_id": conversation_data.get("user_id"),
+                    "status": conversation_data.get("status"),
+                    "has_audio": conversation_data.get("has_audio", False),
+                    "has_user_audio": conversation_data.get("has_user_audio", False),
+                    "has_response_audio": conversation_data.get("has_response_audio", False),
+                    "transcript": formatted_transcript,
+                    "metadata": conversation_data.get("metadata", {}),
+                    "analysis": conversation_data.get("analysis", {}),
+                    "conversation_initiation_client_data": conversation_data.get("conversation_initiation_client_data", {}),
+                    "raw_data": conversation_data  # Keep original data for reference
+                }
+            else:
+                logger.error(f"Failed to get conversation details: HTTP {response.status_code} - {response.text}")
+                return None
             
         except Exception as e:
             logger.error(f"Error getting conversation details for {conversation_id}: {e}")
             return None
 
-    async def _download_conversation_audio(self, conversation_id: str, save_path: Path) -> bool:
-        """Download conversation audio from ElevenLabs"""
+    async def _download_conversation_audio(self, elevenlabs_conversation_id: str, call_id: str) -> str:
+        """Download conversation audio from ElevenLabs and save to local storage"""
         try:
-            logger.info(f"📥 Downloading audio for conversation: {conversation_id}")
+            logger.info(f"📥 Downloading audio for conversation: {elevenlabs_conversation_id}")
             
-            audio_stream = self.client.conversational_ai.conversations.audio.get(conversation_id)
+            # Generate unique filename for this call
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+            filename = f"elevenlabs_{call_id}_{timestamp}.wav"
+            file_path = self.recordings_path / filename
             
-            audio_chunks = []
-            total_bytes = 0
-            
-            for chunk in audio_stream:
-                audio_chunks.append(chunk)
-                total_bytes += len(chunk)
-            
-            # Save audio file
-            complete_audio = b''.join(audio_chunks)
-            with open(save_path, 'wb') as f:
-                f.write(complete_audio)
-            
-            logger.info(f"✅ Downloaded {total_bytes} bytes of audio to {save_path}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error downloading audio for {conversation_id}: {e}")
-            return False
-
-    async def _save_conversation_metadata(self, record: ElevenLabsCallRecord, file_path: Path):
-        """Save conversation metadata to JSON file"""
-        try:
-            metadata = {
-                "call_id": record.conversation_id,
-                "agent_dynamic_id": record.agent_dynamic_id,
-                "elevenlabs_agent_id": record.elevenlabs_agent_id,
-                "elevenlabs_conversation_id": record.conversation_id,
-                "call_type": record.call_type,
-                "start_time": record.start_time.isoformat(),
-                "end_time": record.end_time.isoformat() if record.end_time else None,
-                "duration_seconds": record.duration_seconds,
-                "retrieval_status": record.retrieval_status,
-                "audio_file": record.audio_file_path,
-                "transcript_file": record.transcript_file_path,
-                "retrieved_at": datetime.now(timezone.utc).isoformat(),
-                "conversation_data": record.conversation_data
+            # Download audio using ElevenLabs API
+            url = f"https://api.elevenlabs.io/v1/convai/conversations/{elevenlabs_conversation_id}/audio"
+            headers = {
+                "xi-api-key": os.getenv("ELEVENLABS_API_KEY")
             }
             
-            with open(file_path, 'w') as f:
-                json.dump(metadata, f, indent=2, default=str)
+            response = requests.get(url, headers=headers, stream=True)
             
-            logger.info(f"💾 Saved metadata to {file_path}")
+            if response.status_code == 200:
+                # Save audio file
+                with open(file_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                
+                # Return relative path for web access (relative to audio_storage directory)
+                relative_path = f"/audio/elevenlabs_conversations/{filename}"
+                logger.info(f"✅ Downloaded audio file: {relative_path}")
+                return relative_path
+            else:
+                logger.warning(f"Failed to download audio: HTTP {response.status_code} - {response.text}")
+                return ""
             
         except Exception as e:
-            logger.error(f"Error saving metadata: {e}")
+            logger.error(f"Error downloading audio for {elevenlabs_conversation_id}: {e}")
+            return ""
 
-    async def _save_transcript(self, conversation_data: Dict, file_path: Path):
-        """Save formatted transcript to JSON file"""
+    def _format_transcript_for_db(self, transcript_data: List[Dict]) -> List[Dict]:
+        """Format transcript data for database storage"""
         try:
-            transcript_data = {
-                "conversation_id": conversation_data.get("conversation_id"),
-                "transcript": conversation_data.get("transcript", []),
-                "analysis": conversation_data.get("analysis", {}),
-                "metadata": conversation_data.get("metadata", {}),
-                "message_count": len(conversation_data.get("transcript", [])),
-                "exported_at": datetime.now(timezone.utc).isoformat()
-            }
-            
-            with open(file_path, 'w') as f:
-                json.dump(transcript_data, f, indent=2, default=str)
-            
-            logger.info(f"📝 Saved transcript to {file_path}")
-            
+            formatted_transcript = []
+            for message in transcript_data:
+                formatted_message = {
+                    "role": message.get("role", "unknown"),
+                    "content": message.get("content", ""),
+                    "timestamp": message.get("timestamp", ""),
+                    "message_id": message.get("message_id", ""),
+                    "audio_url": message.get("audio_url", ""),
+                    "duration": message.get("duration", 0)
+                }
+                formatted_transcript.append(formatted_message)
+            return formatted_transcript
         except Exception as e:
-            logger.error(f"Error saving transcript: {e}")
+            logger.error(f"Error formatting transcript for database: {e}")
+            return transcript_data  # Return original if formatting fails
 
     # Public API methods
     def get_completed_recordings(self) -> List[Dict]:
@@ -407,7 +471,6 @@ class ElevenLabsPostCallRecorder:
                 "call_id": record.conversation_id,
                 "agent_dynamic_id": record.agent_dynamic_id,
                 "elevenlabs_conversation_id": record.conversation_id,
-                "call_type": record.call_type,
                 "start_time": record.start_time.isoformat(),
                 "end_time": record.end_time.isoformat() if record.end_time else None,
                 "duration_seconds": record.duration_seconds,
@@ -430,7 +493,6 @@ class ElevenLabsPostCallRecorder:
             pending.append({
                 "call_id": record.conversation_id,
                 "agent_dynamic_id": record.agent_dynamic_id,
-                "call_type": record.call_type,
                 "start_time": record.start_time.isoformat(),
                 "end_time": record.end_time.isoformat() if record.end_time else None,
                 "status": record.retrieval_status,
@@ -454,6 +516,112 @@ class ElevenLabsPostCallRecorder:
                 "status": record.retrieval_status
             }
         return None
+
+    def _format_transcript_for_db(self, transcript_data: Any) -> List[Dict[str, Any]]:
+        """
+        Format ElevenLabs transcript data for database storage
+        
+        Args:
+            transcript_data: Raw transcript data from ElevenLabs API
+            
+        Returns:
+            List of formatted transcript segments
+        """
+        if not transcript_data:
+            return []
+        
+        formatted_transcript = []
+        
+        try:
+            # Handle the new REST API format
+            if isinstance(transcript_data, list):
+                for segment in transcript_data:
+                    if isinstance(segment, dict):
+                        # Extract timestamp - use time_in_call_secs if available
+                        timestamp = segment.get("timestamp")
+                        if not timestamp and segment.get("time_in_call_secs") is not None:
+                            # Convert seconds to ISO timestamp (relative to conversation start)
+                            from datetime import datetime, timedelta
+                            base_time = datetime.utcnow()  # We could use conversation start time here
+                            call_time = base_time + timedelta(seconds=segment.get("time_in_call_secs", 0))
+                            timestamp = call_time.isoformat()
+                        elif not timestamp:
+                            timestamp = datetime.utcnow().isoformat()
+                        
+                        formatted_segment = {
+                            "role": segment.get("role", "user"),  # Use 'role' for frontend compatibility
+                            "content": segment.get("message", ""),  # Use 'content' for frontend compatibility
+                            "speaker": segment.get("role", "unknown"),  # Keep 'speaker' for backward compatibility
+                            "text": segment.get("message", ""),         # Keep 'text' for backward compatibility
+                            "timestamp": timestamp,
+                            "confidence": 1.0,  # ElevenLabs doesn't provide confidence, set to 1.0
+                            "time_in_call_secs": segment.get("time_in_call_secs", 0),
+                            "source_medium": segment.get("source_medium"),
+                            "interrupted": segment.get("interrupted", False),
+                            "metrics": segment.get("conversation_turn_metrics", {}),
+                            "llm_usage": segment.get("llm_usage")
+                        }
+                        formatted_transcript.append(formatted_segment)
+                        
+            elif isinstance(transcript_data, dict):
+                # If it's a single segment
+                timestamp = transcript_data.get("timestamp", datetime.utcnow().isoformat())
+                if not timestamp and transcript_data.get("time_in_call_secs") is not None:
+                    from datetime import datetime, timedelta
+                    base_time = datetime.utcnow()
+                    call_time = base_time + timedelta(seconds=transcript_data.get("time_in_call_secs", 0))
+                    timestamp = call_time.isoformat()
+                    
+                formatted_segment = {
+                    "role": transcript_data.get("role", "user"),  # Use 'role' for frontend compatibility
+                    "content": transcript_data.get("message", ""),  # Use 'content' for frontend compatibility
+                    "speaker": transcript_data.get("role", "unknown"),  # Keep 'speaker' for backward compatibility
+                    "text": transcript_data.get("message", ""),         # Keep 'text' for backward compatibility
+                    "timestamp": timestamp,
+                    "confidence": 1.0,
+                    "time_in_call_secs": transcript_data.get("time_in_call_secs", 0),
+                    "source_medium": transcript_data.get("source_medium"),
+                    "interrupted": transcript_data.get("interrupted", False),
+                    "metrics": transcript_data.get("conversation_turn_metrics", {}),
+                    "llm_usage": transcript_data.get("llm_usage")
+                }
+                formatted_transcript.append(formatted_segment)
+                
+            elif isinstance(transcript_data, str):
+                # If it's just a text string
+                formatted_segment = {
+                    "role": "user",  # Use 'role' for frontend compatibility
+                    "content": transcript_data,  # Use 'content' for frontend compatibility
+                    "speaker": "unknown",  # Keep 'speaker' for backward compatibility
+                    "text": transcript_data,         # Keep 'text' for backward compatibility
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "confidence": 1.0,
+                    "time_in_call_secs": 0,
+                    "source_medium": None,
+                    "interrupted": False,
+                    "metrics": {},
+                    "llm_usage": None
+                }
+                formatted_transcript.append(formatted_segment)
+        
+        except Exception as e:
+            logger.error(f"❌ Error formatting transcript data: {e}")
+            # Return a simple format as fallback
+            formatted_transcript = [{
+                "role": "user",  # Use 'role' for frontend compatibility
+                "content": str(transcript_data),  # Use 'content' for frontend compatibility
+                "speaker": "unknown",  # Keep 'speaker' for backward compatibility
+                "text": str(transcript_data),         # Keep 'text' for backward compatibility
+                "timestamp": datetime.utcnow().isoformat(),
+                "confidence": 1.0,
+                "time_in_call_secs": 0,
+                "source_medium": None,
+                "interrupted": False,
+                "metrics": {},
+                "llm_usage": None
+            }]
+        
+        return formatted_transcript
 
 
 # Global recorder instance
