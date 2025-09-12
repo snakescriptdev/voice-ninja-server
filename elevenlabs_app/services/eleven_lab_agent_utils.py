@@ -299,13 +299,13 @@ class ElevenLabsAgentCRUD:
             # The payload should be: {"tool_config": <config>}
             payload = {"tool_config": webhook_config}
             
-            print(f"Debug: Creating webhook function at: {url}")
-            print(f"Debug: Payload: {json.dumps(payload, indent=2)}")
+            # print(f"Debug: Creating webhook function at: {url}")
+            # print(f"Debug: Payload: {json.dumps(payload, indent=2)}")
             
             resp = requests.post(url, headers=self.headers, json=payload)
             
-            print(f"Debug: ElevenLabs response status: {resp.status_code}")
-            print(f"Debug: ElevenLabs response: {resp.text}")
+            # print(f"Debug: ElevenLabs response status: {resp.status_code}")
+            # print(f"Debug: ElevenLabs response: {resp.text}")
             
             if resp.status_code == 200:
                 return resp.json()
@@ -320,7 +320,7 @@ class ElevenLabsAgentCRUD:
         Update an agent to attach tools by updating the agent's prompt configuration.
         """
         try:
-            print(f"🔍 Debug: Updating agent {agent_id} with tool IDs: {tool_ids}")
+            # print(f"🔍 Debug: Updating agent {agent_id} with tool IDs: {tool_ids}")
             
             # Use the existing update_agent method with tool_ids
             result = self.update_agent(
@@ -328,7 +328,7 @@ class ElevenLabsAgentCRUD:
                 tool_ids=tool_ids
             )
             
-            print(f"🔍 Debug: Update agent result: {result}")
+            # print(f"🔍 Debug: Update agent result: {result}")
             return result
                 
         except Exception as ex:
@@ -340,11 +340,11 @@ class ElevenLabsAgentCRUD:
         """
         try:
             url = f"{BASE_URL}/convai/tools/{tool_id}"
-            print(f"🔍 Debug: Deleting webhook function at: {url}")
+            # print(f"🔍 Debug: Deleting webhook function at: {url}")
             
             resp = requests.delete(url, headers=self.headers)
-            print(f"🔍 Debug: ElevenLabs response status: {resp.status_code}")
-            print(f"🔍 Debug: ElevenLabs response: {resp.text}")
+            # print(f"🔍 Debug: ElevenLabs response status: {resp.status_code}")
+            # print(f"🔍 Debug: ElevenLabs response: {resp.text}")
             
             # 204 No Content is a successful deletion response
             if resp.status_code in [200, 204]:
@@ -361,13 +361,13 @@ class ElevenLabsAgentCRUD:
         """
         try:
             url = f"{BASE_URL}/convai/tools/{tool_id}"
-            print(f"🔍 Debug: Updating webhook tool at: {url}")
+            # print(f"🔍 Debug: Updating webhook tool at: {url}")
             
             payload = {"tool_config": tool_config}
             resp = requests.patch(url, headers=self.headers, json=payload)
             
-            print(f"🔍 Debug: ElevenLabs response status: {resp.status_code}")
-            print(f"🔍 Debug: ElevenLabs response: {resp.text}")
+            # print(f"🔍 Debug: ElevenLabs response status: {resp.status_code}")
+            # print(f"🔍 Debug: ElevenLabs response: {resp.text}")
             
             if resp.status_code == 200:
                 return {"success": True, "message": "Tool updated successfully", "data": resp.json()}
@@ -429,7 +429,7 @@ class ElevenLabsAgentCRUD:
                     current_config["agent"]["prompt"] = {}
                 current_config["agent"]["prompt"]["prompt"] = prompt
                 config_updated = True
-                print(f"🔍 Debug: Updated prompt to: {prompt}")
+                # print(f"🔍 Debug: Updated prompt to: {prompt}")
             
             # Handle model update
             if model:
@@ -476,7 +476,7 @@ class ElevenLabsAgentCRUD:
                     current_config["agent"]["prompt"] = {}
                 current_config["agent"]["prompt"]["knowledge_base"] = knowledge_base
                 config_updated = True
-                print(f"🔍 Debug: Updated knowledge base to: {knowledge_base}")
+                # print(f"🔍 Debug: Updated knowledge base to: {knowledge_base}")
             
             # Handle tool_ids update
             if tool_ids is not None:
@@ -489,7 +489,7 @@ class ElevenLabsAgentCRUD:
                 if "tools" in current_config["agent"]["prompt"]:
                     del current_config["agent"]["prompt"]["tools"]
                 config_updated = True
-                print(f"🔍 Debug: Updated tool_ids to: {tool_ids}")
+                # print(f"🔍 Debug: Updated tool_ids to: {tool_ids}")
             
             # Handle dynamic variables update
             if dynamic_variables:
@@ -499,7 +499,7 @@ class ElevenLabsAgentCRUD:
                     "dynamic_variable_placeholders": dynamic_variables
                 }
                 config_updated = True
-                print(f"🔍 Debug: Updated dynamic variables to: {dynamic_variables}")
+                # print(f"🔍 Debug: Updated dynamic variables to: {dynamic_variables}")
             
             # Add conversation config to payload if any changes were made
             if config_updated:
@@ -507,12 +507,12 @@ class ElevenLabsAgentCRUD:
             
             # Call the update endpoint
             url = f"{BASE_URL}/convai/agents/{agent_id}"
-            print(f"🔍 Debug: Calling ElevenLabs update endpoint: {url}")
-            print(f"🔍 Debug: Payload: {json.dumps(payload, indent=2)}")
+            # print(f"🔍 Debug: Calling ElevenLabs update endpoint: {url}")
+            # print(f"🔍 Debug: Payload: {json.dumps(payload, indent=2)}")
             
             resp = requests.patch(url, headers=self.headers, json=payload)
-            print(f"🔍 Debug: Response status: {resp.status_code}")
-            print(f"🔍 Debug: Response text: {resp.text}")
+            # print(f"🔍 Debug: Response status: {resp.status_code}")
+            # print(f"🔍 Debug: Response text: {resp.text}")
 
             if resp.status_code != 200:
                 raise Exception(f"Failed to update agent: {resp.status_code} {resp.text}")

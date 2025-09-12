@@ -1,7 +1,8 @@
 from fastapi import WebSocket, status, APIRouter
 from starlette.websockets import WebSocketDisconnect
 from app.core import logger, VoiceSettings
-from app.services import RunAssistant
+# DISABLED: Pipecat imports - migrated to ElevenLabs
+# from app.services import RunAssistant
 from typing import Dict
 import secrets,uuid, json
 from app.databases.models import AgentModel, CustomFunctionModel, DailyCallLimitModel, OverallTokenLimitModel,VoiceModel
@@ -66,7 +67,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 "uid": str(uid)
             }
             await websocket.send_json(json_data)
-            await RunAssistant(websocket, voice, uid)
+            # DISABLED: Pipecat functionality - migrated to ElevenLabs
+            # await RunAssistant(websocket, voice, uid)
+            logger.warning("Old pipecat-based voice assistant called - this has been disabled. Use ElevenLabs endpoints instead.")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
 
         
     except Exception as e:
@@ -189,16 +193,20 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
             "is_custom_voice":voice_obj.is_custom_voice,
             "custom_voice_id":custom_voice_id
         }
-        await run_bot(websocket, **params)
+        # await run_bot(websocket, **params)  # DISABLED: Migrated to ElevenLabs live streaming
+        logger.warning("Old run_bot endpoint called - this has been disabled. Use ElevenLabs live streaming instead.")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
 
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}", exc_info=True)
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
 
 
-@ElevenLabsWebSocketRouter.websocket("/agent_ws/")#can be removed its for run_bot() function
-async def agent_websocket_endpoint(websocket: WebSocket):
-    """WebSocket endpoint for agent communication"""
+# @ElevenLabsWebSocketRouter.websocket("/agent_ws/")#can be removed its for run_bot() function - DISABLED
+# REMOVED: This endpoint was using the old run_bot function which has been migrated to ElevenLabs live streaming
+
+
+async def eleven_labs_websocket_endpoint(websocket: WebSocket):
     try:
         # Accept the WebSocket connection first
         await websocket.accept()
@@ -337,7 +345,9 @@ async def agent_websocket_endpoint(websocket: WebSocket):
             "custom_voice_id":custom_voice_id
         }
         
-        await run_bot(websocket, **params)
+        # await run_bot(websocket, **params)  # DISABLED: Migrated to ElevenLabs live streaming
+        logger.warning("Old run_bot endpoint called - this has been disabled. Use ElevenLabs live streaming instead.")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
     except WebSocketDisconnect:
         logger.info("WebSocket client disconnected")
     except Exception as e:

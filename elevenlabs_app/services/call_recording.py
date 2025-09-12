@@ -48,7 +48,7 @@ class ElevenLabsCallRecorder:
         self.user_audio_buffers: Dict[str, List[bytes]] = {}
         self.agent_audio_buffers: Dict[str, List[bytes]] = {}
         
-        logger.info(f"ElevenLabsCallRecorder initialized with storage path: {self.recordings_path}")
+        # logger.info(f"ElevenLabsCallRecorder initialized with storage path: {self.recordings_path}")
 
     def start_recording(self, call_id: str, agent_dynamic_id: str, metadata: Dict = None) -> bool:
         """
