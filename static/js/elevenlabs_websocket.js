@@ -40,7 +40,7 @@ class ElevenLabsWebSocketClient {
         // Make client globally available
         window.elevenLabsClient = this;
         
-        console.log(`ElevenLabs WebSocket Client initialized for agent: ${this.agentId}`);
+        
     }
 
     initDOMElements() {
@@ -77,7 +77,7 @@ class ElevenLabsWebSocketClient {
             this.consecutiveActiveFrames = 0;
             this.requiredActiveFrames = 5; // Frames needed to trigger interruption
             
-            console.log('ElevenLabs audio system initialized with FIFO queue');
+            
         } catch (error) {
             console.error('Failed to initialize audio system:', error);
             this.updateStatus('error', 'Audio initialization failed');
@@ -101,12 +101,12 @@ class ElevenLabsWebSocketClient {
     async connect() {
         try {
             if (this.isConnected || this.isConnecting) {
-                console.log('Already connected/connecting to ElevenLabs');
+                
                 return;
             }
 
             this.isConnecting = true;
-            this.updateStatus('connecting', 'Connecting to ElevenLabs...');
+            this.updateStatus('connecting', 'Connecting to AI Agent...');
             
             // Unlock audio playback on user interaction
             await this.unlockAudioPlayback();
@@ -118,7 +118,7 @@ class ElevenLabsWebSocketClient {
             await this.connectWebSocket();
             
         } catch (error) {
-            console.error('Failed to connect to ElevenLabs:', error);
+            console.error('Failed to connect to AI Agent:', error);
             this.updateStatus('error', 'Connection failed');
             this.showError('Failed to connect: ' + error.message);
         } finally {
@@ -143,7 +143,7 @@ class ElevenLabsWebSocketClient {
             source.start();
             
             this.audioUnlocked = true;
-            console.log('Audio playback unlocked');
+            
         } catch (error) {
             console.warn('Could not unlock audio playback:', error);
         }
@@ -161,7 +161,7 @@ class ElevenLabsWebSocketClient {
                 }
             });
             
-            console.log('Microphone access granted');
+            
             return true;
         } catch (error) {
             throw new Error('Microphone access denied or unavailable');
@@ -174,13 +174,13 @@ class ElevenLabsWebSocketClient {
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
                 const wsUrl = `${wsProtocol}//${this.BASE_URL}/elevenlabs/live/ws/${this.agentId}`;
                 
-                console.log('Connecting to ElevenLabs WebSocket:', wsUrl);
+
                 
                 this.ws = new WebSocket(wsUrl);
                 this.ws.binaryType = 'arraybuffer';
                 
                 this.ws.onopen = () => {
-                    console.log('Connected to ElevenLabs WebSocket');
+                    
                     this.isConnected = true;
                     this.isConnecting = false;
                     this.updateStatus('connected', 'Connected - Waiting for conversation...');
@@ -193,7 +193,7 @@ class ElevenLabsWebSocketClient {
                 };
                 
                 this.ws.onclose = (event) => {
-                    console.log('ElevenLabs WebSocket closed:', event.code, event.reason);
+                    
                     this.isConnected = false;
                     this.isConnecting = false;
                     this.conversationReady = false;
@@ -203,7 +203,7 @@ class ElevenLabsWebSocketClient {
                 };
                 
                 this.ws.onerror = (error) => {
-                    console.error('ElevenLabs WebSocket error:', error);
+                    
                     reject(new Error('WebSocket connection failed'));
                 };
                 
@@ -238,13 +238,13 @@ class ElevenLabsWebSocketClient {
     handleJSONMessage(message) {
         switch (message.type) {
             case 'conversation_ready':
-                console.log('ElevenLabs conversation is ready');
+                
                 this.conversationReady = true;
                 this.updateStatus('connected', 'Conversation ready - Waiting for audio interface...');
                 break;
                 
             case 'audio_interface_ready':
-                console.log('ElevenLabs audio interface is ready');
+                
                 this.audioInterfaceReady = true;
                 this.updateStatus('connected', 'Ready - Speak now!');
                 if (this.conversationReady) {
@@ -255,9 +255,9 @@ class ElevenLabsWebSocketClient {
             case 'audio_chunk':
                 // Handle base64 encoded audio
                 if (message.data_b64) {
-                    console.log(`Received audio chunk: ${message.data_b64.length} base64 chars`);
+
                     const audioData = this.base64ToArrayBuffer(message.data_b64);
-                    console.log(`Decoded audio chunk: ${audioData.byteLength} bytes`);
+                    
                     this.queueAudio(audioData);
                 } else {
                     console.warn('Received audio_chunk without data_b64');
@@ -273,16 +273,16 @@ class ElevenLabsWebSocketClient {
                 break;
                 
             case 'latency_measurement':
-                console.log(`ElevenLabs latency: ${message.latency_ms}ms`);
+                
                 break;
                 
             case 'error':
-                console.error('ElevenLabs error:', message.message);
+                console.error('AI Agent error:', message.message);
                 this.showError(message.message);
                 break;
                 
             case 'session_replaced':
-                console.log('Session replaced:', message.message);
+                
                 break;
                 
             default:
@@ -291,13 +291,13 @@ class ElevenLabsWebSocketClient {
     }
 
     handleAudioMessage(audioData) {
-        // Handle binary audio data from ElevenLabs
+        // Handle binary audio data from AI Agent
         this.playAudio(audioData);
     }
 
     // FIFO Audio Queue Management
     queueAudio(audioData) {
-        console.log(`Queueing audio chunk: ${audioData.byteLength} bytes (Queue size: ${this.audioQueue.length})`);
+        
         this.audioQueue.push(audioData);
         
         // Update status to show queuing
@@ -315,7 +315,7 @@ class ElevenLabsWebSocketClient {
         if (this.audioQueue.length === 0) {
             this.isPlayingAudio = false;
             this.updateStatus('ready', 'Ready - Speak now!');
-            console.log('Audio queue empty, stopping playback');
+
             return;
         }
 
@@ -333,7 +333,7 @@ class ElevenLabsWebSocketClient {
     }
 
     clearAudioQueue() {
-        console.log('Clearing audio queue');
+
         this.audioQueue = [];
         
         // Stop current audio if playing
@@ -354,13 +354,13 @@ class ElevenLabsWebSocketClient {
     setInterruptionSensitivity(threshold = 0.01, requiredFrames = 5) {
         this.voiceActivityThreshold = threshold;
         this.requiredActiveFrames = requiredFrames;
-        console.log(`Interruption sensitivity set: threshold=${threshold}, frames=${requiredFrames}`);
+        
     }
 
     async playAudioChunk(audioData) {
         return new Promise((resolve, reject) => {
             try {
-                console.log(`playAudioChunk called with ${audioData.byteLength} bytes`);
+                
                 
                 if (!this.audioContext) {
                     console.warn('Audio context not available');
@@ -370,7 +370,7 @@ class ElevenLabsWebSocketClient {
 
                 // Resume audio context if suspended
                 if (this.audioContext.state === 'suspended') {
-                    console.log('Resuming suspended audio context');
+                    
                     this.audioContext.resume().then(() => {
                         this.playAudioInternal(audioData, resolve, reject);
                     });
@@ -387,7 +387,7 @@ class ElevenLabsWebSocketClient {
 
     playAudioInternal(audioData, resolve, reject) {
         try {
-            console.log(`Audio context state: ${this.audioContext.state}`);
+            
 
             // For PCM data, we need to create an AudioBuffer directly
             const audioBuffer = this.audioContext.createBuffer(
@@ -414,14 +414,14 @@ class ElevenLabsWebSocketClient {
             
             // Set up completion callback
             source.onended = () => {
-                console.log(`Audio chunk completed: ${audioData.byteLength} bytes`);
+                
                 this.currentAudioSource = null;
                 resolve();
             };
             
             source.start();
             
-            console.log(`Playing audio chunk: ${audioData.byteLength} bytes, ${int16View.length} samples`);
+            
             
         } catch (error) {
             console.error('Error in playAudioInternal:', error);
@@ -456,7 +456,7 @@ class ElevenLabsWebSocketClient {
                         
                         // Only clear queue if agent is speaking AND user has been speaking consistently
                         if (this.isPlayingAudio && this.consecutiveActiveFrames >= this.requiredActiveFrames) {
-                            console.log(`User interruption detected (RMS: ${rms.toFixed(4)}) - clearing audio queue`);
+                            
                             this.clearAudioQueue();
                             this.consecutiveActiveFrames = 0; // Reset after interruption
                         }
@@ -483,7 +483,7 @@ class ElevenLabsWebSocketClient {
             this.audioProcessor.connect(this.audioContext.destination);
             
             this.isRecording = true;
-            console.log('PCM audio streaming started');
+            
             
         } catch (error) {
             console.error('Failed to start audio streaming:', error);
@@ -514,7 +514,7 @@ class ElevenLabsWebSocketClient {
                 this.microphone = null;
             }
             
-            console.log('PCM audio streaming stopped');
+            
             
         } catch (error) {
             console.error('Error stopping audio streaming:', error);
@@ -542,7 +542,7 @@ class ElevenLabsWebSocketClient {
             this.audioInterfaceReady = false;
             this.updateStatus('disconnected', 'Disconnected');
             
-            console.log('Disconnected from ElevenLabs');
+            
             
         } catch (error) {
             console.error('Error during disconnect:', error);
@@ -551,7 +551,7 @@ class ElevenLabsWebSocketClient {
 
     toggleMute() {
         this.isMuted = !this.isMuted;
-        console.log(`Audio ${this.isMuted ? 'muted' : 'unmuted'}`);
+        
         
         if (this.muteBtn) {
             this.muteBtn.textContent = this.isMuted ? '🔇 Muted' : '🔊 Unmuted';
@@ -570,7 +570,7 @@ class ElevenLabsWebSocketClient {
             this.previewStatus.textContent = message;
         }
         
-        console.log(`ElevenLabs Status: ${state} - ${message}`);
+        
     }
 
     addToTranscript(speaker, text) {
@@ -658,5 +658,3 @@ function toggleElevenLabsMute() {
     return false;
 }
 
-// Initialize when script loads
-console.log('ElevenLabs WebSocket Client script loaded');

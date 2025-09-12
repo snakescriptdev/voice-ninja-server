@@ -301,7 +301,7 @@
                                         <path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0"/>
                                         <path d="M0 8s3-5.5 8-5.5S16 8 16 8s-3 5.5-8 5.5S0 8 0 8m8 3.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7"/>
                                         </svg>
-                                        <div class="customize-bot-btn-tooltip">Preview Agent (ElevenLabs)</div>
+                                        <div class="customize-bot-btn-tooltip">Preview Agent</div>
                                     </button>
                                 </a>
                             </div>
@@ -471,7 +471,7 @@
         <h1 class="mb-0 d-flex align-items-center gap-2" id="customFuntionModalLabel">
         <span>
             <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4.33337 14.6667V10" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M4.33337 3.33398V1.33398" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M11.6666 14.666V12.666" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M11.6666 6.00065V1.33398" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M6.33337 4.66732V8.66732C6.33337 9.40065 6.00004 10.0007 5.00004 10.0007H3.66671C2.66671 10.0007 2.33337 9.40065 2.33337 8.66732V4.66732C2.33337 3.93398 2.66671 3.33398 3.66671 3.33398H5.00004C6.00004 3.33398 6.33337 3.93398 6.33337 4.66732Z" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path><path d="M13.6666 7.33333V11.3333C13.6666 12.0667 13.3333 12.6667 12.3333 12.6667H11C9.99996 12.6667 9.66663 12.0667 9.66663 11.3333V7.33333C9.66663 6.6 9.99996 6 11 6H12.3333C13.3333 6 13.6666 6.6 13.6666 7.33333Z" stroke="#525866" stroke-width="1.5" stroke-miterlimit="10" stroke-linecap="round" stroke-linejoin="round"></path></svg>
-        </span>ElevenLabs Webhook Tool</h1>
+        </span>Webhook Tool</h1>
         <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
       </div>
       <div class="modal-body">
@@ -1369,8 +1369,6 @@ document.addEventListener("DOMContentLoaded", function () {
         const currentUrl = new URL(window.location.href);
         const agentId = currentUrl.searchParams.get("agent_id");
         
-        console.log("🔍 Frontend Debug - Saving welcome message:", message);
-        
         // Update both local database and ElevenLabs
         fetch(`${host}/elevenlabs/api/v1/edit_agent`, {
             method: "POST",
@@ -1387,14 +1385,14 @@ document.addEventListener("DOMContentLoaded", function () {
         .then(data => {
             if (data.status === "success") {
                 toastr.success("Welcome message updated successfully", { positionClass: "toast-top-right" });
-                console.log("🔍 Frontend Debug - Welcome message saved successfully");
+                
             } else {
                 toastr.error(data.message || "Failed to update welcome message");
-                console.log("🔍 Frontend Debug - Welcome message save failed:", data.message);
+                
             }
         })
         .catch(error => {
-            console.error("🔍 Frontend Debug - Error saving welcome message:", error);
+            
             toastr.error("Error updating welcome message");
         });
     }
@@ -2539,7 +2537,7 @@ function updateFunctionElement(functionData) {
 
 
 function handleEditCustomFunction(functionId){
-    console.log(`🔍 Debug: handleEditCustomFunction called with functionId: ${functionId}`);
+    
     
     // Basic tool information
     let toolName = document.getElementById("edit_tool_name").value;
@@ -2549,15 +2547,6 @@ function handleEditCustomFunction(functionId){
     let httpMethod = document.getElementById("edit_http_method").value;
     let bodyDescription = document.getElementById("edit_body_description").value;
     let functionParameters = document.getElementById("edit-parameters").value;
-    
-    console.log(`🔍 Debug: Form data collected:`);
-    console.log(`🔍 Debug: - toolName: '${toolName}'`);
-    console.log(`🔍 Debug: - toolDescription: '${toolDescription}'`);
-    console.log(`🔍 Debug: - responseTimeout: '${responseTimeout}'`);
-    console.log(`🔍 Debug: - apiUrl: '${apiUrl}'`);
-    console.log(`🔍 Debug: - httpMethod: '${httpMethod}'`);
-    console.log(`🔍 Debug: - bodyDescription: '${bodyDescription}'`);
-    console.log(`🔍 Debug: - functionParameters: '${functionParameters}'`);
     
     // Advanced options
     let disableInterruptions = document.getElementById("edit_disable_interruptions").checked;
@@ -2692,13 +2681,7 @@ function handleEditCustomFunction(functionId){
         agent_id: agentId
     };
 
-    console.log(`🔍 Debug: Data being sent to backend:`, data);
-    console.log(`🔍 Debug: - function_name: '${data.function_name}'`);
-    console.log(`🔍 Debug: - function_description: '${data.function_description}'`);
-    console.log(`🔍 Debug: - function_url: '${data.function_url}'`);
-    console.log(`🔍 Debug: - function_timeout: ${data.function_timeout}`);
-    console.log(`🔍 Debug: - agent_id: ${data.agent_id}`);
-    console.log(`🔍 Debug: - function_parameters:`, data.function_parameters);
+
 
     $.ajax({
         url: `{{ host }}/elevenlabs/api/v1/edit-custom-functions/${functionId}`,
@@ -2706,7 +2689,7 @@ function handleEditCustomFunction(functionId){
         contentType: 'application/json',
         data: JSON.stringify(data),
         success: function(response) {
-            console.log(`🔍 Debug: Edit response received:`, response);
+            
             if(response.status == "success"){
                 toastr.success('Custom function saved successfully');
                 $('#customFunctionEditModal').modal('hide');
@@ -2957,7 +2940,7 @@ function generateAssignmentsHTML(assignments) {
 
 // Helper function to extract and flatten tool configuration for edit modal
 function extractToolConfigForEdit(rawToolConfig) {
-    console.log(`🔍 Debug: extractToolConfigForEdit called with:`, rawToolConfig);
+    
     
     // Initialize the flattened structure
     var toolConfig = {
@@ -3053,19 +3036,19 @@ function extractToolConfigForEdit(rawToolConfig) {
         }
     }
     
-    console.log(`🔍 Debug: Extracted toolConfig:`, toolConfig);
+    
     return toolConfig;
 }
 
 function editFunction(functionId) {
-    console.log(`🔍 Debug: editFunction called with functionId: ${functionId}`);
+    
     
     $.ajax({
         url: "{{ host }}/elevenlabs/api/v1/get-custom-functions",
         type: 'GET',
         data: { function_id: functionId },
         success: function(response) {
-            console.log(`🔍 Debug: get_custom_functions response:`, response);
+            
             
             if (!response.data) {
                 toastr.error('No function data found.');
@@ -3075,16 +3058,11 @@ function editFunction(functionId) {
             var functionData = response.data;
             var rawToolConfig = functionData.function_parameters || {};
             
-            console.log(`🔍 Debug: Function data received:`, functionData);
-            console.log(`🔍 Debug: - function_name: '${functionData.function_name}'`);
-            console.log(`🔍 Debug: - function_description: '${functionData.function_description}'`);
-            console.log(`🔍 Debug: - function_url: '${functionData.function_url}'`);
-            console.log(`🔍 Debug: - function_timeout: ${functionData.function_timeout}`);
-            console.log(`🔍 Debug: - rawToolConfig:`, rawToolConfig);
+         
             
             // Extract and flatten the tool configuration for the edit modal
             var toolConfig = extractToolConfigForEdit(rawToolConfig);
-            console.log(`🔍 Debug: - flattened toolConfig:`, toolConfig);
+            
             var modal = `
                 <div class="modal fade custom_function_modal" id="customFunctionEditModal" tabindex="-1" aria-labelledby="customFunctionEditModalLabel">
                     <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-xl">
@@ -3101,7 +3079,7 @@ function editFunction(functionId) {
                                             <path d="M13.6666 7.33333V11.3333C13.6666 12.0667 13.3333 12.6667 12.3333 12.6667H11C9.99996 12.6667 9.66663 12.0667 9.66663 11.3333V7.33333C9.66663 6.6 9.99996 6 11 6H12.3333C13.3333 6 13.6666 6.6 13.6666 7.33333Z" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
                                         </svg>
                                     </span>
-                                    Edit ElevenLabs Webhook Tool
+                                    Edit Webhook Tool
                                 </h1>
                                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                             </div>
@@ -4009,7 +3987,7 @@ function saveVariable() {
             const currentUrl = new URL(window.location.href);
             const agentId = currentUrl.searchParams.get("agent_id");
             
-            console.log("🔍 Frontend Debug - Updating variable:", varName, "to:", value);
+            
             
             // Update the variable in the backend
             fetch(`${host}/elevenlabs/api/v1/edit_agent`, {

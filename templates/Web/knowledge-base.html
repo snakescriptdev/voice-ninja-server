@@ -523,9 +523,9 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
     filesContainer.innerHTML = '';
 
     if (fileData.length > 0) {
-        console.log("🔍 Debug: File data received:", fileData);
+        
         fileData.forEach(file => {
-            console.log("🔍 Debug: Processing file:", file);
+            
             let iconPath = "{{ host }}/static/Web/images/upload-file-icon.svg";
             const formattedSize = file.size ? formatFileSize(file.size) : "Unknown Size";
 
