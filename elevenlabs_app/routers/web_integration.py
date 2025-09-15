@@ -193,11 +193,54 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
         if not appearances:
             # Set default appearance
             appearances = type('obj', (object,), {
-                'primary_color': '#0C7FDA',
-                'secondary_color': '#99d2ff', 
-                'pulse_color': '#ffffff',
-                'icon_url': f'{host}/static/Web/images/default_voice_icon.png'
+                'primary_color': '#00d4ff',
+                'secondary_color': '#006eff', 
+                'pulse_color': 'rgba(0, 212, 255, 0.3)',
+                'icon_url': f'{host}/static/Web/images/gif-icon-1.gif',
+                'widget_size': 'medium'
             })
+        else:
+            # Ensure all required properties exist
+            if not hasattr(appearances, 'primary_color') or not appearances.primary_color:
+                appearances.primary_color = '#00d4ff'
+            if not hasattr(appearances, 'secondary_color') or not appearances.secondary_color:
+                appearances.secondary_color = '#006eff'
+            if not hasattr(appearances, 'pulse_color') or not appearances.pulse_color:
+                appearances.pulse_color = 'rgba(0, 212, 255, 0.3)'
+            if not hasattr(appearances, 'icon_url') or not appearances.icon_url:
+                appearances.icon_url = f'{host}/static/Web/images/gif-icon-1.gif'
+            if not hasattr(appearances, 'widget_size') or not appearances.widget_size:
+                appearances.widget_size = 'medium'
+        
+        # Calculate widget sizes based on widget_size setting
+        size_settings = {
+            'small': {
+                'panel_padding': '15px',
+                'panel_gap': '10px',
+                'panel_min_width': '220px',
+                'indicator_size': '40px',
+                'button_padding': '8px 15px',
+                'button_font_size': '12px'
+            },
+            'medium': {
+                'panel_padding': '20px',
+                'panel_gap': '15px',
+                'panel_min_width': '280px',
+                'indicator_size': '50px',
+                'button_padding': '12px 20px',
+                'button_font_size': '14px'
+            },
+            'large': {
+                'panel_padding': '25px',
+                'panel_gap': '20px',
+                'panel_min_width': '320px',
+                'indicator_size': '60px',
+                'button_padding': '15px 25px',
+                'button_font_size': '16px'
+            }
+        }
+        
+        current_size = size_settings.get(appearances.widget_size, size_settings['medium'])
         
         # Check limits and user status
         user = UserModel.get_by_id(created_by) if created_by else None
@@ -440,19 +483,19 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                 <div id="main-panel" style="
                                     background: white;
                                     border-radius: 25px;
-                                    padding: 20px;
+                                    padding: {current_size['panel_padding']};
                                     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
                                     display: flex;
                                     align-items: center;
-                                    gap: 15px;
-                                    min-width: 280px;
+                                    gap: {current_size['panel_gap']};
+                                    min-width: {current_size['panel_min_width']};
                                 ">
                                     <!-- Voice Indicator -->
                                     <div id="voice-indicator" style="
-                                        width: 50px;
-                                        height: 50px;
+                                        width: {current_size['indicator_size']};
+                                        height: {current_size['indicator_size']};
                                         border-radius: 50%;
-                                        background: linear-gradient(45deg, #00d4ff, #006eff);
+                                        background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color});
                                         display: flex;
                                         align-items: center;
                                         justify-content: center;
@@ -473,9 +516,9 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                         color: white;
                                         border: none;
                                         border-radius: 25px;
-                                        padding: 12px 20px;
+                                        padding: {current_size['button_padding']};
                                         font-weight: 600;
-                                        font-size: 14px;
+                                        font-size: {current_size['button_font_size']};
                                         cursor: pointer;
                                         transition: all 0.2s ease;
                                         display: flex;

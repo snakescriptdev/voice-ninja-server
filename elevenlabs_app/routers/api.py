@@ -601,6 +601,79 @@ async def save_variables(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
+@ElevenLabsAPIRouter.post("/save_widget_customization", name="save-widget-customization")
+async def save_widget_customization(request: Request):
+    """
+    Save widget customization settings for an agent
+    """
+    try:
+        data = await request.json()
+        agent_id = data.get("agent_id")
+        primary_color = data.get("primary_color", "#00d4ff")
+        secondary_color = data.get("secondary_color", "#006eff")
+        pulse_color = data.get("pulse_color", "rgba(0, 212, 255, 0.3)")
+        icon_url = data.get("icon_url", "/static/Web/images/gif-icon-1.gif")
+        widget_size = data.get("widget_size", "medium")
+        
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+        
+        # Get or create agent connection settings
+        agent_connection = AgentConnectionModel.get_by_agent_id(agent_id)
+        
+        if agent_connection:
+            # Update existing connection
+            try:
+                Session = sessionmaker(bind=engine)
+                session = Session()
+                
+                agent_connection.primary_color = primary_color
+                agent_connection.secondary_color = secondary_color
+                agent_connection.pulse_color = pulse_color
+                agent_connection.icon_url = icon_url
+                # Add widget_size if the column exists, otherwise skip
+                if hasattr(agent_connection, 'widget_size'):
+                    agent_connection.widget_size = widget_size
+                
+                session.merge(agent_connection)
+                session.commit()
+                session.close()
+                
+            except Exception as e:
+                logger.error(f"Error updating agent connection: {str(e)}")
+                return JSONResponse(status_code=500, content={"status": "error", "message": f"Error updating customization: {str(e)}"})
+        else:
+            # Create new agent connection
+            try:
+                Session = sessionmaker(bind=engine)
+                session = Session()
+                
+                new_connection = AgentConnectionModel(
+                    agent_id=agent_id,
+                    primary_color=primary_color,
+                    secondary_color=secondary_color,
+                    pulse_color=pulse_color,
+                    icon_url=icon_url
+                )
+                
+                # Add widget_size if the column exists
+                if hasattr(new_connection, 'widget_size'):
+                    new_connection.widget_size = widget_size
+                
+                session.add(new_connection)
+                session.commit()
+                session.close()
+                
+            except Exception as e:
+                logger.error(f"Error creating agent connection: {str(e)}")
+                return JSONResponse(status_code=500, content={"status": "error", "message": f"Error saving customization: {str(e)}"})
+        
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Widget customization saved successfully"})
+        
+    except Exception as e:
+        logger.error(f"Error in save_widget_customization: {str(e)}")
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
 @ElevenLabsAPIRouter.post("/upload_file", name="upload_file")
 async def upload_file(request: Request):
     try:
