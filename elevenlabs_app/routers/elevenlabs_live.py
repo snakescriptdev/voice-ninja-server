@@ -360,8 +360,15 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
         except Exception as e:
             logger.error(f"Error cleaning up active session for {agent_dynamic_id}: {e}")
         
-        await websocket.close()
-        logger.info("Live stream socket closed")
+        # Close WebSocket only if it's still open
+        try:
+            if websocket.client_state.name != "DISCONNECTED":
+                await websocket.close()
+                logger.info("Live stream socket closed")
+            else:
+                logger.info("Live stream socket already closed")
+        except Exception as e:
+            logger.warning(f"Error closing WebSocket (probably already closed): {e}")
 
 
 def handle_agent_response_live(call_id: str, response: str, websocket: WebSocket, loop: asyncio.AbstractEventLoop):
