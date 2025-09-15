@@ -306,49 +306,215 @@
                                 </a>
                             </div>
                             <div class="customize-bot-modal" id="customize-bot-modal" style="display: none;">
-                                <div class="recorder-controls show">
-                                    <div class="settings">
-                                        <div class="icon" onclick="toggleColorPalette()">
-                                           <i class="fa-solid fa-gear"></i>
-                                        </div>
-                                        <div id="colorPalette" class="color-palette">
-                                            <div class="color-box d-flex align-items-center gap-2 flex-wrap">
-                                                <div class="color-option" style="background: linear-gradient(45deg, #00b4d8, #0077b6);" onclick="changeTheme('#00b4d8', '#0077b6', 'rgba(0, 180, 216, 0.3)')"></div>
-                                                <div class="color-option" style="background: linear-gradient(45deg, #e63946, #9d0208);" onclick="changeTheme('#e63946', '#9d0208', 'rgba(230, 57, 70, 0.3)')"></div>
-                                                <div class="color-option" style="background: linear-gradient(45deg, #8338ec, #5e60ce);" onclick="changeTheme('#8338ec', '#5e60ce', 'rgba(131, 56, 236, 0.3)')"></div>
-                                                <div class="color-option" style="background: linear-gradient(45deg, #06d6a0, #118ab2);" onclick="changeTheme('#06d6a0', '#118ab2', 'rgba(6, 214, 160, 0.3)')"></div>
-                                                <div class="color-option" style="background: linear-gradient(45deg, #fb8500, #ffb703);" onclick="changeTheme('#fb8500', '#ffb703', 'rgba(251, 133, 0, 0.3)')"></div>
-                                                <div class="color-option" style="background: linear-gradient(45deg, #ff5a5f, #c1839f);" onclick="changeTheme('#ff5a5f', '#c1839f', 'rgba(255, 90, 95, 0.3)')"></div>
-                                                <div class="color-option" style="background: linear-gradient(45deg, #2ec4b6, #20a4f3);" onclick="changeTheme('#2ec4b6', '#20a4f3', 'rgba(46, 196, 182, 0.3)')"></div>
-                                                <div class="color-option" style="background: linear-gradient(45deg, #7209b7, #4361ee);" onclick="changeTheme('#7209b7', '#4361ee', 'rgba(114, 9, 183, 0.3)')"></div>
-                                            </div>
-                                            <div class="mt-3">
-                                                <h6>Choose Icons</h6>
-                                                <div class="d-flex align-items-center gap-2 flex-wrap">
-                                                    <div class="icon-option active" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-1.gif', this)">
-                                                    <img src="{{ host }}/static/Web/images/gif-icon-1.gif" class="img-fluid">
-                                                    </div>
-                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon2.gif', this)">
-                                                    <img src="{{ host }}/static/Web/images/gif-icon2.gif" class="img-fluid">
-                                                    </div>
-                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-3.gif', this)">
-                                                    <img src="{{ host }}/static/Web/images/gif-icon-3.gif" class="img-fluid">
-                                                    </div>
-                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-4.gif', this)">
-                                                    <img src="{{ host }}/static/Web/images/gif-icon-4.gif" class="img-fluid">
-                                                    </div>
-                                                    <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-5.gif', this)">
-                                                        <img src="{{ host }}/static/Web/images/gif-icon-5.gif" class="img-fluid">
-                                                    </div>
-                                                </div>
-                                                </div>
-                                            </div>
-                                        </div> 
-                                     <h1>connect with me</h1>
-                                    <div class="status-indicator">
-                                       <img src="{{ host }}/static/Web/images/wave.gif" alt="voice_icon">
+                                <div class="customize-modal-content">
+                                    <!-- Modal Header -->
+                                    <div class="modal-header d-flex justify-content-between align-items-center mb-4">
+                                        <h3 class="mb-0">Customize Your Agent Widget</h3>
+                                        <button class="btn-close" onclick="toggleCustomizeModal()" style="border: none; background: none; font-size: 24px; cursor: pointer;">&times;</button>
                                     </div>
-                                    <button onclick="saveChanges()">Save Changes</button>
+                                    
+                                    <!-- Two Column Layout -->
+                                    <div class="row">
+                                        <!-- Left Column - Customization Options -->
+                                        <div class="col-md-6">
+                                            <div class="customization-panel">
+                                                <!-- Theme Colors Section -->
+                                                <div class="customize-section mb-4">
+                                                    <h5 class="mb-3">
+                                                        <i class="fa-solid fa-palette me-2"></i>
+                                                        Theme Colors
+                                                    </h5>
+                                                    <div class="color-box d-flex align-items-center gap-2 flex-wrap">
+                                                        <div class="color-option active" style="background: linear-gradient(45deg, #00d4ff, #006eff);" onclick="changeTheme('#00d4ff', '#006eff', 'rgba(0, 212, 255, 0.3)', this)" title="Ocean Blue"></div>
+                                                        <div class="color-option" style="background: linear-gradient(45deg, #e63946, #9d0208);" onclick="changeTheme('#e63946', '#9d0208', 'rgba(230, 57, 70, 0.3)', this)" title="Vibrant Red"></div>
+                                                        <div class="color-option" style="background: linear-gradient(45deg, #8338ec, #5e60ce);" onclick="changeTheme('#8338ec', '#5e60ce', 'rgba(131, 56, 236, 0.3)', this)" title="Purple"></div>
+                                                        <div class="color-option" style="background: linear-gradient(45deg, #06d6a0, #118ab2);" onclick="changeTheme('#06d6a0', '#118ab2', 'rgba(6, 214, 160, 0.3)', this)" title="Mint Green"></div>
+                                                        <div class="color-option" style="background: linear-gradient(45deg, #fb8500, #ffb703);" onclick="changeTheme('#fb8500', '#ffb703', 'rgba(251, 133, 0, 0.3)', this)" title="Orange"></div>
+                                                        <div class="color-option" style="background: linear-gradient(45deg, #ff5a5f, #c1839f);" onclick="changeTheme('#ff5a5f', '#c1839f', 'rgba(255, 90, 95, 0.3)', this)" title="Pink"></div>
+                                                        <div class="color-option" style="background: linear-gradient(45deg, #2ec4b6, #20a4f3);" onclick="changeTheme('#2ec4b6', '#20a4f3', 'rgba(46, 196, 182, 0.3)', this)" title="Teal"></div>
+                                                        <div class="color-option" style="background: linear-gradient(45deg, #7209b7, #4361ee);" onclick="changeTheme('#7209b7', '#4361ee', 'rgba(114, 9, 183, 0.3)', this)" title="Deep Purple"></div>
+                                                    </div>
+                                                </div>
+
+                                                <!-- Widget Size Section -->
+                                                <div class="customize-section mb-4">
+                                                    <h5 class="mb-3">
+                                                        <i class="fa-solid fa-expand-arrows-alt me-2"></i>
+                                                        Widget Size
+                                                    </h5>
+                                                    <div class="size-options d-flex gap-2">
+                                                        <button class="size-btn" onclick="changeSize('small', this)">Small</button>
+                                                        <button class="size-btn active" onclick="changeSize('medium', this)">Medium</button>
+                                                        <button class="size-btn" onclick="changeSize('large', this)">Large</button>
+                                                    </div>
+                                                </div>
+
+                                                <!-- Voice Icons Section -->
+                                                <div class="customize-section mb-4">
+                                                    <h5 class="mb-3">
+                                                        <i class="fa-solid fa-microphone me-2"></i>
+                                                        Voice Icons
+                                                    </h5>
+                                                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                                                        <div class="icon-option active" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-1.gif', this)">
+                                                            <img src="{{ host }}/static/Web/images/gif-icon-1.gif" class="img-fluid">
+                                                        </div>
+                                                        <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon2.gif', this)">
+                                                            <img src="{{ host }}/static/Web/images/gif-icon2.gif" class="img-fluid">
+                                                        </div>
+                                                        <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-3.gif', this)">
+                                                            <img src="{{ host }}/static/Web/images/gif-icon-3.gif" class="img-fluid">
+                                                        </div>
+                                                        <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-4.gif', this)">
+                                                            <img src="{{ host }}/static/Web/images/gif-icon-4.gif" class="img-fluid">
+                                                        </div>
+                                                        <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-5.gif', this)">
+                                                            <img src="{{ host }}/static/Web/images/gif-icon-5.gif" class="img-fluid">
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Right Column - Live Preview -->
+                                        <div class="col-md-6">
+                                            <div class="preview-panel">
+                                                <h5 class="mb-3">
+                                                    <i class="fa-solid fa-eye me-2"></i>
+                                                    Live Preview
+                                                </h5>
+                                                <div class="preview-container" style="height: 400px; border: 2px dashed #ddd; border-radius: 12px; position: relative; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); overflow: hidden;">
+                                                    <!-- ElevenLabs Agent Widget Preview -->
+                                                    <div id="preview-elevenlabs-widget" style="
+                                                        position: absolute;
+                                                        bottom: 20px;
+                                                        right: 20px;
+                                                        z-index: 1000;
+                                                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                                                        transition: all 0.3s ease;
+                                                    ">
+                                                        <!-- Language Selection Panel (initially hidden) -->
+                                                        <div id="preview-language-panel" style="
+                                                            background: white;
+                                                            border-radius: 20px;
+                                                            padding: 20px;
+                                                            margin-bottom: 10px;
+                                                            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+                                                            display: none;
+                                                            min-width: 280px;
+                                                        ">
+                                                            <div style="margin-bottom: 15px;">
+                                                                <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;">
+                                                                    <span style="font-size: 20px; margin-right: 12px;">🇺🇸</span>
+                                                                    <span style="font-weight: 600; color: #1a1a1a;">ENGLISH</span>
+                                                                </div>
+                                                                <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;">
+                                                                    <span style="font-size: 20px; margin-right: 12px;">🇨🇳</span>
+                                                                    <span style="font-weight: 600; color: #1a1a1a;">CHINESE</span>
+                                                                </div>
+                                                                <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;">
+                                                                    <span style="font-size: 20px; margin-right: 12px;">🇭🇷</span>
+                                                                    <span style="font-weight: 600; color: #1a1a1a;">CROATIAN</span>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        <!-- Main Control Panel -->
+                                                        <div id="preview-main-panel" style="
+                                                            background: white;
+                                                            border-radius: 25px;
+                                                            padding: 20px;
+                                                            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+                                                            display: flex;
+                                                            align-items: center;
+                                                            gap: 15px;
+                                                            min-width: 280px;
+                                                        ">
+                                                            <!-- Voice Indicator -->
+                                                            <div id="preview-voice-indicator" style="
+                                                                width: 50px;
+                                                                height: 50px;
+                                                                border-radius: 50%;
+                                                                background: linear-gradient(45deg, #00d4ff, #006eff);
+                                                                display: flex;
+                                                                align-items: center;
+                                                                justify-content: center;
+                                                                flex-shrink: 0;
+                                                                transition: all 0.3s ease;
+                                                            ">
+                                                                <div style="
+                                                                    width: 24px;
+                                                                    height: 24px;
+                                                                    border-radius: 50%;
+                                                                    background: radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(255,255,255,0.4) 70%);
+                                                                "></div>
+                                                            </div>
+                                                            
+                                                            <!-- Action Button -->
+                                                            <button id="preview-voice-chat-btn" onclick="toggleElevenLabsChat()" style="
+                                                                background: #000;
+                                                                color: white;
+                                                                border: none;
+                                                                border-radius: 25px;
+                                                                padding: 12px 20px;
+                                                                font-weight: 600;
+                                                                font-size: 14px;
+                                                                cursor: pointer;
+                                                                transition: all 0.2s ease;
+                                                                display: flex;
+                                                                align-items: center;
+                                                                gap: 8px;
+                                                                flex: 1;
+                                                            ">
+                                                                <i class="fas fa-phone" style="font-size: 14px;"></i>
+                                                                <span id="preview-btn-text">VOICE CHAT</span>
+                                                            </button>
+                                                            
+                                                            <!-- Language Selector -->
+                                                            <button id="preview-language-btn" onclick="toggleLanguagePanel()" style="
+                                                                background: #f5f5f5;
+                                                                border: 2px solid #e0e0e0;
+                                                                border-radius: 20px;
+                                                                padding: 8px 12px;
+                                                                cursor: pointer;
+                                                                display: flex;
+                                                                align-items: center;
+                                                                gap: 6px;
+                                                                transition: all 0.2s ease;
+                                                            ">
+                                                                <span id="preview-selected-flag" style="font-size: 18px;">🇺🇸</span>
+                                                                <i class="fas fa-chevron-down" style="font-size: 10px; color: #666;"></i>
+                                                            </button>
+                                                        </div>
+                                                        
+                                                        <!-- Branding -->
+                                                        <div style="
+                                                            text-align: center;
+                                                            margin-top: 10px;
+                                                            font-size: 11px;
+                                                            color: #999;
+                                                            opacity: 0.7;
+                                                        ">
+                                                            Powered by VoiceNinja
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <!-- Modal Footer -->
+                                    <div class="modal-footer d-flex justify-content-between align-items-center mt-4 pt-3 border-top">
+                                        <button type="button" class="btn btn-secondary" onclick="resetToDefaults()">
+                                            <i class="fa-solid fa-refresh me-2"></i>Reset to Defaults
+                                        </button>
+                                        <div class="d-flex gap-2">
+                                            <button type="button" class="btn btn-outline-primary" onclick="toggleCustomizeModal()">Cancel</button>
+                                            <button type="button" class="btn btn-primary" onclick="saveChanges()">
+                                                <i class="fa-solid fa-save me-2"></i>Save Changes
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <script>
@@ -1085,6 +1251,35 @@ function changeIcon(iconUrl, element) {
 
     // Update global variable for tracking the selected icon
     selectedIconUrl = iconUrl;
+}
+
+// Preview functions for the customization modal
+function toggleElevenLabsChat() {
+    // This is just for preview demo purposes
+    const btn = document.getElementById('preview-voice-chat-btn');
+    const indicator = document.getElementById('preview-voice-indicator');
+    
+    if (btn && indicator) {
+        // Toggle button text
+        const textSpan = btn.querySelector('#preview-btn-text');
+        if (textSpan.textContent === 'VOICE CHAT') {
+            textSpan.textContent = 'CONNECTING...';
+            btn.style.background = '#28a745';
+            indicator.style.background = 'linear-gradient(45deg, #28a745, #20c997)';
+        } else {
+            textSpan.textContent = 'VOICE CHAT';
+            btn.style.background = '#000';
+            indicator.style.background = 'linear-gradient(45deg, #00d4ff, #006eff)';
+        }
+    }
+}
+
+function toggleLanguagePanel() {
+    // This is just for preview demo purposes
+    const chevron = document.querySelector('#preview-language-btn .fa-chevron-down');
+    if (chevron) {
+        chevron.style.transform = chevron.style.transform === 'rotate(180deg)' ? 'rotate(0deg)' : 'rotate(180deg)';
+    }
 }
 
 
@@ -4243,6 +4438,372 @@ function saveVariable() {
                 // Add event listener for real-time validation
                 httpMethodSelect.addEventListener('change', toggleRequestBodySchema);
             }
+        });
+        
+        // Enhanced Customize Modal Functions
+        let currentTheme = {
+            primary: '#00d4ff',
+            secondary: '#006eff',
+            pulse: 'rgba(0, 212, 255, 0.3)'
+        };
+        let currentSize = 'medium';
+        let currentIcon = '{{ host }}/static/Web/images/gif-icon-1.gif';
+
+        function changeTheme(primary, secondary, pulse, element) {
+            // Update current theme
+            currentTheme = { primary, secondary, pulse };
+            
+            // Update active color option
+            document.querySelectorAll('.color-option').forEach(opt => opt.classList.remove('active'));
+            element.classList.add('active');
+            
+            // Update preview widget
+            const indicator = document.getElementById('preview-voice-indicator');
+            if (indicator) {
+                indicator.style.background = `linear-gradient(45deg, ${primary}, ${secondary})`;
+            }
+            
+            // Store the theme for later application to the actual agent widget
+            const agentId = new URL(window.location.href).searchParams.get("agent_id");
+            if (agentId) {
+                // Store in localStorage for now, you can implement server-side storage later
+                localStorage.setItem(`agent_${agentId}_theme`, JSON.stringify(currentTheme));
+            }
+        }
+
+        function changeSize(size, element) {
+            currentSize = size;
+            
+            // Update active size button
+            document.querySelectorAll('.size-btn').forEach(btn => btn.classList.remove('active'));
+            element.classList.add('active');
+            
+            // Update preview widget size
+            const widget = document.getElementById('preview-elevenlabs-widget');
+            const panel = document.getElementById('preview-main-panel');
+            const indicator = document.getElementById('preview-voice-indicator');
+            const button = document.getElementById('preview-voice-chat-btn');
+            
+            if (panel && indicator && button) {
+                const sizes = {
+                    'small': { 
+                        panel: { minWidth: '220px', padding: '15px', gap: '10px' },
+                        indicator: { width: '40px', height: '40px' },
+                        button: { padding: '8px 15px', fontSize: '12px' }
+                    },
+                    'medium': { 
+                        panel: { minWidth: '280px', padding: '20px', gap: '15px' },
+                        indicator: { width: '50px', height: '50px' },
+                        button: { padding: '12px 20px', fontSize: '14px' }
+                    },
+                    'large': { 
+                        panel: { minWidth: '320px', padding: '25px', gap: '20px' },
+                        indicator: { width: '60px', height: '60px' },
+                        button: { padding: '15px 25px', fontSize: '16px' }
+                    }
+                };
+                
+                Object.assign(panel.style, sizes[size].panel);
+                Object.assign(indicator.style, sizes[size].indicator);
+                Object.assign(button.style, sizes[size].button);
+            }
+            
+            // Store the size for later application to the actual agent widget
+            const agentId = new URL(window.location.href).searchParams.get("agent_id");
+            if (agentId) {
+                localStorage.setItem(`agent_${agentId}_size`, currentSize);
+            }
+        }
+
+        function changeIcon(iconUrl, element) {
+            currentIcon = iconUrl;
+            
+            // Update active icon
+            document.querySelectorAll('.icon-option').forEach(opt => opt.classList.remove('active'));
+            element.classList.add('active');
+            
+            // Store the icon for later application to the actual agent widget
+            const agentId = new URL(window.location.href).searchParams.get("agent_id");
+            if (agentId) {
+                localStorage.setItem(`agent_${agentId}_icon`, currentIcon);
+            }
+        }
+
+        function resetToDefaults() {
+            // Reset all settings to defaults
+            currentTheme = { primary: '#00d4ff', secondary: '#006eff', pulse: 'rgba(0, 212, 255, 0.3)' };
+            currentSize = 'medium';
+            currentIcon = '{{ host }}/static/Web/images/gif-icon-1.gif';
+            
+            // Reset UI controls
+            document.querySelectorAll('.color-option').forEach((opt, index) => {
+                opt.classList.toggle('active', index === 0);
+            });
+            document.querySelectorAll('.size-btn').forEach((btn, index) => {
+                btn.classList.toggle('active', index === 1);
+            });
+            document.querySelectorAll('.icon-option').forEach((opt, index) => {
+                opt.classList.toggle('active', index === 0);
+            });
+            
+            // Update preview
+            updatePreview();
+        }
+
+        function updatePreview() {
+            // Apply all current settings to preview
+            const indicator = document.getElementById('preview-voice-indicator');
+            const widget = document.getElementById('preview-elevenlabs-widget');
+            const panel = document.getElementById('preview-main-panel');
+            const button = document.getElementById('preview-voice-chat-btn');
+            
+            if (!indicator || !widget || !panel || !button) return;
+            
+            // Theme
+            indicator.style.background = `linear-gradient(45deg, ${currentTheme.primary}, ${currentTheme.secondary})`;
+            
+            // Size
+            const sizes = {
+                'small': { 
+                    panel: { minWidth: '220px', padding: '15px', gap: '10px' },
+                    indicator: { width: '40px', height: '40px' },
+                    button: { padding: '8px 15px', fontSize: '12px' }
+                },
+                'medium': { 
+                    panel: { minWidth: '280px', padding: '20px', gap: '15px' },
+                    indicator: { width: '50px', height: '50px' },
+                    button: { padding: '12px 20px', fontSize: '14px' }
+                },
+                'large': { 
+                    panel: { minWidth: '320px', padding: '25px', gap: '20px' },
+                    indicator: { width: '60px', height: '60px' },
+                    button: { padding: '15px 25px', fontSize: '16px' }
+                }
+            };
+            Object.assign(panel.style, sizes[currentSize].panel);
+            Object.assign(indicator.style, sizes[currentSize].indicator);
+            Object.assign(button.style, sizes[currentSize].button);
+        }
+
+        function saveChanges() {
+            // Save the customization settings
+            const settings = {
+                theme: currentTheme,
+                size: currentSize,
+                icon: currentIcon
+            };
+            
+            // Get agent ID from URL
+            const currentUrl = new URL(window.location.href);
+            const agentId = currentUrl.searchParams.get("agent_id");
+            
+            if (agentId) {
+                // Store all settings in localStorage for immediate application
+                localStorage.setItem(`agent_${agentId}_customization`, JSON.stringify(settings));
+                
+                // Apply customization to preview agent immediately
+                applyCustomizationToPreviewAgent(agentId, settings);
+            }
+            
+            // Show success message
+            toastr.success("Widget customization saved successfully!", { positionClass: "toast-top-right" });
+            toggleCustomizeModal();
+        }
+
+        // Function to apply customization to the preview agent
+        function applyCustomizationToPreviewAgent(agentId, settings) {
+            // This function will be called to update the actual preview agent with the customizations
+            // You can implement this to update the AgentConnectionModel in the database
+            fetch(`${host}/elevenlabs/api/v1/save_widget_customization`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken()
+                },
+                body: JSON.stringify({
+                    agent_id: agentId,
+                    primary_color: settings.theme.primary,
+                    secondary_color: settings.theme.secondary,
+                    pulse_color: settings.theme.pulse,
+                    icon_url: settings.icon,
+                    widget_size: settings.size
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "success") {
+                    console.log("Widget customization applied to preview agent");
+                } else {
+                    console.warn("Failed to apply customization to preview agent:", data.message);
+                }
+            })
+            .catch(error => {
+                console.error('Error applying customization:', error);
+            });
+        }
+    </script>
+    
+    <style>
+        /* Enhanced Customize Modal Styles */
+        .customize-bot-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 10000;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .customize-modal-content {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            max-width: 1200px;
+            margin: 0 auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+        
+        .customization-panel {
+            height: 500px;
+            overflow-y: auto;
+            padding-right: 15px;
+        }
+        
+        .customization-panel::-webkit-scrollbar {
+            width: 6px;
+        }
+        
+        .customization-panel::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 3px;
+        }
+        
+        .customization-panel::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 3px;
+        }
+        
+        .customization-panel::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+        
+        .customize-section {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            border-left: 4px solid #0C7FDA;
+        }
+        
+        .color-option {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 3px solid transparent;
+            position: relative;
+        }
+        
+        .color-option:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+        }
+        
+        .color-option.active {
+            border-color: #fff;
+            box-shadow: 0 0 0 3px #0C7FDA;
+        }
+        
+        .size-btn {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 10px 15px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 600;
+        }
+        
+        .size-btn:hover {
+            background: #e9ecef;
+            transform: translateY(-2px);
+        }
+        
+        .size-btn.active {
+            background: #0C7FDA;
+            color: white;
+            border-color: #0C7FDA;
+        }
+        
+        .icon-option {
+            width: 50px;
+            height: 50px;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            border: 3px solid transparent;
+        }
+        
+        .icon-option:hover {
+            transform: scale(1.05);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+        
+        .icon-option.active {
+            border-color: #0C7FDA;
+            box-shadow: 0 0 0 2px #0C7FDA40;
+        }
+        
+        .icon-option img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .preview-panel {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            height: 500px;
+        }
+        
+        .preview-container {
+            position: relative;
+            border: 2px dashed #ddd !important;
+            border-radius: 12px !important;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            overflow: hidden;
+        }
+        
+        /* Custom pulse animation */
+        @keyframes customPulse {
+            0% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0.7); }
+            70% { box-shadow: 0 0 0 10px rgba(0, 212, 255, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(0, 212, 255, 0); }
+        }
+        
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .customize-modal-content {
+                padding: 20px;
+                margin: 10px;
+            }
+            
+            .customization-panel,
+            .preview-panel {
+                height: auto;
+                max-height: 400px;
+            }
+            
+            .preview-container {
+                height: 300px !important;
+            }
+        }
+    </style>
         });
     </script>
 {% endblock %}
