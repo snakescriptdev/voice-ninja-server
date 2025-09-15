@@ -71,15 +71,29 @@ async def create_new_agent(request: Request):
         phone_number = data.get("phone_number", '+17752648387')
         selected_knowledge_base = data.get("selected_knowledge_base")
 
+
         elevenlabs_voice_id = VoiceModel.get_by_id(selected_voice).elevenlabs_voice_id
         selected_llm_model_rec = LLMModel.get_by_id(selected_model)
 
-        selected_model_rec = ElevenLabModel.get_by_name(DEFAULT_MODEL_ELEVENLAB)
+        # Enforce and auto-correct ElevenLabs model selection rules
+        ENGLISH_CODES = ["en", "en-US", "en-GB"]
+        EN_MODELS = ["eleven_turbo_v2", "eleven_flash_v2"]
+        NON_EN_MODELS = ["eleven_turbo_v2_5", "eleven_flash_v2_5"]
+        selected_elevenlab_model = data.get("selected_elevenlab_model") or DEFAULT_MODEL_ELEVENLAB
+        if selected_language and selected_elevenlab_model:
+            if selected_language in ENGLISH_CODES:
+                if selected_elevenlab_model not in EN_MODELS:
+                    selected_elevenlab_model = "eleven_turbo_v2"  # auto-correct to default English model
+            else:
+                if selected_elevenlab_model not in NON_EN_MODELS:
+                    selected_elevenlab_model = "eleven_turbo_v2_5"  # auto-correct to default non-English model
+
+        selected_model_rec = ElevenLabModel.get_by_name(selected_elevenlab_model)
         language_in_selected_model = [x for x in selected_model_rec.languages if x['code']==selected_language]
         if not language_in_selected_model:
             error_response = {
                 "status": "error", 
-                "error": f"Selected Language not aloowed.",
+                "error": f"Selected Language not allowed.",
                 "status_code": 500
             }   
             return JSONResponse(
@@ -329,9 +343,23 @@ async def edit_agent(request: Request):
         else:
             selected_llm_model_rec = None
 
+
+        # Enforce and auto-correct ElevenLabs model selection rules
+        ENGLISH_CODES = ["en", "en-US", "en-GB"]
+        EN_MODELS = ["eleven_turbo_v2", "eleven_flash_v2"]
+        NON_EN_MODELS = ["eleven_turbo_v2_5", "eleven_flash_v2_5"]
+        selected_elevenlab_model = data.get("selected_elevenlab_model") or DEFAULT_MODEL_ELEVENLAB
+        if selected_language_code and selected_elevenlab_model:
+            if selected_language_code in ENGLISH_CODES:
+                if selected_elevenlab_model not in EN_MODELS:
+                    selected_elevenlab_model = "eleven_turbo_v2"  # auto-correct to default English model
+            else:
+                if selected_elevenlab_model not in NON_EN_MODELS:
+                    selected_elevenlab_model = "eleven_turbo_v2_5"  # auto-correct to default non-English model
+
         # Validate language selection
         if selected_language_code:
-            selected_model_rec = ElevenLabModel.get_by_name(DEFAULT_MODEL_ELEVENLAB)
+            selected_model_rec = ElevenLabModel.get_by_name(selected_elevenlab_model)
             if selected_model_rec and hasattr(selected_model_rec, 'languages'):
                 language_in_selected_model = [x for x in selected_model_rec.languages if x.get('code') == selected_language_code]
                 if not language_in_selected_model:
@@ -960,7 +988,16 @@ async def attach_knowledge_base(request: Request):
         knowledge_base_id = data.get("knowledge_base_id")
         
         if agent_id:
-            agent = AgentModel.get_by_id(agent_id)
+            # Convert agent_id to integer for database queries
+            try:
+                agent_id_int = int(agent_id)
+            except ValueError:
+                return JSONResponse(status_code=400, content={
+                    "status": "error", 
+                    "message": "Invalid agent_id format"
+                })
+                
+            agent = AgentModel.get_by_id(agent_id_int)
             if agent:
                 # Step 1: Get ElevenLabs Knowledge Base IDs for this specific knowledge base
                 try:
@@ -1041,7 +1078,7 @@ async def attach_knowledge_base(request: Request):
                 
                     # Check if the association already exists
                     query = select(agent_knowledge_association).where(
-                        agent_knowledge_association.c.agent_id == agent_id
+                        agent_knowledge_association.c.agent_id == agent_id_int
                     )
                     result = session.execute(query)
                     existing_association = result.fetchone()
@@ -1049,7 +1086,7 @@ async def attach_knowledge_base(request: Request):
                     # If the agent has a different knowledge base, delete the old one
                     if existing_association and existing_association.knowledge_base_id != knowledge_base_id:
                         delete_stmt = delete(agent_knowledge_association).where(
-                            agent_knowledge_association.c.agent_id == agent_id
+                            agent_knowledge_association.c.agent_id == agent_id_int
                         )
                         session.execute(delete_stmt)
                         session.commit()  # Ensure deletion is applied
@@ -1059,7 +1096,7 @@ async def attach_knowledge_base(request: Request):
                         # If no association exists, insert a new one
                         if not existing_association or existing_association.knowledge_base_id != knowledge_base_id:
                             stmt = insert(agent_knowledge_association).values(
-                                agent_id=agent_id, 
+                                agent_id=agent_id_int, 
                                 knowledge_base_id=knowledge_base_id
                             )
                             session.execute(stmt)

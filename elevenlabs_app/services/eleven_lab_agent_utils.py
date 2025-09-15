@@ -254,6 +254,7 @@ class ElevenLabsAgentCRUD:
             return {"error": "Error occurred", "exc": str(ex)}
     
 
+
     def create_agent(
         self,
         name: str,
@@ -264,8 +265,18 @@ class ElevenLabsAgentCRUD:
         selected_elevenlab_model: str,
         first_message:str
     ) -> Dict[str, Any]:
-
         try:
+            ENGLISH_CODES = ["en", "en-US", "en-GB"]
+            EN_MODELS = ["eleven_turbo_v2", "eleven_flash_v2"]
+            NON_EN_MODELS = ["eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_multilingual_v2"]
+            # Auto-correct model for language
+            if language in ENGLISH_CODES:
+                if selected_elevenlab_model not in EN_MODELS:
+                    selected_elevenlab_model = "eleven_turbo_v2"
+            else:
+                if selected_elevenlab_model not in NON_EN_MODELS:
+                    selected_elevenlab_model = "eleven_turbo_v2_5"
+
             # Build conversation config with overrides
             config = ConversationConfig()
             config.agent.prompt.prompt = prompt
@@ -446,6 +457,22 @@ class ElevenLabsAgentCRUD:
                     current_config["agent"] = {}
                 current_config["agent"]["language"] = language
                 config_updated = True
+                
+                # Check if current model is compatible with new language (auto-correct both ways)
+                ENGLISH_CODES = ["en", "en-US", "en-GB"]
+                EN_MODELS = ["eleven_turbo_v2", "eleven_flash_v2"]
+                NON_EN_MODELS = ["eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_multilingual_v2"]
+                current_model = current_config.get("tts", {}).get("model_id", DEFAULT_MODEL_ELEVENLAB)
+                if language in ENGLISH_CODES:
+                    if current_model not in EN_MODELS:
+                        if "tts" not in current_config:
+                            current_config["tts"] = {}
+                        current_config["tts"]["model_id"] = "eleven_turbo_v2"
+                else:
+                    if current_model not in NON_EN_MODELS:
+                        if "tts" not in current_config:
+                            current_config["tts"] = {}
+                        current_config["tts"]["model_id"] = "eleven_turbo_v2_5"
             
             # Handle voice_id update
             if voice_id:
@@ -456,6 +483,18 @@ class ElevenLabsAgentCRUD:
             
             # Handle model_id update
             if selected_elevenlab_model:
+                # Get current or updated language for model compatibility check
+                current_language = language if language else current_config.get("agent", {}).get("language", "en")
+                ENGLISH_CODES = ["en", "en-US", "en-GB"]
+                EN_MODELS = ["eleven_turbo_v2", "eleven_flash_v2"]
+                NON_EN_MODELS = ["eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_multilingual_v2"]
+                # Auto-correct model for language
+                if current_language in ENGLISH_CODES:
+                    if selected_elevenlab_model not in EN_MODELS:
+                        selected_elevenlab_model = "eleven_turbo_v2"
+                else:
+                    if selected_elevenlab_model not in NON_EN_MODELS:
+                        selected_elevenlab_model = "eleven_turbo_v2_5"
                 if "tts" not in current_config:
                     current_config["tts"] = {}
                 current_config["tts"]["model_id"] = selected_elevenlab_model
@@ -511,8 +550,8 @@ class ElevenLabsAgentCRUD:
             # print(f"🔍 Debug: Payload: {json.dumps(payload, indent=2)}")
             
             resp = requests.patch(url, headers=self.headers, json=payload)
-            # print(f"🔍 Debug: Response status: {resp.status_code}")
-            # print(f"🔍 Debug: Response text: {resp.text}")
+            print(f"🔍 Debug: Response status: {resp.status_code}")
+            print(f"🔍 Debug: Response text: {resp.text}")
 
             if resp.status_code != 200:
                 raise Exception(f"Failed to update agent: {resp.status_code} {resp.text}")
