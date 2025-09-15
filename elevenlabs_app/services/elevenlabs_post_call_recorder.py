@@ -294,10 +294,7 @@ class ElevenLabsPostCallRecorder:
                     # Update the call record with the variables
                     CallModel.update(call_record.id, variables=variables)
                     
-                    if conversation:
-                        logger.info(f"💾 Stored transcript in ConversationModel for call_id: {call_id}")
-                    else:
-                        logger.error(f"❌ Failed to store transcript for call_id: {call_id}")
+                    logger.info(f"💾 No transcript available for call_id: {call_id}, updated call record")
                 
                 logger.info(f"💾 Updated call record with conversation data for call_id: {call_id}")
             else:
@@ -442,25 +439,6 @@ class ElevenLabsPostCallRecorder:
         except Exception as e:
             logger.error(f"Error downloading audio for {elevenlabs_conversation_id}: {e}")
             return ""
-
-    def _format_transcript_for_db(self, transcript_data: List[Dict]) -> List[Dict]:
-        """Format transcript data for database storage"""
-        try:
-            formatted_transcript = []
-            for message in transcript_data:
-                formatted_message = {
-                    "role": message.get("role", "unknown"),
-                    "content": message.get("content", ""),
-                    "timestamp": message.get("timestamp", ""),
-                    "message_id": message.get("message_id", ""),
-                    "audio_url": message.get("audio_url", ""),
-                    "duration": message.get("duration", 0)
-                }
-                formatted_transcript.append(formatted_message)
-            return formatted_transcript
-        except Exception as e:
-            logger.error(f"Error formatting transcript for database: {e}")
-            return transcript_data  # Return original if formatting fails
 
     # Public API methods
     def get_completed_recordings(self) -> List[Dict]:
