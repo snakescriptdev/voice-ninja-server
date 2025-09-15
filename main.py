@@ -84,8 +84,8 @@ app.include_router(ElevenLabsWebRouter, prefix="/elevenlabs/web/v1")
 app.include_router(ElevenLabsLiveRouter, prefix="")
 # Recording management API
 app.include_router(ElevenLabsRecordingRouter, prefix="")
-# Web integration (preview system)
-app.include_router(ElevenLabsWebIntegrationRouter, prefix="")
+# Web integration (preview system) - using separate preview path to avoid conflicts
+app.include_router(ElevenLabsWebIntegrationRouter, prefix="/elevenlabs/preview/v1")
 # app.include_router(ElevenLabsAdminRouter, prefix="/elevenlabs/admin")
 
 @app.on_event("startup")
