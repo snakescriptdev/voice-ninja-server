@@ -295,3 +295,339 @@ async def call_history(request: Request, page: int = 1):
             "host": os.getenv("HOST")
         }
     )
+
+
+# @ElevenLabsWebRouter.get("/chatbot-script.js/{agent_id}")
+# def elevenlabs_chatbot_script_v1(request: Request, agent_id: str):
+#     """
+#     Dynamic JavaScript injection for ElevenLabs agents - Enhanced UI version for /v1/ router
+#     """
+#     try:
+#         ws_protocol = "wss" if request.url.scheme == "https" else "ws"
+#         agent = AgentModel.get_by_dynamic_id(agent_id)
+
+#         if not agent:
+#             response = Response("// Agent not found.", media_type="application/javascript")
+#             response.headers['Cache-Control'] = 'public, max-age=3600'
+#             return response
+
+#         if not agent.elvn_lab_agent_id:
+#             response = Response("// ElevenLabs agent ID not configured.", media_type="application/javascript")
+#             response.headers['Cache-Control'] = 'public, max-age=3600'
+#             return response
+
+#         created_by = agent.created_by
+#         domain = request.base_url.hostname
+#         domains = os.getenv("DOMAIN_NAME", "").split(",")
+#         host = os.getenv("HOST", str(request.base_url))
+        
+#         # Get agent appearance settings
+#         appearances = AgentConnectionModel.get_by_agent_id(agent.id)
+#         if not appearances:
+#             # Set default appearance
+#             appearances = type('obj', (object,), {
+#                 'primary_color': '#0C7FDA',
+#                 'secondary_color': '#99d2ff', 
+#                 'pulse_color': '#ffffff',
+#                 'icon_url': f'{host}/static/Web/images/default_voice_icon.png'
+#             })
+        
+#         # Enhanced ElevenLabs widget with official ElevenLabs design
+#         script_content = f'''
+#         document.addEventListener('DOMContentLoaded', function() {{
+#             (function() {{
+#                 console.log("ElevenLabs Enhanced Design Mode Loading...");
+                
+#                 // Inject ElevenLabs WebSocket script
+#                 const elevenLabsScript = document.createElement('script');
+#                 elevenLabsScript.src = "{host}/static/js/elevenlabs_websocket.js";
+#                 document.head.appendChild(elevenLabsScript);
+                
+#                 elevenLabsScript.onload = function() {{
+#                     if (typeof ElevenLabsWebSocketClient === 'function') {{
+#                         console.log("ElevenLabs client class available for agent: {agent_id}");
+#                         // Don't auto-initialize, wait for user interaction
+#                         window.elevenLabsAgentId = '{agent_id}';
+#                         console.log("ElevenLabs agent ID set:", window.elevenLabsAgentId);
+#                     }} else {{
+#                         console.error("ElevenLabsWebSocketClient is not defined");
+#                     }}
+#                 }};
+
+#                 // Create enhanced ElevenLabs widget with ElevenLabs official design
+#                 const container = document.createElement('div');
+#                 container.innerHTML = `
+#                     <!-- ElevenLabs Agent Widget -->
+#                     <div id="elevenlabs-widget" style="
+#                         position: fixed;
+#                         bottom: 20px;
+#                         right: 20px;
+#                         z-index: 10000;
+#                         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+#                     ">
+#                         <!-- Language Selection Panel (initially hidden) -->
+#                         <div id="language-panel" style="
+#                             background: white;
+#                             border-radius: 20px;
+#                             padding: 20px;
+#                             margin-bottom: 10px;
+#                             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+#                             display: none;
+#                             min-width: 280px;
+#                         ">
+#                             <div style="margin-bottom: 15px;">
+#                                 <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('en', '🇺🇸', 'ENGLISH')">
+#                                     <span style="font-size: 20px; margin-right: 12px;">🇺🇸</span>
+#                                     <span style="font-weight: 600; color: #1a1a1a;">ENGLISH</span>
+#                                 </div>
+#                                 <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('zh', '🇨🇳', 'CHINESE')">
+#                                     <span style="font-size: 20px; margin-right: 12px;">🇨🇳</span>
+#                                     <span style="font-weight: 600; color: #1a1a1a;">CHINESE</span>
+#                                 </div>
+#                                 <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('hr', '🇭🇷', 'CROATIAN')">
+#                                     <span style="font-size: 20px; margin-right: 12px;">🇭🇷</span>
+#                                     <span style="font-weight: 600; color: #1a1a1a;">CROATIAN</span>
+#                                 </div>
+#                                 <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('cs', '🇨🇿', 'CZECH')">
+#                                     <span style="font-size: 20px; margin-right: 12px;">🇨🇿</span>
+#                                     <span style="font-weight: 600; color: #1a1a1a;">CZECH</span>
+#                                 </div>
+#                                 <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('da', '🇩🇰', 'DANISH')">
+#                                     <span style="font-size: 20px; margin-right: 12px;">🇩🇰</span>
+#                                     <span style="font-weight: 600; color: #1a1a1a;">DANISH</span>
+#                                 </div>
+#                                 <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('nl', '🇳🇱', 'DUTCH')">
+#                                     <span style="font-size: 20px; margin-right: 12px;">🇳🇱</span>
+#                                     <span style="font-weight: 600; color: #1a1a1a;">DUTCH</span>
+#                                 </div>
+#                             </div>
+#                         </div>
+                        
+#                         <!-- Main Control Panel -->
+#                         <div id="main-panel" style="
+#                             background: white;
+#                             border-radius: 25px;
+#                             padding: 20px;
+#                             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+#                             display: flex;
+#                             align-items: center;
+#                             gap: 15px;
+#                             min-width: 280px;
+#                         ">
+#                             <!-- Voice Indicator -->
+#                             <div id="voice-indicator" style="
+#                                 width: 50px;
+#                                 height: 50px;
+#                                 border-radius: 50%;
+#                                 background: linear-gradient(45deg, #00d4ff, #006eff);
+#                                 display: flex;
+#                                 align-items: center;
+#                                 justify-content: center;
+#                                 flex-shrink: 0;
+#                                 transition: all 0.3s ease;
+#                             ">
+#                                 <div style="
+#                                     width: 24px;
+#                                     height: 24px;
+#                                     border-radius: 50%;
+#                                     background: radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(255,255,255,0.4) 70%);
+#                                 "></div>
+#                             </div>
+                            
+#                             <!-- Action Button -->
+#                             <button id="voice-chat-btn" onclick="toggleElevenLabsChat()" style="
+#                                 background: #000;
+#                                 color: white;
+#                                 border: none;
+#                                 border-radius: 25px;
+#                                 padding: 12px 20px;
+#                                 font-weight: 600;
+#                                 font-size: 14px;
+#                                 cursor: pointer;
+#                                 transition: all 0.2s ease;
+#                                 display: flex;
+#                                 align-items: center;
+#                                 gap: 8px;
+#                                 flex: 1;
+#                             ">
+#                                 <i class="fas fa-phone" style="font-size: 14px;"></i>
+#                                 <span id="btn-text">VOICE CHAT</span>
+#                             </button>
+                            
+#                             <!-- Language Selector -->
+#                             <button id="language-btn" onclick="toggleLanguagePanel()" style="
+#                                 background: #f5f5f5;
+#                                 border: 2px solid #e0e0e0;
+#                                 border-radius: 20px;
+#                                 padding: 8px 12px;
+#                                 cursor: pointer;
+#                                 display: flex;
+#                                 align-items: center;
+#                                 gap: 6px;
+#                                 transition: all 0.2s ease;
+#                             ">
+#                                 <span id="selected-flag" style="font-size: 18px;">🇺🇸</span>
+#                                 <i class="fas fa-chevron-down" style="font-size: 10px; color: #666;"></i>
+#                             </button>
+#                         </div>
+                        
+#                         <!-- Branding -->
+#                         <div style="
+#                             text-align: center;
+#                             margin-top: 10px;
+#                             font-size: 11px;
+#                             color: #999;
+#                             opacity: 0.7;
+#                         ">
+#                             Powered by Voice Ninja
+#                         </div>
+#                     </div>
+#                 `;
+#                 document.body.appendChild(container);
+
+#                 // Add ElevenLabs-specific control functions
+#                 window.isConnected = false;
+#                 window.selectedLanguage = 'en';
+                
+#                 // Language selection function
+#                 window.selectLanguage = function(code, flag, name) {{
+#                     window.selectedLanguage = code;
+#                     document.getElementById('selected-flag').innerText = flag;
+#                     document.getElementById('language-panel').style.display = 'none';
+#                     console.log('Language selected:', name, code);
+#                 }};
+                
+#                 // Toggle language panel
+#                 window.toggleLanguagePanel = function() {{
+#                     const panel = document.getElementById('language-panel');
+#                     panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+#                 }};
+                
+#                 // Main chat toggle function
+#                 window.toggleElevenLabsChat = function() {{
+#                     if (!window.isConnected) {{
+#                         // Start connection
+#                         document.getElementById('btn-text').innerText = 'CONNECTING...';
+#                         document.getElementById('voice-chat-btn').style.background = '#666';
+                        
+#                         // Initialize ElevenLabs client when user first clicks
+#                         if (!window.elevenLabsClient && window.elevenLabsAgentId) {{
+#                             console.log("Creating ElevenLabs client for agent:", window.elevenLabsAgentId);
+#                             window.elevenLabsClient = new ElevenLabsWebSocketClient(window.elevenLabsAgentId);
+#                         }}
+                        
+#                         // Start ElevenLabs connection
+#                         if (window.elevenLabsClient) {{
+#                             console.log("Starting ElevenLabs connection...");
+#                             window.elevenLabsClient.connect().then(() => {{
+#                                 // Connection successful
+#                                 window.isConnected = true;
+#                                 document.getElementById('btn-text').innerHTML = '<i class="fas fa-times" style="font-size: 14px;"></i> END CALL';
+#                                 document.getElementById('voice-chat-btn').style.background = '#000';
+                                
+#                                 // Animate voice indicator
+#                                 const indicator = document.getElementById('voice-indicator');
+#                                 indicator.style.animation = 'pulse 2s infinite';
+#                                 indicator.style.background = 'linear-gradient(45deg, #00ff88, #00cc66)';
+                                
+#                                 console.log('✅ ElevenLabs connected successfully');
+                                
+#                                 // Listen for disconnection
+#                                 window.elevenLabsClient.ws.onclose = function() {{
+#                                     window.isConnected = false;
+#                                     document.getElementById('btn-text').innerHTML = '<i class="fas fa-phone" style="font-size: 14px;"></i> VOICE CHAT';
+#                                     document.getElementById('voice-chat-btn').style.background = '#000';
+                                    
+#                                     // Reset voice indicator
+#                                     const indicator = document.getElementById('voice-indicator');
+#                                     indicator.style.animation = 'none';
+#                                     indicator.style.background = 'linear-gradient(45deg, #00d4ff, #006eff)';
+                                    
+#                                     console.log('❌ ElevenLabs disconnected');
+#                                 }};
+                                
+#                             }}).catch(err => {{
+#                                 console.error("Failed to connect to ElevenLabs:", err);
+#                                 document.getElementById('btn-text').innerText = 'CONNECTION FAILED';
+#                                 document.getElementById('voice-chat-btn').style.background = '#ff4444';
+#                                 setTimeout(() => {{
+#                                     document.getElementById('btn-text').innerHTML = '<i class="fas fa-phone" style="font-size: 14px;"></i> VOICE CHAT';
+#                                     document.getElementById('voice-chat-btn').style.background = '#000';
+#                                 }}, 3000);
+#                             }});
+#                         }}
+#                     }} else {{
+#                         // End connection
+#                         if (window.elevenLabsClient) {{
+#                             window.elevenLabsClient.disconnect();
+#                             // UI will be updated by the onclose handler
+#                         }}
+#                     }}
+#                 }};
+                
+#                 // Add CSS animations
+#                 const style = document.createElement('style');
+#                 style.textContent = `
+#                     @keyframes pulse {{
+#                         0% {{ box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7); }}
+#                         70% {{ box-shadow: 0 0 0 10px rgba(0, 255, 136, 0); }}
+#                         100% {{ box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }}
+#                     }}
+                    
+#                     #elevenlabs-widget button:hover {{
+#                         transform: translateY(-1px);
+#                         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+#                     }}
+                    
+#                     #language-panel div:hover {{
+#                         background: #f8f9fa !important;
+#                     }}
+                    
+#                     #voice-chat-btn:active {{
+#                         transform: translateY(0);
+#                     }}
+#                 `;
+#                 document.head.appendChild(style);
+                
+#                 // Close language panel when clicking outside
+#                 document.addEventListener('click', function(event) {{
+#                     const languagePanel = document.getElementById('language-panel');
+#                     const languageBtn = document.getElementById('language-btn');
+                    
+#                     if (!languagePanel.contains(event.target) && !languageBtn.contains(event.target)) {{
+#                         languagePanel.style.display = 'none';
+#                     }}
+#                 }});
+#             }})();
+#         }});
+#         '''
+
+#         headers = {
+#             "Content-Type": "application/javascript",
+#             "Cache-Control": "no-cache, no-store, must-revalidate",
+#             "Pragma": "no-cache",
+#             "Expires": "0"
+#         }
+#         return jsonify({"result":"success", "data": result}), 200
+        
+#     except Exception as e:
+#         error_script = f'''
+#         console.error("Error loading ElevenLabs agent script: {str(e)}");
+#         document.addEventListener('DOMContentLoaded', function() {{
+#             const errorDiv = document.createElement('div');
+#             errorDiv.style.cssText = `
+#                 position: fixed;
+#                 bottom: 20px;
+#                 right: 20px;
+#                 background: #ff4444;
+#                 color: white;
+#                 padding: 15px;
+#                 border-radius: 8px;
+#                 z-index: 10000;
+#             `;
+#             errorDiv.textContent = 'Error loading agent: {str(e)}';
+#             document.body.appendChild(errorDiv);
+#         }});
+#         '''
+#         headers = {"Content-Type": "application/javascript", "Cache-Control": "no-cache"}
+#         return Response(content=error_script, media_type="application/javascript", headers=headers)

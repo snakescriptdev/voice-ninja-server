@@ -295,7 +295,7 @@
                                     <img src="{{ host }}/static/Web/images/icon-bot-img.png" class="img-fluid" width="30" height="30">
                                     <div class="customize-bot-btn-tooltip">Customize Your Bot</div>
                                 </button>
-                                <a href="/elevenlabs/web/v1/preview_agent?agent_id={{ agent.dynamic_id }}" target="_blank">
+                                <a href="/elevenlabs/preview/v1/preview_agent?agent_id={{ agent.dynamic_id }}" target="_blank">
                                     <button class="customize-bot-btn position-relative">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="25" height="25" fill="#0c7fda" class="bi bi-eye-fill" viewBox="0 0 16 16">
                                         <path d="M10.5 8a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0"/>
@@ -362,14 +362,14 @@
                                 }
                             </script>
                         </div>
-                        <div class="col-md-2">
+                        <!-- <div class="col-md-2">
                             <label class="form-label">Enable Design</label>
                             <div class="form-check form-switch d-flex align-items-center gap-2 ps-0">
                                 <label class="form-label mb-0">Off</label>
                                 <input class="form-check-input float-none ms-0" type="checkbox" role="switch" id="flexSwitchCheckChecked"  {% if agent.is_design_enabled %} checked {% endif %} onchange="toggleDesign(this.checked)">
                                 <label class="form-label mb-0">On</label>
                             </div>
-                        </div>
+                        </div> -->
                         <script>
                             async function toggleDesign(isEnabled) {
                                 try {
