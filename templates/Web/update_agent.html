@@ -1151,12 +1151,21 @@ document.addEventListener("DOMContentLoaded", function () {
     const isUpdatePage = currentUrl.pathname === "/update_agent";
     const agentId = currentUrl.searchParams.get("agent_id");
 
-    selectBox.addEventListener("click", function () {
+    selectBox.addEventListener("click", function (e) {
+        e.stopPropagation(); // Prevent event bubbling
         optionsContainer.style.display = "block";
     });
 
+    // Close dropdown when clicking outside
+    document.addEventListener("click", function (e) {
+        if (!selectBox.contains(e.target) && !optionsContainer.contains(e.target)) {
+            optionsContainer.style.display = "none";
+        }
+    });
+
     options.forEach(option => {
-        option.addEventListener("click", function () {
+        option.addEventListener("click", function (e) {
+            e.stopPropagation(); // Prevent event bubbling
             const selectedValue = this.getAttribute("data-value");
             const selectedText = this.innerText;
 

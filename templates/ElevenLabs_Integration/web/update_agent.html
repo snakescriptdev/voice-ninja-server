@@ -264,7 +264,7 @@
                     <div class="agent_type_textarea">
                         <textarea class="form-control" id="agent-prompt" placeholder="Enter your prompt here....">{% if agent %}{{ agent.agent_prompt }}{% endif %}</textarea>
                         <div class="agent_type_textarea_footer pt-1">
-                            <small style="font-size:12px;" class="text-muted">Use <span>&#123;&#123;_&#125;&#125;</span> to add variables. (Learn more)</small>
+                            <small style="font-size:12px;" class="text-muted">Use <span>&#123;&#123;_&#125;&#125;</span> to add variables.</small>
                         </div>
                     </div>
                     {% if agent %}
@@ -319,8 +319,8 @@
                                         <div class="col-md-6">
                                             <div class="customization-panel">
                                                 <!-- Theme Colors Section -->
-                                                <div class="customize-section mb-4">
-                                                    <h5 class="mb-3">
+                                                <div class="customize-section mb-3">
+                                                    <h5 class="mb-2">
                                                         <i class="fa-solid fa-palette me-2"></i>
                                                         Theme Colors
                                                     </h5>
@@ -337,8 +337,8 @@
                                                 </div>
 
                                                 <!-- Widget Size Section -->
-                                                <div class="customize-section mb-4">
-                                                    <h5 class="mb-3">
+                                                <div class="customize-section mb-3">
+                                                    <h5 class="mb-2">
                                                         <i class="fa-solid fa-expand-arrows-alt me-2"></i>
                                                         Widget Size
                                                     </h5>
@@ -348,42 +348,17 @@
                                                         <button class="size-btn" onclick="changeSize('large', this)">Large</button>
                                                     </div>
                                                 </div>
-
-                                                <!-- Voice Icons Section -->
-                                                <div class="customize-section mb-4">
-                                                    <h5 class="mb-3">
-                                                        <i class="fa-solid fa-microphone me-2"></i>
-                                                        Voice Icons
-                                                    </h5>
-                                                    <div class="d-flex align-items-center gap-2 flex-wrap">
-                                                        <div class="icon-option active" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-1.gif', this)">
-                                                            <img src="{{ host }}/static/Web/images/gif-icon-1.gif" class="img-fluid">
-                                                        </div>
-                                                        <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon2.gif', this)">
-                                                            <img src="{{ host }}/static/Web/images/gif-icon2.gif" class="img-fluid">
-                                                        </div>
-                                                        <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-3.gif', this)">
-                                                            <img src="{{ host }}/static/Web/images/gif-icon-3.gif" class="img-fluid">
-                                                        </div>
-                                                        <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-4.gif', this)">
-                                                            <img src="{{ host }}/static/Web/images/gif-icon-4.gif" class="img-fluid">
-                                                        </div>
-                                                        <div class="icon-option" onclick="changeIcon('{{ host }}/static/Web/images/gif-icon-5.gif', this)">
-                                                            <img src="{{ host }}/static/Web/images/gif-icon-5.gif" class="img-fluid">
-                                                        </div>
-                                                    </div>
-                                                </div>
                                             </div>
                                         </div>
                                         
                                         <!-- Right Column - Live Preview -->
                                         <div class="col-md-6">
                                             <div class="preview-panel">
-                                                <h5 class="mb-3">
+                                                <h5 class="mb-2">
                                                     <i class="fa-solid fa-eye me-2"></i>
                                                     Live Preview
                                                 </h5>
-                                                <div class="preview-container" style="height: 400px; border: 2px dashed #ddd; border-radius: 12px; position: relative; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); overflow: hidden;">
+                                                <div class="preview-container" style="height: 320px; border: 2px dashed #ddd; border-radius: 10px; position: relative; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); overflow: hidden;">
                                                     <!-- ElevenLabs Agent Widget Preview -->
                                                     <div id="preview-elevenlabs-widget" style="
                                                         position: absolute;
@@ -422,78 +397,87 @@
                                                         <!-- Main Control Panel -->
                                                         <div id="preview-main-panel" style="
                                                             background: white;
-                                                            border-radius: 25px;
-                                                            padding: 20px;
-                                                            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+                                                            border-radius: 20px;
+                                                            padding: 18px;
+                                                            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
                                                             display: flex;
                                                             align-items: center;
-                                                            gap: 15px;
-                                                            min-width: 280px;
+                                                            gap: 12px;
+                                                            min-width: 320px;
+                                                            border: 1px solid rgba(0, 0, 0, 0.05);
                                                         ">
                                                             <!-- Voice Indicator -->
                                                             <div id="preview-voice-indicator" style="
-                                                                width: 50px;
-                                                                height: 50px;
-                                                                border-radius: 50%;
+                                                                width: 45px;
+                                                                height: 45px;
+                                                                border-radius: 12px;
                                                                 background: linear-gradient(45deg, #00d4ff, #006eff);
                                                                 display: flex;
                                                                 align-items: center;
                                                                 justify-content: center;
                                                                 flex-shrink: 0;
                                                                 transition: all 0.3s ease;
+                                                                position: relative;
+                                                                overflow: hidden;
                                                             ">
                                                                 <div style="
-                                                                    width: 24px;
-                                                                    height: 24px;
-                                                                    border-radius: 50%;
-                                                                    background: radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(255,255,255,0.4) 70%);
+                                                                    width: 20px;
+                                                                    height: 20px;
+                                                                    border-radius: 4px;
+                                                                    background: rgba(255,255,255,0.9);
+                                                                    animation: pulse 2s infinite;
                                                                 "></div>
                                                             </div>
                                                             
                                                             <!-- Action Button -->
                                                             <button id="preview-voice-chat-btn" onclick="toggleElevenLabsChat()" style="
-                                                                background: #000;
+                                                                background: linear-gradient(135deg, #1a1a1a, #333);
                                                                 color: white;
                                                                 border: none;
-                                                                border-radius: 25px;
-                                                                padding: 12px 20px;
-                                                                font-weight: 600;
-                                                                font-size: 14px;
+                                                                border-radius: 18px;
+                                                                padding: 14px 24px;
+                                                                font-weight: 700;
+                                                                font-size: 13px;
+                                                                letter-spacing: 0.5px;
                                                                 cursor: pointer;
-                                                                transition: all 0.2s ease;
+                                                                transition: all 0.3s ease;
                                                                 display: flex;
                                                                 align-items: center;
-                                                                gap: 8px;
+                                                                gap: 10px;
                                                                 flex: 1;
+                                                                text-transform: uppercase;
+                                                                box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
                                                             ">
-                                                                <i class="fas fa-phone" style="font-size: 14px;"></i>
-                                                                <span id="preview-btn-text">VOICE CHAT</span>
+                                                                <i class="fas fa-microphone" style="font-size: 13px;"></i>
+                                                                <span id="preview-btn-text">START CHAT</span>
                                                             </button>
                                                             
                                                             <!-- Language Selector -->
                                                             <button id="preview-language-btn" onclick="toggleLanguagePanel()" style="
-                                                                background: #f5f5f5;
-                                                                border: 2px solid #e0e0e0;
-                                                                border-radius: 20px;
-                                                                padding: 8px 12px;
+                                                                background: #f8f9fa;
+                                                                border: 1px solid #e1e5e9;
+                                                                border-radius: 15px;
+                                                                padding: 10px 14px;
                                                                 cursor: pointer;
                                                                 display: flex;
                                                                 align-items: center;
-                                                                gap: 6px;
+                                                                gap: 8px;
                                                                 transition: all 0.2s ease;
+                                                                box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
                                                             ">
-                                                                <span id="preview-selected-flag" style="font-size: 18px;">🇺🇸</span>
-                                                                <i class="fas fa-chevron-down" style="font-size: 10px; color: #666;"></i>
+                                                                <span id="preview-selected-flag" style="font-size: 16px;">🇺🇸</span>
+                                                                <i class="fas fa-chevron-down" style="font-size: 8px; color: #6c757d;"></i>
                                                             </button>
                                                         </div>
                                                         
                                                         <!-- Branding -->
                                                         <div style="
                                                             text-align: center;
-                                                            margin-top: 10px;
-                                                            font-size: 11px;
-                                                            color: #999;
-                                                            opacity: 0.7;
+                                                            margin-top: 12px;
+                                                            font-size: 10px;
+                                                            color: #adb5bd;
+                                                            opacity: 0.8;
+                                                            font-weight: 500;
                                                         ">
                                                             Powered by VoiceNinja
                                                         </div>
@@ -522,9 +506,63 @@
                                     const modal = document.getElementById('customize-bot-modal');
                                     if(modal.style.display === 'none') {
                                         modal.style.display = 'block';
+                                        
+                                        // Initialize default theme if not already set
+                                        if (!localStorage.getItem('selectedTheme')) {
+                                            localStorage.setItem('selectedTheme', JSON.stringify({
+                                                primary: '#00d4ff',
+                                                secondary: '#006eff',
+                                                pulse: 'rgba(0, 212, 255, 0.3)'
+                                            }));
+                                        }
+                                        
+                                        
+                                        // Reset preview widget to default state
+                                        resetPreviewWidget();
                                     } else {
                                         modal.style.display = 'none';
                                     }
+                                }
+                                
+                                function resetPreviewWidget() {
+                                    // Reset button text and icon
+                                    const btn = document.getElementById('preview-voice-chat-btn');
+                                    const textSpan = document.getElementById('preview-btn-text');
+                                    const iconElement = btn?.querySelector('i');
+                                    const indicator = document.getElementById('preview-voice-indicator');
+                                    
+                                    if (textSpan) textSpan.textContent = 'START CHAT';
+                                    if (iconElement) iconElement.className = 'fas fa-microphone';
+                                    if (btn) btn.style.background = 'linear-gradient(135deg, #1a1a1a, #333)';
+                                    
+                                    // Apply current theme to indicator
+                                    const currentTheme = JSON.parse(localStorage.getItem('selectedTheme')) || {
+                                        primary: '#00d4ff',
+                                        secondary: '#006eff'
+                                    };
+                                    
+                                    if (indicator) {
+                                        // Always use gradient background (no more custom icons)
+                                        indicator.style.background = `linear-gradient(45deg, ${currentTheme.primary}, ${currentTheme.secondary})`;
+                                        indicator.innerHTML = '<div style="width: 20px; height: 20px; border-radius: 4px; background: rgba(255,255,255,0.9); animation: pulse 2s infinite;"></div>';
+                                    }
+                                    
+                                    // Update the active color option based on stored theme
+                                    updateActiveColorOption(currentTheme);
+                                }
+                                
+                                function updateActiveColorOption(theme) {
+                                    // Remove active class from all color options
+                                    document.querySelectorAll('.color-option').forEach(opt => opt.classList.remove('active'));
+                                    
+                                    // Find and activate the matching color option
+                                    const colorOptions = document.querySelectorAll('.color-option');
+                                    colorOptions.forEach(option => {
+                                        const onclickAttr = option.getAttribute('onclick');
+                                        if (onclickAttr && onclickAttr.includes(theme.primary) && onclickAttr.includes(theme.secondary)) {
+                                            option.classList.add('active');
+                                        }
+                                    });
                                 }
                             </script>
                         </div>
@@ -570,7 +608,8 @@
                             </div>
                             <input type="text" id="welcome-message" class="form-control mt-2" placeholder="Enter custom welcome message..." style="display: none;">
                             <div class="options">
-                                <div class="option" data-value="custom">Add Custom Message</div>
+                                <div class="option" data-value="custom"><i class="fas fa-plus-circle me-2" style="color: #007bff;"></i>Add Custom Message</div>
+                                
                                 <div class="option" data-value="1">Hi, I am SAGE, how can I help you?</div>
                                 <div class="option" data-value="2">Hey there, Captain! How can I help you?</div>
                                 <div class="option" data-value="3">Hi there, I am Jack Sparrow, how can I help you?</div>
@@ -1026,6 +1065,35 @@
 let host = "{{ host }}";
 let selectedIconUrl = "{{ host }}/static/Web/images/gif-icon-1.gif"; // Default icon
 
+    function updateAgentSetting(field, value) {
+        const currentUrl = new URL(window.location.href);
+        const agentId = currentUrl.searchParams.get("agent_id");
+    
+        fetch(`${host}/elevenlabs/api/v1/edit_agent`, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": getCSRFToken()
+            },
+            body: JSON.stringify({
+                agent_id: agentId,
+                [field]: value   // dynamic key
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === "success") {
+                toastr.success("Agent updated successfully");
+            } else {
+                toastr.error(data.message || "Failed to update agent");
+            }
+        })
+        .catch(error => {
+            console.error("Error:", error);
+            toastr.error("Something went wrong!");
+        });
+    }
+
     $(document).ready(function () {
         var $slider = $('.help_ai_modal_slider');
     
@@ -1260,16 +1328,37 @@ function toggleElevenLabsChat() {
     const indicator = document.getElementById('preview-voice-indicator');
     
     if (btn && indicator) {
-        // Toggle button text
+        // Get current theme colors from localStorage or use defaults
+        const currentTheme = JSON.parse(localStorage.getItem('selectedTheme')) || {
+            primary: '#00d4ff',
+            secondary: '#006eff'
+        };
+        
+        // Toggle button text and styling
         const textSpan = btn.querySelector('#preview-btn-text');
-        if (textSpan.textContent === 'VOICE CHAT') {
-            textSpan.textContent = 'CONNECTING...';
-            btn.style.background = '#28a745';
-            indicator.style.background = 'linear-gradient(45deg, #28a745, #20c997)';
+        const iconElement = btn.querySelector('i');
+        
+        if (textSpan.textContent === 'START CHAT') {
+            // Connecting state
+            textSpan.textContent = 'END CALL';
+            btn.style.background = 'linear-gradient(135deg, #dc3545, #c82333)';
+            indicator.style.background = 'linear-gradient(45deg, #dc3545, #c82333)';
+            
+            // Change icon to end call
+            if (iconElement) {
+                iconElement.className = 'fas fa-phone-slash';
+            }
         } else {
-            textSpan.textContent = 'VOICE CHAT';
-            btn.style.background = '#000';
-            indicator.style.background = 'linear-gradient(45deg, #00d4ff, #006eff)';
+            // Default state - use current theme colors
+            textSpan.textContent = 'START CHAT';
+            btn.style.background = 'linear-gradient(135deg, #1a1a1a, #333)';
+            // Use the selected theme colors, not hardcoded blue
+            indicator.style.background = `linear-gradient(45deg, ${currentTheme.primary}, ${currentTheme.secondary})`;
+            
+            // Change icon back to microphone
+            if (iconElement) {
+                iconElement.className = 'fas fa-microphone';
+            }
         }
     }
 }
@@ -1299,8 +1388,8 @@ function toggleLanguagePanel() {
                             let secondaryColor = connection.secondary_color || "#0077b6"; 
                             let pulseColor = connection.pulse_color || "rgba(0, 180, 216, 0.3)";
                             
-                            // First apply theme
-                            changeTheme(primaryColor, secondaryColor, pulseColor);
+                            // First apply theme to main widget
+                            applyThemeToMainWidget(primaryColor, secondaryColor, pulseColor);
                             
                             // Find icon option matching the saved icon URL
                             let iconOptions = document.querySelectorAll('.icon-option');
@@ -1413,7 +1502,7 @@ function toggleIconPalette() {
     iconPalette.classList.toggle('show');
 }
 
-function changeTheme(primaryColor, secondaryColor, pulseColor) {
+function applyThemeToMainWidget(primaryColor, secondaryColor, pulseColor) {
         // Apply colors to CSS variables
         document.documentElement.style.setProperty('--primary-color', primaryColor);
         document.documentElement.style.setProperty('--secondary-color', secondaryColor);
@@ -1534,12 +1623,21 @@ document.addEventListener("DOMContentLoaded", function () {
     const isUpdatePage = currentUrl.pathname === "/update_agent";
     const agentId = currentUrl.searchParams.get("agent_id");
 
-    selectBox.addEventListener("click", function () {
+    selectBox.addEventListener("click", function (e) {
+        e.stopPropagation(); // Prevent event bubbling
         optionsContainer.style.display = "block";
     });
 
+    // Close dropdown when clicking outside
+    document.addEventListener("click", function (e) {
+        if (!selectBox.contains(e.target) && !optionsContainer.contains(e.target)) {
+            optionsContainer.style.display = "none";
+        }
+    });
+
     options.forEach(option => {
-        option.addEventListener("click", function () {
+        option.addEventListener("click", function (e) {
+            e.stopPropagation(); // Prevent event bubbling
             const selectedValue = this.getAttribute("data-value");
             const selectedText = this.innerText;
 
@@ -4113,35 +4211,6 @@ function saveVariable() {
     </script>
 
     <script>
-        function updateAgentSetting(field, value) {
-            const currentUrl = new URL(window.location.href);
-            const agentId = currentUrl.searchParams.get("agent_id");
-        
-            fetch(`${host}/elevenlabs/api/v1/edit_agent`, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-CSRFToken": getCSRFToken()
-                },
-                body: JSON.stringify({
-                    agent_id: agentId,
-                    [field]: value   // dynamic key
-                })
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.status === "success") {
-                    toastr.success("Agent updated successfully");
-                } else {
-                    toastr.error(data.message || "Failed to update agent");
-                }
-            })
-            .catch(error => {
-                console.error("Error:", error);
-                toastr.error("Something went wrong!");
-            });
-        }
-
         // Function to show dynamic variables when detected
         function showDynamicVariables(variables) {
             const dynamicVarsSection = document.getElementById("dynamic-variables-section");
@@ -4447,15 +4516,19 @@ function saveVariable() {
             pulse: 'rgba(0, 212, 255, 0.3)'
         };
         let currentSize = 'medium';
-        let currentIcon = '{{ host }}/static/Web/images/gif-icon-1.gif';
 
         function changeTheme(primary, secondary, pulse, element) {
             // Update current theme
             currentTheme = { primary, secondary, pulse };
             
-            // Update active color option
+            // Store theme in localStorage for preview functions
+            localStorage.setItem('selectedTheme', JSON.stringify({ primary, secondary, pulse }));
+            
+            // Update active color option (only if element is provided)
             document.querySelectorAll('.color-option').forEach(opt => opt.classList.remove('active'));
-            element.classList.add('active');
+            if (element && element.classList) {
+                element.classList.add('active');
+            }
             
             // Update preview widget
             const indicator = document.getElementById('preview-voice-indicator');
@@ -4466,7 +4539,7 @@ function saveVariable() {
             // Store the theme for later application to the actual agent widget
             const agentId = new URL(window.location.href).searchParams.get("agent_id");
             if (agentId) {
-                // Store in localStorage for now, you can implement server-side storage later
+                // Store in localStorage for server-side storage later
                 localStorage.setItem(`agent_${agentId}_theme`, JSON.stringify(currentTheme));
             }
         }
@@ -4483,49 +4556,89 @@ function saveVariable() {
             const panel = document.getElementById('preview-main-panel');
             const indicator = document.getElementById('preview-voice-indicator');
             const button = document.getElementById('preview-voice-chat-btn');
+            const languagePanel = document.getElementById('preview-language-panel');
+            const languageBtn = document.getElementById('preview-language-btn');
             
             if (panel && indicator && button) {
                 const sizes = {
                     'small': { 
                         panel: { minWidth: '220px', padding: '15px', gap: '10px' },
                         indicator: { width: '40px', height: '40px' },
-                        button: { padding: '8px 15px', fontSize: '12px' }
+                        button: { padding: '8px 15px', fontSize: '12px' },
+                        languagePanel: { minWidth: '220px' },
+                        languageBtn: { padding: '8px 12px' }
                     },
                     'medium': { 
                         panel: { minWidth: '280px', padding: '20px', gap: '15px' },
                         indicator: { width: '50px', height: '50px' },
-                        button: { padding: '12px 20px', fontSize: '14px' }
+                        button: { padding: '12px 20px', fontSize: '14px' },
+                        languagePanel: { minWidth: '280px' },
+                        languageBtn: { padding: '10px 14px' }
                     },
                     'large': { 
                         panel: { minWidth: '320px', padding: '25px', gap: '20px' },
                         indicator: { width: '60px', height: '60px' },
-                        button: { padding: '15px 25px', fontSize: '16px' }
+                        button: { padding: '15px 25px', fontSize: '16px' },
+                        languagePanel: { minWidth: '320px' },
+                        languageBtn: { padding: '12px 16px' }
                     }
                 };
                 
                 Object.assign(panel.style, sizes[size].panel);
                 Object.assign(indicator.style, sizes[size].indicator);
                 Object.assign(button.style, sizes[size].button);
+                
+                if (languagePanel) {
+                    Object.assign(languagePanel.style, sizes[size].languagePanel);
+                }
+                
+                if (languageBtn) {
+                    Object.assign(languageBtn.style, sizes[size].languageBtn);
+                }
+                
+                // Update microphone icon size to match button font size
+                const micIcon = button.querySelector('i');
+                if (micIcon) {
+                    micIcon.style.fontSize = sizes[size].button.fontSize;
+                }
             }
             
-            // Store the size for later application to the actual agent widget
-            const agentId = new URL(window.location.href).searchParams.get("agent_id");
+            // Save size immediately to database
+            const currentUrl = new URL(window.location.href);
+            const agentId = currentUrl.searchParams.get("agent_id");
+            
             if (agentId) {
+                // Store in localStorage for immediate application
                 localStorage.setItem(`agent_${agentId}_size`, currentSize);
-            }
-        }
-
-        function changeIcon(iconUrl, element) {
-            currentIcon = iconUrl;
-            
-            // Update active icon
-            document.querySelectorAll('.icon-option').forEach(opt => opt.classList.remove('active'));
-            element.classList.add('active');
-            
-            // Store the icon for later application to the actual agent widget
-            const agentId = new URL(window.location.href).searchParams.get("agent_id");
-            if (agentId) {
-                localStorage.setItem(`agent_${agentId}_icon`, currentIcon);
+                
+                // Also save to database immediately
+                const saveData = {
+                    agent_id: agentId,
+                    primary_color: currentTheme.primary,
+                    secondary_color: currentTheme.secondary,
+                    pulse_color: currentTheme.pulse,
+                    widget_size: currentSize
+                };
+                
+                fetch(`${host}/elevenlabs/api/v1/save_widget_customization`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRFToken": getCSRFToken()
+                    },
+                    body: JSON.stringify(saveData)
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        console.log("Widget size saved successfully");
+                    } else {
+                        console.error("Failed to save widget size:", data.message);
+                    }
+                })
+                .catch(error => {
+                    console.error("Error saving widget size:", error);
+                });
             }
         }
 
@@ -4533,7 +4646,6 @@ function saveVariable() {
             // Reset all settings to defaults
             currentTheme = { primary: '#00d4ff', secondary: '#006eff', pulse: 'rgba(0, 212, 255, 0.3)' };
             currentSize = 'medium';
-            currentIcon = '{{ host }}/static/Web/images/gif-icon-1.gif';
             
             // Reset UI controls
             document.querySelectorAll('.color-option').forEach((opt, index) => {
@@ -4541,9 +4653,6 @@ function saveVariable() {
             });
             document.querySelectorAll('.size-btn').forEach((btn, index) => {
                 btn.classList.toggle('active', index === 1);
-            });
-            document.querySelectorAll('.icon-option').forEach((opt, index) => {
-                opt.classList.toggle('active', index === 0);
             });
             
             // Update preview
@@ -4586,28 +4695,54 @@ function saveVariable() {
         }
 
         function saveChanges() {
-            // Save the customization settings
-            const settings = {
-                theme: currentTheme,
-                size: currentSize,
-                icon: currentIcon
-            };
-            
             // Get agent ID from URL
             const currentUrl = new URL(window.location.href);
             const agentId = currentUrl.searchParams.get("agent_id");
             
-            if (agentId) {
-                // Store all settings in localStorage for immediate application
-                localStorage.setItem(`agent_${agentId}_customization`, JSON.stringify(settings));
-                
-                // Apply customization to preview agent immediately
-                applyCustomizationToPreviewAgent(agentId, settings);
+            if (!agentId) {
+                toastr.error("Agent ID not found", { positionClass: "toast-top-right" });
+                return;
             }
             
-            // Show success message
-            toastr.success("Widget customization saved successfully!", { positionClass: "toast-top-right" });
-            toggleCustomizeModal();
+            // Prepare the data to save
+            const saveData = {
+                agent_id: agentId,
+                primary_color: currentTheme.primary,
+                secondary_color: currentTheme.secondary,
+                pulse_color: currentTheme.pulse,
+                widget_size: currentSize
+            };
+            
+            // Save to database via API
+            fetch(`${host}/elevenlabs/api/v1/save_widget_customization`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-CSRFToken": getCSRFToken()
+                },
+                body: JSON.stringify(saveData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === "success") {
+                    toastr.success("Widget customization saved successfully!", { positionClass: "toast-top-right" });
+                    
+                    // Also store in localStorage for immediate preview updates
+                    const settings = {
+                        theme: currentTheme,
+                        size: currentSize
+                    };
+                    localStorage.setItem(`agent_${agentId}_customization`, JSON.stringify(settings));
+                    
+                    toggleCustomizeModal();
+                } else {
+                    toastr.error(data.message || "Failed to save customization", { positionClass: "toast-top-right" });
+                }
+            })
+            .catch(error => {
+                console.error("Error saving customization:", error);
+                toastr.error("Error saving customization", { positionClass: "toast-top-right" });
+            });
         }
 
         // Function to apply customization to the preview agent
@@ -4625,7 +4760,6 @@ function saveVariable() {
                     primary_color: settings.theme.primary,
                     secondary_color: settings.theme.secondary,
                     pulse_color: settings.theme.pulse,
-                    icon_url: settings.icon,
                     widget_size: settings.size
                 })
             })
@@ -4659,17 +4793,19 @@ function saveVariable() {
         
         .customize-modal-content {
             background: white;
-            border-radius: 20px;
-            padding: 30px;
-            max-width: 1200px;
-            margin: 0 auto;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            border-radius: 16px;
+            padding: 24px;
+            max-width: 900px;
+            margin: 40px auto;
+            box-shadow: 0 16px 48px rgba(0, 0, 0, 0.25);
+            max-height: calc(100vh - 80px);
+            overflow-y: auto;
         }
         
         .customization-panel {
-            height: 500px;
+            height: 380px;
             overflow-y: auto;
-            padding-right: 15px;
+            padding-right: 12px;
         }
         
         .customization-panel::-webkit-scrollbar {
@@ -4698,8 +4834,8 @@ function saveVariable() {
         }
         
         .color-option {
-            width: 40px;
-            height: 40px;
+            width: 35px;
+            height: 35px;
             border-radius: 50%;
             cursor: pointer;
             transition: all 0.3s ease;
@@ -4714,7 +4850,27 @@ function saveVariable() {
         
         .color-option.active {
             border-color: #fff;
-            box-shadow: 0 0 0 3px #0C7FDA;
+            box-shadow: 0 0 0 4px #0C7FDA, 0 4px 12px rgba(0, 0, 0, 0.3);
+            transform: scale(1.1);
+        }
+        
+        .color-option.active::after {
+            content: '✓';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
+            text-shadow: 0 0 3px rgba(0, 0, 0, 0.8);
+            z-index: 10;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(0.95); }
+            100% { opacity: 1; transform: scale(1); }
         }
         
         .size-btn {
@@ -4736,32 +4892,6 @@ function saveVariable() {
             background: #0C7FDA;
             color: white;
             border-color: #0C7FDA;
-        }
-        
-        .icon-option {
-            width: 50px;
-            height: 50px;
-            border-radius: 8px;
-            overflow: hidden;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            border: 3px solid transparent;
-        }
-        
-        .icon-option:hover {
-            transform: scale(1.05);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
-        }
-        
-        .icon-option.active {
-            border-color: #0C7FDA;
-            box-shadow: 0 0 0 2px #0C7FDA40;
-        }
-        
-        .icon-option img {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
         }
         
         .preview-panel {
@@ -4803,7 +4933,15 @@ function saveVariable() {
                 height: 300px !important;
             }
         }
+
+        /* Compact Modal Styling */
+        #customizeBotModal h5 {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        #customizeBotModal .customize-section {
+            margin-bottom: 1rem;
+        }
     </style>
-        });
-    </script>
 {% endblock %}
