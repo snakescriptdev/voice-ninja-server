@@ -220,7 +220,9 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                 'panel_min_width': '220px',
                 'indicator_size': '40px',
                 'button_padding': '8px 15px',
-                'button_font_size': '12px'
+                'button_font_size': '12px',
+                'language_btn_padding': '8px 12px',
+                'language_panel_min_width': '220px'
             },
             'medium': {
                 'panel_padding': '20px',
@@ -228,7 +230,9 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                 'panel_min_width': '280px',
                 'indicator_size': '50px',
                 'button_padding': '12px 20px',
-                'button_font_size': '14px'
+                'button_font_size': '14px',
+                'language_btn_padding': '10px 14px',
+                'language_panel_min_width': '280px'
             },
             'large': {
                 'panel_padding': '25px',
@@ -236,7 +240,9 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                 'panel_min_width': '320px',
                 'indicator_size': '60px',
                 'button_padding': '15px 25px',
-                'button_font_size': '16px'
+                'button_font_size': '16px',
+                'language_btn_padding': '12px 16px',
+                'language_panel_min_width': '320px'
             }
         }
         
@@ -449,7 +455,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                     margin-bottom: 10px;
                                     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
                                     display: none;
-                                    min-width: 280px;
+                                    min-width: {current_size['language_panel_min_width']};
                                 ">
                                     <div style="margin-bottom: 15px;">
                                         <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('en', '🇺🇸', 'ENGLISH')">
@@ -482,78 +488,87 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                 <!-- Main Control Panel -->
                                 <div id="main-panel" style="
                                     background: white;
-                                    border-radius: 25px;
+                                    border-radius: 20px;
                                     padding: {current_size['panel_padding']};
-                                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+                                    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
                                     display: flex;
                                     align-items: center;
                                     gap: {current_size['panel_gap']};
                                     min-width: {current_size['panel_min_width']};
+                                    border: 1px solid rgba(0, 0, 0, 0.05);
                                 ">
                                     <!-- Voice Indicator -->
                                     <div id="voice-indicator" style="
                                         width: {current_size['indicator_size']};
                                         height: {current_size['indicator_size']};
-                                        border-radius: 50%;
+                                        border-radius: 12px;
                                         background: linear-gradient(45deg, {appearances.primary_color}, {appearances.secondary_color});
                                         display: flex;
                                         align-items: center;
                                         justify-content: center;
                                         flex-shrink: 0;
                                         transition: all 0.3s ease;
+                                        position: relative;
+                                        overflow: hidden;
                                     ">
                                         <div style="
-                                            width: 24px;
-                                            height: 24px;
-                                            border-radius: 50%;
-                                            background: radial-gradient(circle, rgba(255,255,255,0.8) 0%, rgba(255,255,255,0.4) 70%);
+                                            width: 20px;
+                                            height: 20px;
+                                            border-radius: 4px;
+                                            background: rgba(255,255,255,0.9);
+                                            animation: pulse 2s infinite;
                                         "></div>
                                     </div>
                                     
                                     <!-- Action Button -->
                                     <button id="voice-chat-btn" onclick="toggleElevenLabsChat()" style="
-                                        background: #000;
+                                        background: linear-gradient(135deg, #1a1a1a, #333);
                                         color: white;
                                         border: none;
-                                        border-radius: 25px;
+                                        border-radius: 18px;
                                         padding: {current_size['button_padding']};
-                                        font-weight: 600;
+                                        font-weight: 700;
                                         font-size: {current_size['button_font_size']};
+                                        letter-spacing: 0.5px;
                                         cursor: pointer;
-                                        transition: all 0.2s ease;
+                                        transition: all 0.3s ease;
                                         display: flex;
                                         align-items: center;
-                                        gap: 8px;
+                                        gap: 10px;
                                         flex: 1;
+                                        text-transform: uppercase;
+                                        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
                                     ">
-                                        <i class="fas fa-phone" style="font-size: 14px;"></i>
-                                        <span id="btn-text">VOICE CHAT</span>
+                                        <i class="fas fa-microphone" style="font-size: {current_size['button_font_size']};"></i>
+                                        <span id="btn-text">START CHAT</span>
                                     </button>
                                     
                                     <!-- Language Selector -->
                                     <button id="language-btn" onclick="toggleLanguagePanel()" style="
-                                        background: #f5f5f5;
-                                        border: 2px solid #e0e0e0;
-                                        border-radius: 20px;
-                                        padding: 8px 12px;
+                                        background: #f8f9fa;
+                                        border: 1px solid #e1e5e9;
+                                        border-radius: 15px;
+                                        padding: {current_size['language_btn_padding']};
                                         cursor: pointer;
                                         display: flex;
                                         align-items: center;
-                                        gap: 6px;
+                                        gap: 8px;
                                         transition: all 0.2s ease;
+                                        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
                                     ">
-                                        <span id="selected-flag" style="font-size: 18px;">🇺🇸</span>
-                                        <i class="fas fa-chevron-down" style="font-size: 10px; color: #666;"></i>
+                                        <span id="selected-flag" style="font-size: 16px;">🇺🇸</span>
+                                        <i class="fas fa-chevron-down" style="font-size: 8px; color: #6c757d;"></i>
                                     </button>
                                 </div>
                                 
                                 <!-- Branding -->
                                 <div style="
                                     text-align: center;
-                                    margin-top: 10px;
-                                    font-size: 11px;
-                                    color: #999;
-                                    opacity: 0.7;
+                                    margin-top: 12px;
+                                    font-size: 10px;
+                                    color: #adb5bd;
+                                    opacity: 0.8;
+                                    font-weight: 500;
                                 ">
                                     Powered by VoiceNinja
                                 </div>
@@ -645,9 +660,9 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                         const style = document.createElement('style');
                         style.textContent = `
                             @keyframes pulse {{
-                                0% {{ box-shadow: 0 0 0 0 rgba(0, 255, 136, 0.7); }}
-                                70% {{ box-shadow: 0 0 0 10px rgba(0, 255, 136, 0); }}
-                                100% {{ box-shadow: 0 0 0 0 rgba(0, 255, 136, 0); }}
+                                0% {{ opacity: 1; transform: scale(1); }}
+                                50% {{ opacity: 0.7; transform: scale(0.95); }}
+                                100% {{ opacity: 1; transform: scale(1); }}
                             }}
                             
                             #elevenlabs-widget button:hover {{

@@ -38,14 +38,21 @@ async def update_agent(request: Request):
         
         Session = sessionmaker(bind=engine)
         session = Session()
+        
+        # Convert agent_id to integer for database queries
+        try:
+            agent_id_int = int(agent_id)
+        except ValueError:
+            return {"error": "Invalid agent_id format"}
+        
         # Fetch agent knowledge associations
         result = session.execute(
-            select(agent_knowledge_association).where(agent_knowledge_association.c.agent_id == agent_id)
+            select(agent_knowledge_association).where(agent_knowledge_association.c.agent_id == agent_id_int)
         )
         agent_knowledge_ids = [(row.agent_id, row.knowledge_base_id) for row in result.fetchall()]
 
         # Fetch agent details
-        agent_result =  session.execute(select(AgentModel).where(AgentModel.id == agent_id))
+        agent_result =  session.execute(select(AgentModel).where(AgentModel.id == agent_id_int))
         agent = agent_result.scalars().first()
 
         # Fetch all knowledge bases
@@ -99,7 +106,7 @@ async def update_agent(request: Request):
                             "last_synced": str(datetime.now()),
                             "source": "elevenlabs"
                         }
-                        AgentModel.update_elevenlabs_knowledge_base(agent_id, kb_data)
+                        AgentModel.update_elevenlabs_knowledge_base(agent_id_int, kb_data)
                         print(f"✅ Success: Saved ElevenLabs knowledge base info to agent {agent_id}")
                         
             except Exception as e:
@@ -119,11 +126,11 @@ async def update_agent(request: Request):
                 selected_knowledge = VirtualKnowledgeBase(kb_files)
                 print(f"🔍 Debug: Using stored ElevenLabs knowledge base info: {selected_knowledge.knowledge_base_name}")
         
-        # custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
+        # custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id_int)
       
-        custom_functions = ElevenLabsWebhookToolModel.get_all_by_agent(agent_id)
-        daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id)
-        overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id)
+        custom_functions = ElevenLabsWebhookToolModel.get_all_by_agent(agent_id_int)
+        daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id_int)
+        overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id_int)
         voices = VoiceModel.get_allowed_voices(user_id=user_id)
         llm_models = LLMModel.get_all()
         selected_elevenlab_model = agent.selected_model_obj.name
