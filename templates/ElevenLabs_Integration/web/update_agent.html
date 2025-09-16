@@ -348,6 +348,18 @@
                                                         <button class="size-btn" onclick="changeSize('large', this)">Large</button>
                                                     </div>
                                                 </div>
+
+                                                <!-- Start Button Color Section -->
+                                                <div class="customize-section mb-3">
+                                                    <h5 class="mb-2">
+                                                        <i class="fa-solid fa-brush me-2"></i>
+                                                        Start Button Color
+                                                    </h5>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <input type="color" id="start-btn-color-picker" value="#1a1a1a" style="width: 40px; height: 40px; border: none; background: none; cursor: pointer;">
+                                                        <span id="start-btn-color-value" style="font-size: 13px; color: #333;">#1a1a1a</span>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                         
@@ -447,10 +459,71 @@
                                                                 flex: 1;
                                                                 text-transform: uppercase;
                                                                 box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-                                                            ">
+                                                            " data-default-bg="linear-gradient(135deg, #1a1a1a, #333)">
                                                                 <i class="fas fa-microphone" style="font-size: 13px;"></i>
                                                                 <span id="preview-btn-text">START CHAT</span>
                                                             </button>
+<script>
+// --- Start Button Color Customization ---
+const startBtnColorPicker = document.getElementById('start-btn-color-picker');
+const startBtnColorValue = document.getElementById('start-btn-color-value');
+const previewVoiceChatBtn = document.getElementById('preview-voice-chat-btn');
+let currentStartBtnColor = '#1a1a1a';
+
+// --- Initialization: Apply saved theme and button color from backend on load ---
+document.addEventListener('DOMContentLoaded', function() {
+    // Theme
+    let theme = JSON.parse(localStorage.getItem('selectedTheme')) || { primary: '#00d4ff', secondary: '#006eff', pulse: 'rgba(0, 212, 255, 0.3)' };
+    // Fetch agent connection for start_btn_color
+    let agentId = "{{ agent.id if agent else '' }}";
+    if (agentId) {
+        fetch(`{{ host }}/api/get_agent_connection?agent_id=${agentId}`)
+            .then(res => res.json())
+            .then(response => {
+                if (response.status === 'success' && response.data) {
+                    let startBtnColor = response.data.start_btn_color || '#1a1a1a';
+                    currentStartBtnColor = startBtnColor;
+                    if (previewVoiceChatBtn) previewVoiceChatBtn.style.background = startBtnColor;
+                    if (startBtnColorPicker) startBtnColorPicker.value = startBtnColor;
+                    if (startBtnColorValue) startBtnColorValue.textContent = startBtnColor;
+                }
+            });
+    } else {
+        // fallback for new agent
+        if (previewVoiceChatBtn) previewVoiceChatBtn.style.background = '#1a1a1a';
+        if (startBtnColorPicker) startBtnColorPicker.value = '#1a1a1a';
+        if (startBtnColorValue) startBtnColorValue.textContent = '#1a1a1a';
+    }
+    // Also apply theme to indicator if needed
+    const indicator = document.getElementById('preview-voice-indicator');
+    if (indicator) {
+        indicator.style.background = `linear-gradient(45deg, ${theme.primary}, ${theme.secondary})`;
+    }
+});
+
+if (startBtnColorPicker && startBtnColorValue && previewVoiceChatBtn) {
+    startBtnColorPicker.addEventListener('input', function(e) {
+        const color = e.target.value;
+        startBtnColorValue.textContent = color;
+        previewVoiceChatBtn.style.background = color;
+        currentStartBtnColor = color;
+        // Do NOT reset or change pulse color or theme here
+        if (window.previewAgentWindow && typeof window.previewAgentWindow.postMessage === 'function') {
+            window.previewAgentWindow.postMessage({ type: 'updateStartBtnColor', color }, '*');
+        }
+    });
+}
+
+// Listen for postMessage in preview agent (if this is the preview agent window)
+window.addEventListener('message', function(event) {
+    if (event.data && event.data.type === 'updateStartBtnColor') {
+        const color = event.data.color;
+        if (previewVoiceChatBtn) {
+            previewVoiceChatBtn.style.background = color;
+        }
+    }
+});
+</script>
                                                             
                                                             <!-- Language Selector -->
                                                             <button id="preview-language-btn" onclick="toggleLanguagePanel()" style="
@@ -507,18 +580,48 @@
                                     if(modal.style.display === 'none') {
                                         modal.style.display = 'block';
                                         
-                                        // Initialize default theme if not already set
-                                        if (!localStorage.getItem('selectedTheme')) {
-                                            localStorage.setItem('selectedTheme', JSON.stringify({
-                                                primary: '#00d4ff',
-                                                secondary: '#006eff',
-                                                pulse: 'rgba(0, 212, 255, 0.3)'
-                                            }));
+                                        // Always fetch and apply backend start_btn_color and theme
+                                        let agentId = "{{ agent.id if agent else '' }}";
+                                        if (agentId) {
+                                            fetch(`{{ host }}/api/get_agent_connection?agent_id=${agentId}`)
+                                                .then(res => res.json())
+                                                .then(response => {
+                                                    if (response.status === 'success' && response.data) {
+                                                        // Set start button color
+                                                        let startBtnColor = response.data.start_btn_color || '#1a1a1a';
+                                                        currentStartBtnColor = startBtnColor;
+                                                        if (startBtnColorPicker) startBtnColorPicker.value = startBtnColor;
+                                                        if (startBtnColorValue) startBtnColorValue.textContent = startBtnColor;
+                                                        if (previewVoiceChatBtn) previewVoiceChatBtn.style.background = startBtnColor;
+                                                        
+                                                        // Set theme colors from backend
+                                                        currentTheme = {
+                                                            primary: response.data.primary_color || '#00d4ff',
+                                                            secondary: response.data.secondary_color || '#006eff',
+                                                            pulse: response.data.pulse_color || 'rgba(0, 212, 255, 0.3)'
+                                                        };
+                                                        
+                                                        // Update localStorage with current theme
+                                                        localStorage.setItem('selectedTheme', JSON.stringify(currentTheme));
+                                                        
+                                                        // Now reset preview widget with updated values
+                                                        resetPreviewWidget();
+                                                    } else {
+                                                        // Reset preview widget with default values if no data
+                                                        resetPreviewWidget();
+                                                    }
+                                                })
+                                                .catch(error => {
+                                                    console.error('Error fetching agent connection:', error);
+                                                    // Reset preview widget with default values on error
+                                                    currentStartBtnColor = '#1a1a1a'; // Ensure default is set
+                                                    resetPreviewWidget();
+                                                });
+                                        } else {
+                                            // Reset preview widget with default values if no agent ID
+                                            currentStartBtnColor = '#1a1a1a'; // Ensure default is set
+                                            resetPreviewWidget();
                                         }
-                                        
-                                        
-                                        // Reset preview widget to default state
-                                        resetPreviewWidget();
                                     } else {
                                         modal.style.display = 'none';
                                     }
@@ -533,12 +636,13 @@
                                     
                                     if (textSpan) textSpan.textContent = 'START CHAT';
                                     if (iconElement) iconElement.className = 'fas fa-microphone';
-                                    if (btn) btn.style.background = 'linear-gradient(135deg, #1a1a1a, #333)';
+                                    if (btn) btn.style.background = currentStartBtnColor || '#1a1a1a';
                                     
                                     // Apply current theme to indicator
                                     const currentTheme = JSON.parse(localStorage.getItem('selectedTheme')) || {
                                         primary: '#00d4ff',
-                                        secondary: '#006eff'
+                                        secondary: '#006eff',
+                                        pulse: 'rgba(0, 212, 255, 0.3)'
                                     };
                                     
                                     if (indicator) {
@@ -1349,9 +1453,10 @@ function toggleElevenLabsChat() {
                 iconElement.className = 'fas fa-phone-slash';
             }
         } else {
-            // Default state - use current theme colors
+            // Default state - use current theme colors and start button color
             textSpan.textContent = 'START CHAT';
-            btn.style.background = 'linear-gradient(135deg, #1a1a1a, #333)';
+            // Use the customized start button color instead of hardcoded gray
+            btn.style.background = currentStartBtnColor;
             // Use the selected theme colors, not hardcoded blue
             indicator.style.background = `linear-gradient(45deg, ${currentTheme.primary}, ${currentTheme.secondary})`;
             
@@ -1442,6 +1547,7 @@ function saveChanges() {
     let primaryColor = getComputedStyle(document.documentElement).getPropertyValue('--primary-color').trim() || "#00b4d8";
     let secondaryColor = getComputedStyle(document.documentElement).getPropertyValue('--secondary-color').trim() || "#0077b6";
     let pulseColor = getComputedStyle(document.documentElement).getPropertyValue('--pulse-shadow').trim() || "rgba(0, 180, 216, 0.3)";
+    let startBtnColor = currentStartBtnColor || '#1a1a1a';
 
     // Create the data payload
     let data = {
@@ -1449,7 +1555,8 @@ function saveChanges() {
         icon_url: iconUrl,
         primary_color: primaryColor,
         secondary_color: secondaryColor,
-        pulse_color: pulseColor
+        pulse_color: pulseColor,
+        start_btn_color: startBtnColor
     };
 
     // Send data to API
@@ -4710,7 +4817,8 @@ function saveVariable() {
                 primary_color: currentTheme.primary,
                 secondary_color: currentTheme.secondary,
                 pulse_color: currentTheme.pulse,
-                widget_size: currentSize
+                widget_size: currentSize,
+                start_btn_color: currentStartBtnColor || '#1a1a1a'
             };
             
             // Save to database via API

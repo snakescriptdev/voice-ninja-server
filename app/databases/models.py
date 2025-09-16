@@ -933,6 +933,7 @@ class AgentConnectionModel(Base):
     secondary_color = Column(String, default="#5e60ce") 
     pulse_color = Column(String, default="rgba(131, 56, 236, 0.3)")
     widget_size = Column(String, default="medium")
+    start_btn_color = Column(String, default="#1a1a1a")  # New: Start button color
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 

@@ -3,8 +3,10 @@
  * Handles connection to ElevenLabs Conversational AI via WebSocket
  */
 class ElevenLabsWebSocketClient {
-    constructor(agentId = null) {
+    constructor(agentId = null, language = null, model = null) {
         this.agentId = agentId;
+        this.language = language || 'en'; // Default to English if not specified
+        this.model = model; // Store the model for override
         this.BASE_URL = window.location.host;
         this.isRecording = false;
         this.isMuted = false;
@@ -184,6 +186,33 @@ class ElevenLabsWebSocketClient {
                     this.isConnected = true;
                     this.isConnecting = false;
                     this.updateStatus('connected', 'Connected - Waiting for conversation...');
+                    
+                    // Send language preference to initialize conversation
+                    const initData = {
+                        type: 'conversation_init',
+                        language: this.language
+                    };
+                    
+                    // Add model override based on language selection
+                    const ENGLISH_CODES = ["en", "en-US", "en-GB"];
+                    const EN_MODELS = ["eleven_turbo_v2", "eleven_flash_v2"];
+                    const NON_EN_MODELS = ["eleven_turbo_v2_5", "eleven_flash_v2_5"];
+                    
+                    let selectedModel = this.model; // Use provided model if available
+                    if (!selectedModel) {
+                        if (this.language && ENGLISH_CODES.includes(this.language)) {
+                            // For English, prefer eleven_turbo_v2 if available
+                            selectedModel = "eleven_turbo_v2";
+                        } else {
+                            // For non-English, use eleven_turbo_v2_5
+                            selectedModel = "eleven_turbo_v2_5";
+                        }
+                    }
+                    
+                    initData.model = selectedModel;
+                    console.log(`📤 Sending conversation init with language: ${this.language}, model: ${selectedModel}`);
+                    this.ws.send(JSON.stringify(initData));
+                    
                     // Don't start audio streaming immediately, wait for conversation_ready
                     resolve();
                 };
@@ -193,7 +222,7 @@ class ElevenLabsWebSocketClient {
                 };
                 
                 this.ws.onclose = (event) => {
-                    
+     
                     this.isConnected = false;
                     this.isConnecting = false;
                     this.conversationReady = false;
@@ -250,6 +279,14 @@ class ElevenLabsWebSocketClient {
                 if (this.conversationReady) {
                     this.startAudioStreaming();
                 }
+                break;
+                
+            case 'language_confirmed':
+                console.log(`✅ Language confirmed by server: ${message.language}`);
+                if (message.model) {
+                    console.log(`✅ Model confirmed by server: ${message.model}`);
+                }
+                this.updateStatus('connected', `Language set to ${message.language} - Connecting...`);
                 break;
                 
             case 'audio_chunk':
