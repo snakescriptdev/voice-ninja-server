@@ -251,7 +251,6 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                 await websocket.close()
                 return
         
-        # Create conversation initiation data with user_id and dynamic variables
         # Get the agent's selected ElevenLabs model
         selected_model = "eleven_turbo_v2"  # Default fallback
         try:
@@ -264,86 +263,12 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
         except Exception as e:
             logger.warning(f"⚠️ Could not access agent model relationship: {e}, using default: {selected_model}")
 
-        # Use SDK's ConversationInitiationData with proper configuration
-        conversation_config = ConversationInitiationData(
-            user_id=elevenlabs_user_id,
-            conversation_config_override={
-                "agent": {
-                    "language": "en"  # Default language, will be overridden by client
-                }
-            },
-            extra_body={
-                "model": selected_model  # Model goes here
-            },
-            dynamic_variables={
-                "user_id": elevenlabs_user_id,
-                "call_id": call_id,
-                "agent_dynamic_id": agent_dynamic_id,
-                "client_type": "browser_live",
-                "session_start": datetime.utcnow().isoformat()
-            }
-        )
-
-        # Create ElevenLabs conversation with proper config
-        conversation = Conversation(
-            client,
-            elevenlabs_agent_id,
-            user_id=elevenlabs_user_id,
-            requires_auth=bool(api_key),
-            audio_interface=audio_if,
-            config=conversation_config,  # Pass config to SDK
-            callback_agent_response=lambda r: handle_agent_response_live(call_id, r, websocket, loop),
-            callback_user_transcript=lambda t: handle_user_transcript_live(call_id, t, websocket, loop),
-            callback_latency_measurement=lambda latency_ms: handle_latency_measurement_live(call_id, latency_ms, websocket, loop),
-        )
-
-        # Create initial call record in database
-        try:
-            call_record = elevenlabs_conversation_storage.create_call_record(
-                agent_id=agent.id,
-                conversation_id=call_id,  # Using our call_id as conversation identifier
-                user_id=agent.created_by,  # Pass the actual agent owner's user_id to database
-                session_metadata={
-                    "elevenlabs_agent_id": elevenlabs_agent_id,
-                    "elevenlabs_user_id": elevenlabs_user_id,  # ElevenLabs user identifier
-                    "query_user_id": user_id,  # Original user_id from query params
-                    "platform": "elevenlabs_live",
-                    "client_ip": websocket.client.host if websocket.client else "unknown",
-                    "selected_language": "en",  # Default, will be updated when client sends init
-                    "selected_model": selected_model  # Include selected model in metadata
-                }
-            )
-            if call_record:
-                logger.info(f"📞 Created call record in database for call_id: {call_id}, user: {elevenlabs_user_id}, record_id: {call_record.id}")
-            else:
-                logger.error(f"❌ Call record creation returned None for call_id: {call_id}")
-        except Exception as e:
-            logger.error(f"❌ Failed to create call record: {e}", exc_info=True)
-            # Continue anyway - don't fail the conversation
-
-        # Start the conversation session
-        logger.info(f"🚀 Starting ElevenLabs conversation session for call_id: {call_id}, user: {elevenlabs_user_id}")
-        conversation.start_session()
+        # Wait for client to send conversation_init with language preference
+        conversation_ready = False
+        selected_language = "en"  # Default
+        selected_model_override = None
         
-        # Wait for the conversation to be fully initialized
-        logger.info(f"⏳ Waiting for ElevenLabs conversation to initialize for call_id: {call_id}")
-        await asyncio.sleep(0.5)  # Increased delay
-        
-        # Check if audio interface has been started by ElevenLabs
-        if not audio_if._started:
-            logger.warning(f"Audio interface not started after delay for call_id: {call_id}")
-        
-        # Send ready signal to browser
-        logger.info(f"Sending conversation_ready signal for call_id: {call_id}")
-        await websocket.send_json({
-            "type": "conversation_ready",
-            "message": "ElevenLabs conversation is ready",
-            "ts": datetime.utcnow().isoformat()
-        })
-
-        # Receive mic audio from browser
-        audio_chunk_count = 0
-        
+        # Receive messages from browser
         while True:
             try:
                 data = await websocket.receive_json()
@@ -355,30 +280,173 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                 continue
 
             msg_type = data.get("type")
-            if msg_type == "conversation_init":
+            
+            if msg_type == "conversation_init" and not conversation_ready:
                 # Handle language and model override from client
                 selected_language = data.get("language", "en")
                 selected_model_override = data.get("model")
 
-                logger.info(f"📝 Received conversation_init: language={selected_language}, model={selected_model_override} for call_id: {call_id}")
+                # Check if model is compatible with language (auto-correct both ways)
+                ENGLISH_CODES = ["en", "en-US", "en-GB"]
+                EN_MODELS = ["eleven_turbo_v2", "eleven_flash_v2"]
+                NON_EN_MODELS = ["eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_multilingual_v2"]
                 
-                # Send contextual update with the new language preference
+                # Determine the final model to use
+                final_model = selected_model_override or selected_model
+                
+                # Auto-correct model for language compatibility
+                if selected_language in ENGLISH_CODES:
+                    if final_model not in EN_MODELS:
+                        final_model = "eleven_turbo_v2"
+                        logger.info(f"� Auto-corrected model to {final_model} for English language")
+                else:
+                    if final_model not in NON_EN_MODELS:
+                        final_model = "eleven_turbo_v2_5"
+                        logger.info(f"🔄 Auto-corrected model to {final_model} for non-English language: {selected_language}")
+
+                logger.info(f"�📝 Received conversation_init: language={selected_language}, model={final_model} for call_id: {call_id}")
+                
+                # Use SDK's ConversationInitiationData with proper configuration
+                conversation_config = ConversationInitiationData(
+                    user_id=elevenlabs_user_id,
+                    conversation_config_override={
+                        "agent": {
+                            "language": selected_language  # Use selected language from client
+                        }
+                    },
+                    extra_body={
+                        "model": final_model  # Use auto-corrected compatible model
+                    },
+                    dynamic_variables={
+                        "user_id": elevenlabs_user_id,
+                        "call_id": call_id,
+                        "agent_dynamic_id": agent_dynamic_id,
+                        "client_type": "browser_live",
+                        "session_start": datetime.utcnow().isoformat()
+                    }
+                )
+
+                # Create ElevenLabs conversation with proper config
+                conversation = Conversation(
+                    client,
+                    elevenlabs_agent_id,
+                    user_id=elevenlabs_user_id,
+                    requires_auth=bool(api_key),
+                    audio_interface=audio_if,
+                    config=conversation_config,  # Pass config to SDK
+                    callback_agent_response=lambda r: handle_agent_response_live(call_id, r, websocket, loop),
+                    callback_user_transcript=lambda t: handle_user_transcript_live(call_id, t, websocket, loop),
+                    callback_latency_measurement=lambda latency_ms: handle_latency_measurement_live(call_id, latency_ms, websocket, loop),
+                )
+
+                # Create initial call record in database
+                try:
+                    call_record = elevenlabs_conversation_storage.create_call_record(
+                        agent_id=agent.id,
+                        conversation_id=call_id,  # Using our call_id as conversation identifier
+                        user_id=agent.created_by,  # Pass the actual agent owner's user_id to database
+                        session_metadata={
+                            "elevenlabs_agent_id": elevenlabs_agent_id,
+                            "elevenlabs_user_id": elevenlabs_user_id,  # ElevenLabs user identifier
+                            "query_user_id": user_id,  # Original user_id from query params
+                            "platform": "elevenlabs_live",
+                            "client_ip": websocket.client.host if websocket.client else "unknown",
+                            "selected_language": selected_language,  # Use selected language
+                            "selected_model": final_model  # Include auto-corrected model in metadata
+                        }
+                    )
+                    if call_record:
+                        logger.info(f"📞 Created call record in database for call_id: {call_id}, user: {elevenlabs_user_id}, record_id: {call_record.id}")
+                    else:
+                        logger.error(f"❌ Call record creation returned None for call_id: {call_id}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to create call record: {e}", exc_info=True)
+                    # Continue anyway - don't fail the conversation
+
+                # Start the conversation session
+                logger.info(f"🚀 Starting ElevenLabs conversation session for call_id: {call_id}, user: {elevenlabs_user_id}, language: {selected_language}, model: {final_model}")
+                conversation.start_session()
+                
+                # Wait for the conversation to be fully initialized
+                logger.info(f"⏳ Waiting for ElevenLabs conversation to initialize for call_id: {call_id}")
+                await asyncio.sleep(0.5)  # Increased delay
+                
+                # Check if audio interface has been started by ElevenLabs
+                if not audio_if._started:
+                    logger.warning(f"Audio interface not started after delay for call_id: {call_id}")
+                
+                # Send ready signal to browser
+                logger.info(f"Sending conversation_ready signal for call_id: {call_id}")
+                await websocket.send_json({
+                    "type": "conversation_ready",
+                    "message": "ElevenLabs conversation is ready",
+                    "ts": datetime.utcnow().isoformat()
+                })
+                
+                conversation_ready = True
+                
+                # Send confirmation back to client
+                confirmation_data = {
+                    "type": "language_confirmed",
+                    "language": selected_language,
+                    "message": f"Language set to {selected_language}",
+                    "ts": datetime.utcnow().isoformat()
+                }
+
+                if selected_model_override or final_model != selected_model:
+                    confirmation_data.update({
+                        "model": final_model,
+                        "model_message": f"Model set to {final_model}"
+                    })
+
+                await websocket.send_json(confirmation_data)
+                
+            elif msg_type == "conversation_init" and conversation_ready:
+                # Handle language/model changes after conversation is already started
+                new_language = data.get("language", selected_language)
+                new_model_override = data.get("model", selected_model_override or selected_model)
+                
+                # Check if new model is compatible with new language (auto-correct both ways)
+                ENGLISH_CODES = ["en", "en-US", "en-GB"]
+                EN_MODELS = ["eleven_turbo_v2", "eleven_flash_v2"]
+                NON_EN_MODELS = ["eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_multilingual_v2"]
+                
+                # Determine the final new model to use
+                final_new_model = new_model_override
+                
+                # Auto-correct model for language compatibility
+                if new_language in ENGLISH_CODES:
+                    if final_new_model not in EN_MODELS:
+                        final_new_model = "eleven_turbo_v2"
+                        logger.info(f"� Auto-corrected model to {final_new_model} for English language (dynamic update)")
+                else:
+                    if final_new_model not in NON_EN_MODELS:
+                        final_new_model = "eleven_turbo_v2_5"
+                        logger.info(f"🔄 Auto-corrected model to {final_new_model} for non-English language: {new_language} (dynamic update)")
+                
+                logger.info(f"�📝 Received conversation_init after ready: language={new_language}, model={final_new_model} for call_id: {call_id}")
+                
+                # Send contextual update for dynamic changes
                 if conversation:
                     try:
-                        # Send contextual update with the new language preference
-                        context_message = f"User has changed language preference to {selected_language}"
-                        if selected_model_override:
-                            context_message += f" and model to {selected_model_override}"
-
+                        context_message = f"User has updated preferences to language: {new_language}"
+                        if final_new_model != (selected_model_override or selected_model):
+                            context_message += f" and model: {final_new_model}"
+                        
                         conversation.send_contextual_update(context_message)
-                        logger.info(f"📤 Sent contextual update for configuration change: {context_message}")
+                        logger.info(f"📤 Sent contextual update for preference change: {context_message}")
+                        
+                        # Update stored preferences
+                        selected_language = new_language
+                        selected_model_override = final_new_model
+                        
                     except Exception as e:
                         logger.warning(f"⚠️ Failed to send contextual update: {e}")
 
-                # Update call record with selected language and model
-                metadata_update = {"selected_language": selected_language}
-                if selected_model_override:
-                    metadata_update["selected_model"] = selected_model_override
+                # Update call record with new preferences
+                metadata_update = {"selected_language": new_language}
+                if final_new_model:
+                    metadata_update["selected_model"] = final_new_model
 
                 try:
                     elevenlabs_conversation_storage.update_call_metadata(
@@ -391,20 +459,24 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                 # Send confirmation back to client
                 confirmation_data = {
                     "type": "language_confirmed",
-                    "language": selected_language,
-                    "message": f"Language set to {selected_language}",
+                    "language": new_language,
+                    "message": f"Language updated to {new_language}",
                     "ts": datetime.utcnow().isoformat()
                 }
 
-                if selected_model_override:
+                if new_model_override or final_new_model != selected_model:
                     confirmation_data.update({
-                        "model": selected_model_override,
-                        "model_message": f"Model set to {selected_model_override}"
+                        "model": final_new_model,
+                        "model_message": f"Model updated to {final_new_model}"
                     })
 
                 await websocket.send_json(confirmation_data)
                 
             elif msg_type == "user_audio_chunk":
+                if not conversation_ready:
+                    # Ignore audio chunks until conversation is ready
+                    continue
+                    
                 b64 = data.get("data_b64")
                 if not b64:
                     continue
@@ -416,8 +488,6 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                         continue
                     
                     # Process audio chunk
-                    audio_chunk_count += 1
-                    
                     audio_if.push_user_audio(audio_bytes)
                 except Exception as e:
                     logger.error(f"❌ Error processing user audio chunk for call_id {call_id}: {e}", exc_info=True)
@@ -425,7 +495,7 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                 break
             else:
                 # Log unknown message types for debugging
-                
+                logger.debug(f"Unknown message type: {msg_type} for call_id {call_id}")
                 pass
 
     except Exception as e:
