@@ -1045,7 +1045,8 @@ async def get_agent_connection(request: Request, agent_id: str):
                 "icon_url": connection.icon_url,
                 "primary_color": connection.primary_color,
                 "secondary_color": connection.secondary_color,
-                "pulse_color": connection.pulse_color
+                "pulse_color": connection.pulse_color,
+                "start_btn_color": connection.start_btn_color
             }
             return JSONResponse(
                 status_code=200,

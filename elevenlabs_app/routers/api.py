@@ -642,19 +642,19 @@ async def save_widget_customization(request: Request):
         pulse_color = data.get("pulse_color", "rgba(0, 212, 255, 0.3)")
         icon_url = data.get("icon_url", "/static/Web/images/gif-icon-1.gif")
         widget_size = data.get("widget_size", "medium")
-        
+        start_btn_color = data.get("start_btn_color", "#1a1a1a")
+
         if not agent_id:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
-        
+
         # Get or create agent connection settings
         agent_connection = AgentConnectionModel.get_by_agent_id(agent_id)
-        
+
         if agent_connection:
             # Update existing connection
             try:
                 Session = sessionmaker(bind=engine)
                 session = Session()
-                
                 agent_connection.primary_color = primary_color
                 agent_connection.secondary_color = secondary_color
                 agent_connection.pulse_color = pulse_color
@@ -662,11 +662,12 @@ async def save_widget_customization(request: Request):
                 # Add widget_size if the column exists, otherwise skip
                 if hasattr(agent_connection, 'widget_size'):
                     agent_connection.widget_size = widget_size
-                
+                # Add start_btn_color if the column exists
+                if hasattr(agent_connection, 'start_btn_color'):
+                    agent_connection.start_btn_color = start_btn_color
                 session.merge(agent_connection)
                 session.commit()
                 session.close()
-                
             except Exception as e:
                 logger.error(f"Error updating agent connection: {str(e)}")
                 return JSONResponse(status_code=500, content={"status": "error", "message": f"Error updating customization: {str(e)}"})
@@ -687,7 +688,9 @@ async def save_widget_customization(request: Request):
                 # Add widget_size if the column exists
                 if hasattr(new_connection, 'widget_size'):
                     new_connection.widget_size = widget_size
-                
+                # Add start_btn_color if the column exists
+                if hasattr(new_connection, 'start_btn_color'):
+                    new_connection.start_btn_color = start_btn_color
                 session.add(new_connection)
                 session.commit()
                 session.close()
@@ -1050,7 +1053,7 @@ async def attach_knowledge_base(request: Request):
                         )
                         
                         if elevenlabs_result.get("error"):
-                            print(f"❌ Error: Failed to update ElevenLabs agent: {elevenlabs_result.get('exc')}")
+                            print(f"❌ Error: Failed to update ElevenLabs agent: {elevenlabs_result}")
                             return JSONResponse(status_code=500, content={
                                 "status": "error", 
                                 "message": f"Failed to update ElevenLabs agent: {elevenlabs_result.get('exc')}"
@@ -2494,27 +2497,43 @@ async def delete_audio_recording(request: Request, audio_recording_id: int = Non
             audio_file_path = audio_recording.audio_file
             audio_recording_id_for_deletion = audio_recording.id
             
-            # Delete ALL associated conversations first (to avoid foreign key constraint)
-            conversations = db.session.query(ConversationModel).filter(
-                ConversationModel.audio_recording_id == audio_recording.id
-            ).all()
-            
-            for conversation in conversations:
-                db.session.delete(conversation)
-            
-            # Delete the audio recording (while still in the same transaction)
-            db.session.delete(audio_recording)
-            
-            # Delete the main call record if it exists
-            if call_id:
-                call_record = CallModel.get_by_call_id(call_id)
-                if call_record:
-                    db.session.delete(call_record)
-                else:
-                    logger.warning(f"⚠️ Call record not found for call_id: {call_id}")
-            
-            # Commit all database deletions in one transaction
-            db.session.commit()
+            try:
+                # IMPORTANT: Delete ALL associated conversations first (to avoid foreign key constraint)
+                # Use explicit SQL to ensure all conversations are deleted
+                conversations = db.session.query(ConversationModel).filter(
+                    ConversationModel.audio_recording_id == audio_recording.id
+                ).all()
+                
+               
+                
+                # Delete each conversation individually
+                for conversation in conversations:
+                    
+                    db.session.delete(conversation)
+                
+                # Commit conversation deletions first to ensure they're gone before deleting the recording
+                db.session.flush()
+                
+                # Now delete the audio recording
+               
+                db.session.delete(audio_recording)
+                
+                # Delete the main call record if it exists
+                if call_id:
+                    call_record = CallModel.get_by_call_id(call_id)
+                    if call_record:
+                        
+                        db.session.delete(call_record)
+                    else:
+                        logger.warning(f"⚠️ Call record not found for call_id: {call_id}")
+                
+                # Commit all database deletions in one transaction
+                db.session.commit()
+               
+            except Exception as inner_e:
+                db.session.rollback()
+               
+                raise inner_e
             
             # Delete audio file after successful database commit
             if audio_file_path and audio_file_path.strip():
@@ -2530,7 +2549,7 @@ async def delete_audio_recording(request: Request, audio_recording_id: int = Non
                     
                     if os.path.exists(file_path):
                         os.remove(file_path)
-                        logger.info(f"🗑️ Deleted audio file: {file_path}")
+                        
                     else:
                         logger.warning(f"⚠️ Audio file not found: {file_path}")
                 except Exception as e:
@@ -2943,3 +2962,39 @@ async def delete_call_record(call_id: str, request: Request):
     except Exception as e:
         logger.error(f"Error deleting call record: {str(e)}")
         return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to delete call record"})
+
+
+@ElevenLabsAPIRouter.get("/get_agent_connection", name="get_agent_connection")
+async def get_agent_connection(request: Request):
+    try:
+        agent_id = request.query_params.get("agent_id")
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+        
+        connection = AgentConnectionModel.get_by_agent_id(agent_id)
+        if connection:
+            connection_data = {
+                "icon_url": connection.icon_url,
+                "primary_color": connection.primary_color,
+                "secondary_color": connection.secondary_color,
+                "pulse_color": connection.pulse_color,
+                "start_btn_color": connection.start_btn_color
+            }
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": "Agent connection fetched successfully",
+                    "data": connection_data
+                }
+            )
+        else:
+            return JSONResponse(    
+                status_code=200,
+                content={"status": "success", "message": "Agent connection not found", "data": {}}
+            )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+        )
