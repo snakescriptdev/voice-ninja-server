@@ -1,6 +1,6 @@
 DEFAULT_LLM_ELEVENLAB = "gemini-2.5-flash" #llm model 
 
-DEFAULT_MODEL_ELEVENLAB = "eleven_turbo_v2_5"  #elevenlab model (updated to v2_5 for non-English support) check here:-> https://elevenlabs.io/docs/models#eleven-v3-alpha
+DEFAULT_MODEL_ELEVENLAB = "eleven_flash_v2_5"  #elevenlab model (updated to v2_5 for non-English support) check here:-> https://elevenlabs.io/docs/models#eleven-v3-alpha
 
 DEFAULT_LANGUAGE = "en"
 
