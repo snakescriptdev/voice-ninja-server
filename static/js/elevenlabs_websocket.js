@@ -210,7 +210,7 @@ class ElevenLabsWebSocketClient {
                     }
                     
                     initData.model = selectedModel;
-                    console.log(`📤 Sending conversation init with language: ${this.language}, model: ${selectedModel}`);
+                   
                     this.ws.send(JSON.stringify(initData));
                     
                     // Don't start audio streaming immediately, wait for conversation_ready
@@ -282,10 +282,7 @@ class ElevenLabsWebSocketClient {
                 break;
                 
             case 'language_confirmed':
-                console.log(`✅ Language confirmed by server: ${message.language}`);
-                if (message.model) {
-                    console.log(`✅ Model confirmed by server: ${message.model}`);
-                }
+                
                 this.updateStatus('connected', `Language set to ${message.language} - Connecting...`);
                 break;
                 
