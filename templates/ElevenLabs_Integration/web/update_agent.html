@@ -67,15 +67,26 @@
                         </div>
                         <div class="agent_select_box position-relative">
                             <select class="form-select" id = "selected-language" onchange="updateAgentSetting('selected_language_code', this.value)">
-                                {% for language in allowed_languages %}
-                                    <option value="{{ language.code }}" 
-                                        {% if agent and agent.selected_language == language.code %}selected{% endif %}>
-                                        {{ language.name }}
-                                    </option>
-                                {% endfor %}
+                                <option value="en" {% if agent and agent.selected_language == 'en' %}selected{% endif %}>English</option>
+                                <option value="zh" {% if agent and agent.selected_language == 'zh' %}selected{% endif %}>Chinese</option>
+                                <option value="hi" {% if agent and agent.selected_language == 'hi' %}selected{% endif %}>Hindi</option>
+                                <option value="es" {% if agent and agent.selected_language == 'es' %}selected{% endif %}>Spanish</option>
+                                <option value="fr" {% if agent and agent.selected_language == 'fr' %}selected{% endif %}>French</option>
+                                <option value="ar" {% if agent and agent.selected_language == 'ar' %}selected{% endif %}>Arabic</option>
+                                <option value="ru" {% if agent and agent.selected_language == 'ru' %}selected{% endif %}>Russian</option>
+                                <option value="pt" {% if agent and agent.selected_language == 'pt' %}selected{% endif %}>Portuguese</option>
+                                <option value="id" {% if agent and agent.selected_language == 'id' %}selected{% endif %}>Indonesian</option>
+                                <option value="de" {% if agent and agent.selected_language == 'de' %}selected{% endif %}>German</option>
+                                <option value="ta" {% if agent and agent.selected_language == 'ta' %}selected{% endif %}>Tamil</option>
                             </select>
                             <div class="agent_type_select_icon">
-                                <img src="{{ host }}/static/Web/images/lang-icon.svg" class="img-fluid">
+                                <span id="language-icon" style="font-size: 20px;">
+                                    {% if agent and agent.selected_language %}
+                                        {% if agent.selected_language == 'en' %}🇺🇸{% elif agent.selected_language == 'zh' %}🇨🇳{% elif agent.selected_language == 'hi' %}🇮🇳{% elif agent.selected_language == 'es' %}🇪🇸{% elif agent.selected_language == 'fr' %}🇫🇷{% elif agent.selected_language == 'ar' %}🇸🇦{% elif agent.selected_language == 'ru' %}��🇺{% elif agent.selected_language == 'pt' %}🇵�{% elif agent.selected_language == 'id' %}🇮🇩{% elif agent.selected_language == 'de' %}🇩🇪{% elif agent.selected_language == 'ta' %}🇮🇳{% else %}🇺🇸{% endif %}
+                                    {% else %}
+                                        🇺�🇸
+                                    {% endif %}
+                                </span>
                             </div>
                             <div class="setting_icon d-flex align-items-center justify-content-center cursor-pointer">
                                 <img src="{{ host }}/static/Web/images/setting-icon.svg" class="img-fluid">
@@ -5052,4 +5063,55 @@ function saveVariable() {
             margin-bottom: 1rem;
         }
     </style>
+    <script>
+        // Language flag mapping
+        const flagMap = {
+            'en': '🇺🇸',
+            'zh': '🇨🇳',
+            'hi': '🇮🇳',
+            'es': '🇪🇸',
+            'fr': '🇫🇷',
+            'ar': '🇸🇦',
+            'ru': '🇷🇺',
+            'pt': '🇵🇹',
+            'id': '🇮🇩',
+            'de': '🇩🇪',
+            'ta': '🇮🇳'
+        };
+
+        // Function to update language icon
+        function updateLanguageIcon() {
+            console.log('updateLanguageIcon called');
+            const selectElement = document.getElementById('selected-language');
+            const iconElement = document.getElementById('language-icon');
+            
+            if (!selectElement || !iconElement) {
+                console.error('Language select or icon element not found');
+                return;
+            }
+            
+            const selectedValue = selectElement.value;
+            console.log('Selected language:', selectedValue);
+            
+            const flag = flagMap[selectedValue] || '🇺🇸';
+            console.log('Flag to display:', flag);
+            
+            iconElement.textContent = flag;
+            console.log('Icon updated successfully');
+        }
+
+        // Add event listener when DOM is loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            const selectElement = document.getElementById('selected-language');
+            if (selectElement) {
+                selectElement.addEventListener('change', updateLanguageIcon);
+                console.log('Event listener added to language select');
+                
+                // Set initial flag
+                updateLanguageIcon();
+            } else {
+                console.error('Language select element not found on page load');
+            }
+        });
+    </script>
 {% endblock %}

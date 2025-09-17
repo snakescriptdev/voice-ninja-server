@@ -24,7 +24,7 @@ ACTIVE_SESSIONS = {}
 def handle_agent_response_live(call_id: str, response: str, websocket: WebSocket, loop: asyncio.AbstractEventLoop):
     """Handle agent response for live browser sessions"""
     try:
-        logger.info(f"🤖 Agent response for call_id {call_id}: {response[:100]}{'...' if len(response) > 100 else ''}")
+       
         
         # Send to browser
         asyncio.run_coroutine_threadsafe(
@@ -39,7 +39,7 @@ def handle_agent_response_live(call_id: str, response: str, websocket: WebSocket
 def handle_user_transcript_live(call_id: str, transcript: str, websocket: WebSocket, loop: asyncio.AbstractEventLoop):
     """Handle user transcript for live browser sessions"""
     try:
-        logger.info(f"🎤 User transcript for call_id {call_id}: {transcript[:100]}{'...' if len(transcript) > 100 else ''}")
+       
         
         # Send to browser
         asyncio.run_coroutine_threadsafe(
@@ -254,14 +254,14 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
         # Get the agent's selected ElevenLabs model
         selected_model = "eleven_turbo_v2"  # Default fallback
         try:
-            # Try to access the relationship directly
-            if hasattr(agent, 'selected_model_obj') and agent.selected_model_obj:
-                selected_model = agent.selected_model_obj.name
+            # Use the selected_model field directly instead of the relationship
+            if hasattr(agent, 'selected_model') and agent.selected_model:
+                selected_model = agent.selected_model
                 logger.info(f"📝 Agent {agent_dynamic_id} has selected model: {selected_model}")
             else:
                 logger.warning(f"⚠️ Agent {agent_dynamic_id} has no selected model, using default: {selected_model}")
         except Exception as e:
-            logger.warning(f"⚠️ Could not access agent model relationship: {e}, using default: {selected_model}")
+            logger.warning(f"⚠️ Could not access agent model field: {e}, using default: {selected_model}")
 
         # Wait for client to send conversation_init with language preference
         conversation_ready = False

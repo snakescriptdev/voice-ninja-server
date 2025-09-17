@@ -273,7 +273,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
             script_content = f'''
             document.addEventListener('DOMContentLoaded', function() {{
                 (function() {{
-                    console.log("ElevenLabs Agent - No tokens available");
+                    
                     
                     const popup = document.createElement('div');
                     popup.className = 'elevenlabs-popup';
@@ -322,7 +322,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
             script_content = f'''
             document.addEventListener('DOMContentLoaded', function() {{
                 (function() {{
-                    console.log("ElevenLabs Agent - Overall token limit reached");
+                   
                     
                     const popup = document.createElement('div');
                     popup.className = 'elevenlabs-popup';
@@ -371,7 +371,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
             script_content = f'''
             document.addEventListener('DOMContentLoaded', function() {{
                 (function() {{
-                    console.log("ElevenLabs Agent - Daily call limit reached");
+                   
                     
                     const popup = document.createElement('div');
                     popup.className = 'elevenlabs-popup';
@@ -421,7 +421,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
             script_content = f'''
             document.addEventListener('DOMContentLoaded', function() {{
                 (function() {{
-                    console.log("ElevenLabs Enhanced Design Mode Loading...");
+                    
                     
                     // Inject ElevenLabs WebSocket script
                     const elevenLabsScript = document.createElement('script');
@@ -430,11 +430,11 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                     
                     elevenLabsScript.onload = function() {{
                         if (typeof ElevenLabsWebSocketClient === 'function') {{
-                            console.log("ElevenLabs client class available for agent: {agent_id}");
+                          
                             // Don't auto-initialize, wait for user interaction
                             window.elevenLabsAgentId = '{agent_id}';
-                            window.elevenLabsLanguage = 'en'; // Default language
-                            console.log("ElevenLabs agent ID set:", window.elevenLabsAgentId);
+                            window.elevenLabsLanguage = '{agent.selected_language or "en"}'; // Use agent's selected language
+                           
                         }} else {{
                             console.error("ElevenLabsWebSocketClient is not defined");
                         }}
@@ -522,7 +522,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                         gap: 8px;
                                         transition: all 0.2s ease;
                                         box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-                                    " data-language="en">
+                                    " data-language="{agent.selected_language or 'en'}">
                                         <span id="selected-flag" style="font-size: 16px;">🇺🇸</span>
                                         <i class="fas fa-chevron-down" style="font-size: 8px; color: #6c757d; transition: transform 0.2s ease;"></i>
                                     </button>
@@ -540,11 +540,23 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                         right: 0;
                                         z-index: 10001;
                                         border: 1px solid rgba(0, 0, 0, 0.05);
+                                        max-height: 400px;
+                                        overflow-y: auto;
                                     ">
                                         <div style="margin-bottom: 15px;">
+                                        <div style="margin-bottom: 15px;">
+                                            <!-- Top 10 Most Spoken Languages -->
                                             <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('en', '🇺🇸', 'English')">
                                                 <span style="font-size: 20px; margin-right: 12px;">🇺🇸</span>
                                                 <span style="font-weight: 600; color: #1a1a1a;">English</span>
+                                            </div>
+                                            <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('zh', '🇨🇳', 'Chinese')">
+                                                <span style="font-size: 20px; margin-right: 12px;">🇨🇳</span>
+                                                <span style="font-weight: 600; color: #1a1a1a;">Chinese</span>
+                                            </div>
+                                            <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('hi', '🇮🇳', 'Hindi')">
+                                                <span style="font-size: 20px; margin-right: 12px;">🇮🇳</span>
+                                                <span style="font-weight: 600; color: #1a1a1a;">Hindi</span>
                                             </div>
                                             <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('es', '🇪🇸', 'Spanish')">
                                                 <span style="font-size: 20px; margin-right: 12px;">🇪🇸</span>
@@ -554,9 +566,29 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                                 <span style="font-size: 20px; margin-right: 12px;">🇫🇷</span>
                                                 <span style="font-weight: 600; color: #1a1a1a;">French</span>
                                             </div>
+                                            <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('ar', '🇸🇦', 'Arabic')">
+                                                <span style="font-size: 20px; margin-right: 12px;">🇸🇦</span>
+                                                <span style="font-weight: 600; color: #1a1a1a;">Arabic</span>
+                                            </div>
+                                            <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('ru', '🇷🇺', 'Russian')">
+                                                <span style="font-size: 20px; margin-right: 12px;">🇷🇺</span>
+                                                <span style="font-weight: 600; color: #1a1a1a;">Russian</span>
+                                            </div>
+                                            <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('pt', '🇵🇹', 'Portuguese')">
+                                                <span style="font-size: 20px; margin-right: 12px;">🇵🇹</span>
+                                                <span style="font-weight: 600; color: #1a1a1a;">Portuguese</span>
+                                            </div>
+                                            <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('id', '🇮🇩', 'Indonesian')">
+                                                <span style="font-size: 20px; margin-right: 12px;">🇮🇩</span>
+                                                <span style="font-weight: 600; color: #1a1a1a;">Indonesian</span>
+                                            </div>
                                             <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('de', '🇩🇪', 'German')">
                                                 <span style="font-size: 20px; margin-right: 12px;">🇩🇪</span>
                                                 <span style="font-weight: 600; color: #1a1a1a;">German</span>
+                                            </div>
+                                            <div style="display: flex; align-items: center; padding: 10px; cursor: pointer; border-radius: 12px; transition: background 0.2s;" onclick="selectLanguage('ta', '🇮🇳', 'Tamil')">
+                                                <span style="font-size: 20px; margin-right: 12px;">🇮🇳</span>
+                                                <span style="font-weight: 600; color: #1a1a1a;">Tamil</span>
                                             </div>
                                         </div>
                                     </div>
@@ -579,7 +611,42 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
 
                         // Add ElevenLabs-specific control functions
                         window.isConnected = false;
-                        window.selectedLanguage = 'en';
+                        window.selectedLanguage = '{agent.selected_language or "en"}';
+                        
+                        // Language to flag mapping
+                        window.languageFlags = {{
+                            'en': '🇺🇸',
+                            'zh': '🇨🇳',
+                            'hi': '🇮🇳',
+                            'es': '🇪🇸',
+                            'fr': '🇫🇷',
+                            'ar': '🇸🇦',
+                            'ru': '🇷🇺',
+                            'pt': '🇵🇹',
+                            'id': '🇮🇩',
+                            'de': '🇩🇪',
+                            'ta': '🇮🇳'
+                        }};
+                        
+                        // Initialize flag display based on agent's selected language
+                        const initialFlag = window.languageFlags[window.selectedLanguage] || '🇺🇸';
+                        document.getElementById('selected-flag').innerText = initialFlag;
+                       // Toggle language panel
+                        window.toggleLanguagePanel = function() {{
+                            const panel = document.getElementById('language-panel');
+                            const btn = document.getElementById('language-btn');
+                            const chevron = btn.querySelector('.fa-chevron-down');
+                            
+                            if (panel.style.display === 'none' || panel.style.display === '') {{
+                                panel.style.display = 'block';
+                                chevron.style.transform = 'rotate(180deg)';
+                                
+                            }} else {{
+                                panel.style.display = 'none';
+                                chevron.style.transform = 'rotate(0deg)';
+                                
+                            }}
+                        }};
                         
                         // Language selection function
                         window.selectLanguage = function(code, flag, name) {{
@@ -605,7 +672,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                             
                             // Update client language if already connected
                             if (window.elevenLabsClient && window.elevenLabsClient.ws && window.elevenLabsClient.ws.readyState === WebSocket.OPEN) {{
-                                console.log('Updating language and model for active connection:', code, selectedModel);
+                              
                                 window.elevenLabsClient.ws.send(JSON.stringify({{
                                     type: 'conversation_init',
                                     language: code,
@@ -613,32 +680,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                 }}));
                             }}
                             
-                            console.log('Language selected:', name, code, 'with model:', selectedModel);
-                        }};
-                        
-                        // Toggle language panel
-                        window.toggleLanguagePanel = function() {{
-                            const panel = document.getElementById('language-panel');
-                            const btn = document.getElementById('language-btn');
-                            const chevron = btn.querySelector('.fa-chevron-down');
-                            
-                            if (panel.style.display === 'none' || panel.style.display === '') {{
-                                panel.style.display = 'block';
-                                chevron.style.transform = 'rotate(180deg)';
-                                console.log('Language panel opened');
-                            }} else {{
-                                panel.style.display = 'none';
-                                chevron.style.transform = 'rotate(0deg)';
-                                console.log('Language panel closed');
-                            }}
-                        }};
-                        
-                        // Language selection function
-                        window.selectLanguage = function(code, flag, name) {{
-                            window.selectedLanguage = code;
-                            document.getElementById('selected-flag').innerText = flag;
-                            document.getElementById('language-panel').style.display = 'none';
-                            console.log('Language selected:', name, code);
+                           
                         }};
                         
                         // Main chat toggle function
@@ -662,13 +704,13 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                         selectedModel = "eleven_turbo_v2_5";
                                     }}
                                     
-                                    console.log("Creating ElevenLabs client for agent:", window.elevenLabsAgentId, "with language:", selectedLanguage, "and model:", selectedModel);
+                                   
                                     window.elevenLabsClient = new ElevenLabsWebSocketClient(window.elevenLabsAgentId, selectedLanguage, selectedModel);
                                 }}
                                 
                                 // Start ElevenLabs connection
                                 if (window.elevenLabsClient) {{
-                                    console.log("Starting ElevenLabs connection...");
+                                    
                                     window.elevenLabsClient.connect().then(() => {{
                                         // Connection successful
                                         window.isConnected = true;
@@ -680,7 +722,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                         indicator.style.animation = 'pulse 2s infinite';
                                         indicator.style.background = 'linear-gradient(45deg, #00ff88, #00cc66)';
                                         
-                                        console.log('✅ ElevenLabs connected successfully');
+                                       
                                         
                                         // Listen for disconnection
                                         window.elevenLabsClient.ws.onclose = function() {{
@@ -693,7 +735,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                             indicator.style.animation = 'none';
                                             indicator.style.background = '{appearances.pulse_color}';
                                             
-                                            console.log('❌ ElevenLabs disconnected');
+                                            
                                         }};
                                         
                                     }}).catch(err => {{
