@@ -8,7 +8,7 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-router = APIRouter(prefix="/admin")
+router = APIRouter(prefix="")
 
 templates = Jinja2Templates(directory="templates")
 
