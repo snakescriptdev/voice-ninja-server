@@ -210,6 +210,7 @@ async def update_agent(request: Request):
     daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id)
     overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id)
     voices = VoiceModel.get_allowed_voices(user_id=user_id)
+   
     return templates.TemplateResponse(
         "Web/update_agent.html",
         {
@@ -225,7 +226,8 @@ async def update_agent(request: Request):
             "host": os.getenv("HOST"),
             "daily_call_limit": daily_call_limit.set_value if daily_call_limit else 0,
             "overall_token_limit": overall_token_limit.overall_token_limit if overall_token_limit else 0,
-            "per_call_token_limit": agent.per_call_token_limit if agent.per_call_token_limit else 0
+            "per_call_token_limit": agent.per_call_token_limit if agent.per_call_token_limit else 0,
+            
         },
     )
 
@@ -241,7 +243,7 @@ async def knowledge_base(request: Request, page: int = 1):
     formatted_knowledge_bases = []
     for knowledge_base in knowledge_bases:
         files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
-        print(f"🔍 Debug: Loading files for knowledge base {knowledge_base.id} ({knowledge_base.knowledge_base_name})")
+        # print(f"🔍 Debug: Loading files for knowledge base {knowledge_base.id} ({knowledge_base.knowledge_base_name})")
         files_data = []
         for file in files:
             file_data = {
@@ -253,7 +255,7 @@ async def knowledge_base(request: Request, page: int = 1):
                 "elevenlabs_doc_id": file.elevenlabs_doc_id,
                 "elevenlabs_doc_name": file.elevenlabs_doc_name
             }
-            print(f"🔍 Debug: File {file.file_name} - elevenlabs_doc_id: {file.elevenlabs_doc_id}")
+            # print(f"🔍 Debug: File {file.file_name} - elevenlabs_doc_id: {file.elevenlabs_doc_id}")
             files_data.append(file_data)
 
         formatted_knowledge_bases.append({
