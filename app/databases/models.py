@@ -308,6 +308,7 @@ class AgentModel(Base):
     elevenlabs_webhook_tools = relationship("ElevenLabsWebhookToolModel", back_populates="agent", cascade="all, delete-orphan")
     overall_token_limit = relationship("OverallTokenLimitModel", back_populates="agent", cascade="all, delete-orphan")
     daily_call_limit = relationship("DailyCallLimitModel", back_populates="agent", cascade="all, delete-orphan")
+    dynamic_variable_logs = relationship("DynamicVariableLogs", back_populates="agent", cascade="all, delete-orphan")
 
     elvn_lab_agent_id = Column(String, nullable=True,default="") #stores agent id of elevenlab agent.
     elvn_lab_knowledge_base = Column(JSONB, nullable=True, default={}) #stores elevenlabs knowledge base information
@@ -2052,5 +2053,48 @@ class ElevenLabModel(Base):
         """Return all models"""
         with db():
             return db.session.query(cls).all()
+
+
+
+class DynamicVariableLogs(Base):
+    __tablename__ = "dynamic_variable_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+    variable_name = Column(String, nullable=False)
+    variable_value = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+
+    agent = relationship("AgentModel", back_populates="dynamic_variable_logs")
+
+    def __repr__(self):
+        return f"<DynamicVariableLog(id={self.id}, variable_name={self.variable_name})>"
+
+    @classmethod
+    def create(cls, agent_id: int, variable_name: str, variable_value: str) -> "DynamicVariableLogs":
+        """Create a new dynamic variable log entry"""
+        with db():
+            log_entry = cls(agent_id=agent_id, variable_name=variable_name, variable_value=variable_value)
+            db.session.add(log_entry)
+            db.session.commit()
+            db.session.refresh(log_entry)
+            return log_entry
+
+    @classmethod
+    def get_by_agent_id(cls, agent_id: int) -> List["DynamicVariableLogs"]:
+        """Get all dynamic variable logs for a specific agent"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
+
+    @classmethod
+    def delete(cls, log_id: int) -> bool:
+        """Delete a dynamic variable log entry by ID"""
+        with db():
+            log_entry = db.session.query(cls).filter(cls.id == log_id).first()
+            if log_entry:
+                db.session.delete(log_entry)
+                db.session.commit()
+                return True
+            return False
 
 Base.metadata.create_all(engine)

@@ -1314,7 +1314,29 @@ async def create_custom_function(request: Request):
             # Continue with creation - this is not a critical error
         
         # Build ElevenLabs tool_config structure using the fixed function
-        tool_config = build_elevenlabs_tool_config(form_data)
+        try:
+            tool_config = build_elevenlabs_tool_config(form_data)
+            print(f"✅ Successfully built tool config for creation: {form_data.get('tool_name', 'Unknown')}")
+        except ValueError as ve:
+            print(f"❌ Validation error building tool config: {str(ve)}")
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": f"Validation error: {str(ve)}",
+                    "error": str(ve)
+                }
+            )
+        except Exception as e:
+            print(f"❌ Error building tool config: {str(e)}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "error",
+                    "message": "Failed to build tool configuration",
+                    "error": str(e)
+                }
+            )
         
         # print(f"Debug: Built ElevenLabs tool_config: {json.dumps(tool_config, indent=2)}")
         
@@ -1430,9 +1452,21 @@ def build_elevenlabs_tool_config(form_data: dict) -> dict:
     except (ValueError, TypeError):
         response_timeout = 20
     
+    # Extract URL placeholders from the API URL
+    url_placeholders = set()
+    if api_url:
+        import re
+        # Find all placeholders in the URL like {username}, {id}, etc.
+        placeholder_pattern = r'\{([^}]+)\}'
+        url_placeholders = set(re.findall(placeholder_pattern, api_url))
+        print(f"🔍 Debug: Found URL placeholders: {url_placeholders}")
+    
     # Build path_params_schema - ElevenLabs expects a DICTIONARY, not array
     path_params_schema = {}
     path_params = form_data.get("path_params", [])
+    
+    # Create a set of defined parameter names
+    defined_param_names = set()
     for param in path_params:
         param_name = param.get("name", "")
         param_type = param.get("type", "string")
@@ -1454,6 +1488,22 @@ def build_elevenlabs_tool_config(form_data: dict) -> dict:
                 param_obj["constant_value"] = param_constant_value
                 
             path_params_schema[param_name] = param_obj
+            defined_param_names.add(param_name)
+    
+    # Check if all URL placeholders have corresponding path parameters
+    missing_params = url_placeholders - defined_param_names
+    if missing_params:
+        print(f"⚠️ Warning: URL placeholders {missing_params} don't have corresponding path parameters")
+        print(f"🔍 Debug: URL placeholders: {url_placeholders}")
+        print(f"🔍 Debug: Defined parameters: {defined_param_names}")
+        
+        # Auto-create missing path parameters with default values
+        for missing_param in missing_params:
+            print(f"🔧 Auto-creating missing path parameter: {missing_param}")
+            path_params_schema[missing_param] = {
+                "type": "string",
+                "description": f"Path parameter {missing_param} (auto-generated)"
+            }
     
     # Build query_params_schema - ElevenLabs expects properties as DICTIONARY, not array
     # And "type" field is not allowed at root level
@@ -1635,6 +1685,17 @@ def build_elevenlabs_tool_config(form_data: dict) -> dict:
     # Only add path_params_schema if it has content
     if path_params_schema:
         tool_config["api_schema"]["path_params_schema"] = path_params_schema
+        
+        # Final validation: Ensure all URL placeholders have corresponding path parameters
+        final_defined_params = set(path_params_schema.keys())
+        still_missing = url_placeholders - final_defined_params
+        if still_missing:
+            print(f"❌ Error: Still missing path parameters for URL placeholders: {still_missing}")
+            raise ValueError(f"URL placeholders {still_missing} must have corresponding path parameters defined")
+        else:
+            print(f"✅ Validation passed: All URL placeholders have corresponding path parameters")
+            print(f"🔍 Debug: URL placeholders: {url_placeholders}")
+            print(f"🔍 Debug: Path parameters: {final_defined_params}")
     
     # Only add query_params_schema if it has actual parameters
     if query_params_schema and query_params_schema.get("properties") and len(query_params_schema.get("properties", {})) > 0:
@@ -1877,7 +1938,29 @@ async def edit_custom_functions(function_id: int, request: Request):
             })
         
         # Build ElevenLabs tool config using the merged parameters
-        tool_config = build_elevenlabs_tool_config(existing_params)
+        try:
+            tool_config = build_elevenlabs_tool_config(existing_params)
+            print(f"✅ Successfully built tool config for function: {function_name}")
+        except ValueError as ve:
+            print(f"❌ Validation error building tool config: {str(ve)}")
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": f"Validation error: {str(ve)}",
+                    "error": str(ve)
+                }
+            )
+        except Exception as e:
+            print(f"❌ Error building tool config: {str(e)}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "status": "error",
+                    "message": "Failed to build tool configuration",
+                    "error": str(e)
+                }
+            )
         
         # Update tool in ElevenLabs using ElevenLabsAgentCRUD
         try:
