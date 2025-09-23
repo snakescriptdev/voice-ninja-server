@@ -612,6 +612,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                         // Add ElevenLabs-specific control functions
                         window.isConnected = false;
                         window.selectedLanguage = '{agent.selected_language or "en"}';
+                        console.log('Agent selected language from database:', '{agent.selected_language or "en"}');
                         
                         // Language to flag mapping
                         window.languageFlags = {{
@@ -631,6 +632,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                         // Initialize flag display based on agent's selected language
                         const initialFlag = window.languageFlags[window.selectedLanguage] || '🇺🇸';
                         document.getElementById('selected-flag').innerText = initialFlag;
+                        console.log('Initial language set to:', window.selectedLanguage, 'with flag:', initialFlag);
                        // Toggle language panel
                         window.toggleLanguagePanel = function() {{
                             const panel = document.getElementById('language-panel');
@@ -650,6 +652,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                         
                         // Language selection function
                         window.selectLanguage = function(code, flag, name) {{
+                            console.log('Language selected:', code, flag, name);
                             window.selectedLanguage = code;
                             document.getElementById('selected-flag').innerText = flag;
                             document.getElementById('language-panel').style.display = 'none';
@@ -672,12 +675,16 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                             
                             // Update client language if already connected
                             if (window.elevenLabsClient && window.elevenLabsClient.ws && window.elevenLabsClient.ws.readyState === WebSocket.OPEN) {{
-                              
+                                console.log('Sending language update to WebSocket:', code, 'with model:', selectedModel);
                                 window.elevenLabsClient.ws.send(JSON.stringify({{
                                     type: 'conversation_init',
                                     language: code,
                                     model: selectedModel
                                 }}));
+                            }} else if (window.elevenLabsClient) {{
+                                // Update the client's language property for future connections
+                                window.elevenLabsClient.language = code;
+                                console.log('Updated client language property to:', code);
                             }}
                             
                            
@@ -693,7 +700,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                 // Initialize ElevenLabs client when user first clicks
                                 if (!window.elevenLabsClient && window.elevenLabsAgentId) {{
                                     // Get selected language or default to English
-                                    const selectedLanguage = window.selectedLanguage || 'en';
+                                    const selectedLanguage = window.selectedLanguage || window.elevenLabsLanguage || 'en';
                                     
                                     // Determine appropriate model based on language
                                     const ENGLISH_CODES = ["en", "en-US", "en-GB"];
@@ -704,7 +711,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                         selectedModel = "eleven_turbo_v2_5";
                                     }}
                                     
-                                   
+                                    console.log('Initializing ElevenLabs client with language:', selectedLanguage, 'and model:', selectedModel);
                                     window.elevenLabsClient = new ElevenLabsWebSocketClient(window.elevenLabsAgentId, selectedLanguage, selectedModel);
                                 }}
                                 
