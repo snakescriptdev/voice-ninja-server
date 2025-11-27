@@ -291,6 +291,7 @@
         </div>
         <div class="modal-body">
           <form>
+            <input type="hidden" id="selected-knowledge-base-id" name="selected_knowledge_base_id">
             <div class="form_input">
                 <label class="form-label mb-0">Upload Files</label>
                 <div class="upload_area">
@@ -299,7 +300,7 @@
                         Choose a docx, txt or pdf file or drag & drop it here.<span class="file_size_text">Up to 5 MB</span></span>
                         <p id="moreFileName" class="d-none mb-0 text-center"></p>
                     </label>
-                    <input type="file" class="form-control d-none" id="uploadMoreFiles" name="attachment" accept=".docx, .txt, .pdf" multiple>
+                    <input type="file" class="form-control d-none" id="uploadMoreFiles" name="attachment" accept=".docx, .txt, .pdf">
                 </div>
             </div>
             <div class="form_btns d-flex justify-content-end align-items-center gap-3">
@@ -347,6 +348,7 @@ document.getElementById("uploadFile").addEventListener("change", function () {
     
     const knowledgeBaseList = document.getElementById("knowledge-base-list");
     const knowledgeBaseBox = document.getElementById("knowledge-base-box");
+    const selectedKnowledgeBaseInput = document.getElementById("selected-knowledge-base-id");
 
     const deleteButton = document.querySelector('.dlt_btn');
     const editButton = document.querySelector('.edit_btn');
@@ -367,6 +369,11 @@ document.getElementById("uploadFile").addEventListener("change", function () {
 
         // Update the knowledge base display container
         updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId);
+
+        // Persist the currently selected knowledge base id for later actions
+        if (selectedKnowledgeBaseInput) {
+            selectedKnowledgeBaseInput.value = knowledgeBaseId;
+        }
 
         // Show the delete button only for the clicked knowledge base
         deleteButton.style.display = "flex";
@@ -656,7 +663,7 @@ document.addEventListener("DOMContentLoaded", function () {
         deleteDescription.style.display = "none";
 
         if (knowledgeBaseId) {
-            fetch("{{ host }}/api/delete_knowledge_base", {
+            fetch("{{ host }}/elevenlabs/api/v1/delete_knowledge_base", {
                 method: "DELETE",
                 headers: {
                     "X-CSRFToken": "{{ csrf_token }}",
@@ -797,13 +804,7 @@ function deleteFile(fileId, knowledgeBaseId, elevenlabsDocId) {
         });
         return;
     }
-    if (!elevenlabsDocId || elevenlabsDocId === 'null' || elevenlabsDocId === 'undefined') {
-        toastr.error("This file cannot be deleted because it's missing ElevenLabs document ID. Please contact support.", "Error", {
-            positionClass: "toast-top-right"
-        });
-        return;
-    }
-    
+ 
     var confirm_model = document.getElementById("deleteFileModal"); 
     if (confirm_model) {
         confirm_model.setAttribute("data-id", fileId);
@@ -822,12 +823,7 @@ function confirmDeleteFile() {
     const knowledgeBaseId = document.getElementById("deleteFileModal").getAttribute("data-knowledge_base_id");
     const elevenlabs_doc_id = document.getElementById("deleteFileModal").getAttribute("data-elevenlabs_doc_id");
     
-    if (!elevenlabs_doc_id || elevenlabs_doc_id === 'undefined' || elevenlabs_doc_id === 'null') {
-        toastr.error("Error: Missing ElevenLabs document ID. Cannot delete file.", "Error", {
-            positionClass: "toast-top-right"
-        });
-        return;
-    }
+    
     fetch("{{ host }}/elevenlabs/api/v1/delete_file", {
         method: 'DELETE',
         headers: {
@@ -901,10 +897,18 @@ document.getElementById('uploadMoreFiles').addEventListener('change', function(e
 
 function saveMoreFiles(e) {
     e.preventDefault();
-    const knowledgeBaseId = document.getElementById("set-knowledge-base-id").value;
+    const knowledgeBaseInput = document.getElementById("selected-knowledge-base-id");
+    const knowledgeBaseId = knowledgeBaseInput ? knowledgeBaseInput.value : "";
     const file = document.getElementById("uploadMoreFiles").files[0];
     const saveBtn = document.getElementById('saveMoreFilesBtn');    
     
+    if (!knowledgeBaseId) {
+        toastr.error("Please select a knowledge base first.", "Error", {
+            positionClass: "toast-top-right"
+        });
+        return;
+    }
+
     if (!file) {
         toastr.error("Please upload a file.", "Error", {
             positionClass: "toast-top-right"

@@ -37,8 +37,12 @@ class ElevenLabsCallRecorder:
     
     def __init__(self, storage_path: str = None):
         # Use the same audio storage path as the main app
-        self.storage_path = storage_path or "/Users/apple/Desktop/Voice Ninja/voice_ninja/audio_storage"
-        self.recordings_path = Path(self.storage_path) / "elevenlabs_recordings"
+        if storage_path is None:
+            # Default to using the current working directory + "audio_storage"
+            self.storage_path = Path(os.getcwd()) / "audio_storage"
+        else:
+            self.storage_path = Path(storage_path)
+        self.recordings_path = self.storage_path / "elevenlabs_recordings"
         self.recordings_path.mkdir(parents=True, exist_ok=True)
         
         # Active recordings tracking
@@ -47,7 +51,6 @@ class ElevenLabsCallRecorder:
         # Audio buffers for active recordings
         self.user_audio_buffers: Dict[str, List[bytes]] = {}
         self.agent_audio_buffers: Dict[str, List[bytes]] = {}
-        
         # logger.info(f"ElevenLabsCallRecorder initialized with storage path: {self.recordings_path}")
 
     def start_recording(self, call_id: str, agent_dynamic_id: str, metadata: Dict = None) -> bool:

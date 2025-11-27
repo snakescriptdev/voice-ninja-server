@@ -70,10 +70,13 @@ async def create_new_agent(request: Request):
         selected_language = data.get("selected_language")
         phone_number = data.get("phone_number", '+17752648387')
         selected_knowledge_base = data.get("selected_knowledge_base")
-
+        agent_id = None
 
         elevenlabs_voice_id = VoiceModel.get_by_id(selected_voice).elevenlabs_voice_id
         selected_llm_model_rec = LLMModel.get_by_id(selected_model)
+
+        elevenlab_agent_id = None
+        knowledge_base_files = list()
 
         # Enforce and auto-correct ElevenLabs model selection rules
         ENGLISH_CODES = ["en", "en-US", "en-GB"]
@@ -117,7 +120,9 @@ async def create_new_agent(request: Request):
             # Check if ElevenLabs agent creation was successful
             if not api_response or "agent_id" not in api_response or "error" in api_response:
                 error_msg = api_response.get("error", "Unknown error") if api_response else "No response from ElevenLabs"
-                raise Exception(f"Failed to create ElevenLabs agent: {error_msg}")
+                raise Exception(f"Failed to create agent: {error_msg}")
+
+            elevenlab_agent_id = api_response["agent_id"]
 
             # Only create local agent if ElevenLabs was successful
             with db():
@@ -131,10 +136,11 @@ async def create_new_agent(request: Request):
                     selected_voice=selected_voice,
                     selected_language=selected_language,
                     phone_number=phone_number,
-                    elvn_lab_agent_id=api_response["agent_id"]  # Set ElevenLabs ID immediately
+                    elvn_lab_agent_id=elevenlab_agent_id # Set ElevenLabs ID immediately
                 )
                 db.session.add(agent)
                 db.session.flush()
+                agent_id = agent.id
 
                 agent_connection = AgentConnectionModel(agent_id=agent.id)
                 db.session.add(agent_connection)
@@ -157,7 +163,7 @@ async def create_new_agent(request: Request):
             try:
                 # Check if the association already exists
                 query = select(agent_knowledge_association).where(
-                    (agent_knowledge_association.c.agent_id == agent.id) &
+                    (agent_knowledge_association.c.agent_id == agent_id) &
                     (agent_knowledge_association.c.knowledge_base_id == selected_knowledge_base)
                 )
                 result =  session.execute(query)
@@ -166,7 +172,7 @@ async def create_new_agent(request: Request):
                 if not existing_association:
                     # Insert new association if it does not exist
                     stmt = insert(agent_knowledge_association).values(
-                        agent_id=agent.id,  
+                        agent_id=agent_id,  
                         knowledge_base_id=selected_knowledge_base
                     )
                     session.execute(stmt)
@@ -176,11 +182,48 @@ async def create_new_agent(request: Request):
                 session.rollback()
                 return JSONResponse(
                     status_code=500,
-                    content={"status": "error", "message": f"Error updating agent: {str(e)}", "status_code": 500}
+                    content={"status": "error", "message": f"Error creating agent: {str(e)}", "status_code": 500}
                 )
+
+            
+            try:
+                with db():  # use the same session context
+                    # Fetch KB record using the active session
+                    kb_rec = db.session.query(KnowledgeBaseModel).filter(
+                        KnowledgeBaseModel.id == selected_knowledge_base
+                    ).first()
+                    knowledge_base_files = kb_rec.files
+                
+                if knowledge_base_files:
+                    #Update knowledge base in the Agent at elevenlabs.
+                    knowledge_base_files_data = [{"name":x.elevenlabs_doc_name, "id": x.elevenlabs_doc_id, "type": "file"} for x in knowledge_base_files]
+                    creator = ElevenLabsAgentCRUD()
+                    api_response = creator.update_agent(
+                        agent_id = elevenlab_agent_id,
+                        knowledge_base = knowledge_base_files_data
+                    )
+
+                    # Check if ElevenLabs agent creation was successful
+                    if not api_response or "agent_id" not in api_response or "error" in api_response:
+                        error_msg = api_response.get("error", "Unknown error") if api_response else "No response from ElevenLabs"
+                        raise Exception(f"Failed to create agent: {error_msg}")
+
+        
+            except Exception as e:
+                db.session.rollback()
+                error_response = {
+                    "status": "error", 
+                    "error": f"Error creating agent: {str(e)}",
+                    "status_code": 500
+                }   
+                return JSONResponse(
+                    status_code=500,
+                    content=error_response
+                )
+
         return JSONResponse(
                 status_code=200,
-                content={"status": "success", "message": "Agent updated successfully", "status_code": 200}
+                content={"status": "success", "message": "Agent created successfully", "status_code": 200}
             )
     except Exception as e:
         error_response = {
@@ -194,7 +237,6 @@ async def create_new_agent(request: Request):
         )
 
 @ElevenLabsAPIRouter.delete("/delete_agent",name='delete-agent')
-@ElevenLabsAPIRouter.delete("/delete_agent/",name='delete-agent-trailing')
 async def delete_agent(request: Request):
     try:
         agent_id = request.query_params.get("agent_id")
@@ -719,11 +761,6 @@ async def upload_file(request: Request):
         
         # Check if knowledge base already has 5 files
         existing_files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base_id)
-        if len(existing_files) >= 5:
-            return JSONResponse(
-                status_code=400,
-                content={"status": "error", "message": "Maximum limit of 5 files reached for this knowledge base."}
-            )
         # Save file temporarily
         
         temp_file_path = f"knowledge_base_files/{uuid.uuid4()}_{file.filename}"
@@ -834,20 +871,13 @@ async def delete_file(request: Request):
         data = await request.json()
         file_id = int(data.get("file_id"))
         knowledge_base_id = int(data.get("knowledge_base_id"))
-        elevenlabs_doc_id = data.get("elevenlabs_doc_id")
-        
-        # Validate elevenlabs_doc_id
-        if not elevenlabs_doc_id:
-            return JSONResponse(status_code=400, content={
-                "status": "error", 
-                "message": "Missing ElevenLabs document ID"
-            })
-        
+        elevenlabs_doc_id = None
         # Debug logging
         # print(f"🔍 Debug: Deleting file - file_id: {file_id}, knowledge_base_id: {knowledge_base_id}, elevenlabs_doc_id: {elevenlabs_doc_id}")
         
         file = KnowledgeBaseFileModel.get_by_id(file_id)
         if file:
+            elevenlabs_doc_id = file.elevenlabs_doc_id
             if file.knowledge_base_id == knowledge_base_id:
                 # print(f"🔍 Debug: Found file in database - file_id: {file_id}, knowledge_base_id: {knowledge_base_id}")
                                 # Get all files for this knowledge base
@@ -918,18 +948,19 @@ async def delete_file(request: Request):
                 
                 # Now delete the file from ElevenLabs KB
                 # print(f"🔍 Debug: Attempting to delete file from ElevenLabs with doc_id: {elevenlabs_doc_id}")
-                elevenlabs_result = ElevenLabsAgentCRUD().delete_file_from_knowledge_base(elevenlabs_doc_id)
-                
-                # Check if ElevenLabs deletion was successful
-                if elevenlabs_result.get("error"):
-                    print(f"❌ Error: Failed to delete file from ElevenLabs: {elevenlabs_result}")
-                    return JSONResponse(status_code=500, content={
-                        "status": "error", 
-                        "message": f"Failed to delete file from ElevenLabs: {elevenlabs_result.get('exc', 'Unknown error')}"
-                    })
-                
-                print(f"✅ Success: File deleted from ElevenLabs successfully")
-                
+                if elevenlabs_doc_id:
+                    elevenlabs_result = ElevenLabsAgentCRUD().delete_file_from_knowledge_base(elevenlabs_doc_id)
+                    
+                    # Check if ElevenLabs deletion was successful
+                    if elevenlabs_result.get("error"):
+                        print(f"❌ Error: Failed to delete file from ElevenLabs: {elevenlabs_result}")
+                        return JSONResponse(status_code=500, content={
+                            "status": "error", 
+                            "message": f"Failed to delete file from ElevenLabs: {elevenlabs_result.get('exc', 'Unknown error')}"
+                        })
+                    
+                    print(f"✅ Success: File deleted from ElevenLabs successfully")
+                    
                 # Only delete from local storage if ElevenLabs deletion was successful
                 try:
                     # print(f"🔍 Debug: Deleting file from local storage with file_id: {file_id}")
@@ -1239,9 +1270,34 @@ async def delete_knowledge_base(request: Request):
     data = await request.json()
     knowledge_base_id = data.get("knowledge_base_id")
     elevenlabs_doc_id = data.get("elevenlabs_doc_id")
-    elevenlabs_result = ElevenLabsAgentCRUD().delete_file_from_knowledge_base(elevenlabs_doc_id)
-    if elevenlabs_result.get("error"):
-        return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to delete file from ElevenLabs!", "error": elevenlabs_result.get("exc")})
+    # Get all ElevenLabs doc IDs associated with this knowledge base
+    kb_files_data = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base_id)
+    elevenlabs_doc_id_ls = [x.elevenlabs_doc_id for x in kb_files_data if x.elevenlabs_doc_id]
+
+    # Delete each file from ElevenLabs knowledge base (ignore errors if any single file fails)
+    #Update all agents havng this knowledge base at elevenlabs side
+
+    related_agents = AgentModel.get_by_knowledge_base_id(knowledge_base_id)
+
+    for agent in related_agents:
+        try:
+            creator = ElevenLabsAgentCRUD()
+            api_response = creator.clear_agent_knowledge_base(
+                agent_id = agent.elvn_lab_agent_id
+            )
+            if api_response.get("error"):
+                logger.error(f"Failed to updating knowledge base {agent.id} from ElevenLabs: {api_response.get('error')}")
+        except Exception as ex:
+            logger.exception(f"Exception updating knowledge base {agent.id} from ElevenLabs: {str(ex)}")
+
+    for doc_id in elevenlabs_doc_id_ls:
+        try:
+            elevenlabs_result = ElevenLabsAgentCRUD().delete_file_from_knowledge_base(doc_id)
+            if elevenlabs_result.get("error"):
+                # Log the failure and continue with others
+                logger.error(f"Failed to delete doc {doc_id} from ElevenLabs: {elevenlabs_result.get('exc')}")
+        except Exception as ex:
+            logger.exception(f"Exception deleting doc {doc_id} from ElevenLabs: {str(ex)}")
     KnowledgeBaseModel.delete(knowledge_base_id)
     return JSONResponse(status_code=200, content={"status": "success", "message": "Knowledge base deleted successfully"})
 
@@ -1912,7 +1968,9 @@ async def edit_custom_functions(function_id: int, request: Request):
                 'path_params': [],
                 'request_headers': [],
                 'dynamic_variables': [],
-                'assignments': []
+                'assignments': [],
+                "disable_interruptions": function_parameters.get("disable_interruptions"),
+                "force_pre_tool_speech": function_parameters.get("force_pre_tool_speech")
             }
             
             # Extract request body properties if they exist

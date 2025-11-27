@@ -30,8 +30,11 @@ class ElevenLabsConversationStorage:
     """
     
     def __init__(self, audio_storage_path: str = None):
-        # Use the same audio storage path as the main app
-        self.audio_storage_path = audio_storage_path or "/Users/apple/Desktop/Voice Ninja/voice_ninja/audio_storage"
+        # If None, use the current working directory for storage
+        if audio_storage_path is None:
+            self.audio_storage_path = os.path.join(os.getcwd(), "audio_storage")
+        else:
+            self.audio_storage_path = audio_storage_path
         self.elevenlabs_storage_path = Path(self.audio_storage_path) / "elevenlabs"
         self.elevenlabs_storage_path.mkdir(parents=True, exist_ok=True)
         
