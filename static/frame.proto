@@ -10,7 +10,8 @@
 
 syntax = "proto3";
 
-package pipecat;
+// DISABLED: Pipecat package - migrated to ElevenLabs
+// package pipecat;
 
 message TextFrame {
   uint64 id = 1;
