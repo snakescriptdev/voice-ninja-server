@@ -1,6 +1,6 @@
 DEFAULT_LLM_ELEVENLAB = "gemini-2.5-flash" #llm model 
 
-DEFAULT_MODEL_ELEVENLAB = "eleven_turbo_v2"  #elevenlab model check here:-> https://elevenlabs.io/docs/models#eleven-v3-alpha
+DEFAULT_MODEL_ELEVENLAB = "eleven_flash_v2_5"  #elevenlab model (updated to v2_5 for non-English support) check here:-> https://elevenlabs.io/docs/models#eleven-v3-alpha
 
 DEFAULT_LANGUAGE = "en"
 
@@ -66,6 +66,48 @@ VALID_LLMS = [
 ]
 
 ELEVENLABS_MODELS = [
+    {
+        "name": "eleven_turbo_v2_5",
+        "languages": [
+            {"code": "en", "name": "English"},
+            {"code": "es", "name": "Spanish"},
+            {"code": "fr", "name": "French"},
+            {"code": "de", "name": "German"},
+            {"code": "it", "name": "Italian"},
+            {"code": "pt", "name": "Portuguese"},
+            {"code": "hi", "name": "Hindi"},
+            {"code": "ja", "name": "Japanese"},
+            {"code": "zh", "name": "Chinese"},
+            {"code": "ko", "name": "Korean"},
+            {"code": "nl", "name": "Dutch"},
+            {"code": "pl", "name": "Polish"},
+            {"code": "sv", "name": "Swedish"},
+            {"code": "da", "name": "Danish"},
+            {"code": "fi", "name": "Finnish"},
+            {"code": "no", "name": "Norwegian"},
+        ],
+    },
+    {
+        "name": "eleven_flash_v2_5",
+        "languages": [
+            {"code": "en", "name": "English"},
+            {"code": "es", "name": "Spanish"},
+            {"code": "fr", "name": "French"},
+            {"code": "de", "name": "German"},
+            {"code": "it", "name": "Italian"},
+            {"code": "pt", "name": "Portuguese"},
+            {"code": "hi", "name": "Hindi"},
+            {"code": "ja", "name": "Japanese"},
+            {"code": "zh", "name": "Chinese"},
+            {"code": "ko", "name": "Korean"},
+            {"code": "nl", "name": "Dutch"},
+            {"code": "pl", "name": "Polish"},
+            {"code": "sv", "name": "Swedish"},
+            {"code": "da", "name": "Danish"},
+            {"code": "fi", "name": "Finnish"},
+            {"code": "no", "name": "Norwegian"},
+        ],
+    },
     {
         "name": "eleven_multilingual_v2",
         "languages": [

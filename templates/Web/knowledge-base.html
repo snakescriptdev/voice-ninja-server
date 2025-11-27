@@ -523,7 +523,9 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
     filesContainer.innerHTML = '';
 
     if (fileData.length > 0) {
+        
         fileData.forEach(file => {
+            
             let iconPath = "{{ host }}/static/Web/images/upload-file-icon.svg";
             const formattedSize = file.size ? formatFileSize(file.size) : "Unknown Size";
 
@@ -542,7 +544,7 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
                     <a class="d-flex" onclick="downloadFile('${file.url}')"  download>
                         <img src="{{ host }}/static/Web/images/download-icon.svg" class="img-fluid">
                     </a>
-                    <a class="d-flex" onclick="deleteFile(${file.id}, ${file.knowledge_base_id})">
+                    <a class="d-flex" onclick="deleteFile(${file.id}, ${file.knowledge_base_id}, ${file.elevenlabs_doc_id ? `'${file.elevenlabs_doc_id}'` : 'null'})">
                         <img src="{{ host }}/static/Web/images/dlt-icon.svg" class="img-fluid">
                     </a>
                 </div>
@@ -593,12 +595,13 @@ function loadMoreKnowledgeBases() {
                     div.innerHTML = `
                     <a href="#" class="d-flex align-items-center gap-2 active_knowldege_base" 
                        data-id="${kb.id}" 
-                       data-name="${kb.name}" 
+                       data-name="${kb.knowledge_base_name}" 
                        data-files='${JSON.stringify(kb.files)}'>
                         <img src="{{ host }}/static/Web/images/lines-icon.svg" class="img-fluid"> 
-                        ${kb.name}
+                        ${kb.knowledge_base_name}
                     </a>
                     `;
+                   
                     knowledgeBaseList.appendChild(div);
                 }
             });
@@ -747,7 +750,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
 
         // Send AJAX request to backend
-        fetch("{{ host }}/api/upload_knowledge_base", {
+        fetch("{{ host }}/elevenlabs/api/v1/upload_knowledge_base", {
             method: "POST",
             body: formData,
             headers: {
@@ -787,12 +790,25 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 });
 
-function deleteFile(fileId, knowledgeBaseId) {
+function deleteFile(fileId, knowledgeBaseId, elevenlabsDocId) {
+    if (!fileId || !knowledgeBaseId) {
+        toastr.error("Missing required parameters for file deletion.", "Error", {
+            positionClass: "toast-top-right"
+        });
+        return;
+    }
+    if (!elevenlabsDocId || elevenlabsDocId === 'null' || elevenlabsDocId === 'undefined') {
+        toastr.error("This file cannot be deleted because it's missing ElevenLabs document ID. Please contact support.", "Error", {
+            positionClass: "toast-top-right"
+        });
+        return;
+    }
+    
     var confirm_model = document.getElementById("deleteFileModal"); 
     if (confirm_model) {
         confirm_model.setAttribute("data-id", fileId);
         confirm_model.setAttribute("data-knowledge_base_id", knowledgeBaseId);
-        // Use Bootstrap's modal method through jQuery
+        confirm_model.setAttribute("data-elevenlabs_doc_id", elevenlabsDocId);
         $('#deleteFileModal').modal('show');
     } else {
         console.error("Confirm modal element not found");
@@ -804,8 +820,15 @@ function deleteFile(fileId, knowledgeBaseId) {
 function confirmDeleteFile() {
     const fileId = document.getElementById("deleteFileModal").getAttribute("data-id");
     const knowledgeBaseId = document.getElementById("deleteFileModal").getAttribute("data-knowledge_base_id");
-
-    fetch("{{ host }}/api/delete_file", {
+    const elevenlabs_doc_id = document.getElementById("deleteFileModal").getAttribute("data-elevenlabs_doc_id");
+    
+    if (!elevenlabs_doc_id || elevenlabs_doc_id === 'undefined' || elevenlabs_doc_id === 'null') {
+        toastr.error("Error: Missing ElevenLabs document ID. Cannot delete file.", "Error", {
+            positionClass: "toast-top-right"
+        });
+        return;
+    }
+    fetch("{{ host }}/elevenlabs/api/v1/delete_file", {
         method: 'DELETE',
         headers: {
             'Content-Type': 'application/json',
@@ -813,7 +836,8 @@ function confirmDeleteFile() {
         },
         body: JSON.stringify({
             knowledge_base_id: knowledgeBaseId,
-            file_id: fileId
+            file_id: fileId,
+            elevenlabs_doc_id: elevenlabs_doc_id
         })
     })
     .then(response => response.json())
@@ -880,42 +904,62 @@ function saveMoreFiles(e) {
     const knowledgeBaseId = document.getElementById("set-knowledge-base-id").value;
     const file = document.getElementById("uploadMoreFiles").files[0];
     const saveBtn = document.getElementById('saveMoreFilesBtn');    
-    saveBtn.textContent = "Please wait...";
-    saveBtn.disabled = true;
+    
     if (!file) {
         toastr.error("Please upload a file.", "Error", {
             positionClass: "toast-top-right"
         });
-        saveBtn.textContent = "Save";
-        saveBtn.disabled = false;
         return;
     }
+
+    saveBtn.textContent = "Please wait...";
+    saveBtn.disabled = true;
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("knowledge_base_id", knowledgeBaseId);
-    fetch("{{ host }}/api/upload_file", {
+    
+    fetch("{{ host }}/elevenlabs/api/v1/upload_file", {
         method: "POST",
         body: formData,
         headers: {
             "X-CSRFToken": "{{ csrf_token }}"
         },
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            return response.json().then(errorData => {
+                throw new Error(JSON.stringify(errorData));
+            });
+        }
+        return response.json();
+    })
     .then(data => {
         saveBtn.textContent = "Save";
         saveBtn.disabled = false;
+        
         if (data.status === "success") {
             toastr.success("File uploaded successfully!", "Success", {
                 positionClass: "toast-top-right"
             });
+            
+            // Clear form
             document.getElementById('uploadMoreFiles').value = '';
             document.getElementById('moreFileName').textContent = '';
-            document.getElementById('uploadMoreLabel').classList.add('d-none');
+            document.getElementById('moreFileName').classList.add('d-none');
+            document.getElementById('uploadMoreLabel').querySelector('.label-text').classList.remove('d-none');
+            
+            // Close modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('AddFilesModel'));
+            if (modal) {
+                modal.hide();
+            }
+            
             setTimeout(() => {
                 location.reload();
             }, 1000);
         } else {
-            toastr.error(data.message, "Error", {
+            toastr.error(data.message || "Error uploading file", "Error", {
                 positionClass: "toast-top-right"
             });
         }
@@ -924,11 +968,23 @@ function saveMoreFiles(e) {
         saveBtn.textContent = "Save";
         saveBtn.disabled = false;
         console.error("Error:", error);
-        if (error.xhr.responseJSON.error) {
-            toastr.error(error.xhr.responseJSON.error, "Error", {
-                positionClass: "toast-top-right"
-            });
-        } else {
+        
+        try {
+            const errorData = JSON.parse(error.message);
+            if (errorData.detail && errorData.detail.message) {
+                toastr.error(errorData.detail.message, "Error", {
+                    positionClass: "toast-top-right"
+                });
+            } else if (errorData.message) {
+                toastr.error(errorData.message, "Error", {
+                    positionClass: "toast-top-right"
+                });
+            } else {
+                toastr.error("An unexpected error occurred while uploading the file.", "Error", {
+                    positionClass: "toast-top-right"
+                });
+            }
+        } catch (parseError) {
             toastr.error("An unexpected error occurred while uploading the file.", "Error", {
                 positionClass: "toast-top-right"
             });
@@ -976,7 +1032,7 @@ function addUrl(e) {
         fullScreenLoader.innerHTML = spinnerHTML;
         document.body.appendChild(fullScreenLoader);
 
-        fetch("{{ host }}/api/add_url", {
+        fetch("{{ host }}/elevenlabs/api/v1/add_url", {
             method: "POST",
             body: JSON.stringify({
                 url: url,
@@ -1077,7 +1133,7 @@ function createText(e) {
     fullScreenLoader.innerHTML = spinnerHTML;
     document.body.appendChild(fullScreenLoader);
 
-    fetch("{{ host }}/api/create_text", {
+    fetch("{{ host }}/elevenlabs/api/v1/create_text", {
         method: "POST",
         body: JSON.stringify({
             title: title,
