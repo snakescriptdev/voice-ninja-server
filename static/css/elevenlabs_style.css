@@ -1,0 +1,364 @@
+/* ElevenLabs Voice Agent Styles */
+.elevenlabs-voice-icon {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    transition: all 0.3s ease;
+    z-index: 1000;
+    background: linear-gradient(45deg, #0C7FDA, #99d2ff, #ffffff);
+    animation: elevenLabsPulse 2s infinite;
+}
+
+.elevenlabs-voice-icon:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+}
+
+.elevenlabs-voice-icon img {
+    width: 35px;
+    height: 35px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.elevenlabs-badge {
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: #ff6b6b;
+    color: white;
+    font-size: 10px;
+    font-weight: bold;
+    padding: 2px 4px;
+    border-radius: 10px;
+    min-width: 16px;
+    text-align: center;
+}
+
+.elevenlabs-recorder-controls {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 350px;
+    min-height: 200px;
+    border-radius: 15px;
+    padding: 20px;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+    z-index: 1001;
+    transition: all 0.3s ease;
+    transform: translateY(100%);
+    opacity: 0;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+}
+
+.elevenlabs-recorder-controls.show {
+    transform: translateY(0);
+    opacity: 1;
+}
+
+.elevenlabs-recorder-controls.hidden {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+}
+
+.elevenlabs-header {
+    text-align: center;
+    margin-bottom: 15px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+    padding-bottom: 10px;
+}
+
+.elevenlabs-header h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: bold;
+}
+
+.elevenlabs-agent-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 12px;
+    margin-top: 5px;
+    opacity: 0.9;
+}
+
+.elevenlabs-status-indicator {
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.2);
+    font-size: 11px;
+}
+
+.elevenlabs-status-indicator.connected {
+    background: #4CAF50;
+}
+
+.elevenlabs-status-indicator.connecting {
+    background: #FF9800;
+}
+
+.elevenlabs-status-indicator.disconnected {
+    background: #F44336;
+}
+
+.elevenlabs-status-display {
+    margin: 15px 0;
+}
+
+.elevenlabs-waveform {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 40px;
+    margin-bottom: 10px;
+}
+
+.elevenlabs-wave {
+    width: 4px;
+    height: 20px;
+    background: rgba(255, 255, 255, 0.8);
+    margin: 0 2px;
+    border-radius: 2px;
+    animation: elevenLabsWave 1s infinite ease-in-out;
+}
+
+.elevenlabs-wave:nth-child(2) {
+    animation-delay: 0.1s;
+}
+
+.elevenlabs-wave:nth-child(3) {
+    animation-delay: 0.2s;
+}
+
+.elevenlabs-transcript {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    padding: 10px;
+    min-height: 60px;
+    max-height: 120px;
+    overflow-y: auto;
+    font-size: 14px;
+    line-height: 1.4;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.elevenlabs-transcript .message {
+    margin-bottom: 8px;
+    padding: 5px 8px;
+    border-radius: 5px;
+}
+
+.elevenlabs-transcript .message.user {
+    background: rgba(76, 175, 80, 0.3);
+    text-align: right;
+}
+
+.elevenlabs-transcript .message.agent {
+    background: rgba(33, 150, 243, 0.3);
+    text-align: left;
+}
+
+.elevenlabs-transcript .message .speaker {
+    font-weight: bold;
+    font-size: 12px;
+    opacity: 0.8;
+}
+
+.elevenlabs-controls {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 15px;
+    gap: 10px;
+}
+
+.elevenlabs-control-btn {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.3s ease;
+    flex: 1;
+}
+
+.elevenlabs-control-btn:hover {
+    background: rgba(255, 255, 255, 0.3);
+    transform: translateY(-1px);
+}
+
+.elevenlabs-end-btn {
+    background: #f44336;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: bold;
+    transition: all 0.3s ease;
+    flex: 2;
+}
+
+.elevenlabs-end-btn:hover {
+    background: #d32f2f;
+    transform: translateY(-1px);
+}
+
+.elevenlabs-popup {
+    font-family: Arial, sans-serif;
+}
+
+.elevenlabs-popup a:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+}
+
+/* Animations */
+@keyframes elevenLabsPulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(12, 127, 218, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(12, 127, 218, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(12, 127, 218, 0);
+    }
+}
+
+@keyframes elevenLabsWave {
+    0%, 40%, 100% {
+        transform: scaleY(0.4);
+        opacity: 0.5;
+    }
+    20% {
+        transform: scaleY(1);
+        opacity: 1;
+    }
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .elevenlabs-voice-icon {
+        bottom: 15px;
+        right: 15px;
+        width: 50px;
+        height: 50px;
+    }
+    
+    .elevenlabs-voice-icon img {
+        width: 30px;
+        height: 30px;
+    }
+    
+    .elevenlabs-recorder-controls {
+        bottom: 15px;
+        right: 15px;
+        left: 15px;
+        width: auto;
+        max-width: none;
+    }
+    
+    .elevenlabs-header h1 {
+        font-size: 16px;
+    }
+    
+    .elevenlabs-controls {
+        flex-direction: column;
+        gap: 8px;
+    }
+    
+    .elevenlabs-control-btn,
+    .elevenlabs-end-btn {
+        flex: none;
+        width: 100%;
+    }
+}
+
+/* Dark mode support */
+@media (prefers-color-scheme: dark) {
+    .elevenlabs-transcript {
+        background: rgba(255, 255, 255, 0.1);
+        border-color: rgba(255, 255, 255, 0.2);
+    }
+}
+
+/* Accessibility */
+.elevenlabs-voice-icon:focus,
+.elevenlabs-control-btn:focus,
+.elevenlabs-end-btn:focus {
+    outline: 2px solid #ffffff;
+    outline-offset: 2px;
+}
+
+/* Loading state */
+.elevenlabs-loading {
+    position: relative;
+    overflow: hidden;
+}
+
+.elevenlabs-loading::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    animation: elevenLabsLoading 1.5s infinite;
+}
+
+@keyframes elevenLabsLoading {
+    0% {
+        left: -100%;
+    }
+    100% {
+        left: 100%;
+    }
+}
+
+/* Status indicators */
+.elevenlabs-status-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 5px;
+}
+
+.elevenlabs-status-dot.connected {
+    background: #4CAF50;
+    animation: elevenLabsBlink 2s infinite;
+}
+
+.elevenlabs-status-dot.connecting {
+    background: #FF9800;
+    animation: elevenLabsBlink 0.5s infinite;
+}
+
+.elevenlabs-status-dot.disconnected {
+    background: #F44336;
+}
+
+@keyframes elevenLabsBlink {
+    0%, 50% {
+        opacity: 1;
+    }
+    51%, 100% {
+        opacity: 0.3;
+    }
+}

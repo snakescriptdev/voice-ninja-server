@@ -87,3 +87,42 @@ def get_logged_in_user(request: Request):
     if not user or not user.get("is_authenticated"):
         return None
     return user
+
+
+async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str, voice: str, agent_id: int):
+    if not audio:
+        return None
+
+    try:
+        # Define file paths
+        audio_name = f"{SID}.wav"
+        relative_path = f"audio_recordings/{audio_name}"  
+        full_file_path = Path(MEDIA_DIR) / relative_path  
+
+        full_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with io.BytesIO() as buffer:
+            with wave.open(buffer, "wb") as wf:
+                wf.setsampwidth(2)  
+                wf.setnchannels(num_channels)  
+                wf.setframerate(sample_rate)  
+                wf.writeframes(audio)  
+
+            async with aiofiles.open(full_file_path, "wb") as file:
+                await file.write(buffer.getvalue())
+
+        logger.info(f"Audio saved to {full_file_path}")
+
+        AudioRecordings.create(
+            agent_id=agent_id,
+            audio_file=str(full_file_path),
+            audio_name=audio_name,
+            created_at=datetime.now(),
+            call_id=SID
+        )
+
+        return relative_path
+
+    except Exception as e:
+        logger.error(f"Error saving audio: {e}")
+        return None

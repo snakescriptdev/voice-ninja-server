@@ -3,6 +3,9 @@ from sqlalchemy import create_engine, text, bindparam
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import SQLAlchemyError
 import os
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DB_URL = os.getenv("DB_URL", None)
 if not DB_URL:
@@ -11,6 +14,48 @@ if not DB_URL:
 engine = create_engine(DB_URL, pool_pre_ping=True)
 
 ELEVENLABS_MODELS = [
+    {
+        "name": "eleven_turbo_v2_5",
+        "languages": [
+            {"code": "en", "name": "English"},
+            {"code": "es", "name": "Spanish"},
+            {"code": "fr", "name": "French"},
+            {"code": "de", "name": "German"},
+            {"code": "it", "name": "Italian"},
+            {"code": "pt", "name": "Portuguese"},
+            {"code": "hi", "name": "Hindi"},
+            {"code": "ja", "name": "Japanese"},
+            {"code": "zh", "name": "Chinese"},
+            {"code": "ko", "name": "Korean"},
+            {"code": "nl", "name": "Dutch"},
+            {"code": "pl", "name": "Polish"},
+            {"code": "sv", "name": "Swedish"},
+            {"code": "da", "name": "Danish"},
+            {"code": "fi", "name": "Finnish"},
+            {"code": "no", "name": "Norwegian"},
+        ],
+    },
+    {
+        "name": "eleven_flash_v2_5",
+        "languages": [
+            {"code": "en", "name": "English"},
+            {"code": "es", "name": "Spanish"},
+            {"code": "fr", "name": "French"},
+            {"code": "de", "name": "German"},
+            {"code": "it", "name": "Italian"},
+            {"code": "pt", "name": "Portuguese"},
+            {"code": "hi", "name": "Hindi"},
+            {"code": "ja", "name": "Japanese"},
+            {"code": "zh", "name": "Chinese"},
+            {"code": "ko", "name": "Korean"},
+            {"code": "nl", "name": "Dutch"},
+            {"code": "pl", "name": "Polish"},
+            {"code": "sv", "name": "Swedish"},
+            {"code": "da", "name": "Danish"},
+            {"code": "fi", "name": "Finnish"},
+            {"code": "no", "name": "Norwegian"},
+        ],
+    },
     {
         "name": "eleven_multilingual_v2",
         "languages": [

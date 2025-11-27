@@ -210,6 +210,7 @@ async def update_agent(request: Request):
     daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id)
     overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id)
     voices = VoiceModel.get_allowed_voices(user_id=user_id)
+   
     return templates.TemplateResponse(
         "Web/update_agent.html",
         {
@@ -225,7 +226,8 @@ async def update_agent(request: Request):
             "host": os.getenv("HOST"),
             "daily_call_limit": daily_call_limit.set_value if daily_call_limit else 0,
             "overall_token_limit": overall_token_limit.overall_token_limit if overall_token_limit else 0,
-            "per_call_token_limit": agent.per_call_token_limit if agent.per_call_token_limit else 0
+            "per_call_token_limit": agent.per_call_token_limit if agent.per_call_token_limit else 0,
+            
         },
     )
 
@@ -241,17 +243,20 @@ async def knowledge_base(request: Request, page: int = 1):
     formatted_knowledge_bases = []
     for knowledge_base in knowledge_bases:
         files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+        # print(f"🔍 Debug: Loading files for knowledge base {knowledge_base.id} ({knowledge_base.knowledge_base_name})")
         files_data = []
         for file in files:
-            files_data.append(
-                {
-                    "id": file.id,
-                    "name": file.file_name,
-                    "size": "",  # You can add file size if available   
-                    "url": f"/media/{file.file_path}",
-                    "knowledge_base_id": knowledge_base.id
-                }   
-            )
+            file_data = {
+                "id": file.id,
+                "name": file.file_name,
+                "size": "",  # You can add file size if available   
+                "url": f"/media/{file.file_path}",
+                "knowledge_base_id": knowledge_base.id,
+                "elevenlabs_doc_id": file.elevenlabs_doc_id,
+                "elevenlabs_doc_name": file.elevenlabs_doc_name
+            }
+            # print(f"🔍 Debug: File {file.file_name} - elevenlabs_doc_id: {file.elevenlabs_doc_id}")
+            files_data.append(file_data)
 
         formatted_knowledge_bases.append({
             "id": knowledge_base.id,
@@ -341,7 +346,7 @@ async def verify_account(request: Request, token: str):
 @router.get("/call_history")
 @check_session_expiry_redirect
 async def call_history(request: Request, page: int = 1):
-    from app.databases.models import AudioRecordings
+    from app.databases.models import AudioRecordings, VoiceModel
     agent_id = request.query_params.get("agent_id")
     audio_recordings = AudioRecordings.get_all_by_agent(agent_id)
     audio_recordings = sorted(audio_recordings, key=lambda x: x.created_at, reverse=True)
@@ -352,6 +357,13 @@ async def call_history(request: Request, page: int = 1):
     agent = AgentModel.get_by_id(agent_id)
     final_response = paginator.items
 
+    # Get voice name instead of voice ID
+    voice_name = "Unknown"
+    if agent and agent.selected_voice:
+        voice = VoiceModel.get_by_id(agent.selected_voice)
+        if voice:
+            voice_name = voice.voice_name
+
     return templates.TemplateResponse(
         "Web/call_history.html",
         {
@@ -359,7 +371,7 @@ async def call_history(request: Request, page: int = 1):
             "audio_recordings": final_response,  
             "page_obj": paginator,
             "agent_name": agent.agent_name,
-            "selected_voice": agent.selected_voice,
+            "selected_voice": voice_name,  # Now passing voice name instead of ID
             "agent_id": agent_id,
             "host": os.getenv("HOST")
         }
