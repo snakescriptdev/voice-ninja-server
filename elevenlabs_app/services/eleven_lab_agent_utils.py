@@ -3,6 +3,7 @@ import logging
 import json
 from time import sleep
 import os
+import copy
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional, Any
 from elevenlabs import ElevenLabs
@@ -566,12 +567,11 @@ class ElevenLabsAgentCRUD:
             Delete an existing agent by agent_id
             """
             try:
-                url = f"{BASE_URL}/convai/agents/delete"
-                payload = {"agent_id": agent_id}
+                url = f"{BASE_URL}/convai/agents/{agent_id}"
 
-                resp = requests.post(url, headers=self.headers, json=payload)
+                resp = requests.delete(url, headers=self.headers)
 
-                if resp.status_code != 200:
+                if resp.status_code not in [200,204]:
                     raise Exception(f"Failed to delete agent: {resp.status_code} {resp.text}")
 
                 return resp.json()
@@ -684,3 +684,40 @@ class ElevenLabsAgentCRUD:
             error_msg = f"Error occurred while deleting file: {str(ex)}"
             logger.error(error_msg)
             return {"error": "Error Occurred", "exc": error_msg}
+
+    def clear_agent_knowledge_base(self, agent_id: str) -> Dict[str, Any]:
+        """
+        Remove all knowledge base entries from an agent without touching other config.
+        """
+        try:
+            agent = self.get_agent(agent_id)
+            if "error" in agent:
+                return {"error": "Failed to get agent", "exc": agent.get("exc")}
+
+            current_config = agent.get("conversation_config")
+            if not current_config:
+                return {"error": "Invalid agent config", "exc": "conversation_config missing"}
+
+            updated_config = copy.deepcopy(current_config)
+            prompt_cfg = (
+                updated_config.setdefault("agent", {})
+                .setdefault("prompt", {})
+            )
+
+            if "knowledge_base" not in prompt_cfg or not prompt_cfg["knowledge_base"]:
+                logger.info(f"Knowledge base already empty for agent {agent_id}")
+                return {"status": "success", "message": "Knowledge base already empty"}
+
+            prompt_cfg["knowledge_base"] = []
+
+            payload = {"conversation_config": updated_config}
+            url = f"{BASE_URL}/convai/agents/{agent_id}"
+            resp = requests.patch(url, headers=self.headers, json=payload)
+
+            if resp.status_code != 200:
+                raise Exception(f"Failed to clear knowledge base: {resp.status_code} {resp.text}")
+
+            logger.info(f"✅ Cleared knowledge base for agent {agent_id}")
+            return resp.json()
+        except Exception as ex:
+            return {"error": "Error Occurred", "exc": str(ex)}
