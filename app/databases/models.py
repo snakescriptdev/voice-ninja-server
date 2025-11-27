@@ -555,6 +555,21 @@ class AgentModel(Base):
                 db.session.refresh(agent)
                 return agent
             return None
+
+    @classmethod
+    def get_by_knowledge_base_id(cls, kb_id: int) -> List["AgentModel"]:
+        """
+        Get all agents linked to a specific knowledge base ID
+        """
+        with db():
+            return (
+                db.session.query(cls)
+                .join(agent_knowledge_association,
+                    agent_knowledge_association.c.agent_id == cls.id)
+                .filter(agent_knowledge_association.c.knowledge_base_id == kb_id)
+                .all()
+            )
+
     
 class ResetPasswordModel(Base):
     __tablename__ = "reset_password"
