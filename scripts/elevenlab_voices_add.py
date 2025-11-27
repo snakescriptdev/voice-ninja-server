@@ -1,7 +1,10 @@
 import os
 from elevenlabs import ElevenLabs
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text  
 from sqlalchemy.exc import SQLAlchemyError
+from dotenv import load_dotenv
+
+load_dotenv()
 
 DB_URL = os.getenv("DB_URL", None)
 if not DB_URL:
