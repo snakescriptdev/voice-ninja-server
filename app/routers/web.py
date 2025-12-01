@@ -83,39 +83,27 @@ async def forget_password(request: Request):
 
 @router.get("/dashboard", name="dashboard")
 @check_session_expiry_redirect
-async def dashboard(request: Request, page: int = 1):
-    from app.databases.models import AgentModel
+async def dashboard(request: Request):
     from app.databases.models import ApprovedDomainModel
     user = request.session.get("user")
     if not user or not user.get("is_authenticated"):
         return RedirectResponse(url="/login")
+
     domains = os.getenv("DOMAIN_NAME").split(",")
     for domain in domains:
         approved_domain = ApprovedDomainModel.check_domain_exists(domain, user.get("user_id"))
         if not approved_domain:
             ApprovedDomainModel.create(domain, user.get("user_id"))
 
-    # Get all agents created by current user
-    agents = AgentModel.get_all_by_user(user.get("user_id"))
-
-    # Pagination
-    items_per_page = 10
-    start = (page - 1) * items_per_page
-    end = start + items_per_page
-    
-    paginator = Paginator(agents, page, items_per_page, start, end)
     return templates.TemplateResponse(
         "Web/dashboard.html",
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "page_obj": paginator,
             "user": user,
-            "host": os.getenv("HOST")
+            "host": os.getenv("HOST"),
         }
     )
-
-
 
 @router.get("/chatbot/")
 async def index(request: Request):

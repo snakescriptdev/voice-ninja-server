@@ -8,7 +8,15 @@ from loguru import logger
 import os
 from elevenlabs.client import ElevenLabs
 from elevenlabs.conversational_ai.conversation import Conversation, AudioInterface, ConversationInitiationData
-from app.databases.models import AgentModel
+from app.databases.models import (
+    AgentModel, 
+    TokensToConsume, 
+    UserModel, 
+    OverallTokenLimitModel, 
+    DailyCallLimitModel,
+    CallModel,
+    db
+)
 from elevenlabs_app.services.elevenlabs_post_call_recorder import elevenlabs_post_call_recorder
 from elevenlabs_app.services.conversation_storage import elevenlabs_conversation_storage
 from dotenv import load_dotenv
@@ -19,6 +27,9 @@ ElevenLabsLiveRouter = APIRouter(prefix="/elevenlabs/live", tags=["elevenlabs-li
 
 # Prevent multiple concurrent sessions per agent dynamic id
 ACTIVE_SESSIONS = {}
+
+# Track tokens consumed per call_id
+CALL_TOKENS_CONSUMED = {}
 
 
 def handle_agent_response_live(call_id: str, response: str, websocket: WebSocket, loop: asyncio.AbstractEventLoop):
@@ -64,6 +75,153 @@ def handle_latency_measurement_live(call_id: str, latency_ms: float, websocket: 
         
     except Exception as e:
         logger.error(f"❌ Error handling latency measurement for call_id {call_id}: {e}", exc_info=True)
+
+
+async def close_websocket(websocket: WebSocket, reason: str):
+    """Helper to close websocket with logging"""
+    logger.warning(f"{reason}. Disconnecting call...")
+    try:
+        if websocket.client_state.name != "DISCONNECTED":
+            await websocket.close(code=1000, reason=reason)
+            logger.info(f"WebSocket connection closed: {reason}")
+    except Exception as e:
+        logger.warning(f"Error closing WebSocket: {e}")
+
+
+def should_reset_daily_limit(last_updated):
+    """Check if daily limit should reset"""
+    return (datetime.utcnow() - last_updated).total_seconds() >= 86400
+
+
+async def deduct_tokens_periodically(user_id: int, tokens_to_consume: int, agent_id: int, websocket: WebSocket, call_id: str = None):
+    """
+    Deducts tokens periodically and enforces token/call limits.
+    Uses batching to reduce database operations and prevent event loop blocking.
+    Stops automatically when tokens reach 0 or limits are exceeded.
+    """
+    if tokens_to_consume <= 0:
+        logger.error("Invalid token consumption rate. Must be greater than 0.")
+        return
+
+    # Calculate interval with minimum of 1 second to prevent too frequent operations
+    # Batch tokens: deduct multiple tokens at once less frequently
+    tokens_per_batch = max(1, tokens_to_consume // 10)  # Deduct 10% of tokens per batch
+    interval = max(1.0, 60.0 / (tokens_to_consume / tokens_per_batch))  # Minimum 1 second interval
+    
+    logger.info(f"Starting token deduction: {tokens_per_batch} tokens every {interval:.2f} seconds for user_id: {user_id}, agent_id: {agent_id}, call_id: {call_id}")
+    
+    agent = AgentModel.get_by_id(agent_id)
+    per_call_tokens = 0
+    daily_limit_checked = False  # Track if daily limit has been checked for this call
+    
+    # Initialize token tracking for this call_id
+    if call_id:
+        CALL_TOKENS_CONSUMED[call_id] = 0
+    
+    def _deduct_tokens_sync(current_per_call_tokens, check_daily_limit):
+        """Synchronous database operations to run in thread pool"""
+        try:
+            with db():
+                # Query each model separately
+                user = db.session.query(UserModel).filter(UserModel.id == user_id).first()
+                overall_limit = db.session.query(OverallTokenLimitModel).filter(
+                    OverallTokenLimitModel.agent_id == agent_id
+                ).first()
+                daily_limit = db.session.query(DailyCallLimitModel).filter(
+                    DailyCallLimitModel.agent_id == agent_id
+                ).first()
+
+                if not user:
+                    return {"error": f"User {user_id} not found", "should_stop": True}
+
+                # Check user tokens FIRST - this is the primary stopping condition
+                if user.tokens <= 0:
+                    return {"error": f"User {user_id} has insufficient tokens: {user.tokens}", "should_stop": True}
+
+                # Check overall token limit
+                if overall_limit and overall_limit.last_used_tokens >= overall_limit.overall_token_limit:
+                    return {"error": f"Overall token limit exceeded: {overall_limit.last_used_tokens}/{overall_limit.overall_token_limit}", "should_stop": True}
+
+                # Check daily call limit ONCE per call (not on every token deduction)
+                if daily_limit and check_daily_limit:
+                    if should_reset_daily_limit(daily_limit.last_updated):
+                        daily_limit.last_used = 0
+                    
+                    if daily_limit.last_used >= daily_limit.set_value:
+                        return {"error": f"Daily call limit exceeded: {daily_limit.last_used}/{daily_limit.set_value}", "should_stop": True}
+                    
+                    # Increment daily call usage ONCE per call
+                    daily_limit.last_used += 1
+                    daily_limit.last_updated = datetime.utcnow()
+
+                # Check per call token limit
+                if agent and agent.per_call_token_limit > 0:
+                    if current_per_call_tokens + tokens_per_batch >= agent.per_call_token_limit:
+                        return {"error": f"Per call token limit would be exceeded: {current_per_call_tokens + tokens_per_batch}/{agent.per_call_token_limit}", "should_stop": True}
+
+                # Update token counts - BATCH DEDUCTION
+                tokens_to_deduct = min(tokens_per_batch, user.tokens)  # Don't deduct more than available
+                user.tokens -= tokens_to_deduct
+                if overall_limit:
+                    overall_limit.last_used_tokens += tokens_to_deduct
+                
+                db.session.commit()
+                
+                return {
+                    "success": True,
+                    "tokens_deducted": tokens_to_deduct,
+                    "remaining_tokens": user.tokens,
+                    "overall_usage": overall_limit.last_used_tokens if overall_limit else None,
+                    "per_call_tokens": current_per_call_tokens + tokens_to_deduct
+                }
+        except Exception as e:
+            logger.error(f"Error in token deduction: {e}", exc_info=True)
+            return {"error": str(e), "should_stop": True}
+    
+    while True:
+        try:
+            # Run database operations in thread pool to avoid blocking event loop
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(None, _deduct_tokens_sync, per_call_tokens, not daily_limit_checked)
+            
+            if result.get("should_stop"):
+                error_msg = result.get("error", "Unknown error")
+                logger.warning(error_msg)
+                # Update tokens consumed before closing
+                if call_id:
+                    try:
+                        tokens_consumed = CALL_TOKENS_CONSUMED.get(call_id, 0)
+                        if tokens_consumed > 0:
+                            CallModel.update_tokens_consumed(call_id, tokens_consumed)
+                            logger.info(f"💾 Updated tokens consumed ({tokens_consumed}) for call_id: {call_id} (limit reached)")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to update tokens consumed on limit: {e}")
+                await close_websocket(websocket, error_msg)
+                break
+            
+            if result.get("success"):
+                per_call_tokens = result.get("per_call_tokens", per_call_tokens)
+                tokens_deducted = result.get("tokens_deducted", 0)
+                
+                # Update global token tracking for this call_id
+                if call_id:
+                    CALL_TOKENS_CONSUMED[call_id] = CALL_TOKENS_CONSUMED.get(call_id, 0) + tokens_deducted
+                
+                # Log less frequently to reduce noise (every 10 batches or so)
+                if per_call_tokens % (tokens_per_batch * 10) < tokens_per_batch:
+                    logger.info(f"✅ Tokens deducted: {tokens_deducted}, Remaining: {result.get('remaining_tokens')}, Overall: {result.get('overall_usage') or 'N/A'}, Per call: {per_call_tokens}, Total for call: {CALL_TOKENS_CONSUMED.get(call_id, 0)}")
+            
+            # Mark daily limit as checked after first successful deduction
+            if not daily_limit_checked:
+                daily_limit_checked = True
+
+        except Exception as e:
+            logger.error(f"Error in token deduction async wrapper: {e}", exc_info=True)
+            await close_websocket(websocket, "Internal error during token processing")
+            break
+
+        # Sleep before next deduction
+        await asyncio.sleep(interval)
 
 
 @ElevenLabsLiveRouter.get("/health")
@@ -134,27 +292,22 @@ class BrowserAudioInterface(AudioInterface):
 
     # Helper to push user audio from browser to ElevenLabs
     def push_user_audio(self, audio: bytes):
-        if self._started and self._input_cb:
+        # Allow audio to be pushed if callback exists, even if _started is False
+        # This handles race conditions where audio arrives before start() is called
+        if self._input_cb:
             try:
                 # Validate audio data
                 if len(audio) == 0:
-                    logger.warning(f"Empty audio data received for call_id {self.call_id}")
-                    return
-                
-                # Record user audio if recording is enabled
-                if self.recording_enabled:
-                    # Audio is recorded by ElevenLabs directly
-                    pass
+                    return  # Silently ignore empty audio
                 
                 # Send audio to ElevenLabs
                 self._input_cb(audio)
-                # Removed verbose audio logging to reduce log noise
-                # logger.debug(f"Successfully sent {len(audio)} bytes to ElevenLabs for call_id {self.call_id}")
             except Exception as e:
-                logger.error(f"Error delivering browser audio to input_callback for call_id {self.call_id}: {e}")
-                logger.error(f"Audio data length: {len(audio) if audio else 'None'}")
-        else:
-            logger.warning(f"Cannot push audio - started: {self._started}, callback: {bool(self._input_cb)} for call_id {self.call_id}")
+                logger.error(f"Error delivering browser audio to input_callback for call_id {self.call_id}: {e}", exc_info=True)
+        elif not self._started:
+            # Only log warning if we're definitely not started and no callback
+            # This reduces log noise during initialization
+            pass
 
 
 @ElevenLabsLiveRouter.websocket("/ws/{agent_dynamic_id}")
@@ -201,6 +354,22 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
     loop = asyncio.get_running_loop()
     audio_if = BrowserAudioInterface(websocket, loop, call_id)
     conversation = None
+    
+    # Token deduction task
+    token_task = None
+    
+    # Determine user_id for token deduction (use query param if available, otherwise agent owner)
+    token_user_id = None
+    if user_id:
+        try:
+            token_user_id = int(user_id)
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid user_id from query params: {user_id}, falling back to agent owner")
+            token_user_id = agent.created_by if agent.created_by else None
+    else:
+        token_user_id = agent.created_by if agent.created_by else None
+    
+    agent_id = agent.id
 
     # Call metadata for recording
     call_metadata = {
@@ -385,6 +554,23 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                 
                 conversation_ready = True
                 
+                # Start token deduction task if user_id is available
+                if token_user_id:
+                    try:
+                        tokens_to_consume = TokensToConsume.get_by_id(1).token_values
+                        if tokens_to_consume <= 0:
+                            logger.error("Invalid token rate; setting to default (10 tokens per minute).")
+                            tokens_to_consume = 10
+                        
+                        token_task = asyncio.create_task(
+                            deduct_tokens_periodically(token_user_id, tokens_to_consume, agent_id, websocket, call_id)
+                        )
+                        logger.info(f"✅ Started token deduction task for user_id: {token_user_id}, agent_id: {agent_id}, call_id: {call_id}")
+                    except Exception as e:
+                        logger.error(f"❌ Failed to start token deduction task: {e}", exc_info=True)
+                else:
+                    logger.warning(f"⚠️ No user_id available for token deduction. Skipping token deduction.")
+                
                 # Send confirmation back to client
                 confirmation_data = {
                     "type": "language_confirmed",
@@ -500,7 +686,40 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
 
     except Exception as e:
         logger.error(f"Live WS error: {e}")
+        # Update tokens consumed even on error
+        try:
+            tokens_consumed = CALL_TOKENS_CONSUMED.get(call_id, 0)
+            if tokens_consumed > 0:
+                CallModel.update_tokens_consumed(call_id, tokens_consumed)
+                logger.info(f"💾 Updated tokens consumed ({tokens_consumed}) for call_id: {call_id} (error scenario)")
+        except Exception as update_error:
+            logger.error(f"❌ Failed to update tokens consumed on error: {update_error}")
     finally:
+        # Cancel token deduction task if running
+        if token_task:
+            try:
+                token_task.cancel()
+                try:
+                    await token_task
+                except asyncio.CancelledError:
+                    pass
+                logger.info("Stopped token deduction as client disconnected.")
+            except Exception as e:
+                logger.warning(f"Error cancelling token task: {e}")
+        
+        # Get tokens consumed before cleanup
+        tokens_consumed = CALL_TOKENS_CONSUMED.get(call_id, 0)
+        
+        # Update tokens consumed before ending conversation
+        try:
+            if tokens_consumed > 0:
+                CallModel.update_tokens_consumed(call_id, tokens_consumed)
+                logger.info(f"💾 Updated tokens consumed ({tokens_consumed}) for call_id: {call_id}")
+            # Clean up from global tracking
+            CALL_TOKENS_CONSUMED.pop(call_id, None)
+        except Exception as e:
+            logger.error(f"❌ Failed to update tokens consumed: {e}")
+        
         try:
             if conversation:
                 conversation.end_session()
@@ -515,6 +734,13 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
             if conversation and hasattr(conversation, 'conversation_id'):
                 elevenlabs_conversation_id = conversation.conversation_id
             
+            # Determine end reason
+            end_reason = "normal_disconnect"
+            if websocket.client_state.name == "DISCONNECTED":
+                end_reason = "user_disconnected"
+            elif token_task and token_task.cancelled():
+                end_reason = "token_limit_reached"
+            
             # Update call status in database
             try:
                 elevenlabs_conversation_storage.update_call_status(
@@ -522,10 +748,11 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                     status="completed",
                     end_metadata={
                         "elevenlabs_conversation_id": elevenlabs_conversation_id,
-                        "end_reason": "normal_disconnect"
+                        "end_reason": end_reason,
+                        "tokens_consumed": tokens_consumed
                     }
                 )
-                logger.info(f"📞 Updated call status to completed for call_id: {call_id}")
+                logger.info(f"📞 Updated call status to completed for call_id: {call_id}, end_reason: {end_reason}")
             except Exception as e:
                 logger.warning(f"⚠️ Failed to update call status: {e}")
             
