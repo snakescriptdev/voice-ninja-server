@@ -2182,3 +2182,40 @@ audio#audioPlayer {
     min-width: 100%;
     display: block;
 }
+
+.dynamicVariable {
+    background: #ffeb3b;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+#editor-container {
+    height: 250px;
+    border: 1px solid #ccc;
+}
+#editor p strong{
+    border:1px solid #e4e4e4;
+    background-color: #fafafa;
+    padding: 2px 4px;
+    border-radius: 8px;
+    font-weight: 500;
+}
+.variable-highlight {
+    background: #fff2b3;
+    border-radius: 3px;
+    padding: 2px 4px;
+    color: #000;
+    font-weight: 600;
+}
+
+.dynamicVariableCls {
+    background: #fff3b0;
+    padding: 3px 4px;
+    border-radius: 4px;
+    font-weight: 600;
+    color: #000;
+}
+.agent_type_textarea .ck-blurred.ck.ck-content.ck-editor__editable.ck-rounded-corners.ck-editor__editable_inline{
+    max-height: 400px;
+    overflow: auto;
+}
