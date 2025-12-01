@@ -158,8 +158,9 @@ async def update_agent(request: Request):
         )
     except Exception as ex:
         return templates.TemplateResponse(
-            "web/display_error.html",
-            {
+            "ElevenLabs_Integration/errors/display_error.html",
+            {    
+                "request": request,
                 'error_message':'Some Error Occurred. Please ontact the support team.',
                 'dev_error_message':str(ex)
             },

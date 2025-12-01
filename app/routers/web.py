@@ -1,4 +1,4 @@
-from fastapi import APIRouter,Request,UploadFile, Form, Depends
+from fastapi import APIRouter,Request,UploadFile, Form, Depends, Query
 from fastapi.templating import Jinja2Templates
 from app.core import VoiceSettings
 from app.core.config import DEFAULT_VARS,NOISE_SETTINGS_DESCRIPTIONS
@@ -6,10 +6,10 @@ from app.utils.helper import Paginator, check_session_expiry_redirect,get_logged
 from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse,JSONResponse
 from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel,VoiceModel
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import Float
 from app.databases.models import engine
 import os, shutil
 from dotenv import load_dotenv
-from fastapi import Query
 
 from sqlalchemy.exc import SQLAlchemyError
 from app.routers.schemas.voice_schemas import (
@@ -361,6 +361,27 @@ async def call_history(request: Request, page: int = 1):
             "agent_name": agent.agent_name,
             "selected_voice": voice_name,  # Now passing voice name instead of ID
             "agent_id": agent_id,
+            "host": os.getenv("HOST")
+        }
+    )
+
+@router.get("/call_history_all", name="call_history_all")
+@check_session_expiry_redirect
+async def call_history_all(request: Request):
+    """Render the call history page template (no data)"""
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return RedirectResponse(url="/login")
+    
+    # Get user's agents for filter dropdown
+    user_id = user.get("user_id")
+    user_agents = AgentModel.get_all_by_user(user_id)
+    
+    return templates.TemplateResponse(
+        "Web/call_history_all.html",
+        {
+            "request": request,
+            "user_agents": user_agents,
             "host": os.getenv("HOST")
         }
     )

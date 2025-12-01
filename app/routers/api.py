@@ -14,7 +14,7 @@ from app.databases.models import (
     TokensToConsume, ApprovedDomainModel, CallModel,
     KnowledgeBaseModel, KnowledgeBaseFileModel, WebhookModel, 
     CustomFunctionModel,ConversationModel, DailyCallLimitModel,
-    OverallTokenLimitModel
+    OverallTokenLimitModel,VoiceModel
     )
 from app.databases.schema import  AudioRecordListSchema
 import json, re
@@ -40,6 +40,9 @@ from fastapi_sqlalchemy import db
 from app.validators.api_validators import SaveNoiseVariablesRequest,ResetNoiseVariablesRequest
 from pydantic import ValidationError
 from app.core.config import DEFAULT_VARS,NOISE_SETTINGS_DESCRIPTIONS
+
+from sqlalchemy import desc, asc
+
 router = APIRouter(prefix="/api")
 
 razorpay_client = razorpay.Client(auth=(os.getenv("RAZOR_KEY_ID"), os.getenv("RAZOR_KEY_SECRET")))
@@ -2298,12 +2301,17 @@ async def dashboard_search(
 
         def matches(agent):
             # Only use "safe" string fields that are directly loaded on the agent.
+            # Get voice name from relationship if available
+            voice_name = ""
+            if hasattr(agent, "selected_voice_obj") and agent.selected_voice_obj:
+                voice_name = getattr(agent.selected_voice_obj, "voice_name", "") or ""
+            
             candidate_fields = [
                 getattr(agent, "agent_name", "") or "",
                 getattr(agent, "phone_number", "") or "",
                 getattr(agent, "selected_model", "") or "",
                 getattr(agent, "selected_language", "") or "",
-                getattr(agent, "voice_name", "") or "",
+                voice_name,
                 getattr(agent, "llm_name", "") or "",
                 getattr(agent, "model_name", "") or "",
             ]
@@ -2337,6 +2345,15 @@ async def dashboard_search(
             # Try direct attribute, then dict, else default
             return getattr(obj, field, obj.get(field, default) if isinstance(obj, dict) else default)
 
+        # Safely get voice name from relationship
+        voice_name = ""
+        try:
+            if hasattr(agent, "selected_voice_obj") and agent.selected_voice_obj:
+                voice_name = getattr(agent.selected_voice_obj, "voice_name", "") or ""
+        except Exception:
+            # Handle DetachedInstanceError or other relationship access issues
+            voice_name = ""
+
         return {
             "id": get_field(agent, "id", None),
             "agent_name": get_field(agent, "agent_name", "") or "",
@@ -2344,12 +2361,12 @@ async def dashboard_search(
             "selected_model": get_field(agent, "selected_model", "") or "",
             "selected_language": get_field(agent, "selected_language", "") or "",
             "selected_llm_model": get_field(agent, "selected_llm_model", "") or "",
-            # The below safely tries voice/model fields as plain fields only
-            "voice_name": get_field(agent, "voice_name", ""),
+            # Get voice name from relationship
+            "voice_name": voice_name,
             "llm_name": get_field(agent, "llm_name", ""),
             "model_name": get_field(agent, "model_name", ""),
             # Derive has_voice by presence of voice_name
-            "has_voice": bool(get_field(agent, "voice_name", "")),
+            "has_voice": bool(voice_name),
         }
 
     return JSONResponse({
@@ -2365,3 +2382,256 @@ async def dashboard_search(
         "search_query": search_query,
     })
 
+@router.get("/call_history_all")
+async def call_history_all_api(
+    request: Request,
+    page: int = Query(1, ge=1),
+    agent_id: int = Query(None),
+    created_at_from: str = Query(None),
+    created_at_to: str = Query(None),
+    tokens_min: int = Query(None),
+    tokens_max: int = Query(None),
+    sort_by: str = Query("created_at_desc")  # created_at_desc, created_at_asc, tokens_desc, tokens_asc, duration_desc, duration_asc
+):
+    """
+    JSON API endpoint for all call history with filters, sorting, and smart pagination.
+    """
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    user_id = user.get("user_id")
+
+    # Get all agents for this user
+    user_agents = AgentModel.get_all_by_user(user_id)
+    agent_ids = [agent.id for agent in user_agents]
+
+    if not agent_ids:
+        return JSONResponse({
+            "results": [],
+            "page": 1,
+            "total_pages": 0,
+            "total_items": 0,
+            "has_previous": False,
+            "has_next": False,
+            "page_range": [],
+            "pagination": {}
+        })
+
+    # Build query with joins
+    with db():
+        # Join AudioRecordings with CallModel via call_id
+        query = db.session.query(
+            AudioRecordings,
+            CallModel,
+            AgentModel
+        ).outerjoin(
+            CallModel, AudioRecordings.call_id == CallModel.call_id
+        ).join(
+            AgentModel, AudioRecordings.agent_id == AgentModel.id
+        ).filter(
+            AudioRecordings.agent_id.in_(agent_ids)
+        )
+
+        # Apply filters
+        if agent_id and agent_id in agent_ids:
+            query = query.filter(AudioRecordings.agent_id == agent_id)
+
+        if created_at_from:
+            try:
+                from_date = datetime.strptime(created_at_from, "%Y-%m-%d")
+                query = query.filter(AudioRecordings.created_at >= from_date)
+            except ValueError:
+                pass
+
+        if created_at_to:
+            try:
+                to_date = datetime.strptime(created_at_to, "%Y-%m-%d")
+                # Add 23:59:59 to include the entire day
+                to_date = to_date.replace(hour=23, minute=59, second=59)
+                query = query.filter(AudioRecordings.created_at <= to_date)
+            except ValueError:
+                pass
+
+        if tokens_min is not None:
+            query = query.filter(CallModel.tokens_consumed >= tokens_min)
+
+        if tokens_max is not None:
+            query = query.filter(CallModel.tokens_consumed <= tokens_max)
+
+        # Duration sorting will be handled in Python after fetching
+        sort_by_duration = sort_by in ["duration_desc", "duration_asc"]
+        items_per_page = 10  # make it available outside with db()
+        python_post_sort_tokens_asc = False
+
+        # Sorting logic: tokens_desc/tokens_asc get special handling for correct NULLs ordering and direction
+        if not sort_by_duration:
+            if sort_by == "tokens_desc":
+                # Tokens descending, NULLs (no call_model) should be at the end, so use nullslast
+                sort_order = desc(CallModel.tokens_consumed).nullslast()
+                query = query.order_by(sort_order, desc(AudioRecordings.created_at))
+            elif sort_by == "tokens_asc":
+                # ---- FORCE PYTHON POST-SORT for tokens_asc to guarantee correct order for all DBs ----
+                # We'll not apply order_by here, just sort after fetching
+                python_post_sort_tokens_asc = True
+                query = query.order_by(None)  # Remove any ordering, let us order in Python below
+            elif sort_by == "created_at_asc":
+                query = query.order_by(asc(AudioRecordings.created_at))
+            else:  # Default to created_at_desc
+                query = query.order_by(desc(AudioRecordings.created_at))
+
+        # Get total count before pagination
+        total_items = query.count()
+
+        # For duration sorting, we need to fetch all and sort in Python
+        if sort_by_duration:
+            all_results = query.all()
+            results_with_duration = []
+            for recording, call_model, agent in all_results:
+                duration = 0
+                if call_model and call_model.variables:
+                    if isinstance(call_model.variables, dict):
+                        duration = call_model.variables.get("call_duration_secs", 0) or 0
+                results_with_duration.append((recording, call_model, agent, float(duration) if duration else 0.0))
+
+            reverse = sort_by == "duration_desc"
+            results_with_duration.sort(key=lambda x: x[3], reverse=reverse)
+
+            total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+            page = max(1, min(page, total_pages))
+            offset = (page - 1) * items_per_page
+            end = offset + items_per_page
+
+            results = [(r[0], r[1], r[2]) for r in results_with_duration[offset:end]]
+        else:
+            if python_post_sort_tokens_asc:
+                query = query.order_by(None)
+                all_results = query.all()
+
+                def tokens_asc_sort_key(item):
+                    recording, call_model, _ = item
+                    if call_model and call_model.tokens_consumed is not None:
+                        try:
+                            return int(call_model.tokens_consumed)
+                        except:
+                            return float("inf")
+                    return float("inf")
+
+                all_results_sorted = sorted(all_results, key=tokens_asc_sort_key)
+
+                total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+                page = max(1, min(page, total_pages))
+                offset = (page - 1) * items_per_page
+                end = offset + items_per_page
+                results = all_results_sorted[offset:end]
+            else:
+                total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+                page = max(1, min(page, total_pages))
+                offset = (page - 1) * items_per_page
+                results = query.offset(offset).limit(items_per_page).all()
+
+        # No Python post-sort required for tokens_desc or others
+
+    # Process results (handle case where call_model is None; treat tokens as 0 or simply show None for missing)
+    recordings_data = []
+    for recording, call_model, agent in results:
+        voice_name = "Unknown"
+        if agent and agent.selected_voice:
+            voice = VoiceModel.get_by_id(agent.selected_voice)
+            if voice:
+                voice_name = voice.voice_name
+
+        # Get tokens consumed and duration
+        tokens_consumed = call_model.tokens_consumed if call_model else None
+        duration = 0
+        if call_model and call_model.variables:
+            if isinstance(call_model.variables, dict):
+                duration = call_model.variables.get("call_duration_secs", 0) or 0
+            else:
+                try:
+                    duration = call_model.variables.get("call_duration_secs", 0) or 0
+                except:
+                    duration = 0
+
+        recordings_data.append({
+            "id": recording.id,
+            "recording_id": recording.id,
+            "call_id": recording.call_id or "",
+            "agent_id": recording.agent_id,
+            "agent_name": agent.agent_name if agent else "Unknown",
+            "voice_name": voice_name,
+            "audio_file": recording.audio_file,
+            "audio_name": recording.audio_name,
+            "created_at": recording.created_at.isoformat() if recording.created_at else None,
+            "tokens_consumed": tokens_consumed,
+            "duration": float(duration) if duration else 0
+        })
+
+    # Smart pagination logic
+    def get_smart_page_range(current_page, total_pages):
+        """Generate pagination list following 1 2 ... n-1 n pattern with ellipsis when needed."""
+        if total_pages <= 0:
+            return []
+        if total_pages <= 3:
+            return list(range(1, total_pages + 1))
+
+        pages = []
+
+        def add(item):
+            if item not in pages:
+                pages.append(item)
+
+        add(1)
+        add(2)
+
+        if current_page > 4:
+            add("...")
+
+        for p in range(current_page - 1, current_page + 2):
+            if 2 < p < total_pages - 1:
+                add(p)
+
+        if current_page < total_pages - 3:
+            add("...")
+
+        add(total_pages - 1)
+        add(total_pages)
+
+        cleaned = []
+        for item in pages:
+            if item == "...":
+                if cleaned and cleaned[-1] == "...":
+                    continue
+                if not cleaned:
+                    continue
+                cleaned.append(item)
+            else:
+                if 1 <= item <= total_pages:
+                    if not cleaned or cleaned[-1] != item:
+                        cleaned.append(item)
+
+        # Ensure ellipsis not at end or duplicated
+        if cleaned and cleaned[-1] == "...":
+            cleaned = cleaned[:-1]
+
+        return cleaned
+
+    page_range = get_smart_page_range(page, total_pages)
+
+    return JSONResponse({
+        "results": recordings_data,
+        "page": page,
+        "total_pages": total_pages,
+        "total_items": total_items,
+        "has_previous": page > 1,
+        "has_next": page < total_pages,
+        "previous_page": page - 1 if page > 1 else None,
+        "next_page": page + 1 if page < total_pages else None,
+        "page_range": page_range,
+        "pagination": {
+            "items_per_page": items_per_page,
+            "current_page": page,
+            "total_pages": total_pages,
+            "total_items": total_items
+        }
+    })
