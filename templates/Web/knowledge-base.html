@@ -61,9 +61,9 @@
                                             <span>Add</span>
                                         </button>
                                         <ul class="dropdown-menu">
-                                            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#addUrlModal">Add URL</a></li>
-                                            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#addKnowledgeBaseModal">Add Files</a></li>
-                                            <li><a class="dropdown-item" href="#" data-bs-toggle="modal" data-bs-target="#createTextModal">Create Text</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="openAddUrlModal(event, 'create')">Add URL</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="openAddFilesModal(event, 'create')">Add Files</a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="openCreateTextModal(event, 'create')">Create Text</a></li>
                                         </ul>
 
                                         <!-- Add URL Modal -->
@@ -77,13 +77,15 @@
                                                     <div class="modal-body">
                                                         <form id="addUrlForm" onsubmit="addUrl(event)">
                                                             <div class="mb-3">
-                                                                <label for="urlName" class="form-label">Name</label>
+                                                                <label for="urlName" class="form-label" id="urlNameLabel">Knowledge Base Name</label>
                                                                 <input type="text" class="form-control" id="urlName" required>
+                                                                <small class="text-muted d-block" id="urlNameHelper">Enter a new knowledge base name or pick an existing one.</small>
                                                             </div>
                                                             <div class="mb-3">
                                                                 <label for="urlInput" class="form-label">Enter URL</label>
                                                                 <input type="url" class="form-control" id="urlInput" required>
                                                             </div>
+                                                            <input type="hidden" id="add-url-knowledge-base-id">
                                                         </form>
                                                     </div>
                                                     <div class="modal-footer">
@@ -140,13 +142,15 @@
                                                     <div class="modal-body">
                                                         <form id="createTextForm" onsubmit="createText(event)">
                                                             <div class="mb-3">
-                                                                <label for="textTitle" class="form-label">Title</label>
+                                                                <label for="textTitle" class="form-label" id="textTitleLabel">Knowledge Base Name</label>
                                                                 <input type="text" class="form-control" id="textTitle" required>
+                                                                <small class="text-muted d-block" id="textTitleHelper">Provide the name for this knowledge base.</small>
                                                             </div>
                                                             <div class="mb-3">
                                                                 <label for="textContent" class="form-label">Content</label>
                                                                 <textarea class="form-control" id="textContent" rows="5" required></textarea>
                                                             </div>
+                                                            <input type="hidden" id="add-text-knowledge-base-id">
                                                         </form>
                                                     </div>
                                                     <div class="modal-footer">
@@ -168,7 +172,7 @@
                                             data-name="{{ knowledge_base.knowledge_base_name }}" 
                                             data-files='{{ knowledge_base.files | tojson | safe }}'>
                                                 <img src="{{ host }}/static/Web/images/lines-icon.svg" class="img-fluid"> 
-                                                {{ knowledge_base.knowledge_base_name }}
+                                                <span class="kb-name-text">{{ knowledge_base.knowledge_base_name }}</span>
                                             </a>
                                     
                                             <!-- File list container (hidden by default) -->
@@ -206,13 +210,17 @@
                                         <h6 class="mb-0">Select a Knowledge Base</h6>
                                     </div>
                                     <div class="d-flex align-items-center justify-content-end gap-2">
-                                    <!-- Edit button (Initially hidden) -->
-                                        <button type="button" class="gap-2 edit_btn align-items-center justify-content-center" 
-                                                style="display: none;" id="edit-btn" data-id="" data-bs-toggle="modal" 
-                                                data-bs-target="#AddFilesModel" >
-                                            <img src="{{ host }}/static/Web/images/edit-button.svg" class="img-fluid edit-icon">
-                                            Add files
-                                        </button>
+                                        <div class="dropdown selected_kb_actions" id="selected-kb-action-dropdown" style="display: none;">
+                                            <button type="button" class="d-flex gap-2 border-0 dropdown-toggle align-items-center" data-bs-toggle="dropdown" aria-expanded="false">
+                                                <img src="{{ host }}/static/Web/images/white-plus-icon.svg" class="img-fluid">
+                                                <span>Add to KB</span>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end">
+                                                <li><a class="dropdown-item" href="#" onclick="openAddFilesModal(event, 'existing')">Add Files</a></li>
+                                                <li><a class="dropdown-item" href="#" onclick="openAddUrlModal(event, 'existing')">Add URL</a></li>
+                                                <li><a class="dropdown-item" href="#" onclick="openCreateTextModal(event, 'existing')">Add Text</a></li>
+                                            </ul>
+                                        </div>
                                         <!-- Delete button (Initially hidden) -->
                                         <button type="button" class="gap-2 dlt_btn align-items-center justify-content-center" 
                                                 style="display: none;" id="delete-btn" data-id="" data-bs-toggle="modal" 
@@ -292,6 +300,7 @@
         <div class="modal-body">
           <form>
             <input type="hidden" id="selected-knowledge-base-id" name="selected_knowledge_base_id">
+            <input type="hidden" id="selected-knowledge-base-name" name="selected_knowledge_base_name">
             <div class="form_input">
                 <label class="form-label mb-0">Upload Files</label>
                 <div class="upload_area">
@@ -339,22 +348,23 @@ document.getElementById("uploadFile").addEventListener("change", function () {
       labelText.classList.add('d-none');
     }
   });
-    
 
-  document.addEventListener("DOMContentLoaded", function () {
     let page = 2;
     let loading = false;
     let hasNext = true;
-    
     const knowledgeBaseList = document.getElementById("knowledge-base-list");
     const knowledgeBaseBox = document.getElementById("knowledge-base-box");
     const selectedKnowledgeBaseInput = document.getElementById("selected-knowledge-base-id");
+    const selectedKnowledgeBaseNameInput = document.getElementById("selected-knowledge-base-name");
 
     const deleteButton = document.querySelector('.dlt_btn');
-    const editButton = document.querySelector('.edit_btn');
-
+    const actionDropdown = document.getElementById("selected-kb-action-dropdown");
+    
+  document.addEventListener("DOMContentLoaded", function () {
     deleteButton.style.display = "none";
-    editButton.style.display = "none";
+    if (actionDropdown) {
+        actionDropdown.style.display = "none";
+    }
     // Handle knowledge base click using event delegation
     knowledgeBaseList.addEventListener("click", function (event) {
         let target = event.target.closest(".active_knowldege_base");
@@ -374,12 +384,17 @@ document.getElementById("uploadFile").addEventListener("change", function () {
         if (selectedKnowledgeBaseInput) {
             selectedKnowledgeBaseInput.value = knowledgeBaseId;
         }
+        if (selectedKnowledgeBaseNameInput) {
+            selectedKnowledgeBaseNameInput.value = name;
+        }
 
         // Show the delete button only for the clicked knowledge base
         deleteButton.style.display = "flex";
         deleteButton.setAttribute("data-id", knowledgeBaseId);
-        editButton.style.display = "flex";
-        editButton.setAttribute("data-id", knowledgeBaseId);
+        if (actionDropdown) {
+            actionDropdown.style.display = "flex";
+            actionDropdown.setAttribute("data-id", knowledgeBaseId);
+        }
 
         // Highlight the selected item
         document.querySelectorAll(".active_knowldege_base").forEach(kb => kb.classList.remove("selected"));
@@ -567,7 +582,24 @@ function updateKnowledgeBaseDisplay(name, fileData, knowledgeBaseId) {
 function updateKnowledgeBaseName(knowledgeBaseId, newName) {
     const listItem = document.querySelector(`#knowledge-base-list-item_${knowledgeBaseId} a`);
     if (listItem) {
-        listItem.textContent = newName;
+        listItem.setAttribute("data-name", newName);
+        const textNode = listItem.querySelector(".kb-name-text");
+        if (textNode) {
+            textNode.textContent = newName;
+        }
+    }
+    const selectedKnowledgeBaseInput = document.getElementById("selected-knowledge-base-id");
+    const selectedKnowledgeBaseNameInput = document.getElementById("selected-knowledge-base-name");
+    if (selectedKnowledgeBaseInput && selectedKnowledgeBaseInput.value === String(knowledgeBaseId) && selectedKnowledgeBaseNameInput) {
+        selectedKnowledgeBaseNameInput.value = newName;
+        const titleInput = document.getElementById("textTitle");
+        const urlNameInput = document.getElementById("urlName");
+        if (titleInput && titleInput.hasAttribute("readonly")) {
+            titleInput.value = newName;
+        }
+        if (urlNameInput && urlNameInput.hasAttribute("readonly")) {
+            urlNameInput.value = newName;
+        }
     }
 }
 
@@ -589,7 +621,7 @@ function loadMoreKnowledgeBases() {
     loading = true;
     document.getElementById("loader").style.display = "block";
 
-    fetch("{{ host }}/knowledge_base/?page=${page}", {
+    fetch(`/elevenlabs/api/v1/knowledge-base-json?page=${page}`, {
         headers: { "X-Requested-With": "XMLHttpRequest" }
     })
     .then(response => response.json())
@@ -598,14 +630,15 @@ function loadMoreKnowledgeBases() {
             data.knowledge_bases.forEach(kb => {
                 if (!document.querySelector(`.active_knowldege_base[data-id="${kb.id}"]`)) {
                     const div = document.createElement("div");
-                    div.classList.add("list_data"); 
+                            div.classList.add("list_data"); 
+                            div.id = `knowledge-base-list-item_${kb.id}`;
                     div.innerHTML = `
                     <a href="#" class="d-flex align-items-center gap-2 active_knowldege_base" 
                        data-id="${kb.id}" 
                        data-name="${kb.knowledge_base_name}" 
                        data-files='${JSON.stringify(kb.files)}'>
                         <img src="{{ host }}/static/Web/images/lines-icon.svg" class="img-fluid"> 
-                        ${kb.knowledge_base_name}
+                        <span class="kb-name-text">${kb.knowledge_base_name}</span>
                     </a>
                     `;
                    
@@ -631,9 +664,179 @@ function loadMoreKnowledgeBases() {
 }
 
 
+function getSelectedKnowledgeBaseId() {
+    const knowledgeBaseInput = document.getElementById("selected-knowledge-base-id");
+    return knowledgeBaseInput ? knowledgeBaseInput.value : "";
+}
+
+function ensureKnowledgeBaseSelection(actionLabel) {
+    const knowledgeBaseId = getSelectedKnowledgeBaseId();
+    if (!knowledgeBaseId) {
+        toastr.error(`Please select a knowledge base to ${actionLabel}.`, "Error", {
+            positionClass: "toast-top-right"
+        });
+        return null;
+    }
+    return knowledgeBaseId;
+}
+
+function resetCreateKnowledgeBaseForm() {
+    const nameInput = document.getElementById("knowledgeBaseName");
+    const uploadInput = document.getElementById("uploadFile");
+    const fileNameElement = document.getElementById('fileName');
+    const labelText = document.querySelector('#uploadLabel .label-text');
+
+    if (nameInput) {
+        nameInput.value = "";
+    }
+    if (uploadInput) {
+        uploadInput.value = "";
+    }
+    if (fileNameElement) {
+        fileNameElement.textContent = "";
+        fileNameElement.classList.add('d-none');
+    }
+    if (labelText) {
+        labelText.classList.remove('d-none');
+    }
+}
+
+function openAddFilesModal(event, mode = "existing") {
+    event.preventDefault();
+
+    if (mode === "create") {
+        const createModalEl = document.getElementById("addKnowledgeBaseModal");
+        if (createModalEl) {
+            const modal = bootstrap.Modal.getOrCreateInstance(createModalEl);
+            resetCreateKnowledgeBaseForm();
+            modal.show();
+        }
+        return;
+    }
+
+    const knowledgeBaseId = ensureKnowledgeBaseSelection("add files");
+    if (!knowledgeBaseId) return;
+
+    const modalEl = document.getElementById("AddFilesModel");
+    if (modalEl) {
+        const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+        modal.show();
+    }
+}
+
+function openAddUrlModal(event, mode = "existing") {
+    event.preventDefault();
+    const modalEl = document.getElementById("addUrlModal");
+    const hiddenInput = document.getElementById("add-url-knowledge-base-id");
+    const kbNameInput = document.getElementById("urlName");
+    const helper = document.getElementById("urlNameHelper");
+    const label = document.getElementById("urlNameLabel");
+    const selectedKnowledgeBaseNameInput = document.getElementById("selected-knowledge-base-name");
+
+    if (!modalEl || !kbNameInput) {
+        console.error("Required elements for Add URL modal are missing.");
+        return;
+    }
+
+    modalEl.setAttribute("data-mode", mode);
+
+    if (mode === "existing") {
+        const knowledgeBaseId = ensureKnowledgeBaseSelection("add a URL");
+        if (!knowledgeBaseId) return;
+
+        if (hiddenInput) {
+            hiddenInput.value = knowledgeBaseId;
+        }
+
+        const selectedName = selectedKnowledgeBaseNameInput ? selectedKnowledgeBaseNameInput.value : "";
+        kbNameInput.value = selectedName;
+        kbNameInput.setAttribute("readonly", "readonly");
+        if (label) {
+            label.textContent = "Knowledge Base Name";
+        }
+        if (helper) {
+            helper.textContent = "Using the currently selected knowledge base.";
+        }
+    } else {
+        if (hiddenInput) {
+            hiddenInput.value = "";
+        }
+        kbNameInput.value = "";
+        kbNameInput.removeAttribute("readonly");
+        const urlInput = document.getElementById("urlInput");
+        if (urlInput) {
+            urlInput.value = "";
+        }
+        if (label) {
+            label.textContent = "Knowledge Base Name";
+        }
+        if (helper) {
+            helper.textContent = "Enter a name to create a new knowledge base for this URL.";
+        }
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+}
+
+function openCreateTextModal(event, mode = "existing") {
+    event.preventDefault();
+    const modalEl = document.getElementById("createTextModal");
+    const hiddenInput = document.getElementById("add-text-knowledge-base-id");
+    const titleInput = document.getElementById("textTitle");
+    const helper = document.getElementById("textTitleHelper");
+    const label = document.getElementById("textTitleLabel");
+    const selectedKnowledgeBaseNameInput = document.getElementById("selected-knowledge-base-name");
+
+    if (!modalEl || !titleInput) {
+        console.error("Required elements for Create Text modal are missing.");
+        return;
+    }
+
+    modalEl.setAttribute("data-mode", mode);
+
+    if (mode === "existing") {
+        const knowledgeBaseId = ensureKnowledgeBaseSelection("add text");
+        if (!knowledgeBaseId) return;
+
+        if (hiddenInput) {
+            hiddenInput.value = knowledgeBaseId;
+        }
+
+        const selectedName = selectedKnowledgeBaseNameInput ? selectedKnowledgeBaseNameInput.value : "";
+        titleInput.value = selectedName;
+        titleInput.setAttribute("readonly", "readonly");
+        if (label) {
+            label.textContent = "Knowledge Base Name";
+        }
+        if (helper) {
+            helper.textContent = "Using the currently selected knowledge base.";
+        }
+    } else {
+        if (hiddenInput) {
+            hiddenInput.value = "";
+        }
+        titleInput.value = "";
+        titleInput.removeAttribute("readonly");
+        const contentInput = document.getElementById("textContent");
+        if (contentInput) {
+            contentInput.value = "";
+        }
+        if (label) {
+            label.textContent = "Knowledge Base Name";
+        }
+        if (helper) {
+            helper.textContent = "Enter a name to create a new knowledge base for this text.";
+        }
+    }
+
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+}
+
+
 document.addEventListener("DOMContentLoaded", function () {
     const deleteButton = document.querySelector('.dlt_btn');
-    const editButton = document.querySelector('.edit_btn');
     const deleteModal = document.getElementById("deleteModal");
     const confirmDeleteBtn = document.getElementById("confirm-delete");
     const cancelDeleteBtn = document.getElementById("cancel-delete");
@@ -641,7 +844,6 @@ document.addEventListener("DOMContentLoaded", function () {
     const deleteDescription = document.getElementById("delete-description");
     // Ensure the delete button is hidden initially
     deleteButton.style.display = "none";
-    editButton.style.display = "none";
 
     // Listen for clicks on the delete button
     deleteButton.addEventListener("click", function () {
@@ -998,10 +1200,33 @@ function saveMoreFiles(e) {
 
 function addUrl(e) {
         e.preventDefault();
-        const url = document.getElementById("urlInput").value;
-        const name = document.getElementById("urlName").value;
-        if (!url || !name) {
-            toastr.error("Please enter a URL and name.", "Error", {
+        const modalEl = document.getElementById("addUrlModal");
+        const mode = modalEl ? modalEl.getAttribute("data-mode") || "existing" : "existing";
+        const url = document.getElementById("urlInput").value.trim();
+        const knowledgeBaseIdInput = document.getElementById("add-url-knowledge-base-id");
+        const selectedKnowledgeBaseNameInput = document.getElementById("selected-knowledge-base-name");
+        let name = document.getElementById("urlName").value.trim();
+        const knowledgeBaseId = knowledgeBaseIdInput ? knowledgeBaseIdInput.value : "";
+
+        if (!url) {
+            toastr.error("Please enter a URL.", "Error", {
+                positionClass: "toast-top-right"
+            });
+            return;
+        }
+
+        if (mode === "existing") {
+            if (!knowledgeBaseId) {
+                toastr.error("Please select a knowledge base before adding a URL.", "Error", {
+                    positionClass: "toast-top-right"
+                });
+                return;
+            }
+            if (selectedKnowledgeBaseNameInput && selectedKnowledgeBaseNameInput.value) {
+                name = selectedKnowledgeBaseNameInput.value.trim();
+            }
+        } else if (!name) {
+            toastr.error("Please provide a knowledge base name.", "Error", {
                 positionClass: "toast-top-right"
             });
             return;
@@ -1016,7 +1241,6 @@ function addUrl(e) {
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(255, 255, 255, 0.8);
             display: flex;
             justify-content: center;
             align-items: center;
@@ -1038,9 +1262,14 @@ function addUrl(e) {
 
         fetch("{{ host }}/elevenlabs/api/v1/add_url", {
             method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+                "X-CSRFToken": "{{ csrf_token }}"
+            },
             body: JSON.stringify({
                 url: url,
-                name: name
+                name: name,
+                knowledge_base_id: knowledgeBaseId
             })
         })
         .then(response => response.json())
@@ -1049,18 +1278,17 @@ function addUrl(e) {
             document.getElementById('fullScreenLoader').remove();
 
             if (data.status === "success") {
-                // Close the modal
-                document.querySelector(".modal-backdrop")?.remove();
                 const addUrlModal = document.getElementById("addUrlModal");
-                if (addUrlModal) {
-                    addUrlModal.style.display = "none";
-                    addUrlModal.classList.remove("show");
-                }
+                const modalInstance = addUrlModal ? bootstrap.Modal.getInstance(addUrlModal) : null;
+                modalInstance?.hide();
+
                 toastr.success(data.message, "Success", {
                     positionClass: "toast-top-right"
                 });
                 document.getElementById("urlInput").value = "";
-                document.getElementById("urlName").value = "";
+                if (mode === "create") {
+                    document.getElementById("urlName").value = "";
+                }
                 setTimeout(() => {
                     location.reload();
                 }, 1000);
@@ -1090,10 +1318,36 @@ function downloadFile(url) {
 
 function createText(e) {
     e.preventDefault();
-    const title = document.getElementById("textTitle").value;
-    const content = document.getElementById("textContent").value;
-    if (!title || !content) {
-        toastr.error("Please enter a title and content.", "Error", {
+    const modalEl = document.getElementById("createTextModal");
+    const mode = modalEl ? modalEl.getAttribute("data-mode") || "existing" : "existing";
+    const titleInput = document.getElementById("textTitle");
+    const contentInput = document.getElementById("textContent");
+    const knowledgeBaseIdInput = document.getElementById("add-text-knowledge-base-id");
+    const selectedKnowledgeBaseNameInput = document.getElementById("selected-knowledge-base-name");
+
+    const content = contentInput.value;
+    let title = titleInput.value.trim();
+    const knowledgeBaseId = knowledgeBaseIdInput ? knowledgeBaseIdInput.value : "";
+
+    if (!content) {
+        toastr.error("Please enter content.", "Error", {
+            positionClass: "toast-top-right"
+        });
+        return;
+    }
+
+    if (mode === "existing") {
+        if (!knowledgeBaseId) {
+            toastr.error("Please select a knowledge base before adding text.", "Error", {
+                positionClass: "toast-top-right"
+            });
+            return;
+        }
+        if (selectedKnowledgeBaseNameInput && selectedKnowledgeBaseNameInput.value) {
+            title = selectedKnowledgeBaseNameInput.value.trim();
+        }
+    } else if (!title) {
+        toastr.error("Please provide a knowledge base name.", "Error", {
             positionClass: "toast-top-right"
         });
         return;
@@ -1108,7 +1362,6 @@ function createText(e) {
         left: 0;
         width: 100%;
         height: 100%;
-        background: rgba(255, 255, 255, 0.8);
         display: flex;
         justify-content: center;
         align-items: center;
@@ -1139,9 +1392,14 @@ function createText(e) {
 
     fetch("{{ host }}/elevenlabs/api/v1/create_text", {
         method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": "{{ csrf_token }}"
+        },
         body: JSON.stringify({
             title: title,
-            content: content
+            content: content,
+            knowledge_base_id: knowledgeBaseId
         })
     })
     .then(response => response.json())
@@ -1150,15 +1408,21 @@ function createText(e) {
         fullScreenLoader.remove();
 
         if (data.status === "success") {
+            const createTextModal = document.getElementById("createTextModal");
+            const modalInstance = createTextModal ? bootstrap.Modal.getInstance(createTextModal) : null;
+            modalInstance?.hide();
+
             toastr.success(data.message, "Success", {
                 positionClass: "toast-top-right"
             });
-            document.querySelector(".modal-backdrop")?.remove();
-            const createTextModal = document.getElementById("createTextModal");
-            if (createTextModal) {
-                createTextModal.style.display = "none";
-                createTextModal.classList.remove("show");
+
+            if (mode === "create" && titleInput) {
+                titleInput.value = "";
             }
+            if (contentInput) {
+                contentInput.value = "";
+            }
+
             setTimeout(() => {
                 location.reload();
             }, 1000);

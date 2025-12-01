@@ -2171,4 +2171,14 @@ span.description-text::after {
     to {
         transform: rotate(360deg);
     }
+    
+}
+
+.call_detail_audio::-webkit-media-controls {
+   min-width: 400px!important;
+}
+audio#audioPlayer {
+    width: 100% !important;
+    min-width: 100%;
+    display: block;
 }

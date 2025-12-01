@@ -908,7 +908,16 @@ class AudioRecordings(Base):
                 db.session.rollback()
             return False
             return False
-
+    
+    @classmethod
+    def get_call_record(cls, recording_id: int) -> Optional["CallModel"]:
+        """Get the corresponding CallModel for an AudioRecordings record"""
+        from app.databases.models import CallModel
+        with db():
+            recording = db.session.query(cls).filter(cls.id == recording_id).first()
+            if recording and recording.call_id:
+                return CallModel.get_by_call_id(recording.call_id)
+            return None
     
 # class AgentPhoneNumberModel(Base):
 #     __tablename__ = "agent_phone_number"
@@ -1223,6 +1232,7 @@ class CallModel(Base):
     call_id = Column(String, unique=True, nullable=False)  # Unique identifier for each call
     variables = Column(JSONB, nullable=True, default={})  # Store variables as JSON
     created_at = Column(DateTime, default=func.now())
+    tokens_consumed = Column(Integer, default=0)
 
     # Relationship with AgentModel
     agent = relationship("AgentModel", back_populates="calls")
@@ -1262,6 +1272,18 @@ class CallModel(Base):
             call = db.session.query(cls).filter(cls.id == call_id).first()
             if call:
                 call.variables = variables
+                db.session.commit()
+                db.session.refresh(call)
+                return call
+            return None
+    
+    @classmethod
+    def update_tokens_consumed(cls, call_id_str: str, tokens_consumed: int) -> Optional["CallModel"]:
+        """Update tokens consumed for a call by call_id string"""
+        with db():
+            call = db.session.query(cls).filter(cls.call_id == call_id_str).first()
+            if call:
+                call.tokens_consumed = tokens_consumed
                 db.session.commit()
                 db.session.refresh(call)
                 return call

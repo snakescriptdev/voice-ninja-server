@@ -1,4 +1,4 @@
-from fastapi import APIRouter,Request, Response
+from fastapi import APIRouter,Request, Response,Query
 from .schemas.format import (
     ErrorResponse, 
     SuccessResponse, 
@@ -2278,3 +2278,90 @@ async def reset_noise_variables(request: Request):
             status_code=500,
             content={"status": "error", "message": "Something went wrong!", "error": str(e)}
         )
+
+
+@router.get("/dashboard/search")
+async def dashboard_search(
+    request: Request,
+    search: str = Query(default=""),
+    page: int = Query(1, ge=1),
+):
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    agents = AgentModel.get_all_by_user(user.get("user_id"))
+
+    search_query = (search or "").strip()
+    if search_query:
+        search_value = search_query.lower()
+
+        def matches(agent):
+            # Only use "safe" string fields that are directly loaded on the agent.
+            candidate_fields = [
+                getattr(agent, "agent_name", "") or "",
+                getattr(agent, "phone_number", "") or "",
+                getattr(agent, "selected_model", "") or "",
+                getattr(agent, "selected_language", "") or "",
+                getattr(agent, "voice_name", "") or "",
+                getattr(agent, "llm_name", "") or "",
+                getattr(agent, "model_name", "") or "",
+            ]
+            return any(
+                (search_value in value.lower())
+                for value in candidate_fields if value
+            )
+
+        # Avoid DetachedInstanceError:
+        # Don't access lazy loaded relationship fields in matches()
+        agents = [agent for agent in agents if matches(agent)]
+
+    # Pagination for JSON
+    items_per_page = 10
+    total_items = len(agents)
+    total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    paged_agents = agents[start:end]
+
+    # Fix for DetachedInstanceError: Access only available (eager loaded) fields, avoid lazy-loading relations.
+    # If relation fields (like selected_model_obj) are not guaranteed to be loaded, don't access them.
+    # Instead, fallback to safe string values or use .get method if using dict/row objects.
+
+    def safe_serialize_agent(agent):
+        # Use __dict__ to safely get attributes without triggering lazy loads.
+        agent_dict = agent.__dict__ if hasattr(agent, "__dict__") else agent
+
+        def get_field(obj, field, default=""):
+            # Try direct attribute, then dict, else default
+            return getattr(obj, field, obj.get(field, default) if isinstance(obj, dict) else default)
+
+        return {
+            "id": get_field(agent, "id", None),
+            "agent_name": get_field(agent, "agent_name", "") or "",
+            "phone_number": get_field(agent, "phone_number", "") or "",
+            "selected_model": get_field(agent, "selected_model", "") or "",
+            "selected_language": get_field(agent, "selected_language", "") or "",
+            "selected_llm_model": get_field(agent, "selected_llm_model", "") or "",
+            # The below safely tries voice/model fields as plain fields only
+            "voice_name": get_field(agent, "voice_name", ""),
+            "llm_name": get_field(agent, "llm_name", ""),
+            "model_name": get_field(agent, "model_name", ""),
+            # Derive has_voice by presence of voice_name
+            "has_voice": bool(get_field(agent, "voice_name", "")),
+        }
+
+    return JSONResponse({
+        "page": page,
+        "total_pages": total_pages,
+        "total_items": total_items,
+        "has_previous": page > 1,
+        "has_next": page < total_pages,
+        "previous_page": max(1, page - 1) if page > 1 else None,
+        "next_page": min(total_pages, page + 1) if page < total_pages else None,
+        "page_range": list(range(1, total_pages + 1)),
+        "results": [safe_serialize_agent(agent) for agent in paged_agents],
+        "search_query": search_query,
+    })
+

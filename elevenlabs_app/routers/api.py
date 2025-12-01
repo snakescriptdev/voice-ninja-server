@@ -31,7 +31,7 @@ from app.databases.models import agent_knowledge_association
 from config import MEDIA_DIR  # Import properly
 from app.utils.helper import extract_text_from_file, is_valid_url
 # from app.utils.langchain_integration import get_splits, convert_to_vectorstore  # Removed - using ElevenLabs knowledge base directly
-
+import urllib.parse,re
 
 
 
@@ -2145,6 +2145,9 @@ async def add_url(request: Request):
         data = await request.json()
         url = data.get("url")
         name = data.get("name")
+        knowledge_base_id = data.get("knowledge_base_id")
+        if knowledge_base_id:
+            name = re.sub(r'[^0-9A-Za-z]+','_', urllib.parse.urlparse(url).netloc + "_" + urllib.parse.urlparse(url).path.strip("/"))
         
         if not url:
             return JSONResponse(
@@ -2152,12 +2155,14 @@ async def add_url(request: Request):
             )
 
         user = request.session.get("user")
+        if knowledge_base_id:
+            knowledge_base = KnowledgeBaseModel.get_by_id(knowledge_base_id)
+        else:
+            # Check if Knowledge Base already exists
+            knowledge_base = KnowledgeBaseModel.get_by_name(name, user.get("user_id"))
 
-        # Check if Knowledge Base already exists
-        knowledge_base = KnowledgeBaseModel.get_by_name(name, user.get("user_id"))
-
-        if not knowledge_base:
-            knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=name, url=url)
+            if not knowledge_base:
+                knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=name, url=url)
         
         temp_file_name = f"{name}_{uuid.uuid4()}.txt"
         temp_file_path = os.path.join(MEDIA_DIR, "knowledge_base_files", temp_file_name)
@@ -2272,12 +2277,18 @@ async def create_text(request: Request):
         content = data.get("content")
         if not title or not content:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Title and content are required"})
+        knowledge_base_id = data.get("knowledge_base_id")
+        if knowledge_base_id:
+            title = "".join(c if c.isalnum() else "_" for c in content[:50]).strip("_")
         user = request.session.get("user")
         # Check if Knowledge Base already exists
-        knowledge_base = KnowledgeBaseModel.get_by_name(title, user.get("user_id"))
+        if knowledge_base_id:
+            knowledge_base = KnowledgeBaseModel.get_by_id(knowledge_base_id)
+        else:
+            knowledge_base = KnowledgeBaseModel.get_by_name(title, user.get("user_id"))
 
-        if not knowledge_base:
-            knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=title)
+            if not knowledge_base:
+                knowledge_base = KnowledgeBaseModel.create(created_by_id=user.get("user_id"), knowledge_base_name=title)
 
         file_path = os.path.join(MEDIA_DIR, f"knowledge_base_files/{title}_{uuid.uuid4()}.txt")
 
@@ -2464,6 +2475,7 @@ async def call_details(request: Request):
     """Get detailed information about a specific call"""
     try:
         transcript, summary = None, None
+        tokens_consumed = None
         data = await request.json()
         call_id = data.get("call_id")
         
@@ -2552,7 +2564,11 @@ async def call_details(request: Request):
         
         # Get call details from CallModel
         call_details = CallModel.get_by_call_id(call.call_id) if hasattr(call, 'call_id') else None
-        
+
+        # Try to get tokens consumed from call_details if available
+        if call_details and hasattr(call_details, "tokens_consumed"):
+            tokens_consumed = call_details.tokens_consumed
+
         # Get dynamic variables and show only essential call information
         dynamic_variables = call_details.variables if call_details else (agent.dynamic_variable if agent else {})
         filtered_variables = {}
@@ -2582,7 +2598,8 @@ async def call_details(request: Request):
                     "audio_file": call.audio_file,
                     "created_at": str(call.created_at) if hasattr(call, 'created_at') else None,
                     "agent_name": agent.agent_name if agent else "Unknown",
-                    "duration": getattr(call, 'duration', 0) or 0
+                    "duration": dynamic_variables.get("call_duration_secs") or 0,
+                    "tokens_consumed": tokens_consumed
                 },
                 "transcript": transcript,
                 "summary": summary,
@@ -3139,3 +3156,49 @@ async def get_agent_connection(request: Request):
             status_code=500,
             content={"status": "error", "message": "Something went wrong!", "error": str(e)}
         )
+
+@ElevenLabsAPIRouter.get("/knowledge-base-json", name="knowledge-base_json")
+async def knowledge_base_json(request: Request, page: int = 1):
+    user_id = request.session.get("user").get("user_id")
+    knowledge_bases = KnowledgeBaseModel.get_all_by_user(user_id)
+
+    items_per_page = 10
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+
+    formatted_knowledge_bases = []
+
+    for knowledge_base in knowledge_bases[start:end]:
+        files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+
+        files_data = [
+            {
+                "id": file.id,
+                "name": file.file_name,
+                "size": "",
+                "url": f"/media/{file.file_path}",
+                "knowledge_base_id": knowledge_base.id,
+                "elevenlabs_doc_id": file.elevenlabs_doc_id,
+                "elevenlabs_doc_name": file.elevenlabs_doc_name
+            }
+            for file in files
+        ]
+
+        formatted_knowledge_bases.append({
+            "id": knowledge_base.id,
+            "knowledge_base_name": knowledge_base.knowledge_base_name,
+            "files": files_data
+        })
+
+    # Pagination status
+    total_items = len(knowledge_bases)
+    has_next = end < total_items
+    next_page = page + 1 if has_next else None
+
+    return {
+        "knowledge_bases": formatted_knowledge_bases,
+        "has_next": has_next,
+        "next_page": next_page,
+        "current_page": page,
+        "total_items": total_items
+    }
