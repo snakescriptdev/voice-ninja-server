@@ -430,19 +430,11 @@ async def edit_agent(request: Request):
                 # Extract dynamic variables from the prompt
                 from jinja2 import meta
                 new_variables = meta.find_undeclared_variables(parsed_template)
-                # print(f"🔍 Debug: Dynamic variables found in prompt: {list(new_variables)}")
-                
-                # Get existing dynamic variables if any
-                existing_variables = agent_rec.dynamic_variable if hasattr(agent_rec, 'dynamic_variable') else {}
-                # print(f"🔍 Debug: Existing dynamic variables: {existing_variables}")
-                
-                # Merge existing and new variables
-                merged_variables = {**existing_variables, **{var: "" for var in new_variables if var not in existing_variables}}
-                # print(f"🔍 Debug: Merged dynamic variables: {merged_variables}")
                 
                 # Add dynamic variables to update data
-                if merged_variables:
-                    update_data['dynamic_variable'] = merged_variables
+                if new_variables:
+                    new_variables_dict = {v: "" for v in new_variables}
+                    update_data['dynamic_variable'] = new_variables_dict
                     # print(f"🔍 Debug: Added dynamic_variable to update data")
                 
             except Exception as parse_error:
@@ -569,9 +561,15 @@ async def edit_agent(request: Request):
                     session.execute(stmt)
                     session.commit()
 
+            updated_dynamic_vars = updated_agent.dynamic_variable if hasattr(updated_agent, "dynamic_variable") else {}
             return JSONResponse(
                 status_code=200,
-                content={"status": "success", "message": "Agent updated successfully", "status_code": 200}
+                content={
+                    "status": "success",
+                    "message": "Agent updated successfully",
+                    "status_code": 200,
+                    "updated_dynamic_variables": updated_dynamic_vars 
+                }
             )
 
         except Exception as e:

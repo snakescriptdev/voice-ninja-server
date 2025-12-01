@@ -273,7 +273,13 @@
                 </div>
                 <div class="agent_type_box_inner">
                     <div class="agent_type_textarea">
-                        <textarea class="form-control" id="agent-prompt" placeholder="Enter your prompt here....">{% if agent %}{{ agent.agent_prompt }}{% endif %}</textarea>
+                        <div id="editor" style="min-height:200px; border:1px solid #ddd; padding:8px;"></div>
+                        <div style="margin-top:10px;">
+                            <button id="save-editor-btn" class="btn btn-primary">Save</button>
+                            <button id="cancel-editor-btn" class="btn btn-secondary">Cancel</button>
+                        </div>
+                        <textarea class="form-control" style="display:none;" id="agent-prompt"class="hidden-textarea" placeholder="Enter your prompt here....">{% if agent %}{{ agent.agent_prompt }}{% endif %}</textarea>
+
                         <div class="agent_type_textarea_footer pt-1">
                             <small style="font-size:12px;" class="text-muted">Use <span>&#123;&#123;_&#125;&#125;</span> to add variables.</small>
                         </div>
@@ -1127,7 +1133,267 @@ window.addEventListener('message', function(event) {
     <input hidden id="username" placeholder="Username" value="admin">
     <input hidden id="password" placeholder="Password" value="admin123">
     <input hidden id="elevenlabs-agent-id" value="{{ agent_id }}">
-  <script>
+    
+    <script src="https://cdn.ckeditor.com/ckeditor5/41.1.0/balloon-block/ckeditor.js"></script>
+
+    {% raw %}
+    <script>
+    
+    /* =====================================================
+       1️⃣ REGISTER MODEL ELEMENT
+    ===================================================== */
+    function registerVariablePillSchema(editor) {
+        editor.model.schema.register('variablePill', {
+            allowWhere: '$text',
+            isInline: true,
+            isObject: true,
+            allowAttributes: ['data-var', 'style']
+        });
+    
+        // VIEW → MODEL
+        editor.conversion.for('upcast').elementToElement({
+            view: { name: 'span', attributes: { 'data-var': true } },
+            model: (view, { writer }) => {
+                return writer.createElement('variablePill', {
+                    'data-var': view.getAttribute('data-var'),
+                    'style': view.getAttribute('style')
+                });
+            }
+        });
+    
+        // MODEL → VIEW
+        editor.conversion.for('downcast').elementToElement({
+            model: 'variablePill',
+            view: (modelEl, { writer }) => {
+                return writer.createContainerElement('span', {
+                    'data-var': modelEl.getAttribute('data-var'),
+                    'style': modelEl.getAttribute('style')
+                });
+            }
+        });
+    }
+    
+    /* =====================================================
+       2️⃣ REAL TIME WRAPPER — VIEW DIRECT APPROACH
+    ===================================================== */
+    function enableRealtimeWrapping(editor) {
+        const pillStyle =
+            'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
+    
+        const viewDoc = editor.editing.view.document;
+    
+        viewDoc.on('insertText', (evt, data) => {
+            if (data.text !== '}') return; // Only act on "}
+            
+            // Delay so the view updates first
+            setTimeout(() => wrapInView(editor, pillStyle), 0);
+        });
+    }
+    
+    function wrapInView(editor, pillStyle) {
+        const view = editor.editing.view;
+        const viewRoot = view.document.getRoot();
+        const writer = view.document.writer;
+    
+        view.change(writer => {
+            const range = view.createRangeIn(viewRoot);
+    
+            for (const value of range) {
+                const node = value.item;
+    
+                if (!node.is('text')) continue;
+    
+                const text = node.data;
+                const regex = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
+                const match = regex.exec(text);
+    
+                if (!match) continue;
+    
+                const full = match[0];
+                const name = match[1];
+                const start = match.index;
+                const end = start + full.length;
+    
+                const startPos = writer.createPositionAt(node, start);
+                const endPos = writer.createPositionAt(node, end);
+                const wrapRange = writer.createRange(startPos, endPos);
+    
+                // Remove raw text
+                writer.remove(wrapRange);
+    
+                // Create span
+                const span = writer.createAttributeElement('span', {
+                    'data-var': name,
+                    'style': pillStyle
+                });
+    
+                // Insert span + text
+                writer.insert(viewWriter.createText(full), span);
+    
+                // Insert pill
+                writer.insert(span, startPos);
+    
+                return;
+            }
+        });
+    }
+    
+    /* =====================================================
+       3️⃣ HELPERS
+    ===================================================== */
+    function wrapVariables(text) {
+        const pillStyle =
+            'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
+    
+        return text.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g,
+            (_, name) => `<span data-var="${name}" style="${pillStyle}">{{${name}}}</span>`
+        );
+    }
+    
+    function htmlToPlainText(html) {
+        const div = document.createElement("div");
+        div.innerHTML = html;
+        return div.innerText.trim();
+    }
+    
+    /* =====================================================
+       4️⃣ INIT CKEDITOR
+    ===================================================== */
+    let originalRawValue = document.getElementById("agent-prompt").value.trim();
+    let editorInstance;
+    
+    BalloonEditor
+        .create(document.querySelector('#editor'), {
+            toolbar: [
+                'bold', 'italic', 'underline', '|',
+                'numberedList', 'bulletedList', '|',
+                'undo', 'redo'
+            ],
+            htmlSupport: {
+                allow: [
+                    {
+                        name: 'span',
+                        attributes: true,
+                        classes: true,
+                        styles: true
+                    }
+                ]
+            }
+        })
+        .then(editor => {
+            editorInstance = editor;
+    
+            editor.setData(wrapVariables(originalRawValue).replace(/\n/g, "<br>"));
+    
+            registerVariablePillSchema(editor);
+            enableRealtimeWrapping(editor);
+        })
+        .catch(err => console.error(err));
+    
+    /* =====================================================
+       5️⃣ SAVE
+    ===================================================== */
+    document.getElementById("save-editor-btn").addEventListener("click", async function () {
+        try {
+            if (!editorInstance) {
+                console.error("save: editorInstance not ready");
+                return;
+            }
+    
+            const pillStyle = 'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
+            const model = editorInstance.model;
+    
+            // 1) Make all replacements in the MODEL (safe). We'll collect matches first to avoid walker mutation issues.
+            model.change(writer => {
+                const root = model.document.getRoot();
+                const walker = writer.createRangeIn(root).getWalker();
+                const regex = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
+    
+                // collect matches: each item { node, start, end, name }
+                const replacements = [];
+    
+                for (const item of walker) {
+                    const node = item.item;
+                    if (!node.is('$text')) continue;
+                    const text = node.data;
+                    // iterate all matches in this text
+                    let m;
+                    regex.lastIndex = 0;
+                    while ((m = regex.exec(text)) !== null) {
+                        replacements.push({
+                            node,
+                            start: m.index,
+                            end: m.index + m[0].length,
+                            name: m[1]
+                        });
+                    }
+                }
+    
+                // apply replacements from end -> start to avoid invalidating positions
+                for (let i = replacements.length - 1; i >= 0; --i) {
+                    const r = replacements[i];
+                    const startPos = writer.createPositionAt(r.node, r.start);
+                    const endPos = writer.createPositionAt(r.node, r.end);
+                    const range = writer.createRange(startPos, endPos);
+    
+                    // get the first item (text node slice) inside that range, remove it, insert pill
+                    const extracted = range.getItems().next().value;
+    
+                    const pill = writer.createElement('variablePill', {
+                        'data-var': r.name,
+                        'style': pillStyle
+                    });
+    
+                    writer.insertText(`{{${r.name}}}`, pill);
+                    writer.remove(extracted);
+                    writer.insert(pill, range.start);
+                }
+            });
+    
+            // 2) Get the new HTML from editor (downcast applied) and create cleaned plain text
+            let html = editorInstance.getData();
+    
+            const cleanedText = html
+                .replace(/<br\s*\/?>/gi, "\n")
+                .replace(/<\/(p|div|section|li)>/gi, "\n")
+                .replace(/<[^>]+>/g, "")        // remove remaining tags
+                .replace(/&nbsp;/g, " ")
+                .replace(/\n{3,}/g, "\n\n")
+                .trim();
+    
+            // 3) Put cleaned text into hidden input and call save functions
+            document.getElementById("agent-prompt").value = cleanedText;
+    
+            const url = new URL(window.location.href);
+            const agentId = url.searchParams.get("agent_id");
+    
+            // Your save APIs
+            saveAgentPrompt(agentId, cleanedText);
+            updateAgentSetting('prompt', cleanedText);
+    
+            console.log("save: success", { cleanedText, html });
+    
+        } catch (err) {
+            console.error("save: error", err);
+        }
+    });
+    
+   
+    /* =====================================================
+       6️⃣ CANCEL
+    ===================================================== */
+    document.getElementById("cancel-editor-btn").addEventListener("click", function () {
+        if (!editorInstance) return;
+    
+        editorInstance.setData(wrapVariables(originalRawValue).replace(/\n/g, "<br>"));
+    });
+    
+    </script>
+    {% endraw %}
+    
+    <script>
+    var dynamicVariables = {{ dynamic_variables|tojson|safe }};
+
     function toggleVariableModal() {
         const modal = document.getElementById('variable-modal');
         if(modal.style.display === 'none') {
@@ -1147,7 +1413,7 @@ window.addEventListener('message', function(event) {
         dynamicVariablesDiv.innerHTML = '';
         
         // Get dynamic variables from the template context
-        const dynamicVariables = {{ dynamic_variables|tojson|safe }};
+        
         
         if (dynamicVariables && Object.keys(dynamicVariables).length > 0) {
             // Add existing variables
@@ -1699,28 +1965,6 @@ function applyThemeToMainWidget(primaryColor, secondaryColor, pulseColor) {
             }
         });
     });
-    
-
-document.addEventListener("DOMContentLoaded", function () {
-    const textarea = document.getElementById("agent-prompt");
-
-    // Check if the URL matches the ElevenLabs update-agent pattern
-    const currentUrl = new URL(window.location.href);
-    if (currentUrl.pathname === "/elevenlabs/web/v1/update_agent" && currentUrl.searchParams.has("agent_id")) {
-        const agentId = currentUrl.searchParams.get("agent_id");
-        let initialValue = textarea.value.trim(); // Store the initial value
-
-        textarea.addEventListener("blur", function () {
-            const text = textarea.value.trim();  // Get the text value
-
-            if (text !== "" && text !== initialValue) {  
-                saveAgentPrompt(agentId, text);
-                updateAgentSetting('prompt',text)
-                initialValue = text; 
-            }
-        });
-    }
-});
 
 function getCSRFToken() {
     return document.cookie.split('; ').find(row => row.startsWith('csrftoken='))?.split('=')[1];
@@ -1867,7 +2111,21 @@ function saveAgentPrompt(agentId, promptText) {
     .then(response => response.json())
     .then(data => {
         if(data.status == "success"){
+            if (data.updated_dynamic_variables){
+                try{
+                    renderDynamicVariables(data.updated_dynamic_variables);
+
+                }
+
+                catch(err){
+                    console.error({err},"while updating dynamic variables")
+                }
+            }
             toastr.success("Prompt saved successfully", { positionClass: "toast-top-right" });
+            setTimeout(()=>{
+                window.location.reload();
+            },2000)
+            
         } else if (data.status == "error"){
             toastr.error(data.message || "Error saving prompt", { positionClass: "toast-top-right" });
         } else {
@@ -4403,6 +4661,39 @@ function saveVariable() {
                 toastr.error("Error updating variable");
             });
         }
+
+        function renderDynamicVariables(updated_dynamic_variables) {
+            const container = document.getElementById("dynamic-variables");
+        
+            // Clear old variables
+            container.innerHTML = "";
+            dynamicVariables = updated_dynamic_variables;
+        
+            // Loop through updated variables
+            Object.entries(updated_dynamic_variables).forEach(([varName, varValue]) => {
+        
+                const item = document.createElement("div");
+                item.className = "variable-modal-content-item mb-2";
+        
+                item.innerHTML = `
+                    <input type="text" class="form-control" placeholder="Variable Name" value="${varName}">
+                    <input type="text" class="form-control" placeholder="Enter the value" value="${varValue || ''}">
+                    <button class="dlt_btn bg-transparent border-0 p-0" onclick="removeVariable(this)">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20"
+                             viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                             stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+                             class="h-12 w-12">
+                            <path d="M3 6h18"></path>
+                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"></path>
+                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path>
+                        </svg>
+                    </button>
+                `;
+        
+                container.appendChild(item);
+            });
+        }
+        
 
         // ElevenLabs API Compliance Validation Functions
         function validateElevenLabsCompliance(httpMethod, bodyDescription) {

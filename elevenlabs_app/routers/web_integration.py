@@ -457,12 +457,14 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                     border-radius: 20px;
                                     padding: {current_size['panel_padding']};
                                     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.15);
-                                    display: flex;
-                                    align-items: center;
-                                    gap: {current_size['panel_gap']};
                                     min-width: {current_size['panel_min_width']};
                                     border: 1px solid rgba(0, 0, 0, 0.05);
                                     position: relative;
+                                ">
+                                <div style="
+                                    display: flex;
+                                    align-items: center;
+                                    gap: {current_size['panel_gap']};
                                 ">
                                     <!-- Voice Indicator -->
                                     <div id="voice-indicator" style="
@@ -593,6 +595,7 @@ def elevenlabs_chatbot_script(request: Request, agent_id: str):
                                         </div>
                                     </div>
                                 </div>
+                            </div>
                                 
                                 <!-- Branding -->
                                 <div style="
