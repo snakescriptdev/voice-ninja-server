@@ -2219,3 +2219,6 @@ audio#audioPlayer {
     max-height: 400px;
     overflow: auto;
 }
+.form_input_outer select, .form_input_outer input{
+    padding: 8px 12px;
+}

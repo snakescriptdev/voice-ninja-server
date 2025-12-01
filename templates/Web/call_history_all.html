@@ -15,7 +15,7 @@
         <!-- Page Content  -->
         <div id="content" class="page_content position-relative">
             <div class="agent_page_header d-flex align-items-center justify-content-between">
-                <div class="d-flex align-items-center gap-2">
+                <div class="form_input_outer">
                     <button type="button"
                         class="sidebarCollapse mobile_hamburger_btn hamburger_btn bg-transparent border-0">
                         <img src="{{ host }}/static/Web/images/hamburger-icon.svg" class="img-fluid">
@@ -65,9 +65,9 @@
             </div>
 
             <!-- Filters and Sort Section -->
-            <div class="table_filters pt-3 pb-3 d-flex flex-wrap align-items-center gap-3">
-                <div class="d-flex align-items-center gap-2">
-                    <label class="mb-0">Agent:</label>
+            <div class="table_filters pt-3 pb-3 d-flex flex-wrap align-items-end gap-3">
+                <div class="form_input_outer">
+                    <label class="mb-1 form-label">Agent:</label>
                     <select class="form-select form-select-sm" id="filterAgent" style="width: 200px;">
                         <option value="">All Agents</option>
                         {% for agent in user_agents %}
@@ -75,24 +75,24 @@
                         {% endfor %}
                     </select>
                 </div>
-                <div class="d-flex align-items-center gap-2">
-                    <label class="mb-0">From Date:</label>
+                <div class="form_input_outer">
+                    <label class="mb-1 form-label">From Date:</label>
                     <input type="date" class="form-control form-control-sm" id="filterDateFrom" style="width: 150px;">
                 </div>
-                <div class="d-flex align-items-center gap-2">
-                    <label class="mb-0">To Date:</label>
+                <div class="form_input_outer">
+                    <label class="mb-1 form-label">To Date:</label>
                     <input type="date" class="form-control form-control-sm" id="filterDateTo" style="width: 150px;">
                 </div>
-                <div class="d-flex align-items-center gap-2">
-                    <label class="mb-0">Tokens Min:</label>
+                <div class="form_input_outer">
+                    <label class="mb-1 form-label">Tokens Min:</label>
                     <input type="number" class="form-control form-control-sm" id="filterTokensMin" placeholder="Min" style="width: 100px;">
                 </div>
-                <div class="d-flex align-items-center gap-2">
-                    <label class="mb-0">Tokens Max:</label>
+                <div class="form_input_outer">
+                    <label class="mb-1 form-label">Tokens Max:</label>
                     <input type="number" class="form-control form-control-sm" id="filterTokensMax" placeholder="Max" style="width: 100px;">
                 </div>
-                <div class="d-flex align-items-center gap-2">
-                    <label class="mb-0">Sort By:</label>
+                <div class="form_input_outer">
+                    <label class="mb-1 form-label">Sort By:</label>
                     <select class="form-select form-select-sm" id="sortBy" style="width: 200px;">
                         <option value="created_at_desc">Date (Newest First)</option>
                         <option value="created_at_asc">Date (Oldest First)</option>
@@ -102,8 +102,8 @@
                         <option value="duration_asc">Duration (Low to High)</option>
                     </select>
                 </div>
-                <button class="btn btn-primary btn-sm" id="applyFilters">Apply Filters</button>
-                <button class="btn btn-secondary btn-sm" id="clearFilters">Clear</button>
+                <button class="btn btn-primary" id="applyFilters" style="background:#0C7FDA;">Apply Filters</button>
+                <button class="btn btn-secondary" id="clearFilters">Clear</button>
             </div>
 
             <div class="agent_table_outer">
