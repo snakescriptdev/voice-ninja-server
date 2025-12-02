@@ -1137,260 +1137,260 @@ window.addEventListener('message', function(event) {
     <script src="https://cdn.ckeditor.com/ckeditor5/41.1.0/balloon-block/ckeditor.js"></script>
 
     {% raw %}
-    <script>
-    
-    /* =====================================================
-       1️⃣ REGISTER MODEL ELEMENT
-    ===================================================== */
-    function registerVariablePillSchema(editor) {
-        editor.model.schema.register('variablePill', {
-            allowWhere: '$text',
-            isInline: true,
-            isObject: true,
-            allowAttributes: ['data-var', 'style']
-        });
-    
-        // VIEW → MODEL
-        editor.conversion.for('upcast').elementToElement({
-            view: { name: 'span', attributes: { 'data-var': true } },
-            model: (view, { writer }) => {
-                return writer.createElement('variablePill', {
-                    'data-var': view.getAttribute('data-var'),
-                    'style': view.getAttribute('style')
-                });
-            }
-        });
-    
-        // MODEL → VIEW
-        editor.conversion.for('downcast').elementToElement({
-            model: 'variablePill',
-            view: (modelEl, { writer }) => {
-                return writer.createContainerElement('span', {
-                    'data-var': modelEl.getAttribute('data-var'),
-                    'style': modelEl.getAttribute('style')
-                });
-            }
-        });
-    }
-    
-    /* =====================================================
-       2️⃣ REAL TIME WRAPPER — VIEW DIRECT APPROACH
-    ===================================================== */
-    function enableRealtimeWrapping(editor) {
-        const pillStyle =
-            'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
-    
-        const viewDoc = editor.editing.view.document;
-    
-        viewDoc.on('insertText', (evt, data) => {
-            if (data.text !== '}') return; // Only act on "}
+        <script>
             
-            // Delay so the view updates first
-            setTimeout(() => wrapInView(editor, pillStyle), 0);
-        });
-    }
-    
-    function wrapInView(editor, pillStyle) {
-        const view = editor.editing.view;
-        const viewRoot = view.document.getRoot();
-        const writer = view.document.writer;
-    
-        view.change(writer => {
-            const range = view.createRangeIn(viewRoot);
-    
-            for (const value of range) {
-                const node = value.item;
-    
-                if (!node.is('text')) continue;
-    
-                const text = node.data;
-                const regex = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
-                const match = regex.exec(text);
-    
-                if (!match) continue;
-    
-                const full = match[0];
-                const name = match[1];
-                const start = match.index;
-                const end = start + full.length;
-    
-                const startPos = writer.createPositionAt(node, start);
-                const endPos = writer.createPositionAt(node, end);
-                const wrapRange = writer.createRange(startPos, endPos);
-    
-                // Remove raw text
-                writer.remove(wrapRange);
-    
-                // Create span
-                const span = writer.createAttributeElement('span', {
-                    'data-var': name,
-                    'style': pillStyle
+            /* =====================================================
+            1️⃣ REGISTER MODEL ELEMENT
+            ===================================================== */
+            function registerVariablePillSchema(editor) {
+                editor.model.schema.register('variablePill', {
+                    allowWhere: '$text',
+                    isInline: true,
+                    isObject: true,
+                    allowAttributes: ['data-var', 'style']
                 });
-    
-                // Insert span + text
-                writer.insert(viewWriter.createText(full), span);
-    
-                // Insert pill
-                writer.insert(span, startPos);
-    
-                return;
-            }
-        });
-    }
-    
-    /* =====================================================
-       3️⃣ HELPERS
-    ===================================================== */
-    function wrapVariables(text) {
-        const pillStyle =
-            'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
-    
-        return text.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g,
-            (_, name) => `<span data-var="${name}" style="${pillStyle}">{{${name}}}</span>`
-        );
-    }
-    
-    function htmlToPlainText(html) {
-        const div = document.createElement("div");
-        div.innerHTML = html;
-        return div.innerText.trim();
-    }
-    
-    /* =====================================================
-       4️⃣ INIT CKEDITOR
-    ===================================================== */
-    let originalRawValue = document.getElementById("agent-prompt").value.trim();
-    let editorInstance;
-    
-    BalloonEditor
-        .create(document.querySelector('#editor'), {
-            toolbar: [
-                'bold', 'italic', 'underline', '|',
-                'numberedList', 'bulletedList', '|',
-                'undo', 'redo'
-            ],
-            htmlSupport: {
-                allow: [
-                    {
-                        name: 'span',
-                        attributes: true,
-                        classes: true,
-                        styles: true
-                    }
-                ]
-            }
-        })
-        .then(editor => {
-            editorInstance = editor;
-    
-            editor.setData(wrapVariables(originalRawValue).replace(/\n/g, "<br>"));
-    
-            registerVariablePillSchema(editor);
-            enableRealtimeWrapping(editor);
-        })
-        .catch(err => console.error(err));
-    
-    /* =====================================================
-       5️⃣ SAVE
-    ===================================================== */
-    document.getElementById("save-editor-btn").addEventListener("click", async function () {
-        try {
-            if (!editorInstance) {
-                console.error("save: editorInstance not ready");
-                return;
-            }
-    
-            const pillStyle = 'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
-            const model = editorInstance.model;
-    
-            // 1) Make all replacements in the MODEL (safe). We'll collect matches first to avoid walker mutation issues.
-            model.change(writer => {
-                const root = model.document.getRoot();
-                const walker = writer.createRangeIn(root).getWalker();
-                const regex = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
-    
-                // collect matches: each item { node, start, end, name }
-                const replacements = [];
-    
-                for (const item of walker) {
-                    const node = item.item;
-                    if (!node.is('$text')) continue;
-                    const text = node.data;
-                    // iterate all matches in this text
-                    let m;
-                    regex.lastIndex = 0;
-                    while ((m = regex.exec(text)) !== null) {
-                        replacements.push({
-                            node,
-                            start: m.index,
-                            end: m.index + m[0].length,
-                            name: m[1]
+            
+                // VIEW → MODEL
+                editor.conversion.for('upcast').elementToElement({
+                    view: { name: 'span', attributes: { 'data-var': true } },
+                    model: (view, { writer }) => {
+                        return writer.createElement('variablePill', {
+                            'data-var': view.getAttribute('data-var'),
+                            'style': view.getAttribute('style')
                         });
                     }
-                }
-    
-                // apply replacements from end -> start to avoid invalidating positions
-                for (let i = replacements.length - 1; i >= 0; --i) {
-                    const r = replacements[i];
-                    const startPos = writer.createPositionAt(r.node, r.start);
-                    const endPos = writer.createPositionAt(r.node, r.end);
-                    const range = writer.createRange(startPos, endPos);
-    
-                    // get the first item (text node slice) inside that range, remove it, insert pill
-                    const extracted = range.getItems().next().value;
-    
-                    const pill = writer.createElement('variablePill', {
-                        'data-var': r.name,
-                        'style': pillStyle
+                });
+            
+                // MODEL → VIEW
+                editor.conversion.for('downcast').elementToElement({
+                    model: 'variablePill',
+                    view: (modelEl, { writer }) => {
+                        return writer.createContainerElement('span', {
+                            'data-var': modelEl.getAttribute('data-var'),
+                            'style': modelEl.getAttribute('style')
+                        });
+                    }
+                });
+            }
+            
+            /* =====================================================
+            2️⃣ REAL TIME WRAPPER — VIEW DIRECT APPROACH
+            ===================================================== */
+            function enableRealtimeWrapping(editor) {
+                const pillStyle =
+                    'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
+            
+                const viewDoc = editor.editing.view.document;
+            
+                viewDoc.on('insertText', (evt, data) => {
+                    if (data.text !== '}') return; // Only act on "}
+                    
+                    // Delay so the view updates first
+                    setTimeout(() => wrapInView(editor, pillStyle), 0);
+                });
+            }
+            
+            function wrapInView(editor, pillStyle) {
+                const view = editor.editing.view;
+                const viewRoot = view.document.getRoot();
+                const writer = view.document.writer;
+            
+                view.change(writer => {
+                    const range = view.createRangeIn(viewRoot);
+            
+                    for (const value of range) {
+                        const node = value.item;
+            
+                        if (!node.is('text')) continue;
+            
+                        const text = node.data;
+                        const regex = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
+                        const match = regex.exec(text);
+            
+                        if (!match) continue;
+            
+                        const full = match[0];
+                        const name = match[1];
+                        const start = match.index;
+                        const end = start + full.length;
+            
+                        const startPos = writer.createPositionAt(node, start);
+                        const endPos = writer.createPositionAt(node, end);
+                        const wrapRange = writer.createRange(startPos, endPos);
+            
+                        // Remove raw text
+                        writer.remove(wrapRange);
+            
+                        // Create span
+                        const span = writer.createAttributeElement('span', {
+                            'data-var': name,
+                            'style': pillStyle
+                        });
+            
+                        // Insert span + text
+                        writer.insert(viewWriter.createText(full), span);
+            
+                        // Insert pill
+                        writer.insert(span, startPos);
+            
+                        return;
+                    }
+                });
+            }
+            
+            /* =====================================================
+            3️⃣ HELPERS
+            ===================================================== */
+            function wrapVariables(text) {
+                const pillStyle =
+                    'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
+            
+                return text.replace(/{{\s*([a-zA-Z0-9_]+)\s*}}/g,
+                    (_, name) => `<span data-var="${name}" style="${pillStyle}">{{${name}}}</span>`
+                );
+            }
+            
+            function htmlToPlainText(html) {
+                const div = document.createElement("div");
+                div.innerHTML = html;
+                return div.innerText.trim();
+            }
+            
+            /* =====================================================
+            4️⃣ INIT CKEDITOR
+            ===================================================== */
+            let originalRawValue = document.getElementById("agent-prompt").value.trim();
+            let editorInstance;
+            
+            BalloonEditor
+                .create(document.querySelector('#editor'), {
+                    toolbar: [
+                        'bold', 'italic', 'underline', '|',
+                        'numberedList', 'bulletedList', '|',
+                        'undo', 'redo'
+                    ],
+                    htmlSupport: {
+                        allow: [
+                            {
+                                name: 'span',
+                                attributes: true,
+                                classes: true,
+                                styles: true
+                            }
+                        ]
+                    }
+                })
+                .then(editor => {
+                    editorInstance = editor;
+            
+                    editor.setData(wrapVariables(originalRawValue).replace(/\n/g, "<br>"));
+            
+                    registerVariablePillSchema(editor);
+                    enableRealtimeWrapping(editor);
+                })
+                .catch(err => console.error(err));
+            
+            /* =====================================================
+            5️⃣ SAVE
+            ===================================================== */
+            document.getElementById("save-editor-btn").addEventListener("click", async function () {
+                try {
+                    if (!editorInstance) {
+                        console.error("save: editorInstance not ready");
+                        return;
+                    }
+            
+                    const pillStyle = 'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
+                    const model = editorInstance.model;
+            
+                    // 1) Make all replacements in the MODEL (safe). We'll collect matches first to avoid walker mutation issues.
+                    model.change(writer => {
+                        const root = model.document.getRoot();
+                        const walker = writer.createRangeIn(root).getWalker();
+                        const regex = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
+            
+                        // collect matches: each item { node, start, end, name }
+                        const replacements = [];
+            
+                        for (const item of walker) {
+                            const node = item.item;
+                            if (!node.is('$text')) continue;
+                            const text = node.data;
+                            // iterate all matches in this text
+                            let m;
+                            regex.lastIndex = 0;
+                            while ((m = regex.exec(text)) !== null) {
+                                replacements.push({
+                                    node,
+                                    start: m.index,
+                                    end: m.index + m[0].length,
+                                    name: m[1]
+                                });
+                            }
+                        }
+            
+                        // apply replacements from end -> start to avoid invalidating positions
+                        for (let i = replacements.length - 1; i >= 0; --i) {
+                            const r = replacements[i];
+                            const startPos = writer.createPositionAt(r.node, r.start);
+                            const endPos = writer.createPositionAt(r.node, r.end);
+                            const range = writer.createRange(startPos, endPos);
+            
+                            // get the first item (text node slice) inside that range, remove it, insert pill
+                            const extracted = range.getItems().next().value;
+            
+                            const pill = writer.createElement('variablePill', {
+                                'data-var': r.name,
+                                'style': pillStyle
+                            });
+            
+                            writer.insertText(`{{${r.name}}}`, pill);
+                            writer.remove(extracted);
+                            writer.insert(pill, range.start);
+                        }
                     });
-    
-                    writer.insertText(`{{${r.name}}}`, pill);
-                    writer.remove(extracted);
-                    writer.insert(pill, range.start);
+            
+                    // 2) Get the new HTML from editor (downcast applied) and create cleaned plain text
+                    let html = editorInstance.getData();
+            
+                    const cleanedText = html
+                        .replace(/<br\s*\/?>/gi, "\n")
+                        .replace(/<\/(p|div|section|li)>/gi, "\n")
+                        .replace(/<[^>]+>/g, "")        // remove remaining tags
+                        .replace(/&nbsp;/g, " ")
+                        .replace(/\n{3,}/g, "\n\n")
+                        .trim();
+            
+                    // 3) Put cleaned text into hidden input and call save functions
+                    document.getElementById("agent-prompt").value = cleanedText;
+            
+                    const url = new URL(window.location.href);
+                    const agentId = url.searchParams.get("agent_id");
+            
+                    // Your save APIs
+                    saveAgentPrompt(agentId, cleanedText);
+                    updateAgentSetting('prompt', cleanedText);
+            
+                    console.log("save: success", { cleanedText, html });
+            
+                } catch (err) {
+                    console.error("save: error", err);
                 }
             });
-    
-            // 2) Get the new HTML from editor (downcast applied) and create cleaned plain text
-            let html = editorInstance.getData();
-    
-            const cleanedText = html
-                .replace(/<br\s*\/?>/gi, "\n")
-                .replace(/<\/(p|div|section|li)>/gi, "\n")
-                .replace(/<[^>]+>/g, "")        // remove remaining tags
-                .replace(/&nbsp;/g, " ")
-                .replace(/\n{3,}/g, "\n\n")
-                .trim();
-    
-            // 3) Put cleaned text into hidden input and call save functions
-            document.getElementById("agent-prompt").value = cleanedText;
-    
-            const url = new URL(window.location.href);
-            const agentId = url.searchParams.get("agent_id");
-    
-            // Your save APIs
-            saveAgentPrompt(agentId, cleanedText);
-            updateAgentSetting('prompt', cleanedText);
-    
-            console.log("save: success", { cleanedText, html });
-    
-        } catch (err) {
-            console.error("save: error", err);
-        }
-    });
-    
-   
-    /* =====================================================
-       6️⃣ CANCEL
-    ===================================================== */
-    document.getElementById("cancel-editor-btn").addEventListener("click", function () {
-        if (!editorInstance) return;
-    
-        editorInstance.setData(wrapVariables(originalRawValue).replace(/\n/g, "<br>"));
-    });
-    
-    </script>
+            
+        
+            /* =====================================================
+            6️⃣ CANCEL
+            ===================================================== */
+            document.getElementById("cancel-editor-btn").addEventListener("click", function () {
+                if (!editorInstance) return;
+            
+                editorInstance.setData(wrapVariables(originalRawValue).replace(/\n/g, "<br>"));
+            });
+            
+            </script>
     {% endraw %}
-    
+            
     <script>
     var dynamicVariables = {{ dynamic_variables|tojson|safe }};
 
