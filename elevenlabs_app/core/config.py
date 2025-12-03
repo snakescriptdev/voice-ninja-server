@@ -3,7 +3,7 @@ from typing import List
 from pathlib import Path
 from functools import lru_cache
 import os
-
+from zoneinfo import available_timezones
 
 os.makedirs("./audio_storage", exist_ok=True)
 
@@ -140,3 +140,5 @@ DEFAULT_VARS = {
     "AUDIO_MAX_NOISE_BUFFER_SIZE_MS": VoiceSettings.AUDIO_MAX_NOISE_BUFFER_SIZE_MS,
     "AUDIO_BUFFER_SCALING_FACTOR": VoiceSettings.AUDIO_BUFFER_SCALING_FACTOR
 }
+
+ALLOWED_TIMEZONES = sorted(list(available_timezones()))

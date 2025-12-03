@@ -103,22 +103,11 @@
                                             {{ knowledge_base.knowledge_base_name }}
                                         </option>
                                     {% endfor %}
-                                    {% if selected_knowledge and selected_knowledge.id == "elevenlabs_virtual" %}
-                                        <option value="elevenlabs_virtual" selected>
-                                            {{ selected_knowledge.knowledge_base_name }}
-                                        </option>
-                                    {% endif %}
                             </select>
                             <script>
                                 function updateKnowledgeBase(knowledgeBaseId) {
                                     const currentUrl = new URL(window.location.href);
                                     const agentId = currentUrl.searchParams.get("agent_id");
-                                    
-                                    // Handle virtual knowledge base case
-                                    if (knowledgeBaseId === "elevenlabs_virtual") {
-                                        toastr.info("This knowledge base is managed directly in ElevenLabs and cannot be changed from here");
-                                        return;
-                                    }
                                     
                                     fetch(`${host}/elevenlabs/api/v1/attach-knowledge-base`, {
                                         method: "POST",
@@ -271,6 +260,16 @@
                     </div>
                     {% endif %}
                 </div>
+
+                <div id="varPopup" 
+                    style="display:none; position:absolute; z-index:9999; background:#fff; 
+                            border:1px solid #ddd; border-radius:6px; padding:8px; box-shadow:0 2px 8px rgba(0,0,0,0.15);">
+                    {% for var in system_variables_data %}
+                        <div class="var-item" data-var="{{ var.name }}" title="{{ var.value }}">{{ var.name }}</div>
+                    {% endfor %}
+                </div>
+
+
                 <div class="agent_type_box_inner">
                     <div class="agent_type_textarea">
                         <div id="editor" style="min-height:200px; border:1px solid #ddd; padding:8px;"></div>
@@ -986,31 +985,31 @@ window.addEventListener('message', function(event) {
                 <label for="parameters" class="form-label mb-0">Parameters (Optional)</label>
                 <small class="text-muted">JSON schema that defines the format in which the LLM will return. Please refer to the docs.</small>
                 <textarea class="form-control my-2" id="parameters" placeholder="Enter function parameters">{
-  "tool_config": {
-    "name": "",
-    "type": "webhook",
-    "api_schema": {
-      "url": "",
-      "method": "POST",
-      "auth_connection": null,
-      "request_headers": {},
-      "path_params_schema": {},
-      "query_params_schema": null,
-      "request_body_schema": {
-        "type": "object",
-        "properties": {}
-      }
-    },
-    "assignments": [],
-    "description": "",
-    "dynamic_variables": {
-      "dynamic_variable_placeholders": {}
-    },
-    "disable_interruptions": false,
-    "force_pre_tool_speech": false,
-    "response_timeout_secs": 20
-  }
-}</textarea>
+                    "tool_config": {
+                        "name": "",
+                        "type": "webhook",
+                        "api_schema": {
+                        "url": "",
+                        "method": "POST",
+                        "auth_connection": null,
+                        "request_headers": {},
+                        "path_params_schema": {},
+                        "query_params_schema": null,
+                        "request_body_schema": {
+                            "type": "object",
+                            "properties": {}
+                        }
+                        },
+                        "assignments": [],
+                        "description": "",
+                        "dynamic_variables": {
+                        "dynamic_variable_placeholders": {}
+                        },
+                        "disable_interruptions": false,
+                        "force_pre_tool_speech": false,
+                        "response_timeout_secs": 20
+                    }
+                    }</textarea>
 
             </div>
             <div class="format_json_btn_box mb-3">
@@ -1133,114 +1132,167 @@ window.addEventListener('message', function(event) {
     <input hidden id="username" placeholder="Username" value="admin">
     <input hidden id="password" placeholder="Password" value="admin123">
     <input hidden id="elevenlabs-agent-id" value="{{ agent_id }}">
-    
-    <script src="https://cdn.ckeditor.com/ckeditor5/41.1.0/balloon-block/ckeditor.js"></script>
+    <script src="https://cdn.ckeditor.com/ckeditor5/41.1.0/balloon/ckeditor.js"></script>
+
 
     {% raw %}
         <script>
+
+            /* ------------------------------------------------------------------
+            GLOBAL POPUP HANDLERS
+            ------------------------------------------------------------------ */
+
+            document.addEventListener("click", e => {
+                if (!e.target.closest("#varPopup")) {
+                    document.getElementById("varPopup").style.display = "none";
+                }
+            });
+
+            function attachPopupItemEvents() {
+                document.querySelectorAll("#varPopup .var-item").forEach(item => {
+                    item.onclick = function () {
+                        const variable = this.getAttribute("data-var");
+                        const insertText = `${variable}}}`;
+                        const popup = document.getElementById("varPopup");
+
+                        popup.style.display = "none";
+
+                        editorInstance.model.change(writer => {
+                            const pos = editorInstance.model.document.selection.getFirstPosition();
+                            writer.insertText(insertText, pos);
+                        });
+                    };
+                });
+            }
+
+
+            /* ------------------------------------------------------------------
+            POPUP DISPLAY LOGIC
+            ------------------------------------------------------------------ */
+
+            function showVariablePopup() {
+                const sel = window.getSelection();
+                if (!sel.rangeCount) return;
             
-            /* =====================================================
-            1️⃣ REGISTER MODEL ELEMENT
-            ===================================================== */
+                const range = sel.getRangeAt(0);
+                const rect = range.getBoundingClientRect();
+            
+                const popup = document.getElementById("varPopup");
+            
+                popup.style.position = "fixed";
+                popup.style.left = rect.left + "px";
+                popup.style.top = (rect.bottom + 4) + "px";
+                popup.style.display = "block";
+            }
+                                    
+            function enableVariablePopup(editor) {
+                const viewDoc = editor.editing.view.document;
+            
+                viewDoc.on("insertText", (evt, data) => {
+                    if (data.text !== "{") return;
+            
+                    setTimeout(() => {
+                        const sel = window.getSelection();
+                        const textBefore = sel.anchorNode.textContent.slice(0, sel.anchorOffset);
+            
+                        if (textBefore.endsWith("{{")) {
+                            showVariablePopup();
+                        }
+                    }, 0);
+                });
+            }
+            
+            
+            /* ------------------------------------------------------------------
+            VARIABLE PILL MODEL SCHEMA
+            ------------------------------------------------------------------ */
+
             function registerVariablePillSchema(editor) {
-                editor.model.schema.register('variablePill', {
-                    allowWhere: '$text',
+                editor.model.schema.register("variablePill", {
+                    allowWhere: "$text",
                     isInline: true,
                     isObject: true,
-                    allowAttributes: ['data-var', 'style']
+                    allowAttributes: ["data-var", "style"]
                 });
-            
-                // VIEW → MODEL
-                editor.conversion.for('upcast').elementToElement({
-                    view: { name: 'span', attributes: { 'data-var': true } },
-                    model: (view, { writer }) => {
-                        return writer.createElement('variablePill', {
-                            'data-var': view.getAttribute('data-var'),
-                            'style': view.getAttribute('style')
+
+                editor.conversion.for("upcast").elementToElement({
+                    view: { name: "span", attributes: { "data-var": true } },
+                    model: (viewEl, { writer }) => {
+                        return writer.createElement("variablePill", {
+                            "data-var": viewEl.getAttribute("data-var"),
+                            "style": viewEl.getAttribute("style")
                         });
                     }
                 });
-            
-                // MODEL → VIEW
-                editor.conversion.for('downcast').elementToElement({
-                    model: 'variablePill',
+
+                editor.conversion.for("downcast").elementToElement({
+                    model: "variablePill",
                     view: (modelEl, { writer }) => {
-                        return writer.createContainerElement('span', {
-                            'data-var': modelEl.getAttribute('data-var'),
-                            'style': modelEl.getAttribute('style')
+                        return writer.createContainerElement("span", {
+                            "data-var": modelEl.getAttribute("data-var"),
+                            "style": modelEl.getAttribute("style")
                         });
                     }
                 });
             }
-            
-            /* =====================================================
-            2️⃣ REAL TIME WRAPPER — VIEW DIRECT APPROACH
-            ===================================================== */
+
+
+            /* ------------------------------------------------------------------
+            WRAPPING VARIABLES AS PILLS
+            ------------------------------------------------------------------ */
+
             function enableRealtimeWrapping(editor) {
-                const pillStyle =
-                    'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
-            
+                const pillStyle = "background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;";
                 const viewDoc = editor.editing.view.document;
-            
-                viewDoc.on('insertText', (evt, data) => {
-                    if (data.text !== '}') return; // Only act on "}
-                    
-                    // Delay so the view updates first
+
+                viewDoc.on("insertText", (evt, data) => {
+                    if (data.text !== "}") return;
                     setTimeout(() => wrapInView(editor, pillStyle), 0);
                 });
             }
-            
+
             function wrapInView(editor, pillStyle) {
                 const view = editor.editing.view;
-                const viewRoot = view.document.getRoot();
                 const writer = view.document.writer;
-            
+
                 view.change(writer => {
-                    const range = view.createRangeIn(viewRoot);
-            
+                    const range = view.createRangeIn(view.document.getRoot());
+
                     for (const value of range) {
                         const node = value.item;
-            
-                        if (!node.is('text')) continue;
-            
+
+                        if (!node.is("text")) continue;
+
                         const text = node.data;
                         const regex = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
                         const match = regex.exec(text);
-            
                         if (!match) continue;
-            
+
                         const full = match[0];
                         const name = match[1];
                         const start = match.index;
                         const end = start + full.length;
-            
+
                         const startPos = writer.createPositionAt(node, start);
                         const endPos = writer.createPositionAt(node, end);
                         const wrapRange = writer.createRange(startPos, endPos);
-            
-                        // Remove raw text
+
                         writer.remove(wrapRange);
-            
-                        // Create span
-                        const span = writer.createAttributeElement('span', {
-                            'data-var': name,
-                            'style': pillStyle
+
+                        const span = writer.createAttributeElement("span", {
+                            "data-var": name,
+                            "style": pillStyle
                         });
-            
-                        // Insert span + text
-                        writer.insert(viewWriter.createText(full), span);
-            
-                        // Insert pill
+
                         writer.insert(span, startPos);
-            
+                        writer.insert(viewWriter.createText(full), span);
+                        //writer.insertText(full, span);
+
                         return;
                     }
                 });
             }
-            
-            /* =====================================================
-            3️⃣ HELPERS
-            ===================================================== */
+
             function wrapVariables(text) {
                 const pillStyle =
                     'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
@@ -1255,142 +1307,80 @@ window.addEventListener('message', function(event) {
                 div.innerHTML = html;
                 return div.innerText.trim();
             }
-            
-            /* =====================================================
-            4️⃣ INIT CKEDITOR
-            ===================================================== */
+
+            /* ------------------------------------------------------------------
+            INIT CKEDITOR
+            ------------------------------------------------------------------ */
+
             let originalRawValue = document.getElementById("agent-prompt").value.trim();
             let editorInstance;
-            
-            BalloonEditor
-                .create(document.querySelector('#editor'), {
-                    toolbar: [
-                        'bold', 'italic', 'underline', '|',
-                        'numberedList', 'bulletedList', '|',
-                        'undo', 'redo'
-                    ],
-                    htmlSupport: {
-                        allow: [
-                            {
-                                name: 'span',
-                                attributes: true,
-                                classes: true,
-                                styles: true
-                            }
-                        ]
-                    }
-                })
-                .then(editor => {
-                    editorInstance = editor;
-            
-                    editor.setData(wrapVariables(originalRawValue).replace(/\n/g, "<br>"));
-            
-                    registerVariablePillSchema(editor);
-                    enableRealtimeWrapping(editor);
-                })
-                .catch(err => console.error(err));
-            
-            /* =====================================================
-            5️⃣ SAVE
-            ===================================================== */
-            document.getElementById("save-editor-btn").addEventListener("click", async function () {
-                try {
-                    if (!editorInstance) {
-                        console.error("save: editorInstance not ready");
-                        return;
-                    }
-            
-                    const pillStyle = 'background:#fff3b0;padding:3px 4px;border-radius:4px;font-weight:600;color:#000;';
-                    const model = editorInstance.model;
-            
-                    // 1) Make all replacements in the MODEL (safe). We'll collect matches first to avoid walker mutation issues.
-                    model.change(writer => {
-                        const root = model.document.getRoot();
-                        const walker = writer.createRangeIn(root).getWalker();
-                        const regex = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
-            
-                        // collect matches: each item { node, start, end, name }
-                        const replacements = [];
-            
-                        for (const item of walker) {
-                            const node = item.item;
-                            if (!node.is('$text')) continue;
-                            const text = node.data;
-                            // iterate all matches in this text
-                            let m;
-                            regex.lastIndex = 0;
-                            while ((m = regex.exec(text)) !== null) {
-                                replacements.push({
-                                    node,
-                                    start: m.index,
-                                    end: m.index + m[0].length,
-                                    name: m[1]
-                                });
-                            }
+
+            BalloonEditor.create(document.querySelector("#editor"), {
+                toolbar: [
+                    "bold", "italic", "underline", "|",
+                    "numberedList", "bulletedList", "|",
+                    "undo", "redo"
+                ],
+                htmlSupport: {
+                    allow: [
+                        {
+                            name: "span",
+                            attributes: true,
+                            classes: true,
+                            styles: true
                         }
-            
-                        // apply replacements from end -> start to avoid invalidating positions
-                        for (let i = replacements.length - 1; i >= 0; --i) {
-                            const r = replacements[i];
-                            const startPos = writer.createPositionAt(r.node, r.start);
-                            const endPos = writer.createPositionAt(r.node, r.end);
-                            const range = writer.createRange(startPos, endPos);
-            
-                            // get the first item (text node slice) inside that range, remove it, insert pill
-                            const extracted = range.getItems().next().value;
-            
-                            const pill = writer.createElement('variablePill', {
-                                'data-var': r.name,
-                                'style': pillStyle
-                            });
-            
-                            writer.insertText(`{{${r.name}}}`, pill);
-                            writer.remove(extracted);
-                            writer.insert(pill, range.start);
-                        }
-                    });
-            
-                    // 2) Get the new HTML from editor (downcast applied) and create cleaned plain text
-                    let html = editorInstance.getData();
-            
-                    const cleanedText = html
-                        .replace(/<br\s*\/?>/gi, "\n")
-                        .replace(/<\/(p|div|section|li)>/gi, "\n")
-                        .replace(/<[^>]+>/g, "")        // remove remaining tags
-                        .replace(/&nbsp;/g, " ")
-                        .replace(/\n{3,}/g, "\n\n")
-                        .trim();
-            
-                    // 3) Put cleaned text into hidden input and call save functions
-                    document.getElementById("agent-prompt").value = cleanedText;
-            
-                    const url = new URL(window.location.href);
-                    const agentId = url.searchParams.get("agent_id");
-            
-                    // Your save APIs
-                    saveAgentPrompt(agentId, cleanedText);
-                    updateAgentSetting('prompt', cleanedText);
-            
-                    console.log("save: success", { cleanedText, html });
-            
-                } catch (err) {
-                    console.error("save: error", err);
+                    ]
                 }
-            });
-            
-        
-            /* =====================================================
-            6️⃣ CANCEL
-            ===================================================== */
-            document.getElementById("cancel-editor-btn").addEventListener("click", function () {
+            })
+            .then(editor => {
+                editorInstance = editor;
+
+                //editor.setData(
+                 //   originalRawValue.replace(/\n/g, "<br>")
+                //);
+                editor.setData(wrapVariables(originalRawValue).replace(/\n/g, "<br>"));
+
+                registerVariablePillSchema(editor);
+                enableRealtimeWrapping(editor);
+                enableVariablePopup(editor);
+                attachPopupItemEvents();
+
+            })
+            .catch(err => console.error(err));
+
+
+            /* ------------------------------------------------------------------
+            SAVE BUTTON
+            ------------------------------------------------------------------ */
+
+            document.getElementById("save-editor-btn").addEventListener("click", function () {
                 if (!editorInstance) return;
-            
-                editorInstance.setData(wrapVariables(originalRawValue).replace(/\n/g, "<br>"));
+
+                let html = editorInstance.getData();
+                const cleanedText = html
+                    .replace(/<br\s*\/?>/gi, "\n")
+                    .replace(/<\/(p|div|section|li)>/gi, "\n")
+                    .replace(/<[^>]+>/g, "")        // remove remaining tags
+                    .replace(/&nbsp;/g, " ")
+                    .replace(/\n{3,}/g, "\n\n")
+                    .trim();
+        
+                // 3) Put cleaned text into hidden input and call save functions
+                document.getElementById("agent-prompt").value = cleanedText;
+        
+                const url = new URL(window.location.href);
+                const agentId = url.searchParams.get("agent_id");
+        
+                // Your save APIs
+                saveAgentPrompt(agentId, cleanedText);
+                updateAgentSetting('prompt', cleanedText);
+        
+                console.log("save: success", { cleanedText, html });
             });
-            
-            </script>
+
+        </script>
     {% endraw %}
-            
+
     <script>
     var dynamicVariables = {{ dynamic_variables|tojson|safe }};
 
@@ -3220,121 +3210,211 @@ function handleEditCustomFunction(functionId){
     let apiUrl = document.getElementById("edit_api_url").value;
     let httpMethod = document.getElementById("edit_http_method").value;
     let bodyDescription = document.getElementById("edit_body_description").value;
-    let functionParameters = document.getElementById("edit-parameters").value;
-    
-    // Advanced options
-    let disableInterruptions = document.getElementById("edit_disable_interruptions").checked;
-    let forcePreToolSpeech = document.getElementById("edit_force_pre_tool_speech").checked;
-    
-    // Frontend validation for ElevenLabs API compliance
-    if (!validateElevenLabsCompliance(httpMethod, bodyDescription)) {
-        return; // Stop if validation fails
-    }
-    
-    const currentUrl = new URL(window.location.href);
-    const agentId = currentUrl.searchParams.get("agent_id");
 
-    // Collect path parameters with validation
-    let pathParams = [];
-    document.querySelectorAll('#edit_path_params_container .path-param-row').forEach((row, index) => {
-        let name = row.querySelector('input[name="path_param_name"]').value;
-        let type = row.querySelector('select[name="path_param_type"]').value;
-        let description = row.querySelector('input[name="path_param_description"]').value;
-        let dynamicVariable = row.querySelector('input[name="path_param_dynamic_variable"]').value;
-        let constantValue = row.querySelector('input[name="path_param_constant_value"]').value;
-        
-        if (name) {
-            // Validate path parameter (only one of description, dynamic_variable, or constant_value)
-            if (!validatePathParameter(description, dynamicVariable, constantValue, index + 1)) {
-                return; // Stop if validation fails
-            }
-            
-            pathParams.push({ 
-                name, 
-                type, 
-                description, 
-                dynamic_variable: dynamicVariable,
-                constant_value: constantValue
-            });
+    const activeTabId = document.querySelector('#FunctionToolTab .nav-link.active')?.id;
+
+    let toolConfig = {}
+    let data = {}
+
+    if(activeTabId === "configure-tab"){
+        const errors = [];
+
+        // Basic tool information
+        const toolName = (document.getElementById("edit_tool_name")?.value || "").trim();
+        const toolDescription = (document.getElementById("edit_tool_description")?.value || "").trim();
+        const responseTimeoutRaw = document.getElementById("edit_response_timeout")?.value;
+        const responseTimeout = parseInt(responseTimeoutRaw, 10);
+        const apiUrl = (document.getElementById("edit_api_url")?.value || "").trim();
+        const httpMethod = (document.getElementById("edit_http_method")?.value || "POST").toUpperCase();
+        const bodyDescription = (document.getElementById("edit_body_description")?.value || "").trim();
+
+        // Advanced options
+        const disableInterruptions = !!document.getElementById("edit_disable_interruptions")?.checked;
+        const forcePreToolSpeech = !!document.getElementById("edit_force_pre_tool_speech")?.checked;
+
+        // Basic validation
+        if (!toolName) errors.push("Tool name is required.");
+        if (!apiUrl) errors.push("Webhook URL is required.");
+        if (Number.isNaN(responseTimeout) || responseTimeout < 5 || responseTimeout > 120) {
+        errors.push("Response timeout must be a number between 5 and 120 (seconds).");
         }
-    });
 
-    // Validate path parameters against URL placeholders
-    if (!validatePathParametersAgainstURL(apiUrl, pathParams)) {
-        return; // Stop if validation fails
-    }
-
-    // Collect query parameters
-    let queryParams = [];
-    document.querySelectorAll('#edit_query_params_container .query-param-row').forEach((row, index) => {
-        let name = row.querySelector('input[name="query_param_name"]').value;
-        let type = row.querySelector('select[name="query_param_type"]').value;
-        let required = row.querySelector('input[name="query_param_required"]').checked;
-        let description = row.querySelector('input[name="query_param_description"]').value;
-        if (name) {
-            queryParams.push({ name, type, required, description });
+        // Validate ElevenLabs compliance placeholder function (update if you have specific rules)
+        if (!validateElevenLabsCompliance(httpMethod, bodyDescription)) {
+        errors.push("ElevenLabs compliance validation failed for chosen method/body.");
         }
-    });
 
-    // Collect request body properties
-    let requestBodyProperties = [];
-    document.querySelectorAll('#edit_request_body_properties_container .body-property-row').forEach((row, index) => {
-        let name = row.querySelector('input[name="body_property_name"]').value;
-        let type = row.querySelector('select[name="body_property_type"]').value;
-        let required = row.querySelector('input[name="body_property_required"]').checked;
-        let description = row.querySelector('input[name="body_property_description"]').value;
-        if (name) {
-            requestBodyProperties.push({ name, type, required, description });
+        // Helper to safely read values within a row
+        function getVal(row, selector) {
+        const el = row.querySelector(selector);
+        return el ? (el.value ?? "").trim() : "";
         }
-    });
-
-    // Collect request headers
-    let requestHeaders = [];
-    document.querySelectorAll('#edit_request_headers_container .header-row').forEach((row, index) => {
-        let name = row.querySelector('input[name="header_name"]').value;
-        let value = row.querySelector('input[name="header_value"]').value;
-        if (name && value) {
-            requestHeaders.push({ name, value });
+        function getChecked(row, selector) {
+        const el = row.querySelector(selector);
+        return !!(el && el.checked);
         }
-    });
 
-    // Collect dynamic variables
-    let dynamicVariables = [];
-    document.querySelectorAll('#edit_dynamic_variables_container .variable-row').forEach((row, index) => {
-        let name = row.querySelector('input[name="variable_name"]').value;
-        let value = row.querySelector('input[name="variable_value"]').value;
-        if (name && value) {
-            dynamicVariables.push({ name, value });
+        // PATH PARAMETERS: rows may be arbitrary; we look for elements with class .path-param-row or .path-param-item
+        const pathParams = [];
+        document.querySelectorAll('#edit_path_params_container .path-param-row, #edit_path_params_container .path-param-item, #edit_path_params_container .path-param').forEach((row, index) => {
+        // tolerant selectors - try to find likely inputs
+        const name = getVal(row, 'input[name="path_param_name"], .path-param-name, input.path-param-name, input[name="name"], input[name="param_name"]');
+        const type = getVal(row, 'select[name="path_param_type"], select.path-param-type') || 'string';
+        const description = getVal(row, 'input[name="path_param_description"], .path-param-description');
+        const dynamicVariable = getVal(row, 'input[name="path_param_dynamic_variable"], .path-param-dynamic-variable');
+        const constantValue = getVal(row, 'input[name="path_param_constant_value"], .path-param-constant-value');
+
+        if (!name) return; // skip empty rows
+
+        // ensure only one of description / dynamic / constant (if you want stricter rules)
+        const provided = [description ? 1 : 0, dynamicVariable ? 1 : 0, constantValue ? 1 : 0].reduce((a,b)=>a+b,0);
+        if (provided > 1) {
+            errors.push(`Path param "${name}" (row ${index+1}) has multiple value sources (description/dynamic/constant) — only one allowed.`);
         }
-    });
 
-    // Collect assignments
-    let assignments = [];
-    document.querySelectorAll('#edit_assignments_container .assignment-row').forEach((row, index) => {
-        let variable = row.querySelector('input[name="assignment_variable"]').value;
-        let path = row.querySelector('input[name="assignment_path"]').value;
-        if (variable && path) {
-            assignments.push({ variable, path });
+        pathParams.push({
+            name,
+            type,
+            description: description || null,
+            dynamic_variable: dynamicVariable || null,
+            constant_value: constantValue || null
+        });
+        });
+
+        // Validate path placeholders against URL
+        const urlPlaceholders = [];
+        const placeholderRegex = /\{([^}]+)\}/g;
+        let m;
+        while ((m = placeholderRegex.exec(apiUrl)) !== null) {
+        urlPlaceholders.push(m[1]);
         }
-    });
-
-    // Parse JSON parameters if provided
-    let parsedParameters = {};
-    if (functionParameters) {
-        try {
-            parsedParameters = JSON.parse(functionParameters);
-        } catch (e) {
-            toastr.error('Invalid JSON format in parameters field');
-            return;
+        // Every pathParam name must appear in URL placeholders
+        const missingInUrl = pathParams.filter(p => !urlPlaceholders.includes(p.name));
+        if (missingInUrl.length > 0) {
+        errors.push(`Path parameters not present as placeholders in URL: ${missingInUrl.map(p => p.name).join(', ')}. Add {name} to the URL or remove the param.`);
         }
-    }
+        // Optional: warn if URL contains placeholders not defined as pathParams
+        const undefinedPlaceholders = urlPlaceholders.filter(ph => !pathParams.some(p => p.name === ph));
+        if (undefinedPlaceholders.length > 0) {
+        errors.push(`URL contains placeholders not defined in Path Parameters: ${undefinedPlaceholders.join(', ')}. Either remove them from the URL or add corresponding path parameters.`);
+        }
 
-    // Build comprehensive tool config
-    let toolConfig = {
+        // QUERY PARAMETERS: detect .param-item, .query-param-row or fallback header-like structures
+        const queryParams = [];
+        document.querySelectorAll('#edit_query_params_container .param-item, #edit_query_params_container .query-param-row, #edit_query_params_container .query-param').forEach((row) => {
+        const name = getVal(row, 'input[name="query_param_name"], .param-name, input.param-name, input[name="name"]');
+        if (!name) return;
+        const type = getVal(row, 'select[name="query_param_type"], select.param-type') || getVal(row, 'select.param-type') || 'string';
+        const required = getChecked(row, 'input[name="query_param_required"], .param-required, input.param-required') || false;
+        const description = getVal(row, 'input[name="query_param_description"], .param-description') || null;
+
+        // determine value type and value (llm_prompt, constant_value, dynamic_variable)
+        const valueType = getVal(row, 'select.param-value-type, select[name="query_param_value_type"]') || null;
+        let value = null;
+        if (valueType === 'constant_value') {
+            value = getVal(row, '.param-constant-value, input.param-constant-value, input[name="query_param_constant_value"]') || null;
+        } else if (valueType === 'dynamic_variable') {
+            value = getVal(row, '.param-dynamic-variable, input.param-dynamic-variable, input[name="query_param_dynamic_variable"]') || null;
+        } else if (valueType === 'llm_prompt' || !valueType) {
+            // If LLM prompt input is present, capture it; otherwise null
+            value = getVal(row, '.param-llm-prompt, textarea.param-llm-prompt') || null;
+        }
+
+        queryParams.push({
+            name,
+            type,
+            required,
+            description,
+            value_type: valueType || 'llm_prompt',
+            value: value
+        });
+        });
+
+        // REQUEST BODY PROPERTIES
+        const requestBodyProperties = [];
+        document.querySelectorAll('#edit_request_body_properties_container .property-item, #edit_request_body_properties_container .body-property-row, #edit_request_body_properties_container .property').forEach((row) => {
+        const name = getVal(row, 'input[name="body_property_name"], .property-name, input.property-name, input[name="name"]');
+        if (!name) return;
+        const type = getVal(row, 'select[name="body_property_type"], select.property-type') || 'string';
+        const required = getChecked(row, 'input[name="body_property_required"], .property-required, input.property-required') || false;
+        const description = getVal(row, 'input[name="body_property_description"], .property-description') || null;
+        const valueType = getVal(row, 'select.property-value-type, select[name="body_property_value_type"]') || null;
+
+        let value = null;
+        if (valueType === 'constant_value') {
+            value = getVal(row, '.property-constant-value, input.property-constant-value') || null;
+        } else if (valueType === 'dynamic_variable') {
+            value = getVal(row, '.property-dynamic-variable, input.property-dynamic-variable') || null;
+        } else {
+            value = getVal(row, '.property-llm-prompt, textarea.property-llm-prompt') || null;
+        }
+
+        requestBodyProperties.push({
+            name,
+            type,
+            required,
+            description,
+            value_type: valueType || 'llm_prompt',
+            value
+        });
+        });
+
+        // REQUEST HEADERS
+        const requestHeaders = [];
+        // header rows use class .header-row in your markup
+        document.querySelectorAll('#edit_request_headers_container .header-row, #edit_request_headers_container .header').forEach((row) => {
+        const name = getVal(row, 'input[name="header_name"], input.header-name, .header-name');
+        const value = getVal(row, 'input[name="header_value"], input.header-value, .header-value');
+        if (!name && !value) return;
+        requestHeaders.push({ name: name || "", value: value || "" });
+        });
+
+        // DYNAMIC VARIABLES (variable-row)
+        const dynamicVariables = [];
+        document.querySelectorAll('#edit_dynamic_variables_container .variable-row, #edit_dynamic_variables_container .variable').forEach((row) => {
+        const name = getVal(row, 'input[name="variable_name"], input.variable-name, .variable-name');
+        const value = getVal(row, 'input[name="variable_value"], input.variable-value, .variable-value');
+        if (!name) return;
+        dynamicVariables.push({ name, value });
+        });
+
+        // ASSIGNMENTS
+        const assignments = [];
+        document.querySelectorAll('#edit_assignments_container .assignment-row, #edit_assignments_container .assignment').forEach((row) => {
+        const variable = getVal(row, 'input[name="assignment_variable"], input.assignment-variable, .assignment-variable');
+        const path = getVal(row, 'input[name="assignment_path"], input.assignment-path, .assignment-path');
+        if (!variable || !path) return;
+        assignments.push({ variable, path });
+        });
+
+        // Extra: dedupe names (tool-level)
+        function duplicatesFrom(arr, key) {
+        const seen = new Map();
+        arr.forEach(item => {
+            const k = item[key];
+            if (!k) return;
+            seen.set(k, (seen.get(k) || 0) + 1);
+        });
+        return [...seen.entries()].filter(([k,v]) => v>1).map(([k]) => k);
+        }
+        const dupQuery = duplicatesFrom(queryParams, 'name');
+        const dupBody = duplicatesFrom(requestBodyProperties, 'name');
+        const dupPath = duplicatesFrom(pathParams, 'name');
+        if (dupQuery.length) errors.push(`Duplicate query parameter identifiers: ${dupQuery.join(', ')}`);
+        if (dupBody.length) errors.push(`Duplicate request body property identifiers: ${dupBody.join(', ')}`);
+        if (dupPath.length) errors.push(`Duplicate path parameter identifiers: ${dupPath.join(', ')}`);
+
+        // If any validation errors, return them
+        if (errors.length) {
+        return { ok: false, errors };
+        }
+
+        // Compose the tool config payload
+        toolConfig = {
         api_url: apiUrl,
-        response_timeout_secs: parseInt(responseTimeout) || 20,
+        response_timeout_secs: Number.isFinite(responseTimeout) ? responseTimeout : 20,
         http_method: httpMethod,
-        body_description: bodyDescription,
+        body_description: bodyDescription || null,
         path_params: pathParams,
         query_params: queryParams,
         request_body_properties: requestBodyProperties,
@@ -3343,19 +3423,68 @@ function handleEditCustomFunction(functionId){
         assignments: assignments,
         disable_interruptions: disableInterruptions,
         force_pre_tool_speech: forcePreToolSpeech,
-        ...parsedParameters
-    };
+        };
 
-    let data = {
+        // extract agent_id from page URL search params if present (keeps backward compatibility)
+        const currentUrl = new URL(window.location.href);
+        const agentId = currentUrl.searchParams.get("agent_id") || null;
+
+        data = {
         function_name: toolName,
         function_description: toolDescription,
         function_url: apiUrl,
-        function_timeout: parseInt(responseTimeout) || 20,
+        function_timeout: Number.isFinite(responseTimeout) ? responseTimeout : 20,
         function_parameters: toolConfig,
         agent_id: agentId
-    };
+        };
 
 
+    }
+    else if(activeTabId == "format_json_tab"){
+        //edit only according to JSON schema
+        let functionParameters = document.getElementById("edit-parameters").value;
+        // Parse JSON parameters if provided
+        let parsedParameters = {};
+        if (functionParameters) {
+            try {
+                parsedParameters = JSON.parse(functionParameters);
+            } catch (e) {
+                toastr.error('Invalid JSON format in parameters field');
+                return;
+            }
+        }
+
+        toolConfig = {
+            api_url: apiUrl,
+            response_timeout_secs: parseInt(responseTimeout) || 20,
+            http_method: httpMethod,
+            body_description: bodyDescription,
+            path_params: pathParams,
+            query_params: queryParams,
+            request_body_properties: requestBodyProperties,
+            request_headers: requestHeaders,
+            dynamic_variables: dynamicVariables,
+            assignments: assignments,
+            disable_interruptions: disableInterruptions,
+            force_pre_tool_speech: forcePreToolSpeech,
+            ...parsedParameters
+        };
+
+        data = {
+            function_name: toolName,
+            function_description: toolDescription,
+            function_url: apiUrl,
+            function_timeout: parseInt(responseTimeout) || 20,
+            function_parameters: toolConfig,
+            agent_id: agentId
+        };
+
+
+    }
+    else{
+        toastr.error("Something went wrong in updating Tools. Please contact support team.");
+    }
+    
 
     $.ajax({
         url: `{{ host }}/elevenlabs/api/v1/edit-custom-functions/${functionId}`,
@@ -3600,10 +3729,10 @@ function generateAssignmentsHTML(assignments) {
     return assignments.map((assignment, index) => `
         <div class="row mb-2 assignment-row" data-index="${index}">
             <div class="col-md-4">
-                <input type="text" class="form-control" name="assignment_variable" value="${assignment.variable_name || ''}" placeholder="Variable name">
+                <input type="text" class="form-control" name="assignment_variable" value="${assignment.dynamic_variable || ''}" placeholder="Variable name">
             </div>
             <div class="col-md-6">
-                <input type="text" class="form-control" name="assignment_path" value="${assignment.response_path || ''}" placeholder="JSON path (e.g., $.data.id)">
+                <input type="text" class="form-control" name="assignment_path" value="${assignment.value_path || ''}" placeholder="JSON path (e.g., $.data.id)">
             </div>
             <div class="col-md-2">
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditAssignment(${index})">×</button>
@@ -3758,221 +3887,235 @@ function editFunction(functionId) {
                                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                             </div>
                             <div class="modal-body">
-                                <form id="editFunctionForm">
-                                    <!-- Basic Tool Information -->
-                                    <div class="card mb-3">
-                                        <div class="card-header">
-                                            <h6 class="mb-0">Tool Configuration</h6>
-                                        </div>
-                                        <div class="card-body">
-                                            <div class="row">
-                                                <div class="col-md-6">
-                                    <div class="form_field mb-3">
-                                                        <label for="edit_tool_name" class="form-label">Tool Name *</label>
-                                                        <input type="text" class="form-control" id="edit_tool_name" value="${functionData.function_name || ''}" placeholder="my_webhook_tool" required>
-                                                        <small class="text-muted">Only letters, numbers, underscores, and hyphens. Max 64 characters.</small>
-                                    </div>
+                                <ul class="nav nav-tabs" id="FunctionToolTab" role="tablist">
+                                    <li class="nav-item" role="presentation">
+                                        <button class="nav-link active" id="configure-tab" data-bs-toggle="tab" data-bs-target="#configure-tab-pane" type="button" role="tab" aria-controls="configure-tab-pane" aria-selected="true">Configure</button>
+                                    </li>
+                                    <li class="nav-item" role="presentation">
+                                        <button class="nav-link" id="format_json_tab" data-bs-toggle="tab" data-bs-target="#format_json_tab-pane" type="button" role="tab" aria-controls="format_json_tab-pane" aria-selected="false">Format JSON</button>
+                                    </li>
+                                </ul>
+                                <div class="tab-content" id="FunctionToolTabContent">
+                                    <div class="tab-pane fade show active" id="configure-tab-pane" role="tabpanel" aria-labelledby="configure-tab" tabindex="0">
+
+                                        <form id="editFunctionForm">
+                                            <!-- Basic Tool Information -->
+                                            <div class="card mb-3">
+                                                <div class="card-header">
+                                                    <h6 class="mb-0">Tool Configuration</h6>
                                                 </div>
-                                                <div class="col-md-6">
-                                    <div class="form_field mb-3">
-                                                        <label for="edit_response_timeout" class="form-label">Response Timeout (seconds)</label>
-                                                        <input type="number" class="form-control" id="edit_response_timeout" value="${functionData.function_timeout || 20}" placeholder="20" min="5" max="120">
-                                                        <small class="text-muted">Between 5-120 seconds</small>
-                                    </div>
-                                                </div>
-                                            </div>
-                                            
-                                    <div class="form_field mb-3">
-                                                <label for="edit_tool_description" class="form-label">Description *</label>
-                                                <textarea class="form-control" id="edit_tool_description" placeholder="Describe what this webhook tool does" rows="2" required>${functionData.function_description || ''}</textarea>
-                                    </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- API Schema Configuration -->
-                                    <div class="card mb-3">
-                                        <div class="card-header">
-                                            <h6 class="mb-0">API Schema</h6>
-                                        </div>
-                                        <div class="card-body">
-                                            <div class="row">
-                                                <div class="col-md-8">
-                                    <div class="form_field mb-3">
-                                                        <label for="edit_api_url" class="form-label">Webhook URL *</label>
-                                                        <input type="url" class="form-control" id="edit_api_url" value="${functionData.function_url || ''}" placeholder="https://api.example.com/agents/{agent_id}" required>
-                                                        <small class="text-muted">May include path parameters like {agent_id}</small>
-                                        </div>
-                                    </div>
-                                                <div class="col-md-4">
-                                                    <div class="form_field mb-3">
-                                                        <label for="edit_http_method" class="form-label">HTTP Method</label>
-                                                        <select class="form-select" id="edit_http_method">
-                                                            <option value="GET" ${toolConfig.http_method === 'GET' ? 'selected' : ''}>GET</option>
-                                                            <option value="POST" ${toolConfig.http_method === 'POST' || !toolConfig.http_method ? 'selected' : ''}>POST</option>
-                                                            <option value="PUT" ${toolConfig.http_method === 'PUT' ? 'selected' : ''}>PUT</option>
-                                                            <option value="PATCH" ${toolConfig.http_method === 'PATCH' ? 'selected' : ''}>PATCH</option>
-                                                            <option value="DELETE" ${toolConfig.http_method === 'DELETE' ? 'selected' : ''}>DELETE</option>
-                                                        </select>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- Path Parameters -->
-                                    <div class="card mb-3">
-                                        <div class="card-header d-flex justify-content-between align-items-center">
-                                            <h6 class="mb-0">Path Parameters</h6>
-                                            <button type="button" class="btn btn-sm btn-outline-primary" id="add-edit-path-param-btn" onclick="addEditPathParam()" disabled>+ Add Path Parameter</button>
-                                        </div>
-                                        <div class="card-body">
-                                            <small class="text-muted mb-3 d-block">Add path wrapped in curly braces to the URL to configure them here.</small>
-                                            <div id="edit_path_params_help" class="alert alert-info mb-3" style="display: none;">
-                                                <small><strong>Example:</strong> Add <code>{agent_id}</code> to your URL like: <code>https://api.example.com/agents/{agent_id}</code></small>
-                                            </div>
-                                            <div id="edit_path_params_container">
-                                                ${generatePathParamsHTML(toolConfig.path_params || [])}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- Query Parameters -->
-                                    <div class="card mb-3">
-                                        <div class="card-header d-flex justify-content-between align-items-center">
-                                            <h6 class="mb-0">Query Parameters</h6>
-                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditQueryParam()">+ Add Query Parameter</button>
-                                        </div>
-                                        <div class="card-body">
-                                            <small class="text-muted mb-3 d-block">Parameters that will be added to the URL as query params (?param=value)</small>
-                                            <div id="edit_query_params_container">
-                                                ${generateQueryParamsHTML(toolConfig.query_params || [])}
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- Request Body Schema -->
-                                    <div class="card mb-3" id="edit_request_body_schema_section" style="display: ${['POST', 'PUT', 'PATCH'].includes(toolConfig.http_method) ? 'block' : 'none'};">
-                                        <div class="card-header d-flex justify-content-between align-items-center">
-                                            <h6 class="mb-0">Request Body Schema</h6>
-                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditRequestBodyProperty()">+ Add Property</button>
-                                        </div>
-                                        <div class="card-body">
-                                            <small class="text-muted mb-3 d-block">Define the JSON structure for POST/PUT/PATCH requests</small>
+                                                <div class="card-body">
+                                                    <div class="row">
+                                                        <div class="col-md-6">
                                             <div class="form_field mb-3">
-                                                <label for="edit_body_description" class="form-label">Body Description</label>
-                                                <input type="text" class="form-control" id="edit_body_description" value="${toolConfig.body_description || ''}" placeholder="Description of the request body">
+                                                                <label for="edit_tool_name" class="form-label">Tool Name *</label>
+                                                                <input type="text" class="form-control" id="edit_tool_name" value="${functionData.function_name || ''}" placeholder="my_webhook_tool" required>
+                                                                <small class="text-muted">Only letters, numbers, underscores, and hyphens. Max 64 characters.</small>
                                             </div>
-                                            <div id="edit_request_body_properties_container">
-                                                ${generateRequestBodyPropertiesHTML(toolConfig.request_body_properties || [])}
+                                                        </div>
+                                                        <div class="col-md-6">
+                                            <div class="form_field mb-3">
+                                                                <label for="edit_response_timeout" class="form-label">Response Timeout (seconds)</label>
+                                                                <input type="number" class="form-control" id="edit_response_timeout" value="${functionData.function_timeout || 20}" placeholder="20" min="5" max="120">
+                                                                <small class="text-muted">Between 5-120 seconds</small>
                                             </div>
-                                        </div>
-                                    </div>
+                                                        </div>
+                                                    </div>
+                                                    
+                                            <div class="form_field mb-3">
+                                                        <label for="edit_tool_description" class="form-label">Description *</label>
+                                                        <textarea class="form-control" id="edit_tool_description" placeholder="Describe what this webhook tool does" rows="2" required>${functionData.function_description || ''}</textarea>
+                                            </div>
+                                                </div>
+                                            </div>
 
-                                    <!-- Request Headers -->
-                                    <div class="card mb-3">
-                                        <div class="card-header d-flex justify-content-between align-items-center">
-                                            <h6 class="mb-0">Request Headers</h6>
-                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditRequestHeader()">+ Add Header</button>
-                                        </div>
-                                        <div class="card-body">
-                                            <small class="text-muted mb-3 d-block">Headers to include in the webhook request</small>
-                                            <div id="edit_request_headers_container">
-                                                ${generateRequestHeadersHTML(toolConfig.request_headers || [])}
+                                            <!-- API Schema Configuration -->
+                                            <div class="card mb-3">
+                                                <div class="card-header">
+                                                    <h6 class="mb-0">API Schema</h6>
+                                                </div>
+                                                <div class="card-body">
+                                                    <div class="row">
+                                                        <div class="col-md-8">
+                                            <div class="form_field mb-3">
+                                                                <label for="edit_api_url" class="form-label">Webhook URL *</label>
+                                                                <input type="url" class="form-control" id="edit_api_url" value="${functionData.function_url || ''}" placeholder="https://api.example.com/agents/{agent_id}" required>
+                                                                <small class="text-muted">May include path parameters like {agent_id}</small>
+                                                </div>
                                             </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- Dynamic Variables -->
-                                    <div class="card mb-3">
-                                        <div class="card-header d-flex justify-content-between align-items-center">
-                                            <h6 class="mb-0">Dynamic Variables</h6>
-                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditDynamicVariable()">+ Add Variable</button>
-                                        </div>
-                                        <div class="card-body">
-                                            <small class="text-muted mb-3 d-block">Variables that can be used in the webhook configuration</small>
-                                            <div id="edit_dynamic_variables_container">
-                                                ${generateDynamicVariablesHTML(toolConfig.dynamic_variables || [])}
+                                                        <div class="col-md-4">
+                                                            <div class="form_field mb-3">
+                                                                <label for="edit_http_method" class="form-label">HTTP Method</label>
+                                                                <select class="form-select" id="edit_http_method">
+                                                                    <option value="GET" ${toolConfig.http_method === 'GET' ? 'selected' : ''}>GET</option>
+                                                                    <option value="POST" ${toolConfig.http_method === 'POST' || !toolConfig.http_method ? 'selected' : ''}>POST</option>
+                                                                    <option value="PUT" ${toolConfig.http_method === 'PUT' ? 'selected' : ''}>PUT</option>
+                                                                    <option value="PATCH" ${toolConfig.http_method === 'PATCH' ? 'selected' : ''}>PATCH</option>
+                                                                    <option value="DELETE" ${toolConfig.http_method === 'DELETE' ? 'selected' : ''}>DELETE</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             </div>
-                                        </div>
-                                    </div>
 
-                                    <!-- Response Assignments -->
-                                    <div class="card mb-3">
-                                        <div class="card-header d-flex justify-content-between align-items-center">
-                                            <h6 class="mb-0">Response Assignments</h6>
-                                            <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditAssignment()">+ Add Assignment</button>
-                                        </div>
-                                        <div class="card-body">
-                                            <small class="text-muted mb-3 d-block">Extract values from webhook response and assign to dynamic variables</small>
-                                            <div id="edit_assignments_container">
-                                                ${generateAssignmentsHTML(toolConfig.assignments || [])}
+                                            <!-- Path Parameters -->
+                                            <div class="card mb-3">
+                                                <div class="card-header d-flex justify-content-between align-items-center">
+                                                    <h6 class="mb-0">Path Parameters</h6>
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" id="add-edit-path-param-btn" onclick="addEditPathParam()" disabled>+ Add Path Parameter</button>
+                                                </div>
+                                                <div class="card-body">
+                                                    <small class="text-muted mb-3 d-block">Add path wrapped in curly braces to the URL to configure them here.</small>
+                                                    <div id="edit_path_params_help" class="alert alert-info mb-3" style="display: none;">
+                                                        <small><strong>Example:</strong> Add <code>{agent_id}</code> to your URL like: <code>https://api.example.com/agents/{agent_id}</code></small>
+                                                    </div>
+                                                    <div id="edit_path_params_container">
+                                                        ${generatePathParamsHTML(toolConfig.path_params || [])}
+                                                    </div>
+                                                </div>
                                             </div>
-                                        </div>
-                                    </div>
 
-                                    <div class="form_field mb-3 parameters_field">
-                                        <label for="parameters" class="form-label mb-0">Parameters (Optional)</label>
+                                            <!-- Query Parameters -->
+                                            <div class="card mb-3">
+                                                <div class="card-header d-flex justify-content-between align-items-center">
+                                                    <h6 class="mb-0">Query Parameters</h6>
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditQueryParam()">+ Add Query Parameter</button>
+                                                </div>
+                                                <div class="card-body">
+                                                    <small class="text-muted mb-3 d-block">Parameters that will be added to the URL as query params (?param=value)</small>
+                                                    <div id="edit_query_params_container">
+                                                        ${generateQueryParamsHTML(toolConfig.query_params || [])}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- Request Body Schema -->
+                                            <div class="card mb-3" id="edit_request_body_schema_section" style="display: ${['POST', 'PUT', 'PATCH'].includes(toolConfig.http_method) ? 'block' : 'none'};">
+                                                <div class="card-header d-flex justify-content-between align-items-center">
+                                                    <h6 class="mb-0">Request Body Schema</h6>
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditRequestBodyProperty()">+ Add Property</button>
+                                                </div>
+                                                <div class="card-body">
+                                                    <small class="text-muted mb-3 d-block">Define the JSON structure for POST/PUT/PATCH requests</small>
+                                                    <div class="form_field mb-3">
+                                                        <label for="edit_body_description" class="form-label">Body Description</label>
+                                                        <input type="text" class="form-control" id="edit_body_description" value="${toolConfig.body_description || ''}" placeholder="Description of the request body">
+                                                    </div>
+                                                    <div id="edit_request_body_properties_container">
+                                                        ${generateRequestBodyPropertiesHTML(toolConfig.request_body_properties || [])}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- Request Headers -->
+                                            <div class="card mb-3">
+                                                <div class="card-header d-flex justify-content-between align-items-center">
+                                                    <h6 class="mb-0">Request Headers</h6>
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditRequestHeader()">+ Add Header</button>
+                                                </div>
+                                                <div class="card-body">
+                                                    <small class="text-muted mb-3 d-block">Headers to include in the webhook request</small>
+                                                    <div id="edit_request_headers_container">
+                                                        ${generateRequestHeadersHTML(toolConfig.request_headers || [])}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- Dynamic Variables -->
+                                            <div class="card mb-3">
+                                                <div class="card-header d-flex justify-content-between align-items-center">
+                                                    <h6 class="mb-0">Dynamic Variables</h6>
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditDynamicVariable()">+ Add Variable</button>
+                                                </div>
+                                                <div class="card-body">
+                                                    <small class="text-muted mb-3 d-block">Variables that can be used in the webhook configuration</small>
+                                                    <div id="edit_dynamic_variables_container">
+                                                        ${generateDynamicVariablesHTML(toolConfig.dynamic_variables || [])}
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- Response Assignments -->
+                                            <div class="card mb-3">
+                                                <div class="card-header d-flex justify-content-between align-items-center">
+                                                    <h6 class="mb-0">Response Assignments</h6>
+                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditAssignment()">+ Add Assignment</button>
+                                                </div>
+                                                <div class="card-body">
+                                                    <small class="text-muted mb-3 d-block">Extract values from webhook response and assign to dynamic variables</small>
+                                                    <div id="edit_assignments_container">
+                                                        ${generateAssignmentsHTML(
+                                                            (functionData?.function_parameters?.tool_config?.assignments || [])
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <!-- Advanced Options -->
+                                            <div class="card mb-3">
+                                                <div class="card-header">
+                                                    <h6 class="mb-0">Advanced Options</h6>
+                                                </div>
+                                                <div class="card-body">
+                                                    <div class="row">
+                                                        <div class="col-md-6">
+                                                            <div class="form-check mb-3">
+                                                                <input class="form-check-input" type="checkbox" id="edit_disable_interruptions" ${toolConfig.disable_interruptions ? 'checked' : ''}>
+                                                                <label class="form-check-label" for="edit_disable_interruptions">
+                                                                    Disable Interruptions
+                                                                </label>
+                                                                <small class="text-muted d-block">User cannot interrupt while tool is running</small>
+                                                            </div>
+                                                        </div>
+                                                        <div class="col-md-6">
+                                                            <div class="form-check mb-3">
+                                                                <input class="form-check-input" type="checkbox" id="edit_force_pre_tool_speech" ${toolConfig.force_pre_tool_speech ? 'checked' : ''}>
+                                                                <label class="form-check-label" for="edit_force_pre_tool_speech">
+                                                                    Force Pre-Tool Speech
+                                                                </label>
+                                                                <small class="text-muted d-block">Agent speaks before calling the tool</small>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </form>
+                                    </div>
+                                    <div class="tab-pane fade" id="format_json_tab-pane" role="tabpanel" aria-labelledby="format_json_tab" tabindex="0">
+                                      <div class="form_field mb-3 parameters_field">
+                                        <label for="edit-parameters" class="form-label mb-0">Parameters (Optional)</label>
                                         <small class="text-muted">JSON schema that defines the format in which the LLM will return. Please refer to the docs.</small>
-                                        <textarea class="form-control my-2" id="edit-parameters" placeholder="Enter function parameters">${JSON.stringify(functionData.function_parameters, null, 2) || `{
-  "tool_config": {
-    "name": "",
-    "type": "webhook",
-    "api_schema": {
-      "url": "",
-      "method": "POST",
-      "auth_connection": null,
-      "request_headers": {},
-      "path_params_schema": {},
-      "query_params_schema": null,
-      "request_body_schema": {
-        "type": "object",
-        "properties": {}
-      }
-    },
-    "assignments": [],
-    "description": "",
-    "dynamic_variables": {
-      "dynamic_variable_placeholders": {}
-    },
-    "disable_interruptions": false,
-    "force_pre_tool_speech": false,
-    "response_timeout_secs": 20
-  }
-}`}</textarea>
-                                    </div>
-                                    <div class="format_json_btn_box mb-3">
-                                        <button type="button" onclick="EditformatJSON()" class="w-100">Format JSON</button>
-                                    </div>
+                                        <textarea rows="20" class="form-control my-2" id="edit-parameters" placeholder="Enter function parameters">{
+                                            "tool_config": {
+                                                "name": "",
+                                                "type": "webhook",
+                                                "api_schema": {
+                                                "url": "",
+                                                "method": "POST",
+                                                "auth_connection": null,
+                                                "request_headers": {},
+                                                "path_params_schema": {},
+                                                "query_params_schema": null,
+                                                "request_body_schema": {
+                                                    "type": "object",
+                                                    "properties": {}
+                                                }
+                                                },
+                                                "assignments": [],
+                                                "description": "",
+                                                "dynamic_variables": {
+                                                "dynamic_variable_placeholders": {}
+                                                },
+                                                "disable_interruptions": false,
+                                                "force_pre_tool_speech": false,
+                                                "response_timeout_secs": 20
+                                            }
+                                            }
+                                            </textarea>
 
-                                    <!-- Advanced Options -->
-                                    <div class="card mb-3">
-                                        <div class="card-header">
-                                            <h6 class="mb-0">Advanced Options</h6>
-                                        </div>
-                                        <div class="card-body">
-                                            <div class="row">
-                                                <div class="col-md-6">
-                                                    <div class="form-check mb-3">
-                                                        <input class="form-check-input" type="checkbox" id="edit_disable_interruptions" ${toolConfig.disable_interruptions ? 'checked' : ''}>
-                                                        <label class="form-check-label" for="edit_disable_interruptions">
-                                                            Disable Interruptions
-                                                        </label>
-                                                        <small class="text-muted d-block">User cannot interrupt while tool is running</small>
-                                                    </div>
-                                                </div>
-                                                <div class="col-md-6">
-                                                    <div class="form-check mb-3">
-                                                        <input class="form-check-input" type="checkbox" id="edit_force_pre_tool_speech" ${toolConfig.force_pre_tool_speech ? 'checked' : ''}>
-                                                        <label class="form-check-label" for="edit_force_pre_tool_speech">
-                                                            Force Pre-Tool Speech
-                                                        </label>
-                                                        <small class="text-muted d-block">Agent speaks before calling the tool</small>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
                                     </div>
-                                </form>
+                                    </div>
+                                </div>
                             </div>
                             <div class="modal-footer">
                                 <button type="button" class="btn" data-bs-dismiss="modal">Close</button>

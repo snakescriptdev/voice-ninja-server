@@ -27,6 +27,7 @@ import base64
 from typing import Optional
 from fastapi_sqlalchemy import db
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
@@ -126,3 +127,35 @@ async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str
     except Exception as e:
         logger.error(f"Error saving audio: {e}")
         return None
+
+def update_system_variables(system_variables_data, agent):
+    # Determine timezone safely
+    system_timezone = agent.agent_timezone or "UTC"
+
+    # Current UTC time ISO
+    current_utc = datetime.utcnow().replace(tzinfo=ZoneInfo("UTC")).isoformat()
+
+    # Current time in user's timezone
+    try:
+        current_local_time = datetime.now(ZoneInfo(system_timezone)).isoformat()
+    except Exception:
+        # fallback to UTC if timezone invalid
+        current_local_time = datetime.now(ZoneInfo("UTC")).isoformat()
+
+    # Update values
+    for item in system_variables_data:
+        name = item["name"]
+
+        if name == "system__current_agent_id":
+            item["value"] = agent.elvn_lab_agent_id
+
+        elif name == "system__timezone":
+            item["value"] = system_timezone
+
+        elif name == "system__time":
+            item["value"] = current_local_time
+
+        elif name == "system__time_utc":
+            item["value"] = current_utc
+
+    return system_variables_data
