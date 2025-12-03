@@ -2300,26 +2300,34 @@ async def dashboard_search(
         search_value = search_query.lower()
 
         def matches(agent):
-            # Only use "safe" string fields that are directly loaded on the agent.
-            # Get voice name from relationship if available
+            search_value = search_query.lower()
+
             voice_name = ""
-            if hasattr(agent, "selected_voice_obj") and agent.selected_voice_obj:
-                voice_name = getattr(agent.selected_voice_obj, "voice_name", "") or ""
-            
+            try:
+                if agent.selected_voice_obj:
+                    voice_name = (agent.selected_voice_obj.voice_name or "")
+            except:
+                voice_name = ""
+
+            llm_model_name = ""
+            try:
+                if agent.selected_llm_model_obj:
+                    llm_model_name = getattr(agent.selected_llm_model_obj, "name", "") or ""
+            except:
+                llm_model_name = ""
+
             candidate_fields = [
-                getattr(agent, "agent_name", "") or "",
-                getattr(agent, "phone_number", "") or "",
-                getattr(agent, "selected_model", "") or "",
-                getattr(agent, "selected_language", "") or "",
+                agent.agent_name or "",
+                (getattr(agent, "phone_number") or ""),
+                agent.selected_language or "",
                 voice_name,
-                getattr(agent, "llm_name", "") or "",
-                getattr(agent, "model_name", "") or "",
+                llm_model_name,
             ]
+
             return any(
                 (search_value in value.lower())
-                for value in candidate_fields if value
+                for value in candidate_fields if value is not None
             )
-
         # Avoid DetachedInstanceError:
         # Don't access lazy loaded relationship fields in matches()
         agents = [agent for agent in agents if matches(agent)]
@@ -2364,7 +2372,7 @@ async def dashboard_search(
             # Get voice name from relationship
             "voice_name": voice_name,
             "llm_name": get_field(agent, "llm_name", ""),
-            "model_name": get_field(agent, "model_name", ""),
+            "model_name": getattr(agent.selected_llm_model_obj, "model_name", "") if agent.selected_llm_model_obj else "",
             # Derive has_voice by presence of voice_name
             "has_voice": bool(voice_name),
         }
