@@ -2,9 +2,9 @@ from fastapi import APIRouter,Request,UploadFile, Form, Depends
 from fastapi.templating import Jinja2Templates
 from elevenlabs_app.core import VoiceSettings
 from elevenlabs_app.core.config import DEFAULT_VARS,NOISE_SETTINGS_DESCRIPTIONS
-from elevenlabs_app.utils.helper import Paginator, check_session_expiry_redirect,get_logged_in_user
+from elevenlabs_app.utils.helper import Paginator, check_session_expiry_redirect,update_system_variables
 from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse,JSONResponse
-from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel,VoiceModel,LLMModel,ElevenLabModel
+from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel,VoiceModel,LLMModel,ElevenLabModel,SystemVariable
 from sqlalchemy.orm import sessionmaker
 from app.databases.models import engine
 import os, shutil
@@ -38,7 +38,20 @@ async def update_agent(request: Request):
         
         Session = sessionmaker(bind=engine)
         session = Session()
+
+        system_var_query_result = session.execute(select(SystemVariable))
+        system_variables = system_var_query_result.scalars().all()
+        system_variables_data = [
+                {
+                    "id": sv.id,
+                    "name": sv.name,
+                    "value" : None,
+                    "description": sv.description,
+                }
+                for sv in system_variables
+            ]
         
+
         # Convert agent_id to integer for database queries
         try:
             agent_id_int = int(agent_id)
@@ -54,6 +67,11 @@ async def update_agent(request: Request):
         # Fetch agent details
         agent_result =  session.execute(select(AgentModel).where(AgentModel.id == agent_id_int))
         agent = agent_result.scalars().first()
+
+        try:
+            system_variables_data = update_system_variables(system_variables_data, agent)
+        except Exception as ex:
+            pass
 
         # Fetch all knowledge bases
         knowledge_result =  session.execute(select(KnowledgeBaseModel))
@@ -112,22 +130,6 @@ async def update_agent(request: Request):
             except Exception as e:
                 print(f"⚠️ Warning: Failed to sync ElevenLabs knowledge base: {str(e)}")
         
-        # Check if agent has ElevenLabs knowledge base data but no local association
-        if agent.elvn_lab_knowledge_base and not selected_knowledge:
-            kb_files = agent.elvn_lab_knowledge_base.get("files", [])
-            if kb_files:
-                # Create a virtual knowledge base for display
-                class VirtualKnowledgeBase:
-                    def __init__(self, files):
-                        self.id = "elevenlabs_virtual"
-                        self.knowledge_base_name = f"ElevenLabs KB ({len(files)} files)"
-                        self.files = files
-                
-                selected_knowledge = VirtualKnowledgeBase(kb_files)
-                print(f"🔍 Debug: Using stored ElevenLabs knowledge base info: {selected_knowledge.knowledge_base_name}")
-        
-        # custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id_int)
-      
         custom_functions = ElevenLabsWebhookToolModel.get_all_by_agent(agent_id_int)
         daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id_int)
         overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id_int)
@@ -153,7 +155,8 @@ async def update_agent(request: Request):
                 "host": os.getenv("HOST"),
                 "daily_call_limit": daily_call_limit.set_value if daily_call_limit else 0,
                 "overall_token_limit": overall_token_limit.overall_token_limit if overall_token_limit else 0,
-                "per_call_token_limit": agent.per_call_token_limit if agent.per_call_token_limit else 0
+                "per_call_token_limit": agent.per_call_token_limit if agent.per_call_token_limit else 0,
+                "system_variables_data": system_variables_data
             },
         )
     except Exception as ex:

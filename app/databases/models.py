@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text
 from sqlalchemy.orm import relationship, joinedload
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
@@ -321,6 +321,7 @@ class AgentModel(Base):
     selected_model_obj = relationship("ElevenLabModel", back_populates="agents")
     # Store selected language (like "en", "hi", etc.)
     selected_language = Column(String, nullable=True)
+    agent_timezone = Column(String(100), nullable=True, server_default="UTC")
 
     def __repr__(self):
         return f"<Agent(id={self.id}, agent_name={self.agent_name})>"
@@ -2133,5 +2134,15 @@ class DynamicVariableLogs(Base):
                 db.session.commit()
                 return True
             return False
+
+class SystemVariable(Base):
+    __tablename__ = "system_variables"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(Text, nullable=True)
+
+    def __repr__(self):
+        return f"<SystemVariable(id={self.id}, name='{self.name}', description='{self.description}')>"
 
 Base.metadata.create_all(engine)

@@ -2222,3 +2222,10 @@ audio#audioPlayer {
 .form_input_outer select, .form_input_outer input{
     padding: 8px 12px;
 }
+#varPopup .var-item {
+    padding:6px 10px;
+    cursor:pointer;
+}
+#varPopup .var-item:hover {
+    background:#efefef;
+}
