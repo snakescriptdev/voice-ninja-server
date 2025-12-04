@@ -159,3 +159,189 @@ def update_system_variables(system_variables_data, agent):
             item["value"] = current_utc
 
     return system_variables_data
+
+def build_elevenlabs_tool_config(form_data: dict) -> dict:
+    """
+    Convert frontend function_parameters → EXACT ElevenLabs webhook tool schema.
+    FULL-REPLACE mode. No auto generation. No merging.
+    """
+
+    # ------------------------
+    # BASIC FIELDS
+    # ------------------------
+    tool_name = form_data.get("tool_name")
+    tool_description = form_data.get("tool_description")
+    api_url = form_data.get("api_url")
+    http_method = form_data.get("http_method", "POST").upper()
+    response_timeout = int(form_data.get("response_timeout", 20))
+
+    # ------------------------
+    # PATH PARAMS SCHEMA
+    # ------------------------
+    path_params_schema = {}
+    for p in form_data.get("path_params", []):
+        name = p.get("name")
+        if not name:
+            continue
+
+        entry = {"type": p.get("type", "string")}
+
+        # if p.get("description"):
+        #     entry["description"] = p["description"]
+
+        # if p.get("dynamic_variable"):
+        #     entry["dynamic_variable"] = p["dynamic_variable"]
+
+        # if p.get("constant_value") not in [None, ""]:
+        #     entry["constant_value"] = p["constant_value"]
+
+        if p.get("value_type") == "dynamic_variable":
+            entry["dynamic_variable"] = p.get("dynamic_variable")
+
+        if p.get("value_type") == "constant_value":
+            entry["constant_value"] = p.get("constant_value")
+
+        if p.get("value_type") == "llm_prompt":
+            if p.get("description"):
+                entry["description"] = p["description"]
+                
+
+        path_params_schema[name] = entry
+
+    # ------------------------
+    # QUERY PARAMS SCHEMA
+    # ------------------------
+    query_params_properties = {}
+    for q in form_data.get("query_params", []):
+        name = q.get("name")
+        if not name:
+            continue
+
+        entry = {"type": q.get("type", "string")}
+
+        if q.get("description"):
+            entry["description"] = q["description"]
+
+        if q.get("value_type") == "dynamic_variable":
+            entry["dynamic_variable"] = q.get("dynamic_variable")
+
+        if q.get("value_type") == "constant_value":
+            entry["constant_value"] = q.get("constant_value")
+
+        if q.get("value_type") == "llm_prompt":
+            if q.get("description"):
+                entry["description"] = q["description"]
+                
+
+        query_params_properties[name] = entry
+
+    query_params_schema = None
+    if query_params_properties:
+        query_params_schema = {"properties": query_params_properties}
+
+    # ------------------------
+    # REQUEST BODY SCHEMA
+    # ------------------------
+    body_properties = {}
+    body_required = []
+
+    for b in form_data.get("request_body_properties", []):
+        name = b.get("name")
+        if not name:
+            continue
+
+        entry = {"type": b.get("type", "string")}
+
+        if b.get("description"):
+            entry["description"] = b["description"]
+
+        if b.get("value_type") == "dynamic_variable":
+            entry["dynamic_variable"] = b.get("dynamic_variable")
+
+        if b.get("value_type") == "constant_value":
+            entry["constant_value"] = b.get("constant_value")
+
+        if b.get("value_type") == "llm_prompt":
+            if b.get("description"):
+                entry["description"] = b["description"]
+                
+
+        body_properties[name] = entry
+
+        if b.get("required"):
+            body_required.append(name)
+
+    request_body_schema = None
+    if body_properties:
+        request_body_schema = {
+            "type": "object",
+            "description": form_data.get("body_description", "Body"),
+            "properties": body_properties,
+            "required": body_required
+        }
+
+    # ------------------------
+    # REQUEST HEADERS
+    # ------------------------
+    request_headers = {}
+    for h in form_data.get("request_headers", []):
+        name = h.get("name")
+        val = h.get("value")
+        if name and val:
+            request_headers[name] = val
+
+    # ------------------------
+    # DYNAMIC VARIABLES
+    # ------------------------
+    dyn_vars = {}
+    for v in form_data.get("dynamic_variables", []):
+        name = v.get("name")
+        val = v.get("value")
+        if name:
+            dyn_vars[name] = val
+
+    # ------------------------
+    # ASSIGNMENTS
+    # ------------------------
+    assignments = []
+    for a in form_data.get("assignments", []):
+        assignments.append({
+            "dynamic_variable": a.get("variable"),
+            "value_path": a.get("path"),
+            "source": "response"
+        })
+
+    # ------------------------
+    # FINAL TOOL CONFIG
+    # ------------------------
+    api_schema = {
+        "url": api_url,
+        "method": http_method,
+        "request_headers": request_headers,
+        "auth_connection": form_data.get("auth_connection")
+    }
+
+    if path_params_schema:
+        api_schema["path_params_schema"] = path_params_schema
+
+    if query_params_schema:
+        api_schema["query_params_schema"] = query_params_schema
+
+    if request_body_schema:
+        api_schema["request_body_schema"] = request_body_schema
+
+    tool_config = {
+        "type": "webhook",
+        "name": tool_name,
+        "description": tool_description,
+        "api_schema": api_schema,
+        "response_timeout_secs": response_timeout,
+        "dynamic_variables": {
+            "dynamic_variable_placeholders": dyn_vars
+        },
+        "assignments": assignments,
+        "disable_interruptions": form_data.get("disable_interruptions", False),
+        "force_pre_tool_speech": form_data.get("force_pre_tool_speech", False)
+    }
+
+    return tool_config
