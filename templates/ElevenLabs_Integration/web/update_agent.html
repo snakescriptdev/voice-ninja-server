@@ -154,7 +154,7 @@
                                     <li class="dropdown-item gap-3 d-flex align-items-center justify-content-between mb-2" id="function-{{ function.id }}">
                                         <div class="functionNameDivBlock">{{ function.tool_name }}</div>
                                         <div class="d-flex align-items-center gap-2">
-                                            <button class="edit-function-btn bg-transparent border-0 p-0" onclick="editFunction(`{{ function.id }}`)"><img src="{{ host }}/static/Web/images/edit-icon.svg" class="img-fluid"></button>   
+                                            <button class="edit-function-btn bg-transparent border-0 p-0" onclick="openEditToolsModal(`{{ function.id }}`)"><img src="{{ host }}/static/Web/images/edit-icon.svg" class="img-fluid"></button>   
                                             <button class="delete-function-btn bg-transparent border-0 p-0" onclick="deleteFunction(`{{ function.id }}`)"><img src="{{ host }}/static/Web/images/black-dlt-icon.svg" class="img-fluid"></button>
                                         </div>
                                     </li>
@@ -211,7 +211,7 @@
                                                     {% endfor %}
                                                 </div>
                                             <div>
-                                                <button class="add-variable-btn"  onclick="addNewVariable()">+ Add</button>
+                                                <button type="button" class="add-variable-btn"  onclick="addNewVariable()">+ Add</button>
                                             </div>
                                         </div>
                                         <div class="variable-modal-footer d-flex align-items-center gap-2 justify-content-end pt-2">
@@ -1129,11 +1129,12 @@ window.addEventListener('message', function(event) {
     </div>
     <script src="{{ host }}/elevenlabs/chatbot-script-preview.js/{{ agent_id }}"></script>
     <script src="{{ host }}/static/js/elevenlabs_websocket.js"></script>
+    <script src="{{ host }}/static/js/elevenlabs/openEditWebhookModal.js"></script>
+
     <input hidden id="username" placeholder="Username" value="admin">
     <input hidden id="password" placeholder="Password" value="admin123">
     <input hidden id="elevenlabs-agent-id" value="{{ agent_id }}">
     <script src="https://cdn.ckeditor.com/ckeditor5/41.1.0/balloon/ckeditor.js"></script>
-
 
     {% raw %}
         <script>
@@ -2217,9 +2218,9 @@ $('#customFuntionModal').on('shown.bs.modal', function () {
             }
 
             // Validate path parameters
-            if (formData.path_params && formData.path_params.length > 0) {
-                for (let i = 0; i < formData.path_params.length; i++) {
-                    const param = formData.path_params[i];
+            if (formData.path_params_schema && formData.path_params_schema.length > 0) {
+                for (let i = 0; i < formData.path_params_schema.length; i++) {
+                    const param = formData.path_params_schema[i];
                     if (!validatePathParameter(param.description, param.dynamic_variable, param.constant_value, i + 1)) {
                         return; // Stop if validation fails
                     }
@@ -2249,7 +2250,7 @@ $('#customFuntionModal').on('shown.bs.modal', function () {
                     <li class="dropdown-item gap-3 d-flex align-items-center justify-content-between mb-2" id="function-${functionData.id}">
                                 <div class="functionNameDivBlock">${functionData.tool_name || formData.tool_name}</div>
                         <div class="d-flex align-items-center gap-2">
-                            <button class="edit-function-btn bg-transparent border-0 p-0" onclick="editFunction(${functionData.id})"><img src="{{ url_for('static', path='/Web/images/edit-icon.svg') }}" class="img-fluid"></button>   
+                            <button class="edit-function-btn bg-transparent border-0 p-0" onclick="openEditToolsModal(${functionData.id})"><img src="{{ url_for('static', path='/Web/images/edit-icon.svg') }}" class="img-fluid"></button>   
                             <button class="delete-function-btn bg-transparent border-0 p-0" onclick="deleteFunction(${functionData.id})"><img src="{{ url_for('static', path='/Web/images/black-dlt-icon.svg') }}" class="img-fluid"></button>
                         </div>
                     </li>
@@ -2391,7 +2392,7 @@ function updateParametersField() {
 
         // Collect request body properties
         const requestBodyProperties = [];
-        document.querySelectorAll('#request_body_properties_container .body-property-row').forEach((row) => {
+        document.querySelectorAll('#request_body_properties_container .body-param-row').forEach((row) => {
             const name = row.querySelector('input[name="body_property_name"]')?.value;
             const type = row.querySelector('select[name="body_property_type"]')?.value || 'string';
             const description = row.querySelector('textarea[name="body_property_description"]')?.value || '';
@@ -2611,13 +2612,13 @@ function collectQueryParams() {
 function collectRequestBodyProperties() {
     const properties = [];
     const container = document.getElementById("request_body_properties_container");
-    const propElements = container.querySelectorAll('.property-item');
+    const propElements = container.querySelectorAll('.param-item');
     
     propElements.forEach(element => {
-        const name = element.querySelector('.property-name').value;
-        const type = element.querySelector('.property-type').value;
-        const required = element.querySelector('.property-required').checked;
-        const valueType = element.querySelector('.property-value-type').value;
+        const name = element.querySelector('.param-name').value;
+        const type = element.querySelector('.param-type').value;
+        const required = element.querySelector('.param-required').checked;
+        const valueType = element.querySelector('.param-value-type').value;
         
         // Get the appropriate value based on value type
         let description = '';
@@ -2625,13 +2626,13 @@ function collectRequestBodyProperties() {
         let constantValue = '';
         
         if (valueType === 'llm_prompt') {
-            const descInput = element.querySelector('.property-description');
+            const descInput = element.querySelector('.param-description');
             description = descInput ? descInput.value : '';
         } else if (valueType === 'constant_value') {
-            const constInput = element.querySelector('.property-constant-value');
+            const constInput = element.querySelector('.param-constant-value');
             constantValue = constInput ? constInput.value : '';
         } else if (valueType === 'dynamic_variable') {
-            const dynInput = element.querySelector('.property-dynamic-var');
+            const dynInput = element.querySelector('.param-dynamic-var');
             dynamicVar = dynInput ? dynInput.value : '';
         }
         
@@ -2846,12 +2847,7 @@ function addPathParam() {
                     <label class="form-label">Identifier *</label>
                     <input type="text" class="form-control param-name" placeholder="agent_id" required>
                 </div>
-                <div class="col-md-2">
-                    <div class="form-check mt-4">
-                        <input class="form-check-input param-required" type="checkbox" checked>
-                        <label class="form-check-label">Required</label>
-                    </div>
-                </div>
+               
                 <div class="col-md-5">
                     <label class="form-label">Value Type</label>
                     <select class="form-select param-value-type" onchange="togglePathParamValueType('${paramId}')">
@@ -2936,12 +2932,7 @@ function addQueryParam() {
                     <label class="form-label">Identifier *</label>
                     <input type="text" class="form-control param-name" placeholder="limit" required>
                 </div>
-                <div class="col-md-2">
-                    <div class="form-check mt-4">
-                        <input class="form-check-input param-required" type="checkbox" checked>
-                        <label class="form-check-label">Required</label>
-                    </div>
-                </div>
+                
                 <div class="col-md-5">
                     <label class="form-label">Value Type</label>
                     <select class="form-select param-value-type" onchange="toggleQueryParamValueType('${paramId}')">
@@ -3004,7 +2995,7 @@ function addRequestBodyProperty() {
     const propId = 'property_' + Date.now();
     
     const propHtml = `
-        <div class="property-item border rounded p-3 mb-3" id="${propId}">
+        <div class="param-item border rounded p-3 mb-3" id="${propId}">
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <h6 class="mb-0">Request Body Property</h6>
                 <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeElement('${propId}')">Delete</button>
@@ -3012,7 +3003,7 @@ function addRequestBodyProperty() {
             <div class="row">
                 <div class="col-md-2">
                     <label class="form-label">Data type</label>
-                    <select class="form-select property-type">
+                    <select class="form-select param-type">
                         <option value="string" selected>String</option>
                         <option value="integer">Integer</option>
                         <option value="number">Number</option>
@@ -3023,17 +3014,17 @@ function addRequestBodyProperty() {
                 </div>
                 <div class="col-md-3">
                     <label class="form-label">Identifier *</label>
-                    <input type="text" class="form-control property-name" placeholder="message" required>
+                    <input type="text" class="form-control param-name" placeholder="message" required>
                 </div>
                 <div class="col-md-2">
                     <div class="form-check mt-4">
-                        <input class="form-check-input property-required" type="checkbox">
+                        <input class="form-check-input param-required" type="checkbox">
                         <label class="form-check-label">Required</label>
                     </div>
                 </div>
                 <div class="col-md-5">
                     <label class="form-label">Value Type</label>
-                    <select class="form-select property-value-type" onchange="toggleBodyPropertyValueType('${propId}')">
+                    <select class="form-select param-value-type" onchange="toggleBodyPropertyValueType('${propId}')">
                         <option value="llm_prompt" selected>LLM Prompt</option>
                         <option value="constant_value">Constant Value</option>
                         <option value="dynamic_variable">Dynamic Variable</option>
@@ -3042,9 +3033,9 @@ function addRequestBodyProperty() {
             </div>
             <div class="row mt-2">
                 <div class="col-12">
-                    <div class="property-value-container" id="${propId}_value_container">
+                    <div class="param-value-container" id="${propId}_value_container">
                         <label class="form-label">Description *</label>
-                        <textarea class="form-control property-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript." required></textarea>
+                        <textarea class="form-control param-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript." required></textarea>
                         <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript. <strong>Required for LLM Prompt type.</strong></small>
                     </div>
                 </div>
@@ -3061,26 +3052,26 @@ function addRequestBodyProperty() {
 
 function toggleBodyPropertyValueType(propId) {
     const container = document.getElementById(propId + '_value_container');
-    const valueTypeSelect = document.querySelector(`#${propId} .property-value-type`);
+    const valueTypeSelect = document.querySelector(`#${propId} .param-value-type`);
     const valueType = valueTypeSelect.value;
     
     let html = '';
     if (valueType === 'llm_prompt') {
         html = `
             <label class="form-label">Description</label>
-            <textarea class="form-control property-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript."></textarea>
+            <textarea class="form-control param-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript."></textarea>
             <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.</small>
         `;
     } else if (valueType === 'constant_value') {
         html = `
             <label class="form-label">Constant Value</label>
-            <input type="text" class="form-control property-constant-value" placeholder="Hello">
+            <input type="text" class="form-control param-constant-value" placeholder="Hello">
             <small class="text-muted">The constant value that will be used for this property.</small>
         `;
     } else if (valueType === 'dynamic_variable') {
         html = `
             <label class="form-label">Dynamic Variable</label>
-            <input type="text" class="form-control property-dynamic-var" placeholder="user_message">
+            <input type="text" class="form-control param-dynamic-var" placeholder="user_message">
             <small class="text-muted">The dynamic variable that will be replaced with actual values when the conversation starts.</small>
         `;
     }
@@ -3194,995 +3185,595 @@ function updateFunctionElement(functionData) {
     const $li = $(`#function-${functionData.id}`);
     if ($li.length) {
         $li.find('div.functionNameDivBlock').text(functionData.function_name);
-        $li.find('.edit-function-btn').attr('onclick', `editFunction(${functionData.id})`);
+        $li.find('.edit-function-btn').attr('onclick', `openEditToolsModal(${functionData.id})`);
         $li.find('.delete-function-btn').attr('onclick', `deleteFunction(${functionData.id})`);
     }
 }
-
-
-function handleEditCustomFunction(functionId){
-    
-    
-    // Basic tool information
-    let toolName = document.getElementById("edit_tool_name").value;
-    let toolDescription = document.getElementById("edit_tool_description").value;
-    let responseTimeout = document.getElementById("edit_response_timeout").value;
-    let apiUrl = document.getElementById("edit_api_url").value;
-    let httpMethod = document.getElementById("edit_http_method").value;
-    let bodyDescription = document.getElementById("edit_body_description").value;
+function handleEditCustomFunction(functionId) {
 
     const activeTabId = document.querySelector('#FunctionToolTab .nav-link.active')?.id;
 
-    let toolConfig = {}
-    let data = {}
+    const getVal = (row, selector) => {
+        const el = row.querySelector(selector);
+        return el ? (el.value ?? "").trim() : "";
+    };
+    const getChecked = (row, selector) => {
+        const el = row.querySelector(selector);
+        return !!(el && el.checked);
+    };
 
-    if(activeTabId === "configure-tab"){
+    let toolConfig = {};
+    let data = {};
+
+    /* ============================================================
+       CONFIG TAB SAVE
+    ============================================================ */
+    if (activeTabId === "configure-tab") {
         const errors = [];
 
-        // Basic tool information
         const toolName = (document.getElementById("edit_tool_name")?.value || "").trim();
         const toolDescription = (document.getElementById("edit_tool_description")?.value || "").trim();
-        const responseTimeoutRaw = document.getElementById("edit_response_timeout")?.value;
-        const responseTimeout = parseInt(responseTimeoutRaw, 10);
         const apiUrl = (document.getElementById("edit_api_url")?.value || "").trim();
         const httpMethod = (document.getElementById("edit_http_method")?.value || "POST").toUpperCase();
         const bodyDescription = (document.getElementById("edit_body_description")?.value || "").trim();
 
-        // Advanced options
         const disableInterruptions = !!document.getElementById("edit_disable_interruptions")?.checked;
         const forcePreToolSpeech = !!document.getElementById("edit_force_pre_tool_speech")?.checked;
 
-        // Basic validation
+        let responseTimeout = parseInt(document.getElementById("edit_response_timeout")?.value, 10);
+        if (Number.isNaN(responseTimeout)) responseTimeout = 20;
+
         if (!toolName) errors.push("Tool name is required.");
         if (!apiUrl) errors.push("Webhook URL is required.");
-        if (Number.isNaN(responseTimeout) || responseTimeout < 5 || responseTimeout > 120) {
-        errors.push("Response timeout must be a number between 5 and 120 (seconds).");
-        }
+        if (responseTimeout < 5 || responseTimeout > 120)
+            errors.push("Response timeout must be between 5–120 seconds.");
 
-        // Validate ElevenLabs compliance placeholder function (update if you have specific rules)
-        if (!validateElevenLabsCompliance(httpMethod, bodyDescription)) {
-        errors.push("ElevenLabs compliance validation failed for chosen method/body.");
-        }
-
-        // Helper to safely read values within a row
-        function getVal(row, selector) {
-        const el = row.querySelector(selector);
-        return el ? (el.value ?? "").trim() : "";
-        }
-        function getChecked(row, selector) {
-        const el = row.querySelector(selector);
-        return !!(el && el.checked);
-        }
-
-        // PATH PARAMETERS: rows may be arbitrary; we look for elements with class .path-param-row or .path-param-item
+        /* ============================================================
+           PATH PARAMETERS
+        ============================================================ */
         const pathParams = [];
-        document.querySelectorAll('#edit_path_params_container .path-param-row, #edit_path_params_container .path-param-item, #edit_path_params_container .path-param').forEach((row, index) => {
-        // tolerant selectors - try to find likely inputs
-        const name = getVal(row, 'input[name="path_param_name"], .path-param-name, input.path-param-name, input[name="name"], input[name="param_name"]');
-        const type = getVal(row, 'select[name="path_param_type"], select.path-param-type') || 'string';
-        const description = getVal(row, 'input[name="path_param_description"], .path-param-description');
-        const dynamicVariable = getVal(row, 'input[name="path_param_dynamic_variable"], .path-param-dynamic-variable');
-        const constantValue = getVal(row, 'input[name="path_param_constant_value"], .path-param-constant-value');
+        document.querySelectorAll('#edit_path_params_container .param-item')
+            .forEach((row) => {
 
-        if (!name) return; // skip empty rows
+                const name = getVal(row, '.param-name');
+                if (!name) return;
 
-        // ensure only one of description / dynamic / constant (if you want stricter rules)
-        const provided = [description ? 1 : 0, dynamicVariable ? 1 : 0, constantValue ? 1 : 0].reduce((a,b)=>a+b,0);
-        if (provided > 1) {
-            errors.push(`Path param "${name}" (row ${index+1}) has multiple value sources (description/dynamic/constant) — only one allowed.`);
-        }
+                const type = getVal(row, '.param-type') || "string";
+                const valueType = getVal(row, '.param-value-type') || "llm_prompt";
 
-        pathParams.push({
-            name,
-            type,
-            description: description || null,
-            dynamic_variable: dynamicVariable || null,
-            constant_value: constantValue || null
-        });
-        });
+                let constantValue = null;
+                let dynamicVariable = null;
+                let description = null;
 
-        // Validate path placeholders against URL
-        const urlPlaceholders = [];
-        const placeholderRegex = /\{([^}]+)\}/g;
-        let m;
-        while ((m = placeholderRegex.exec(apiUrl)) !== null) {
-        urlPlaceholders.push(m[1]);
-        }
-        // Every pathParam name must appear in URL placeholders
+                if (valueType === "constant_value") {
+                    constantValue = getVal(row, '.param-constant-value');
+                } 
+                else if (valueType === "dynamic_variable") {
+                    dynamicVariable = getVal(row, '.param-dynamic-variable');
+                } 
+                else {
+                    description = getVal(row, '.param-description');
+                }
+
+                pathParams.push({
+                    name,
+                    type,
+                    value_type: valueType,
+                    constant_value: constantValue,
+                    dynamic_variable: dynamicVariable,
+                    description
+                });
+            });
+
+        // Validate URL placeholders
+        const urlPlaceholders = [...apiUrl.matchAll(/\{([^}]+)\}/g)].map(m => m[1]);
+
         const missingInUrl = pathParams.filter(p => !urlPlaceholders.includes(p.name));
-        if (missingInUrl.length > 0) {
-        errors.push(`Path parameters not present as placeholders in URL: ${missingInUrl.map(p => p.name).join(', ')}. Add {name} to the URL or remove the param.`);
-        }
-        // Optional: warn if URL contains placeholders not defined as pathParams
+        if (missingInUrl.length)
+            errors.push(`Path parameters not in URL: ${missingInUrl.map(p => p.name).join(", ")}`);
+
         const undefinedPlaceholders = urlPlaceholders.filter(ph => !pathParams.some(p => p.name === ph));
-        if (undefinedPlaceholders.length > 0) {
-        errors.push(`URL contains placeholders not defined in Path Parameters: ${undefinedPlaceholders.join(', ')}. Either remove them from the URL or add corresponding path parameters.`);
-        }
+        if (undefinedPlaceholders.length)
+            errors.push(`URL placeholders missing in Path Params: ${undefinedPlaceholders.join(", ")}`);
 
-        // QUERY PARAMETERS: detect .param-item, .query-param-row or fallback header-like structures
-        const queryParams = [];
-        document.querySelectorAll('#edit_query_params_container .param-item, #edit_query_params_container .query-param-row, #edit_query_params_container .query-param').forEach((row) => {
-        const name = getVal(row, 'input[name="query_param_name"], .param-name, input.param-name, input[name="name"]');
-        if (!name) return;
-        const type = getVal(row, 'select[name="query_param_type"], select.param-type') || getVal(row, 'select.param-type') || 'string';
-        const required = getChecked(row, 'input[name="query_param_required"], .param-required, input.param-required') || false;
-        const description = getVal(row, 'input[name="query_param_description"], .param-description') || null;
-
-        // determine value type and value (llm_prompt, constant_value, dynamic_variable)
-        const valueType = getVal(row, 'select.param-value-type, select[name="query_param_value_type"]') || null;
-        let value = null;
-        if (valueType === 'constant_value') {
-            value = getVal(row, '.param-constant-value, input.param-constant-value, input[name="query_param_constant_value"]') || null;
-        } else if (valueType === 'dynamic_variable') {
-            value = getVal(row, '.param-dynamic-variable, input.param-dynamic-variable, input[name="query_param_dynamic_variable"]') || null;
-        } else if (valueType === 'llm_prompt' || !valueType) {
-            // If LLM prompt input is present, capture it; otherwise null
-            value = getVal(row, '.param-llm-prompt, textarea.param-llm-prompt') || null;
-        }
-
-        queryParams.push({
-            name,
-            type,
-            required,
-            description,
-            value_type: valueType || 'llm_prompt',
-            value: value
-        });
-        });
-
-        // REQUEST BODY PROPERTIES
-        const requestBodyProperties = [];
-        document.querySelectorAll('#edit_request_body_properties_container .property-item, #edit_request_body_properties_container .body-property-row, #edit_request_body_properties_container .property').forEach((row) => {
-        const name = getVal(row, 'input[name="body_property_name"], .property-name, input.property-name, input[name="name"]');
-        if (!name) return;
-        const type = getVal(row, 'select[name="body_property_type"], select.property-type') || 'string';
-        const required = getChecked(row, 'input[name="body_property_required"], .property-required, input.property-required') || false;
-        const description = getVal(row, 'input[name="body_property_description"], .property-description') || null;
-        const valueType = getVal(row, 'select.property-value-type, select[name="body_property_value_type"]') || null;
-
-        let value = null;
-        if (valueType === 'constant_value') {
-            value = getVal(row, '.property-constant-value, input.property-constant-value') || null;
-        } else if (valueType === 'dynamic_variable') {
-            value = getVal(row, '.property-dynamic-variable, input.property-dynamic-variable') || null;
-        } else {
-            value = getVal(row, '.property-llm-prompt, textarea.property-llm-prompt') || null;
-        }
-
-        requestBodyProperties.push({
-            name,
-            type,
-            required,
-            description,
-            value_type: valueType || 'llm_prompt',
-            value
-        });
-        });
-
-        // REQUEST HEADERS
-        const requestHeaders = [];
-        // header rows use class .header-row in your markup
-        document.querySelectorAll('#edit_request_headers_container .header-row, #edit_request_headers_container .header').forEach((row) => {
-        const name = getVal(row, 'input[name="header_name"], input.header-name, .header-name');
-        const value = getVal(row, 'input[name="header_value"], input.header-value, .header-value');
-        if (!name && !value) return;
-        requestHeaders.push({ name: name || "", value: value || "" });
-        });
-
-        // DYNAMIC VARIABLES (variable-row)
-        const dynamicVariables = [];
-        document.querySelectorAll('#edit_dynamic_variables_container .variable-row, #edit_dynamic_variables_container .variable').forEach((row) => {
-        const name = getVal(row, 'input[name="variable_name"], input.variable-name, .variable-name');
-        const value = getVal(row, 'input[name="variable_value"], input.variable-value, .variable-value');
-        if (!name) return;
-        dynamicVariables.push({ name, value });
-        });
-
-        // ASSIGNMENTS
-        const assignments = [];
-        document.querySelectorAll('#edit_assignments_container .assignment-row, #edit_assignments_container .assignment').forEach((row) => {
-        const variable = getVal(row, 'input[name="assignment_variable"], input.assignment-variable, .assignment-variable');
-        const path = getVal(row, 'input[name="assignment_path"], input.assignment-path, .assignment-path');
-        if (!variable || !path) return;
-        assignments.push({ variable, path });
-        });
-
-        // Extra: dedupe names (tool-level)
-        function duplicatesFrom(arr, key) {
-        const seen = new Map();
-        arr.forEach(item => {
-            const k = item[key];
-            if (!k) return;
-            seen.set(k, (seen.get(k) || 0) + 1);
-        });
-        return [...seen.entries()].filter(([k,v]) => v>1).map(([k]) => k);
-        }
-        const dupQuery = duplicatesFrom(queryParams, 'name');
-        const dupBody = duplicatesFrom(requestBodyProperties, 'name');
-        const dupPath = duplicatesFrom(pathParams, 'name');
-        if (dupQuery.length) errors.push(`Duplicate query parameter identifiers: ${dupQuery.join(', ')}`);
-        if (dupBody.length) errors.push(`Duplicate request body property identifiers: ${dupBody.join(', ')}`);
-        if (dupPath.length) errors.push(`Duplicate path parameter identifiers: ${dupPath.join(', ')}`);
-
-        // If any validation errors, return them
         if (errors.length) {
-        return { ok: false, errors };
+            toastr.error(errors[0]);
+            return;
         }
 
-        // Compose the tool config payload
-        toolConfig = {
-        api_url: apiUrl,
-        response_timeout_secs: Number.isFinite(responseTimeout) ? responseTimeout : 20,
-        http_method: httpMethod,
-        body_description: bodyDescription || null,
-        path_params: pathParams,
-        query_params: queryParams,
-        request_body_properties: requestBodyProperties,
-        request_headers: requestHeaders,
-        dynamic_variables: dynamicVariables,
-        assignments: assignments,
-        disable_interruptions: disableInterruptions,
-        force_pre_tool_speech: forcePreToolSpeech,
-        };
+        /* ============================================================
+           QUERY PARAMETERS
+        ============================================================ */
+        const queryParams = [];
+        document.querySelectorAll('#edit_query_params_container .param-item')
+            .forEach((row) => {
+                const name = getVal(row, '.param-name');
+                if (!name) return;
 
-        // extract agent_id from page URL search params if present (keeps backward compatibility)
+                const type = getVal(row, '.param-type') || "string";
+                const valueType = getVal(row, '.param-value-type') || "llm_prompt";
+
+                let constantValue = null;
+                let dynamicVariable = null;
+                let description = null;
+
+                if (valueType === "constant_value") {
+                    constantValue = getVal(row, '.param-constant-value');
+                } else if (valueType === "dynamic_variable") {
+                    dynamicVariable = getVal(row, '.param-dynamic-variable');
+                } else {
+                    description = getVal(row, '.param-description');
+                }
+
+                queryParams.push({
+                    name,
+                    type,
+                    value_type: valueType,
+                    constant_value: constantValue,
+                    dynamic_variable: dynamicVariable,
+                    description
+                });
+            });
+
+        /* ============================================================
+           REQUEST BODY PROPERTIES
+        ============================================================ */
+        const requestBodyProperties = [];
+        document.querySelectorAll('#edit_request_body_properties_container .param-item')
+            .forEach((row) => {
+
+                const name = getVal(row, '.param-name');
+                if (!name) return;
+
+                const type = getVal(row, '.param-type') || "string";
+                const required = getChecked(row, '.param-required');
+                const valueType = getVal(row, '.param-value-type') || "llm_prompt";
+
+                let constantValue = null;
+                let dynamicVariable = null;
+                let description = null;
+
+                if (valueType === "constant_value") {
+                    constantValue = getVal(row, '.param-constant-value');
+                } else if (valueType === "dynamic_variable") {
+                    dynamicVariable = getVal(row, '.param-dynamic-variable');
+                } else {
+                    description = getVal(row, '.param-description');
+                }
+
+                requestBodyProperties.push({
+                    name,
+                    type,
+                    required,
+                    value_type: valueType,
+                    constant_value: constantValue,
+                    dynamic_variable: dynamicVariable,
+                    description
+                });
+            });
+
+        /* ============================================================
+           HEADERS
+        ============================================================ */
+        const requestHeaders = [];
+        document.querySelectorAll('#edit_request_headers_container .header-row')
+            .forEach((row) => {
+                const inputs = row.querySelectorAll('input');
+                const name = inputs[0]?.value.trim() || "";
+                const value = inputs[1]?.value.trim() || "";
+                if (!name && !value) return;
+
+                requestHeaders.push({ name, value });
+            });
+
+        /* ============================================================
+           DYNAMIC VARIABLES
+        ============================================================ */
+        const dynamicVariables = [];
+        document.querySelectorAll('#edit_dynamic_variables_container .variable-row')
+            .forEach((row) => {
+                const inputs = row.querySelectorAll('input');
+                const name = inputs[0]?.value.trim() || "";
+                const value = inputs[1]?.value.trim() || "";
+                if (!name) return;
+
+                dynamicVariables.push({ name, value });
+            });
+
+        /* ============================================================
+           ASSIGNMENTS
+        ============================================================ */
+        const assignments = [];
+        document.querySelectorAll('#edit_assignments_container .assignment-row')
+            .forEach((row) => {
+                const inputs = row.querySelectorAll('input');
+                const variable = inputs[0]?.value.trim() || "";
+                const path = inputs[1]?.value.trim() || "";
+                if (!variable || !path) return;
+
+                assignments.push({ variable, path });
+            });
+
+        /* ============================================================
+           FINAL PAYLOAD
+        ============================================================ */
         const currentUrl = new URL(window.location.href);
         const agentId = currentUrl.searchParams.get("agent_id") || null;
 
-        data = {
-        function_name: toolName,
-        function_description: toolDescription,
-        function_url: apiUrl,
-        function_timeout: Number.isFinite(responseTimeout) ? responseTimeout : 20,
-        function_parameters: toolConfig,
-        agent_id: agentId
-        };
-
-
-    }
-    else if(activeTabId == "format_json_tab"){
-        //edit only according to JSON schema
-        let functionParameters = document.getElementById("edit-parameters").value;
-        // Parse JSON parameters if provided
-        let parsedParameters = {};
-        if (functionParameters) {
-            try {
-                parsedParameters = JSON.parse(functionParameters);
-            } catch (e) {
-                toastr.error('Invalid JSON format in parameters field');
-                return;
-            }
-        }
-
         toolConfig = {
             api_url: apiUrl,
-            response_timeout_secs: parseInt(responseTimeout) || 20,
             http_method: httpMethod,
+            response_timeout_secs: responseTimeout,
             body_description: bodyDescription,
             path_params: pathParams,
             query_params: queryParams,
             request_body_properties: requestBodyProperties,
             request_headers: requestHeaders,
             dynamic_variables: dynamicVariables,
-            assignments: assignments,
+            assignments,
             disable_interruptions: disableInterruptions,
-            force_pre_tool_speech: forcePreToolSpeech,
-            ...parsedParameters
+            force_pre_tool_speech: forcePreToolSpeech
         };
 
         data = {
             function_name: toolName,
             function_description: toolDescription,
             function_url: apiUrl,
-            function_timeout: parseInt(responseTimeout) || 20,
+            function_timeout: responseTimeout,
             function_parameters: toolConfig,
             agent_id: agentId
         };
+        data['activeTabId'] = activeTabId;
+    }
 
+    /* ============================================================
+       RAW JSON TAB SAVE
+    ============================================================ */
+    else if (activeTabId === "format_json_tab") {
+        let txt = document.getElementById("edit-parameters").value;
 
+        try {
+            data = JSON.parse(txt);
+            data['activeTabId'] = activeTabId;
+        } catch (e) {
+            toastr.error("Invalid JSON.");
+            return;
+        }
     }
     else{
-        toastr.error("Something went wrong in updating Tools. Please contact support team.");
+        toastr.error("Some Error in updating custom functions. Please contact support team.");
+        return;
     }
-    
 
+    /* ============================================================
+       SUBMIT
+    ============================================================ */
     $.ajax({
-        url: `{{ host }}/elevenlabs/api/v1/edit-custom-functions/${functionId}`,
+        url: `${host}/elevenlabs/api/v1/edit-custom-functions/${functionId}`,
         type: 'PUT',
         contentType: 'application/json',
         data: JSON.stringify(data),
-        success: function(response) {
-            
-            if(response.status == "success"){
-                toastr.success('Custom function saved successfully');
+        success: function (response) {
+            if (response.status === "success") {
+                toastr.success("Custom function updated.");
                 $('#customFunctionEditModal').modal('hide');
-                // Clear form fields
-                document.getElementById("edit_tool_name").value = '';
-                document.getElementById("edit_tool_description").value = '';
-                document.getElementById("edit_api_url").value = '';
-                document.getElementById("edit_response_timeout").value = '';
-                document.getElementById("edit-parameters").value = '';
-                var functionData = response.data
-                updateFunctionElement(functionData);
-            }
-            else{
-                toastr.error(response.message || 'Something went wrong!');
+                updateFunctionElement(response.data);
+            } else {
+                toastr.error(response.message || "Update failed.");
             }
         },
-        error: function(xhr, status, error) {
-            let errorMessage = xhr?.responseJSON?.message;
-            toastr.error(errorMessage || 'Error saving custom function: ' + error);
+        error: function (xhr) {
+            toastr.error(xhr?.responseJSON?.message || "Error updating function.");
         }
     });
 }
 
-// Helper functions for generating HTML for edit modal
-function generatePathParamsHTML(pathParams) {
-    if (!pathParams || pathParams.length === 0) {
-        return '<p class="text-muted">No path parameters defined</p>';
-    }
-    return pathParams.map((param, index) => {
-        const paramId = 'edit_path_param_' + index;
-        return `
-        <div class="param-item border rounded p-3 mb-3" id="${paramId}">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="mb-0">Path Parameter</h6>
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditPathParam(${index})">Delete</button>
-            </div>
-            <div class="row">
-                <div class="col-md-2">
-                    <label class="form-label">Data type</label>
-                    <select class="form-select param-type">
-                        <option value="string" ${param.type === 'string' ? 'selected' : ''}>String</option>
-                        <option value="integer" ${param.type === 'integer' ? 'selected' : ''}>Integer</option>
-                        <option value="number" ${param.type === 'number' ? 'selected' : ''}>Number</option>
-                        <option value="boolean" ${param.type === 'boolean' ? 'selected' : ''}>Boolean</option>
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">Identifier *</label>
-                    <input type="text" class="form-control param-name" value="${param.name || ''}" placeholder="agent_id" required>
-                </div>
-                <div class="col-md-2">
-                    <div class="form-check mt-4">
-                        <input class="form-check-input param-required" type="checkbox" ${param.required ? 'checked' : ''}>
-                        <label class="form-check-label">Required</label>
-                    </div>
-                </div>
-                <div class="col-md-5">
-                    <label class="form-label">Value Type</label>
-                    <select class="form-select param-value-type" onchange="toggleEditPathParamValueType('${paramId}')">
-                        <option value="llm_prompt" ${param.value_type === 'llm_prompt' ? 'selected' : ''}>LLM Prompt</option>
-                        <option value="constant_value" ${param.value_type === 'constant_value' ? 'selected' : ''}>Constant Value</option>
-                        <option value="dynamic_variable" ${param.value_type === 'dynamic_variable' ? 'selected' : ''}>Dynamic Variable</option>
-                    </select>
-                </div>
-            </div>
-            <div class="row mt-2">
-                <div class="col-12">
-                    <div class="param-value-container" id="${paramId}_value_container">
-                        <label class="form-label">Description</label>
-                        <textarea class="form-control param-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.">${param.description || ''}</textarea>
-                        <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.</small>
-                    </div>
-                </div>
-            </div>
-        </div>
-        `;
-    }).join('');
-}
-
-function generateQueryParamsHTML(queryParams) {
-    if (!queryParams || queryParams.length === 0) {
-        return '<p class="text-muted">No query parameters defined</p>';
-    }
-    return queryParams.map((param, index) => {
-        const paramId = 'edit_query_param_' + index;
-        return `
-        <div class="param-item border rounded p-3 mb-3" id="${paramId}">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="mb-0">Query Parameter</h6>
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditQueryParam(${index})">Delete</button>
-            </div>
-            <div class="row">
-                <div class="col-md-2">
-                    <label class="form-label">Data type</label>
-                    <select class="form-select param-type">
-                        <option value="string" ${param.type === 'string' ? 'selected' : ''}>String</option>
-                        <option value="integer" ${param.type === 'integer' ? 'selected' : ''}>Integer</option>
-                        <option value="number" ${param.type === 'number' ? 'selected' : ''}>Number</option>
-                        <option value="boolean" ${param.type === 'boolean' ? 'selected' : ''}>Boolean</option>
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">Identifier *</label>
-                    <input type="text" class="form-control param-name" value="${param.name || ''}" placeholder="limit" required>
-                </div>
-                <div class="col-md-2">
-                    <div class="form-check mt-4">
-                        <input class="form-check-input param-required" type="checkbox" ${param.required ? 'checked' : ''}>
-                        <label class="form-check-label">Required</label>
-                    </div>
-                </div>
-                <div class="col-md-5">
-                    <label class="form-label">Value Type</label>
-                    <select class="form-select param-value-type" onchange="toggleEditQueryParamValueType('${paramId}')">
-                        <option value="llm_prompt" ${param.value_type === 'llm_prompt' ? 'selected' : ''}>LLM Prompt</option>
-                        <option value="constant_value" ${param.value_type === 'constant_value' ? 'selected' : ''}>Constant Value</option>
-                        <option value="dynamic_variable" ${param.value_type === 'dynamic_variable' ? 'selected' : ''}>Dynamic Variable</option>
-                    </select>
-                </div>
-            </div>
-            <div class="row mt-2">
-                <div class="col-12">
-                    <div class="param-value-container" id="${paramId}_value_container">
-                        <label class="form-label">Description</label>
-                        <input type="text" class="form-control param-description" value="${param.description || ''}" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.">
-                        <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.</small>
-                    </div>
-                </div>
-            </div>
-        </div>
-        `;
-    }).join('');
-}
-
-function generateRequestBodyPropertiesHTML(properties) {
-    if (!properties || properties.length === 0) {
-        return '<p class="text-muted">No properties defined</p>';
-    }
-    return properties.map((prop, index) => {
-        const propId = 'edit_property_' + index;
-        return `
-        <div class="property-item border rounded p-3 mb-3" id="${propId}">
-            <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="mb-0">Request Body Property</h6>
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditRequestBodyProperty(${index})">Delete</button>
-            </div>
-            <div class="row">
-                <div class="col-md-2">
-                    <label class="form-label">Data type</label>
-                    <select class="form-select property-type">
-                        <option value="string" ${prop.type === 'string' ? 'selected' : ''}>String</option>
-                        <option value="integer" ${prop.type === 'integer' ? 'selected' : ''}>Integer</option>
-                        <option value="number" ${prop.type === 'number' ? 'selected' : ''}>Number</option>
-                        <option value="boolean" ${prop.type === 'boolean' ? 'selected' : ''}>Boolean</option>
-                        <option value="object" ${prop.type === 'object' ? 'selected' : ''}>Object</option>
-                        <option value="array" ${prop.type === 'array' ? 'selected' : ''}>Array</option>
-                    </select>
-                </div>
-                <div class="col-md-3">
-                    <label class="form-label">Identifier *</label>
-                    <input type="text" class="form-control property-name" value="${prop.name || ''}" placeholder="message" required>
-                </div>
-                <div class="col-md-2">
-                    <div class="form-check mt-4">
-                        <input class="form-check-input property-required" type="checkbox" ${prop.required ? 'checked' : ''}>
-                        <label class="form-check-label">Required</label>
-                    </div>
-                </div>
-                <div class="col-md-5">
-                    <label class="form-label">Value Type</label>
-                    <select class="form-select property-value-type" onchange="toggleEditBodyPropertyValueType('${propId}')">
-                        <option value="llm_prompt" ${prop.value_type === 'llm_prompt' ? 'selected' : ''}>LLM Prompt</option>
-                        <option value="constant_value" ${prop.value_type === 'constant_value' ? 'selected' : ''}>Constant Value</option>
-                        <option value="dynamic_variable" ${prop.value_type === 'dynamic_variable' ? 'selected' : ''}>Dynamic Variable</option>
-                    </select>
-                </div>
-            </div>
-            <div class="row mt-2">
-                <div class="col-12">
-                    <div class="property-value-container" id="${propId}_value_container">
-                        <label class="form-label">Description</label>
-                        <textarea class="form-control property-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.">${prop.description || ''}</textarea>
-                        <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.</small>
-                    </div>
-                </div>
-            </div>
-        </div>
-        `;
-    }).join('');
-}
-
-function generateRequestHeadersHTML(headers) {
-    if (!headers || headers.length === 0) {
-        return '<p class="text-muted">No headers defined</p>';
-    }
-    return headers.map((header, index) => `
-        <div class="row mb-2 header-row" data-index="${index}">
-            <div class="col-md-4">
-                <input type="text" class="form-control" name="header_name" value="${header.name || ''}" placeholder="Header name">
-            </div>
-            <div class="col-md-6">
-                <input type="text" class="form-control" name="header_value" value="${header.value || ''}" placeholder="Header value">
-            </div>
-            <div class="col-md-2">
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditRequestHeader(${index})">×</button>
-            </div>
-        </div>
-    `).join('');
-}
-
-function generateDynamicVariablesHTML(variables) {
-    if (!variables || variables.length === 0) {
-        return '<p class="text-muted">No dynamic variables defined</p>';
-    }
-    return variables.map((variable, index) => `
-        <div class="row mb-2 variable-row" data-index="${index}">
-            <div class="col-md-4">
-                <input type="text" class="form-control" name="variable_name" value="${variable.name || ''}" placeholder="Variable name">
-            </div>
-            <div class="col-md-6">
-                <input type="text" class="form-control" name="variable_description" value="${variable.description || ''}" placeholder="Variable description">
-            </div>
-            <div class="col-md-2">
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditDynamicVariable(${index})">×</button>
-            </div>
-        </div>
-    `).join('');
-}
-
-function generateAssignmentsHTML(assignments) {
-    if (!assignments || assignments.length === 0) {
-        return '<p class="text-muted">No assignments defined</p>';
-    }
-    return assignments.map((assignment, index) => `
-        <div class="row mb-2 assignment-row" data-index="${index}">
-            <div class="col-md-4">
-                <input type="text" class="form-control" name="assignment_variable" value="${assignment.dynamic_variable || ''}" placeholder="Variable name">
-            </div>
-            <div class="col-md-6">
-                <input type="text" class="form-control" name="assignment_path" value="${assignment.value_path || ''}" placeholder="JSON path (e.g., $.data.id)">
-            </div>
-            <div class="col-md-2">
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditAssignment(${index})">×</button>
-            </div>
-        </div>
-    `).join('');
-}
-
-// Helper function to extract and flatten tool configuration for edit modal
-function extractToolConfigForEdit(rawToolConfig) {
-    
-    
-    // Initialize the flattened structure
-    var toolConfig = {
-        http_method: 'POST',
-        body_description: '',
-        path_params: [],
-        query_params: [],
-        request_body_properties: [],
-        request_headers: [],
-        dynamic_variables: [],
-        assignments: [],
-        disable_interruptions: false,
-        force_pre_tool_speech: false
-    };
-    
-    // Check if we have the nested structure
-    if (rawToolConfig && rawToolConfig.tool_config) {
-        var innerConfig = rawToolConfig.tool_config;
-        var apiSchema = innerConfig.api_schema || {};
-        
-        // Extract basic info
-        toolConfig.http_method = apiSchema.method || 'POST';
-        toolConfig.body_description = apiSchema.request_body_schema?.description || '';
-        toolConfig.disable_interruptions = innerConfig.disable_interruptions || false;
-        toolConfig.force_pre_tool_speech = innerConfig.force_pre_tool_speech || false;
-        
-        // Extract path parameters
-        if (apiSchema.path_params_schema && apiSchema.path_params_schema.properties) {
-            toolConfig.path_params = Object.entries(apiSchema.path_params_schema.properties).map(([name, config]) => ({
-                name: name,
-                type: config.type || 'string',
-                required: apiSchema.path_params_schema.required?.includes(name) || false,
-                description: config.description || '',
-                value_type: config.value_type || 'llm_prompt',
-                constant_value: config.constant_value || '',
-                dynamic_variable: config.dynamic_variable || ''
-            }));
-        }
-        
-        // Extract query parameters
-        if (apiSchema.query_params_schema && apiSchema.query_params_schema.properties) {
-            toolConfig.query_params = Object.entries(apiSchema.query_params_schema.properties).map(([name, config]) => ({
-                name: name,
-                type: config.type || 'string',
-                required: apiSchema.query_params_schema.required?.includes(name) || false,
-                description: config.description || '',
-                value_type: config.value_type || 'llm_prompt',
-                constant_value: config.constant_value || '',
-                dynamic_variable: config.dynamic_variable || ''
-            }));
-        }
-        
-        // Extract request body properties
-        if (apiSchema.request_body_schema && apiSchema.request_body_schema.properties) {
-            toolConfig.request_body_properties = Object.entries(apiSchema.request_body_schema.properties).map(([name, config]) => ({
-                name: name,
-                type: config.type || 'string',
-                required: apiSchema.request_body_schema.required?.includes(name) || false,
-                description: config.description || '',
-                value_type: config.value_type || 'llm_prompt',
-                constant_value: config.constant_value || '',
-                dynamic_variable: config.dynamic_variable || ''
-            }));
-        }
-        
-        // Extract request headers
-        if (apiSchema.request_headers) {
-            toolConfig.request_headers = Object.entries(apiSchema.request_headers).map(([name, value]) => ({
-                name: name,
-                value: value,
-                value_type: 'constant_value'
-            }));
-        }
-        
-        // Extract dynamic variables
-        if (innerConfig.dynamic_variables && innerConfig.dynamic_variables.dynamic_variable_placeholders) {
-            toolConfig.dynamic_variables = Object.entries(innerConfig.dynamic_variables.dynamic_variable_placeholders).map(([name, config]) => ({
-                name: name,
-                description: config.description || '',
-                value_type: config.value_type || 'llm_prompt',
-                constant_value: config.constant_value || '',
-                dynamic_variable: config.dynamic_variable || ''
-            }));
-        }
-        
-        // Extract assignments
-        if (innerConfig.assignments) {
-            toolConfig.assignments = innerConfig.assignments.map(assignment => ({
-                response_path: assignment.response_path || '',
-                variable_name: assignment.variable_name || '',
-                description: assignment.description || ''
-            }));
-        }
-    }
-    
-    
-    return toolConfig;
-}
-
-function editFunction(functionId) {
-    
-    
+function openEditToolsModal(functionId) {
     $.ajax({
-        url: "{{ host }}/elevenlabs/api/v1/get-custom-functions",
+        url: `${host}/elevenlabs/api/v1/get-custom-functions`,
         type: 'GET',
         data: { function_id: functionId },
-        success: function(response) {
-            
-            
+        success: function (response) {
+
             if (!response.data) {
-                toastr.error('No function data found.');
+                toastr.error("No function data found.");
                 return;
             }
 
-            var functionData = response.data;
-            var rawToolConfig = functionData.function_parameters || {};
-            
-         
-            
-            // Extract and flatten the tool configuration for the edit modal
-            var toolConfig = extractToolConfigForEdit(rawToolConfig);
-            
-            var modal = `
-                <div class="modal fade custom_function_modal" id="customFunctionEditModal" tabindex="-1" aria-labelledby="customFunctionEditModalLabel">
+            const functionData = response.data;
+            const rawToolConfig = functionData.function_parameters || {};
+
+            /** -------------------------------
+             * Flatten & extract using the class
+             * --------------------------------*/
+            const tool = new WebhookToolEditor(rawToolConfig, functionData);
+            const config = tool.extract();
+
+            /** -------------------------------------------------------------
+             *  Build modal HTML (your structure kept 100% unchanged)
+             * -------------------------------------------------------------*/
+            const modal = `
+                <div class="modal fade custom_function_modal" id="customFunctionEditModal" tabindex="-1">
                     <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-xl">
                         <div class="modal-content">
                             <div class="modal-header">
-                                <h1 class="mb-0 d-flex align-items-center gap-2" id="customFunctionEditModalLabel">
-                                    <span>
-                                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="none">
-                                            <path d="M4.33337 14.6667V10" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
-                                            <path d="M4.33337 3.33398V1.33398" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
-                                            <path d="M11.6666 14.666V12.666" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
-                                            <path d="M11.6666 6.00065V1.33398" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
-                                            <path d="M6.33337 4.66732V8.66732C6.33337 9.40065 6.00004 10.0007 5.00004 10.0007H3.66671C2.66671 10.0007 2.33337 9.40065 2.33337 8.66732V4.66732C2.33337 3.93398 2.66671 3.33398 3.66671 3.33398H5.00004C6.00004 3.33398 6.33337 3.93398 6.33337 4.66732Z" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
-                                            <path d="M13.6666 7.33333V11.3333C13.6666 12.0667 13.3333 12.6667 12.3333 12.6667H11C9.99996 12.6667 9.66663 12.0667 9.66663 11.3333V7.33333C9.66663 6.6 9.99996 6 11 6H12.3333C13.3333 6 13.6666 6.6 13.6666 7.33333Z" stroke="#525866" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path>
-                                        </svg>
-                                    </span>
-                                    Edit Webhook Tool
-                                </h1>
-                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                                <h1 class="mb-0">Edit Webhook Tool</h1>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                             </div>
+
                             <div class="modal-body">
+
                                 <ul class="nav nav-tabs" id="FunctionToolTab" role="tablist">
-                                    <li class="nav-item" role="presentation">
-                                        <button class="nav-link active" id="configure-tab" data-bs-toggle="tab" data-bs-target="#configure-tab-pane" type="button" role="tab" aria-controls="configure-tab-pane" aria-selected="true">Configure</button>
+                                    <li class="nav-item" role="presentation" >
+                                        <button class="nav-link active" id="configure-tab"
+                                            data-bs-target="#configure-tab-pane" data-bs-toggle="tab">
+                                            Configure
+                                        </button>
                                     </li>
                                     <li class="nav-item" role="presentation">
-                                        <button class="nav-link" id="format_json_tab" data-bs-toggle="tab" data-bs-target="#format_json_tab-pane" type="button" role="tab" aria-controls="format_json_tab-pane" aria-selected="false">Format JSON</button>
+                                        <button class="nav-link" id="format_json_tab"
+                                            data-bs-target="#format_json_tab-pane" data-bs-toggle="tab">
+                                            Format JSON
+                                        </button>
                                     </li>
                                 </ul>
-                                <div class="tab-content" id="FunctionToolTabContent">
-                                    <div class="tab-pane fade show active" id="configure-tab-pane" role="tabpanel" aria-labelledby="configure-tab" tabindex="0">
+
+                                <div class="tab-content">
+
+                                    <!-- CONFIG TAB -->
+                                    <div class="tab-pane fade show active p-2" id="configure-tab-pane">
 
                                         <form id="editFunctionForm">
-                                            <!-- Basic Tool Information -->
+
+                                            <!-- BASIC TOOL CONFIG -->
                                             <div class="card mb-3">
-                                                <div class="card-header">
-                                                    <h6 class="mb-0">Tool Configuration</h6>
-                                                </div>
+                                                <div class="card-header"><h6>Tool Configuration</h6></div>
                                                 <div class="card-body">
+
                                                     <div class="row">
                                                         <div class="col-md-6">
-                                            <div class="form_field mb-3">
-                                                                <label for="edit_tool_name" class="form-label">Tool Name *</label>
-                                                                <input type="text" class="form-control" id="edit_tool_name" value="${functionData.function_name || ''}" placeholder="my_webhook_tool" required>
-                                                                <small class="text-muted">Only letters, numbers, underscores, and hyphens. Max 64 characters.</small>
-                                            </div>
+                                                            <label class="form-label">Tool Name *</label>
+                                                            <input type="text" class="form-control"
+                                                                id="edit_tool_name"
+                                                                value="${functionData.function_name}">
                                                         </div>
+
                                                         <div class="col-md-6">
-                                            <div class="form_field mb-3">
-                                                                <label for="edit_response_timeout" class="form-label">Response Timeout (seconds)</label>
-                                                                <input type="number" class="form-control" id="edit_response_timeout" value="${functionData.function_timeout || 20}" placeholder="20" min="5" max="120">
-                                                                <small class="text-muted">Between 5-120 seconds</small>
-                                            </div>
+                                                            <label class="form-label">Response Timeout</label>
+                                                            <input type="number" class="form-control"
+                                                                id="edit_response_timeout"
+                                                                value="${functionData.function_timeout || 20}">
                                                         </div>
                                                     </div>
-                                                    
-                                            <div class="form_field mb-3">
-                                                        <label for="edit_tool_description" class="form-label">Description *</label>
-                                                        <textarea class="form-control" id="edit_tool_description" placeholder="Describe what this webhook tool does" rows="2" required>${functionData.function_description || ''}</textarea>
-                                            </div>
+
+                                                    <label class="form-label mt-3">Description *</label>
+                                                    <textarea class="form-control" id="edit_tool_description"
+                                                        rows="2">${functionData.function_description || ""}</textarea>
+
                                                 </div>
                                             </div>
 
-                                            <!-- API Schema Configuration -->
+                                            <!-- API SCHEMA -->
                                             <div class="card mb-3">
-                                                <div class="card-header">
-                                                    <h6 class="mb-0">API Schema</h6>
-                                                </div>
+                                                <div class="card-header"><h6>API Schema</h6></div>
                                                 <div class="card-body">
+
                                                     <div class="row">
+
                                                         <div class="col-md-8">
-                                            <div class="form_field mb-3">
-                                                                <label for="edit_api_url" class="form-label">Webhook URL *</label>
-                                                                <input type="url" class="form-control" id="edit_api_url" value="${functionData.function_url || ''}" placeholder="https://api.example.com/agents/{agent_id}" required>
-                                                                <small class="text-muted">May include path parameters like {agent_id}</small>
-                                                </div>
-                                            </div>
+                                                            <label class="form-label">Webhook URL *</label>
+                                                            <input type="url"
+                                                                class="form-control"
+                                                                id="edit_api_url"
+                                                                value="${functionData.function_url}">
+                                                        </div>
+
                                                         <div class="col-md-4">
-                                                            <div class="form_field mb-3">
-                                                                <label for="edit_http_method" class="form-label">HTTP Method</label>
-                                                                <select class="form-select" id="edit_http_method">
-                                                                    <option value="GET" ${toolConfig.http_method === 'GET' ? 'selected' : ''}>GET</option>
-                                                                    <option value="POST" ${toolConfig.http_method === 'POST' || !toolConfig.http_method ? 'selected' : ''}>POST</option>
-                                                                    <option value="PUT" ${toolConfig.http_method === 'PUT' ? 'selected' : ''}>PUT</option>
-                                                                    <option value="PATCH" ${toolConfig.http_method === 'PATCH' ? 'selected' : ''}>PATCH</option>
-                                                                    <option value="DELETE" ${toolConfig.http_method === 'DELETE' ? 'selected' : ''}>DELETE</option>
-                                                                </select>
-                                                            </div>
+                                                            <label class="form-label">HTTP Method *</label>
+                                                            <select class="form-select" id="edit_http_method">
+                                                                <option value="GET" ${config.http_method === "GET" ? "selected" : ""}>GET</option>
+                                                                <option value="POST" ${config.http_method === "POST" ? "selected" : ""}>POST</option>
+                                                                <option value="PUT" ${config.http_method === "PUT" ? "selected" : ""}>PUT</option>
+                                                                <option value="PATCH" ${config.http_method === "PATCH" ? "selected" : ""}>PATCH</option>
+                                                                <option value="DELETE" ${config.http_method === "DELETE" ? "selected" : ""}>DELETE</option>
+                                                            </select>
                                                         </div>
+
                                                     </div>
+
                                                 </div>
                                             </div>
 
-                                            <!-- Path Parameters -->
+                                            <!-- PATH PARAMS -->
                                             <div class="card mb-3">
-                                                <div class="card-header d-flex justify-content-between align-items-center">
-                                                    <h6 class="mb-0">Path Parameters</h6>
-                                                    <button type="button" class="btn btn-sm btn-outline-primary" id="add-edit-path-param-btn" onclick="addEditPathParam()" disabled>+ Add Path Parameter</button>
+                                                <div class="card-header d-flex justify-content-between">
+                                                    <h6>Path Parameters</h6>
+                                                    <button type="button" class="btn btn-sm btn-outline-primary"
+                                                        onclick="addEditPathParam()">+ Add Path Parameter</button>
                                                 </div>
                                                 <div class="card-body">
-                                                    <small class="text-muted mb-3 d-block">Add path wrapped in curly braces to the URL to configure them here.</small>
-                                                    <div id="edit_path_params_help" class="alert alert-info mb-3" style="display: none;">
-                                                        <small><strong>Example:</strong> Add <code>{agent_id}</code> to your URL like: <code>https://api.example.com/agents/{agent_id}</code></small>
-                                                    </div>
                                                     <div id="edit_path_params_container">
-                                                        ${generatePathParamsHTML(toolConfig.path_params || [])}
+                                                        ${generatePathParamsHTML(config.path_params)}
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            <!-- Query Parameters -->
+                                            <!-- QUERY PARAMS -->
                                             <div class="card mb-3">
-                                                <div class="card-header d-flex justify-content-between align-items-center">
-                                                    <h6 class="mb-0">Query Parameters</h6>
-                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditQueryParam()">+ Add Query Parameter</button>
+                                                <div class="card-header d-flex justify-content-between">
+                                                    <h6>Query Parameters</h6>
+                                                    <button  type="button"  class="btn btn-sm btn-outline-primary"
+                                                        onclick="addEditQueryParam()">+ Add Query Parameter</button>
                                                 </div>
                                                 <div class="card-body">
-                                                    <small class="text-muted mb-3 d-block">Parameters that will be added to the URL as query params (?param=value)</small>
                                                     <div id="edit_query_params_container">
-                                                        ${generateQueryParamsHTML(toolConfig.query_params || [])}
+                                                        ${generateQueryParamsHTML(config.query_params)}
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            <!-- Request Body Schema -->
-                                            <div class="card mb-3" id="edit_request_body_schema_section" style="display: ${['POST', 'PUT', 'PATCH'].includes(toolConfig.http_method) ? 'block' : 'none'};">
-                                                <div class="card-header d-flex justify-content-between align-items-center">
-                                                    <h6 class="mb-0">Request Body Schema</h6>
-                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditRequestBodyProperty()">+ Add Property</button>
+                                            <!-- REQUEST BODY -->
+                                            <div class="card mb-3" id="edit_request_body_schema_section"
+                                                style="display: ${["POST", "PUT", "PATCH"].includes(config.http_method) ? "block" : "none"}">
+
+                                                <div class="card-header d-flex justify-content-between">
+                                                    <h6>Request Body Schema</h6>
+                                                    <button type="button"  class="btn btn-sm btn-outline-primary"
+                                                        onclick="addEditRequestBodyProperty()">+ Add Property</button>
                                                 </div>
+
                                                 <div class="card-body">
-                                                    <small class="text-muted mb-3 d-block">Define the JSON structure for POST/PUT/PATCH requests</small>
-                                                    <div class="form_field mb-3">
-                                                        <label for="edit_body_description" class="form-label">Body Description</label>
-                                                        <input type="text" class="form-control" id="edit_body_description" value="${toolConfig.body_description || ''}" placeholder="Description of the request body">
-                                                    </div>
-                                                    <div id="edit_request_body_properties_container">
-                                                        ${generateRequestBodyPropertiesHTML(toolConfig.request_body_properties || [])}
+                                                    <label class="form-label">Body Description</label>
+                                                    <input class="form-control"
+                                                        id="edit_body_description"
+                                                        value="${config.body_description || ""}">
+                                                    <div id="edit_request_body_properties_container" class="mt-3">
+                                                        ${generateRequestBodyPropertiesHTML(config.request_body_properties)}
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            <!-- Request Headers -->
+                                            <!-- HEADERS -->
                                             <div class="card mb-3">
-                                                <div class="card-header d-flex justify-content-between align-items-center">
-                                                    <h6 class="mb-0">Request Headers</h6>
-                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditRequestHeader()">+ Add Header</button>
+                                                <div class="card-header d-flex justify-content-between">
+                                                    <h6>Request Headers</h6>
+                                                    <button  type="button" class="btn btn-sm btn-outline-primary"
+                                                        onclick="addEditRequestHeader()">+ Add Header</button>
                                                 </div>
                                                 <div class="card-body">
-                                                    <small class="text-muted mb-3 d-block">Headers to include in the webhook request</small>
                                                     <div id="edit_request_headers_container">
-                                                        ${generateRequestHeadersHTML(toolConfig.request_headers || [])}
+                                                        ${generateRequestHeadersHTML(config.request_headers)}
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            <!-- Dynamic Variables -->
+                                            <!-- DYNAMIC VARIABLES -->
                                             <div class="card mb-3">
-                                                <div class="card-header d-flex justify-content-between align-items-center">
-                                                    <h6 class="mb-0">Dynamic Variables</h6>
-                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditDynamicVariable()">+ Add Variable</button>
+                                                <div class="card-header d-flex justify-content-between">
+                                                    <h6>Dynamic Variables</h6>
+                                                    <button type="button"  class="btn btn-sm btn-outline-primary"
+                                                        onclick="addEditDynamicVariable()">+ Add Variable</button>
                                                 </div>
                                                 <div class="card-body">
-                                                    <small class="text-muted mb-3 d-block">Variables that can be used in the webhook configuration</small>
                                                     <div id="edit_dynamic_variables_container">
-                                                        ${generateDynamicVariablesHTML(toolConfig.dynamic_variables || [])}
+                                                        ${generateDynamicVariablesHTML(config.dynamic_variables)}
                                                     </div>
                                                 </div>
                                             </div>
 
-                                            <!-- Response Assignments -->
+                                            <!-- ASSIGNMENTS -->
                                             <div class="card mb-3">
-                                                <div class="card-header d-flex justify-content-between align-items-center">
-                                                    <h6 class="mb-0">Response Assignments</h6>
-                                                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="addEditAssignment()">+ Add Assignment</button>
+                                                <div class="card-header d-flex justify-content-between">
+                                                    <h6>Response Assignments</h6>
+                                                    <button type="button"  class="btn btn-sm btn-outline-primary"
+                                                        onclick="addEditAssignment()">+ Add Assignment</button>
                                                 </div>
                                                 <div class="card-body">
-                                                    <small class="text-muted mb-3 d-block">Extract values from webhook response and assign to dynamic variables</small>
                                                     <div id="edit_assignments_container">
-                                                        ${generateAssignmentsHTML(
-                                                            (functionData?.function_parameters?.tool_config?.assignments || [])
-                                                        )}
+                                                        ${generateAssignmentsHTML(config.assignments)}
                                                     </div>
                                                 </div>
                                             </div>
-                                            <!-- Advanced Options -->
+
+                                            <!-- ADVANCED -->
                                             <div class="card mb-3">
-                                                <div class="card-header">
-                                                    <h6 class="mb-0">Advanced Options</h6>
-                                                </div>
+                                                <div class="card-header"><h6>Advanced Options</h6></div>
                                                 <div class="card-body">
+
                                                     <div class="row">
+
                                                         <div class="col-md-6">
-                                                            <div class="form-check mb-3">
-                                                                <input class="form-check-input" type="checkbox" id="edit_disable_interruptions" ${toolConfig.disable_interruptions ? 'checked' : ''}>
-                                                                <label class="form-check-label" for="edit_disable_interruptions">
-                                                                    Disable Interruptions
-                                                                </label>
-                                                                <small class="text-muted d-block">User cannot interrupt while tool is running</small>
-                                                            </div>
+                                                            <label class="form-check-label">
+                                                                <input type="checkbox"
+                                                                    id="edit_disable_interruptions"
+                                                                    class="form-check-input"
+                                                                    ${config.disable_interruptions ? "checked" : ""}>
+                                                                Disable Interruptions
+                                                            </label>
                                                         </div>
+
                                                         <div class="col-md-6">
-                                                            <div class="form-check mb-3">
-                                                                <input class="form-check-input" type="checkbox" id="edit_force_pre_tool_speech" ${toolConfig.force_pre_tool_speech ? 'checked' : ''}>
-                                                                <label class="form-check-label" for="edit_force_pre_tool_speech">
-                                                                    Force Pre-Tool Speech
-                                                                </label>
-                                                                <small class="text-muted d-block">Agent speaks before calling the tool</small>
-                                                            </div>
+                                                            <label class="form-check-label">
+                                                                <input type="checkbox"
+                                                                    id="edit_force_pre_tool_speech"
+                                                                    class="form-check-input"
+                                                                    ${config.force_pre_tool_speech ? "checked" : ""}>
+                                                                Force Pre-Tool Speech
+                                                            </label>
                                                         </div>
+
                                                     </div>
+
                                                 </div>
                                             </div>
+
                                         </form>
-                                    </div>
-                                    <div class="tab-pane fade" id="format_json_tab-pane" role="tabpanel" aria-labelledby="format_json_tab" tabindex="0">
-                                      <div class="form_field mb-3 parameters_field">
-                                        <label for="edit-parameters" class="form-label mb-0">Parameters (Optional)</label>
-                                        <small class="text-muted">JSON schema that defines the format in which the LLM will return. Please refer to the docs.</small>
-                                        <textarea rows="20" class="form-control my-2" id="edit-parameters" placeholder="Enter function parameters">{
-                                            "tool_config": {
-                                                "name": "",
-                                                "type": "webhook",
-                                                "api_schema": {
-                                                "url": "",
-                                                "method": "POST",
-                                                "auth_connection": null,
-                                                "request_headers": {},
-                                                "path_params_schema": {},
-                                                "query_params_schema": null,
-                                                "request_body_schema": {
-                                                    "type": "object",
-                                                    "properties": {}
-                                                }
-                                                },
-                                                "assignments": [],
-                                                "description": "",
-                                                "dynamic_variables": {
-                                                "dynamic_variable_placeholders": {}
-                                                },
-                                                "disable_interruptions": false,
-                                                "force_pre_tool_speech": false,
-                                                "response_timeout_secs": 20
-                                            }
-                                            }
-                                            </textarea>
 
                                     </div>
+
+                                    <!-- RAW JSON TAB -->
+                                    <div class="tab-pane fade" id="format_json_tab-pane">
+                                        <textarea id="edit-parameters" class="form-control" rows="20">
+                                            ${JSON.stringify(rawToolConfig?.tool_config, null, 4)}
+                                        </textarea>
                                     </div>
+
                                 </div>
+
                             </div>
+
                             <div class="modal-footer">
-                                <button type="button" class="btn" data-bs-dismiss="modal">Close</button>
-                                <button type="button" id="save-edit-custom-function" class="btn save_btn" onclick="handleEditCustomFunction('${functionId}')">Update Webhook Tool</button>
+                                <button class="btn" data-bs-dismiss="modal">Close</button>
+                                <button class="btn save_btn"
+                                    onclick="handleEditCustomFunction('${functionId}')">
+                                    Update Webhook Tool
+                                </button>
                             </div>
+
                         </div>
                     </div>
                 </div>
             `;
-            // Remove any existing modal
+
+            /** Remove old modal & append */
             $('#customFunctionEditModal').remove();
-            // Append the new modal to body
-            $('body').append(modal);
-            // Show the modal
-            $('#customFunctionEditModal').modal('show');
-            
-            // Add event listeners for edit modal validation
+            $("body").append(modal);
+            $("#customFunctionEditModal").modal("show");
+
+            /** Auto-bind triggers */
             setTimeout(() => {
-                const editHttpMethodSelect = document.getElementById('edit_http_method');
-                if (editHttpMethodSelect) {
-                    // Check initial state
-                    toggleEditRequestBodySchema();
-                    
-                    // Add event listener for real-time validation
-                    editHttpMethodSelect.addEventListener('change', toggleEditRequestBodySchema);
-                }
-                
-                const editApiUrlInput = document.getElementById('edit_api_url');
-                if (editApiUrlInput) {
-                    // Check initial state
-                    checkEditUrlForPathParams();
-                    
-                    // Add event listener for real-time validation
-                    editApiUrlInput.addEventListener('input', checkEditUrlForPathParams);
-                    editApiUrlInput.addEventListener('blur', checkEditUrlForPathParams);
-                }
-            }, 100);
+                toggleEditRequestBodySchema();
+                document.getElementById("edit_http_method")
+                    ?.addEventListener("change", toggleEditRequestBodySchema);
+
+                const url = document.getElementById("edit_api_url");
+                url?.addEventListener("input", checkEditUrlForPathParams);
+                url?.addEventListener("blur", checkEditUrlForPathParams);
+            }, 50);
         },
-        error: function(xhr, status, error) {
-            toastr.error('Error fetching custom function: ' + xhr.responseText || error);
+
+        error: function (xhr) {
+            toastr.error("Error fetching custom function");
         }
     });
 }
 
 // Edit modal helper functions
 function addEditPathParam() {
-    // Check if URL contains curly braces before allowing path parameter addition
-    const apiUrl = document.getElementById("edit_api_url").value;
-    const hasCurlyBraces = /\{[^}]+\}/.test(apiUrl);
-    
-    if (!hasCurlyBraces) {
-        toastr.error('Please add curly braces to the URL (e.g., {agent_id}) before adding path parameters');
-        return;
-    }
-    
-    const container = document.getElementById('edit_path_params_container');
-    const paramId = 'edit_path_param_' + Date.now();
-    
-    const paramHtml = `
-        <div class="param-item border rounded p-3 mb-3" id="${paramId}">
-            <div class="d-flex justify-content-between align-items-center mb-2">
+    const container = document.getElementById("edit_path_params_container");
+    const index = container.querySelectorAll(".param-item").length;
+    const id = `edit_path_param_${index}`;
+
+    const html = `
+        <div class="param-item border rounded p-3 mb-3" id="${id}">
+            <div class="d-flex justify-content-between mb-2">
                 <h6 class="mb-0">Path Parameter</h6>
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeElement('${paramId}')">Delete</button>
+                <button class="btn btn-sm btn-outline-danger" onclick="removeEditPathParam(${index})">Delete</button>
             </div>
+
             <div class="row">
                 <div class="col-md-2">
-                    <label class="form-label">Data type</label>
+                    <label class="form-label">Type</label>
                     <select class="form-select param-type">
                         <option value="string" selected>String</option>
                         <option value="integer">Integer</option>
@@ -4190,47 +3781,38 @@ function addEditPathParam() {
                         <option value="boolean">Boolean</option>
                     </select>
                 </div>
+
                 <div class="col-md-3">
-                    <label class="form-label">Identifier *</label>
-                    <input type="text" class="form-control param-name" placeholder="agent_id" required>
+                    <label class="form-label">Identifier</label>
+                    <input class="form-control param-name" placeholder="user_id">
                 </div>
-                <div class="col-md-2">
-                    <div class="form-check mt-4">
-                        <input class="form-check-input param-required" type="checkbox" checked>
-                        <label class="form-check-label">Required</label>
-                    </div>
-                </div>
+
                 <div class="col-md-5">
                     <label class="form-label">Value Type</label>
-                    <select class="form-select param-value-type" onchange="toggleEditPathParamValueType('${paramId}')">
+                    <select class="form-select param-value-type" onchange="toggleEditPathParamValueType('${id}')">
                         <option value="llm_prompt" selected>LLM Prompt</option>
                         <option value="constant_value">Constant Value</option>
                         <option value="dynamic_variable">Dynamic Variable</option>
                     </select>
                 </div>
             </div>
+
             <div class="row mt-2">
-                <div class="col-12">
-                    <div class="param-value-container" id="${paramId}_value_container">
-                        <label class="form-label">Description</label>
-                        <textarea class="form-control param-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript."></textarea>
-                        <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.</small>
-                    </div>
+                <div class="col-12" id="${id}_value_container">
+                    <label class="form-label">LLM Prompt Description</label>
+                    <textarea class="form-control param-description" rows="2"></textarea>
                 </div>
             </div>
-        </div>
-    `;
-    
-    container.insertAdjacentHTML('beforeend', paramHtml);
-    
-    // Initialize field states for the new row
-    const newRow = container.lastElementChild;
-    initializeRowFieldStates(newRow);
+        </div>`;
+
+    container.insertAdjacentHTML("beforeend", html);
 }
 
 function removeEditPathParam(index) {
-    const row = document.querySelector(`#edit_path_params_container .path-param-row[data-index="${index}"]`);
-    if (row) row.remove();
+    const element = document.getElementById(`edit_path_param_${index}`);
+    if (element) {
+        element.remove();
+    }
 }
 
 function toggleEditPathParamValueType(paramId) {
@@ -4261,18 +3843,20 @@ function toggleEditPathParamValueType(paramId) {
 }
 
 function addEditQueryParam() {
-    const container = document.getElementById('edit_query_params_container');
-    const paramId = 'edit_query_param_' + Date.now();
-    
-    const paramHtml = `
-        <div class="param-item border rounded p-3 mb-3" id="${paramId}">
-            <div class="d-flex justify-content-between align-items-center mb-2">
+    const container = document.getElementById("edit_query_params_container");
+    const index = container.querySelectorAll(".param-item").length;
+    const id = `edit_query_param_${index}`;
+
+    const html = `
+        <div class="param-item border rounded p-3 mb-3" id="${id}">
+            <div class="d-flex justify-content-between mb-2">
                 <h6 class="mb-0">Query Parameter</h6>
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeElement('${paramId}')">Delete</button>
+                <button class="btn btn-sm btn-outline-danger" onclick="removeEditQueryParam(${index})">Delete</button>
             </div>
+
             <div class="row">
                 <div class="col-md-2">
-                    <label class="form-label">Data type</label>
+                    <label class="form-label">Type</label>
                     <select class="form-select param-type">
                         <option value="string" selected>String</option>
                         <option value="integer">Integer</option>
@@ -4280,47 +3864,37 @@ function addEditQueryParam() {
                         <option value="boolean">Boolean</option>
                     </select>
                 </div>
+
                 <div class="col-md-3">
-                    <label class="form-label">Identifier *</label>
-                    <input type="text" class="form-control param-name" placeholder="limit" required>
+                    <label class="form-label">Identifier</label>
+                    <input class="form-control param-name" placeholder="limit">
                 </div>
-                <div class="col-md-2">
-                    <div class="form-check mt-4">
-                        <input class="form-check-input param-required" type="checkbox" checked>
-                        <label class="form-check-label">Required</label>
-                    </div>
-                </div>
+
                 <div class="col-md-5">
                     <label class="form-label">Value Type</label>
-                    <select class="form-select param-value-type" onchange="toggleEditQueryParamValueType('${paramId}')">
+                    <select class="form-select param-value-type" onchange="toggleEditQueryParamValueType('${id}')">
                         <option value="llm_prompt" selected>LLM Prompt</option>
                         <option value="constant_value">Constant Value</option>
                         <option value="dynamic_variable">Dynamic Variable</option>
                     </select>
                 </div>
             </div>
+
             <div class="row mt-2">
-                <div class="col-12">
-                    <div class="param-value-container" id="${paramId}_value_container">
-                        <label class="form-label">Description</label>
-                        <input type="text" class="form-control param-description" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.">
-                        <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.</small>
-                    </div>
+                <div class="col-12" id="${id}_value_container">
+                    <label class="form-label">LLM Prompt Description</label>
+                    <textarea class="form-control param-description" rows="2"></textarea>
                 </div>
             </div>
         </div>
     `;
-    
-    container.insertAdjacentHTML('beforeend', paramHtml);
-    
-    // Initialize field states for the new row
-    const newRow = container.lastElementChild;
-    initializeRowFieldStates(newRow);
+
+    container.insertAdjacentHTML("beforeend", html);
 }
 
 function removeEditQueryParam(index) {
-    const row = document.querySelector(`#edit_query_params_container .query-param-row[data-index="${index}"]`);
-    if (row) row.remove();
+    const el = document.getElementById(`edit_query_param_${index}`);
+    if (el) el.remove();
 }
 
 function toggleEditQueryParamValueType(paramId) {
@@ -4351,19 +3925,21 @@ function toggleEditQueryParamValueType(paramId) {
 }
 
 function addEditRequestBodyProperty() {
-    const container = document.getElementById('edit_request_body_properties_container');
-    const propId = 'edit_property_' + Date.now();
-    
-    const propHtml = `
-        <div class="property-item border rounded p-3 mb-3" id="${propId}">
-            <div class="d-flex justify-content-between align-items-center mb-2">
+    const container = document.getElementById("edit_request_body_properties_container");
+    const index = container.querySelectorAll(".param-item").length;
+    const id = `edit_property_${index}`;
+
+    const html = `
+        <div class="param-item border rounded p-3 mb-3" id="${id}">
+            <div class="d-flex justify-content-between mb-2">
                 <h6 class="mb-0">Request Body Property</h6>
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeElement('${propId}')">Delete</button>
+                <button class="btn btn-sm btn-outline-danger" onclick="removeEditRequestBodyProperty(${index})">Delete</button>
             </div>
+
             <div class="row">
                 <div class="col-md-2">
-                    <label class="form-label">Data type</label>
-                    <select class="form-select property-type">
+                    <label class="form-label">Type</label>
+                    <select class="form-select param-type">
                         <option value="string" selected>String</option>
                         <option value="integer">Integer</option>
                         <option value="number">Number</option>
@@ -4372,70 +3948,68 @@ function addEditRequestBodyProperty() {
                         <option value="array">Array</option>
                     </select>
                 </div>
+
                 <div class="col-md-3">
-                    <label class="form-label">Identifier *</label>
-                    <input type="text" class="form-control property-name" placeholder="message" required>
+                    <label class="form-label">Identifier</label>
+                    <input class="form-control param-name" placeholder="email">
                 </div>
+
                 <div class="col-md-2">
-                    <div class="form-check mt-4">
-                        <input class="form-check-input property-required" type="checkbox">
-                        <label class="form-check-label">Required</label>
-                    </div>
+                    <label class="form-check-label mt-4">
+                        <input type="checkbox" class="form-check-input param-required">
+                        Required
+                    </label>
                 </div>
+
                 <div class="col-md-5">
                     <label class="form-label">Value Type</label>
-                    <select class="form-select property-value-type" onchange="toggleEditBodyPropertyValueType('${propId}')">
+                    <select class="form-select param-value-type"
+                        onchange="toggleEditBodyPropertyValueType('${id}')">
                         <option value="llm_prompt" selected>LLM Prompt</option>
                         <option value="constant_value">Constant Value</option>
                         <option value="dynamic_variable">Dynamic Variable</option>
                     </select>
                 </div>
             </div>
+
             <div class="row mt-2">
-                <div class="col-12">
-                    <div class="property-value-container" id="${propId}_value_container">
-                        <label class="form-label">Description *</label>
-                        <textarea class="form-control property-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript." required></textarea>
-                        <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript. <strong>Required for LLM Prompt type.</strong></small>
-                    </div>
+                <div class="col-12" id="${id}_value_container">
+                    <label class="form-label">LLM Prompt Description</label>
+                    <textarea class="form-control param-description" rows="2"></textarea>
                 </div>
             </div>
         </div>
     `;
-    
-    container.insertAdjacentHTML('beforeend', propHtml);
-    
-    // Initialize field states for the new row
-    const newRow = container.lastElementChild;
-    initializeRowFieldStates(newRow);
+
+    container.insertAdjacentHTML("beforeend", html);
 }
 
 function removeEditRequestBodyProperty(index) {
-    const row = document.querySelector(`#edit_request_body_properties_container .body-prop-row[data-index="${index}"]`);
-    if (row) row.remove();
+    const el = document.getElementById(`edit_property_${index}`);
+    if (el) el.remove();
 }
 
 function toggleEditBodyPropertyValueType(propId) {
     const container = document.getElementById(propId + '_value_container');
-    const valueTypeSelect = document.querySelector(`#${propId} .property-value-type`);
+    const valueTypeSelect = document.querySelector(`#${propId} .param-value-type`);
     const valueType = valueTypeSelect.value;
     
     let html = '';
     if (valueType === 'llm_prompt') {
         html = `
             <label class="form-label">Description</label>
-            <textarea class="form-control property-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript."></textarea>
+            <textarea class="form-control param-description" rows="3" placeholder="This field will be passed to the LLM and should describe in detail how to extract the data from the transcript."></textarea>
             <small class="text-muted">This field will be passed to the LLM and should describe in detail how to extract the data from the transcript.</small>
         `;
     } else if (valueType === 'constant_value') {
         html = `
             <label class="form-label">Constant Value</label>
-            <input type="text" class="form-control property-constant-value" placeholder="Enter constant value">
+            <input type="text" class="form-control param-constant-value" placeholder="Enter constant value">
         `;
     } else if (valueType === 'dynamic_variable') {
         html = `
             <label class="form-label">Dynamic Variable</label>
-            <input type="text" class="form-control property-dynamic-variable" placeholder="Enter dynamic variable name">
+            <input type="text" class="form-control param-dynamic-variable" placeholder="Enter dynamic variable name">
         `;
     }
     
@@ -4443,78 +4017,89 @@ function toggleEditBodyPropertyValueType(propId) {
 }
 
 function addEditRequestHeader() {
-    const container = document.getElementById('edit_request_headers_container');
-    const index = container.children.length;
+    const container = document.getElementById("edit_request_headers_container");
+    const index = container.querySelectorAll(".header-row").length;
+
     const html = `
         <div class="row mb-2 header-row" data-index="${index}">
             <div class="col-md-4">
-                <input type="text" class="form-control" name="header_name" placeholder="Header name">
+                <input class="form-control" placeholder="Header name">
             </div>
             <div class="col-md-6">
-                <input type="text" class="form-control" name="header_value" placeholder="Header value">
+                <input class="form-control" placeholder="Header value">
             </div>
             <div class="col-md-2">
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditRequestHeader(${index})">×</button>
+                <button class="btn btn-sm btn-outline-danger"
+                    onclick="removeEditRequestHeader(${index})">×</button>
             </div>
         </div>
     `;
-    container.insertAdjacentHTML('beforeend', html);
+
+    container.insertAdjacentHTML("beforeend", html);
 }
 
+
 function removeEditRequestHeader(index) {
-    const row = document.querySelector(`#edit_request_headers_container .header-row[data-index="${index}"]`);
+    const container = document.getElementById("edit_request_headers_container");
+    const row = container.querySelector(`.header-row[data-index="${index}"]`);
     if (row) row.remove();
 }
 
 function addEditDynamicVariable() {
-    const container = document.getElementById('edit_dynamic_variables_container');
-    const index = container.children.length;
+    const container = document.getElementById("edit_dynamic_variables_container");
+    const index = container.querySelectorAll(".variable-row").length;
+
     const html = `
         <div class="row mb-2 variable-row" data-index="${index}">
             <div class="col-md-4">
-                <input type="text" class="form-control" name="variable_name" placeholder="Variable name">
+                <input class="form-control" placeholder="variable_name">
             </div>
             <div class="col-md-6">
-                <input type="text" class="form-control" name="variable_value" placeholder="Variable value">
+                <input class="form-control" placeholder="description or value">
             </div>
             <div class="col-md-2">
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditDynamicVariable(${index})">×</button>
+                <button class="btn btn-sm btn-outline-danger"
+                    onclick="removeEditDynamicVariable(${index})">×</button>
             </div>
         </div>
     `;
-    container.insertAdjacentHTML('beforeend', html);
+
+    container.insertAdjacentHTML("beforeend", html);
 }
 
 function removeEditDynamicVariable(index) {
-    const row = document.querySelector(`#edit_dynamic_variables_container .variable-row[data-index="${index}"]`);
+    const container = document.getElementById("edit_dynamic_variables_container");
+    const row = container.querySelector(`.variable-row[data-index="${index}"]`);
     if (row) row.remove();
 }
 
 function addEditAssignment() {
-    const container = document.getElementById('edit_assignments_container');
-    const index = container.children.length;
+    const container = document.getElementById("edit_assignments_container");
+    const index = container.querySelectorAll(".assignment-row").length;
+
     const html = `
         <div class="row mb-2 assignment-row" data-index="${index}">
             <div class="col-md-4">
-                <input type="text" class="form-control" name="assignment_variable" placeholder="Variable name">
+                <input class="form-control" placeholder="dynamic_variable">
             </div>
             <div class="col-md-6">
-                <input type="text" class="form-control" name="assignment_path" placeholder="JSON path (e.g., $.data.id)">
+                <input class="form-control" placeholder="response_path (e.g. id)">
             </div>
             <div class="col-md-2">
-                <button type="button" class="btn btn-sm btn-outline-danger" onclick="removeEditAssignment(${index})">×</button>
+                <button class="btn btn-sm btn-outline-danger"
+                    onclick="removeEditAssignment(${index})">×</button>
             </div>
         </div>
     `;
-    container.insertAdjacentHTML('beforeend', html);
+
+    container.insertAdjacentHTML("beforeend", html);
 }
 
 function removeEditAssignment(index) {
-    const row = document.querySelector(`#edit_assignments_container .assignment-row[data-index="${index}"]`);
+    const container = document.getElementById("edit_assignments_container");
+    const row = container.querySelector(`.assignment-row[data-index="${index}"]`);
     if (row) row.remove();
 }
-
-
 
 function setExampleJSON(exampleId) {
     const examples = {
@@ -4904,8 +4489,8 @@ function saveVariable() {
 
             // Add validation to parameter fields with enable/disable functionality
             document.addEventListener('input', function(e) {
-                if (e.target.matches('input[name="path_param_description"], input[name="path_param_dynamic_variable"], input[name="path_param_constant_value"], input[name="query_param_description"], input[name="query_param_dynamic_variable"], input[name="query_param_constant_value"], input[name="body_prop_description"], input[name="body_prop_dynamic_variable"], input[name="body_prop_constant_value"], .param-description, .param-dynamic-var, .param-constant-value, .property-description, .property-dynamic-var, .property-constant-value')) {
-                    const row = e.target.closest('.path-param-row, .query-param-row, .body-prop-row, .param-item, .property-item');
+                if (e.target.matches('input[name="path_param_description"], input[name="path_param_dynamic_variable"], input[name="path_param_constant_value"], input[name="query_param_description"], input[name="query_param_dynamic_variable"], input[name="query_param_constant_value"], input[name="body_prop_description"], input[name="body_prop_dynamic_variable"], input[name="body_prop_constant_value"], .param-description, .param-dynamic-var, .param-constant-value, .param-description, .param-dynamic-var, .param-constant-value')) {
+                    const row = e.target.closest('.path-param-row, .query-param-row, .body-prop-row, .param-item, .param-item');
                     if (row) {
                         // Determine parameter type and get appropriate field selectors
                         let descriptionField, dynamicVarField, constantValField;
@@ -4926,10 +4511,10 @@ function saveVariable() {
                             descriptionField = row.querySelector('.param-description');
                             dynamicVarField = row.querySelector('.param-dynamic-var');
                             constantValField = row.querySelector('.param-constant-value');
-                        } else if (row.classList.contains('property-item')) {
-                            descriptionField = row.querySelector('.property-description');
-                            dynamicVarField = row.querySelector('.property-dynamic-var');
-                            constantValField = row.querySelector('.property-constant-value');
+                        } else if (row.classList.contains('param-item')) {
+                            descriptionField = row.querySelector('.param-description');
+                            dynamicVarField = row.querySelector('.param-dynamic-var');
+                            constantValField = row.querySelector('.param-constant-value');
                         }
                         
                         if (descriptionField && dynamicVarField && constantValField) {
@@ -4986,7 +4571,7 @@ function saveVariable() {
         // Function to initialize field states for existing data
         function initializeFieldStates() {
             // Initialize all parameter rows
-            const allParamRows = document.querySelectorAll('.path-param-row, .query-param-row, .body-prop-row, .param-item, .property-item');
+            const allParamRows = document.querySelectorAll('.path-param-row, .query-param-row, .body-prop-row, .param-item, .param-item');
             allParamRows.forEach(row => {
                 initializeRowFieldStates(row);
             });
@@ -5015,10 +4600,10 @@ function saveVariable() {
                 descriptionField = row.querySelector('.param-description');
                 dynamicVarField = row.querySelector('.param-dynamic-var');
                 constantValField = row.querySelector('.param-constant-value');
-            } else if (row.classList.contains('property-item')) {
-                descriptionField = row.querySelector('.property-description');
-                dynamicVarField = row.querySelector('.property-dynamic-var');
-                constantValField = row.querySelector('.property-constant-value');
+            } else if (row.classList.contains('param-item')) {
+                descriptionField = row.querySelector('.param-description');
+                dynamicVarField = row.querySelector('.param-dynamic-var');
+                constantValField = row.querySelector('.param-constant-value');
             }
             
             if (descriptionField && dynamicVarField && constantValField) {
