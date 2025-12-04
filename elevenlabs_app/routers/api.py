@@ -1306,186 +1306,193 @@ async def delete_knowledge_base(request: Request):
 async def create_custom_function(request: Request):
     try:
         data = await request.json()
-        form_data = data.get("webhook_config", {})
+
+        # Extract agent_id (same as before)
         agent_id = data.get("agent_id")
-        agent = AgentModel.get_by_id(agent_id)
-        if not agent:
-            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
-        
         if not agent_id:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
-        
-        if not form_data:
-            return JSONResponse(status_code=400, content={"status": "error", "message": "Webhook configuration is required"})
-        
-        eleven_agent_id = agent.elvn_lab_agent_id
-        # print(f"Debug: Local agent ID: {agent_id}")
-        # print(f"Debug: ElevenLabs agent ID: '{eleven_agent_id}' (type: {type(eleven_agent_id)})")
-        
-        if not eleven_agent_id:
-            return JSONResponse(status_code=400, content={"status": "error", "message": "ElevenLabs agent ID is required. Please ensure the agent is properly created in ElevenLabs."})
-        
-        # Validate required fields
-        tool_name = form_data.get("tool_name", "")
-        tool_description = form_data.get("tool_description", "")
-        
-        # print(f"Debug: Received form_data: {form_data}")
-        # print(f"Debug: tool_name: '{tool_name}' (type: {type(tool_name)})")
-        # print(f"Debug: tool_description: '{tool_description}' (type: {type(tool_description)})")
-        
-        if not tool_name or not tool_description:
-            return JSONResponse(status_code=400, content={"status": "error", "message": "Tool name and description are required"})
-        
-        # Ensure tool_name is a string and not None
-        if tool_name is None:
-            tool_name = ""
-        
-        # Validate tool name format (ElevenLabs requirements: ^[a-zA-Z0-9_-]{1,64}$)
-        if not re.match(r'^[a-zA-Z0-9_-]{1,64}$', str(tool_name)):
-            return JSONResponse(
-                status_code=400, 
-                content={"status": "error", "message": "Invalid tool name. Must contain only letters, numbers, underscores, and hyphens. Max 64 characters."}
-            )
-        
-        # Check if tool name already exists for this agent (local database)
-        from app.databases.models import ElevenLabsWebhookToolModel
-        existing_tool = ElevenLabsWebhookToolModel.get_by_name(tool_name, agent_id)
-        if existing_tool:
-            return JSONResponse(status_code=400, content={
-                "status": "error", 
-                "message": f"A webhook tool with the name '{tool_name}' already exists for this agent."
-            })
-        
-        # Check if tool name already exists in our database for this agent
-        try:
-            existing_tool = ElevenLabsWebhookToolModel.get_by_name(tool_name, agent_id)
-            if existing_tool:
-                return JSONResponse(status_code=400, content={
-                    "status": "error", 
-                    "message": f"A webhook tool with the name '{tool_name}' already exists for this agent."
-                })
-        except Exception as e:
-            print(f"Warning: Could not check existing tools in database: {e}")
-            # Continue with creation - this is not a critical error
-        
-        # Build ElevenLabs tool_config structure using the fixed function
-        try:
-            tool_config = build_elevenlabs_tool_config(form_data)
-            print(f"✅ Successfully built tool config for creation: {form_data.get('tool_name', 'Unknown')}")
-        except ValueError as ve:
-            print(f"❌ Validation error building tool config: {str(ve)}")
+
+        # Fetch agent
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent or not agent.elvn_lab_agent_id:
             return JSONResponse(
                 status_code=400,
-                content={
-                    "status": "error",
-                    "message": f"Validation error: {str(ve)}",
-                    "error": str(ve)
-                }
+                content={"status": "error", "message": "Agent not found or not linked to ElevenLabs"}
             )
-        except Exception as e:
-            print(f"❌ Error building tool config: {str(e)}")
+
+        eleven_agent_id = agent.elvn_lab_agent_id
+
+        # ------------------------------------------
+        # MATCH EXACT FORMAT OF edit_custom_functions
+        # ------------------------------------------
+        active_tab_id = data.get("activeTabId")
+
+        function_name = None
+        function_description = None
+        function_url = None
+        function_timeout = None
+        function_parameters = None
+
+        # -------------------------------
+        #   CONFIGURE TAB MODE
+        # -------------------------------
+        if active_tab_id == "configure-tab":
+
+            function_name = data.get("function_name")
+            function_description = data.get("function_description")
+            function_url = data.get("function_url")
+            function_timeout = data.get("function_timeout")
+            function_parameters = data.get("function_parameters", {})
+
+        # -------------------------------
+        #   JSON FORMAT MODE
+        # -------------------------------
+        elif active_tab_id == "format_json_tab":
+
+            function_name = data.get("name")
+            function_description = data.get("description")
+            function_url = data.get("api_schema", {}).get("url")
+            function_timeout = data.get("response_timeout_secs")
+
+        else:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Invalid operation. Please contact support."}
+            )
+
+        # -------------------------------
+        # REQUIRED FIELD VALIDATIONS
+        # -------------------------------
+        if not function_name:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Function name is required"})
+        if not function_description:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Function description is required"})
+        if not function_url:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Function URL is required"})
+
+        # Validate tool name pattern
+        if not re.match(r'^[a-zA-Z0-9_-]{1,64}$', function_name):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Invalid function name format"}
+            )
+
+        # Check duplicate tool name
+        from app.databases.models import ElevenLabsWebhookToolModel
+        if ElevenLabsWebhookToolModel.get_by_name(function_name, agent_id):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": f"Function '{function_name}' already exists for this agent"}
+            )
+
+        # -------------------------------
+        # BUILD TOOL CONFIG
+        # -------------------------------
+        if active_tab_id == "format_json_tab":
+            del data["activeTabId"]
+            tool_config = data
+
+        else:
+            function_parameters.update({
+                "tool_name": function_name,
+                "tool_description": function_description,
+                "api_url": function_url,
+                "response_timeout": function_timeout
+            })
+
+            try:
+                tool_config = build_elevenlabs_tool_config(function_parameters)
+            except ValueError as ve:
+                return JSONResponse(
+                    status_code=400,
+                    content={"status": "error", "message": str(ve), "error": str(ve)}
+                )
+            except Exception as e:
+                return JSONResponse(
+                    status_code=500,
+                    content={"status": "error", "message": "Failed to build tool configuration", "error": str(e)}
+                )
+
+        # -------------------------------
+        # CREATE TOOL IN ELEVEN LABS
+        # -------------------------------
+        result = ElevenLabsAgentCRUD().create_webhook_function(tool_config)
+        if "error" in result:
             return JSONResponse(
                 status_code=500,
-                content={
-                    "status": "error",
-                    "message": "Failed to build tool configuration",
-                    "error": str(e)
-                }
+                content={"status": "error", "message": "Failed to create ElevenLabs tool", "error": result.get("exc")}
             )
-        
-        # print(f"Debug: Built ElevenLabs tool_config: {json.dumps(tool_config, indent=2)}")
-        
-        # Validate that POST/PUT/PATCH methods have request_body_schema if needed
-        api_schema = tool_config.get("api_schema", {})
-        http_method = api_schema.get("method", "")
-        request_body_schema = api_schema.get("request_body_schema")
-        
-        # print(f"Debug: HTTP method: '{http_method}'")
-        # print(f"Debug: Request body schema exists: {request_body_schema is not None}")
-        
-        # Create the tool in ElevenLabs
-        result = ElevenLabsAgentCRUD().create_webhook_function(tool_config)  # Pass tool_config directly
-        
-        if "error" in result:
-            return JSONResponse(status_code=500, content={
-                "status": "error", 
-                "message": f"Failed to create webhook function: {result.get('exc', 'Unknown error')}"
-            })
-        
-        # Extract ElevenLabs tool ID from result
+
         elevenlabs_tool_id = result.get("id") or result.get("tool_id")
-        
-        # print(f"Debug: Created tool in ElevenLabs with ID: {elevenlabs_tool_id}")
-        
+
         if not elevenlabs_tool_id:
-            return JSONResponse(status_code=500, content={
-                "status": "error", 
-                "message": "Failed to get tool ID from ElevenLabs response"
-            })
-        
-        # Get existing tools from agent's conversation config and add the new tool
-        # print(f"Debug: Getting existing tools for agent {eleven_agent_id}")
-        existing_agent_result = ElevenLabsAgentCRUD().get_agent(eleven_agent_id)
-        
-        existing_tool_ids = []
-        if "error" not in existing_agent_result:
-            # Extract tool_ids from agent's conversation config
-            conversation_config = existing_agent_result.get("conversation_config", {})
-            agent_config = conversation_config.get("agent", {})
-            prompt_config = agent_config.get("prompt", {})
-            existing_tool_ids = prompt_config.get("tool_ids", [])
-            # print(f"Debug: Found {len(existing_tool_ids)} existing tools in agent config: {existing_tool_ids}")
-        else:
-            print(f"Warning: Failed to get agent config: {existing_agent_result}")
-        
-        # Add the new tool to the existing tools list
-        all_tool_ids = existing_tool_ids + [elevenlabs_tool_id]
-        # print(f"Debug: Updating agent {eleven_agent_id} with all tools: {all_tool_ids}")
-        
-        update_result = ElevenLabsAgentCRUD().update_agent_tools(eleven_agent_id, all_tool_ids)
-        
-        if "error" in update_result:
-            print(f"Warning: Failed to attach tool to agent: {update_result.get('exc')}")
-            # The tool exists in ElevenLabs but isn't attached to the agent
-        
-        # Save to local database
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": "Missing ElevenLabs tool ID in response"}
+            )
+
+        # -----------------------------------------
+        # ATTACH TOOL TO ELEVENLABS AGENT
+        # -----------------------------------------
+        agent_data = ElevenLabsAgentCRUD().get_agent(eleven_agent_id)
+        existing_tools = []
+
+        if "error" not in agent_data:
+            prompt_cfg = (
+                agent_data.get("conversation_config", {})
+                .get("agent", {})
+                .get("prompt", {})
+            )
+            existing_tools = prompt_cfg.get("tool_ids", [])
+
+        updated_tools = existing_tools + [elevenlabs_tool_id]
+        ElevenLabsAgentCRUD().update_agent_tools(eleven_agent_id, updated_tools)
+
+        # -------------------------------
+        # SAVE IN LOCAL DB
+        # -------------------------------
         try:
-            local_tool = ElevenLabsWebhookToolModel.create(
+            new_func = ElevenLabsWebhookToolModel.create(
                 agent_id=agent_id,
-                tool_name=tool_name,
-                tool_description=tool_description,
-                tool_config={"tool_config": tool_config},  # Wrap for local storage
+                tool_name=function_name,
+                tool_description=function_description,
+                tool_config={"tool_config": tool_config},
                 elevenlabs_tool_id=elevenlabs_tool_id
             )
-            
-            print(f"Success: Saved webhook tool to local database with ID: {local_tool.id}")
-            
-            # Prepare response data
-            response_data = {
-                "id": local_tool.id,
-                "tool_name": local_tool.tool_name,
-                "tool_description": local_tool.tool_description,
-                "elevenlabs_tool_id": local_tool.elevenlabs_tool_id,
-                "tool_config": local_tool.tool_config
+        except Exception as db_err:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "status": "success",
+                    "message": "Function created in ElevenLabs but failed to save locally",
+                    "error": str(db_err),
+                    "data": result
+                }
+            )
+
+        # -------------------------------
+        # SUCCESS RESPONSE
+        # -------------------------------
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": "Custom function created successfully",
+                "data": {
+                    "id": new_func.id,
+                    "function_name": new_func.tool_name,
+                    "function_description": new_func.tool_description,
+                    "function_parameters": new_func.tool_config,
+                    "elevenlabs_tool_id": new_func.elevenlabs_tool_id
+                }
             }
-            
-            return JSONResponse(status_code=200, content={
-                "status": "success", 
-                "message": "Webhook tool created successfully",
-                "data": response_data
-            })
-            
-        except Exception as db_error:
-            print(f"Error: Failed to save to local database: {str(db_error)}")
-            # Even if local save fails, we still return success since ElevenLabs creation succeeded
-            return JSONResponse(status_code=200, content={
-                "status": "success", 
-                "message": "Webhook tool created in ElevenLabs successfully (local save failed)",
-                "data": result
-            })
-        
+        )
+
     except Exception as e:
-        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+        )
 
 @ElevenLabsAPIRouter.delete("/delete-custom-functions", name="delete-custom-functions")
 async def delete_custom_functions(request: Request):

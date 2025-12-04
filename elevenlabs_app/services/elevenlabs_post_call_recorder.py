@@ -368,7 +368,7 @@ class ElevenLabsPostCallRecorder:
                 # Format the transcript for our database
                 formatted_transcript = []
                 if conversation_data.get("transcript"):
-                    for msg in conversation_data["transcript"]:
+                    for index, msg in enumerate(conversation_data["transcript"]):
                         formatted_message = {
                             "role": msg.get("role", "unknown"),
                             "message": msg.get("message", ""),
@@ -376,8 +376,27 @@ class ElevenLabsPostCallRecorder:
                             "source_medium": msg.get("source_medium"),
                             "interrupted": msg.get("interrupted", False),
                             "llm_usage": msg.get("llm_usage"),
+                            "tool_calls": msg.get("tool_calls", {}),
                             "conversation_turn_metrics": msg.get("conversation_turn_metrics", {})
                         }
+                        if msg.get("tool_calls"):
+                            tool_calls = msg.get("tool_calls")
+                            tool_name = None
+                            if msg.get("tool_name"):
+                                tool_name = msg.get("tool_name")
+                            tool_type = None
+                            if msg.get("tool_type"):
+                                tool_type = msg.get("tool_type")
+
+                            tool_results = None
+                            if index +  1 < len(conversation_data["transcript"]):
+                                tool_results = conversation_data["transcript"][index+1].get("tool_results")
+                            
+                            formatted_message = f"Tool Name: {tool_name}\nTool Type: {tool_type}"
+                            
+                            formatted_message["message"] = formatted_message
+                            formatted_message["tool_calls"] = tool_calls
+                            formatted_message["tool_results"] = tool_results
                         formatted_transcript.append(formatted_message)
                 
                 # Return the full conversation data with formatted transcript
