@@ -491,7 +491,8 @@ async def live_ws(websocket: WebSocket, agent_dynamic_id: str):
                         "call_id": call_id,
                         "agent_dynamic_id": agent_dynamic_id,
                         "client_type": "browser_live",
-                        "session_start": datetime.utcnow().isoformat()
+                        "session_start": datetime.utcnow().isoformat(),
+                        **agent.dynamic_variable
                     }
                 )
 
