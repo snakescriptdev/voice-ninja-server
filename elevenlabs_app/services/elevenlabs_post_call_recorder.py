@@ -367,8 +367,11 @@ class ElevenLabsPostCallRecorder:
                 
                 # Format the transcript for our database
                 formatted_transcript = []
+
                 if conversation_data.get("transcript"):
                     for index, msg in enumerate(conversation_data["transcript"]):
+
+                        # Base formatted message dict
                         formatted_message = {
                             "role": msg.get("role", "unknown"),
                             "message": msg.get("message", ""),
@@ -376,28 +379,48 @@ class ElevenLabsPostCallRecorder:
                             "source_medium": msg.get("source_medium"),
                             "interrupted": msg.get("interrupted", False),
                             "llm_usage": msg.get("llm_usage"),
-                            "tool_calls": msg.get("tool_calls", {}),
-                            "conversation_turn_metrics": msg.get("conversation_turn_metrics", {})
+                            "tool_calls": msg.get("tool_calls", []),
+                            "conversation_turn_metrics": msg.get("conversation_turn_metrics", {}),
                         }
+
+                        # If a tool was called
                         if msg.get("tool_calls"):
                             tool_calls = msg.get("tool_calls")
-                            tool_name = None
-                            if msg.get("tool_name"):
-                                tool_name = msg.get("tool_name")
-                            tool_type = None
-                            if msg.get("tool_type"):
-                                tool_type = msg.get("tool_type")
+                            tool_name = msg.get("tool_name")
+                            tool_type = msg.get("tool_type")
 
+                            # Get tool results from the next transcript message (if exists)
                             tool_results = None
-                            if index +  1 < len(conversation_data["transcript"]):
-                                tool_results = conversation_data["transcript"][index+1].get("tool_results")
-                            
-                            formatted_message = f"Tool Name: {tool_name}\nTool Type: {tool_type}"
-                            
-                            formatted_message["message"] = formatted_message
-                            formatted_message["tool_calls"] = tool_calls
-                            formatted_message["tool_results"] = tool_results
+                            if index + 1 < len(conversation_data["transcript"]):
+                                tool_results = conversation_data["transcript"][index + 1].get("tool_results")
+
+                            formatted_message["tool_info"] = {
+                                "tool_name": tool_name,
+                                "tool_type": tool_type,
+                                "tool_results": tool_results,
+                            }
+
                         formatted_transcript.append(formatted_message)
+
+
+                allowed_system_keys = {
+                    "system__time_utc",
+                    "system__time",
+                    "system__timezone",
+                }
+
+
+                dynamic_variables = conversation_data.get("conversation_initiation_client_data", {}).get("dynamic_variables", {})
+                cleaned_dynamic_variables = {
+                    k: v
+                    for k, v in dynamic_variables.items()
+                    if not k.startswith("system__") or k in allowed_system_keys
+                }
+
+                error_details_obj = {
+                    "termination_reason" : conversation_data.get("metadata",{}).get("termination_reason"),
+                }
+                conversation_config_override = conversation_data.get("conversation_initiation_client_data",{}).get("conversation_config_override")
                 
                 # Return the full conversation data with formatted transcript
                 return {
@@ -412,7 +435,10 @@ class ElevenLabsPostCallRecorder:
                     "metadata": conversation_data.get("metadata", {}),
                     "analysis": conversation_data.get("analysis", {}),
                     "conversation_initiation_client_data": conversation_data.get("conversation_initiation_client_data", {}),
-                    "raw_data": conversation_data  # Keep original data for reference
+                    "raw_data": conversation_data , # Keep original data for reference,
+                    "error_details" : error_details_obj,
+                    "dynamic_variables": cleaned_dynamic_variables,
+                    "conversation_config_override": conversation_config_override
                 }
             else:
                 logger.error(f"Failed to get conversation details: HTTP {response.status_code} - {response.text}")
