@@ -1623,7 +1623,11 @@ class ConversationModel(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     audio_recording_id = Column(Integer, ForeignKey("audio_recordings.id"), nullable=False)
-
+    error_details = Column(JSONB, nullable=True)
+    client_data = Column(JSONB, nullable=True)
+    status = Column(String, nullable=False, default="done")
+    conversation_config_override = Column(JSONB, nullable=True)
+    
     def __repr__(self):
         return f"<Conversation(id={self.id})>"
     
