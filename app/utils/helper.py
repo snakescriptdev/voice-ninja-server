@@ -26,6 +26,7 @@ from aiohttp import ClientConnectorError
 import base64
 from typing import Optional
 from fastapi_sqlalchemy import db
+from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
 @dataclass
@@ -405,3 +406,15 @@ async def save_conversation( transcript: list, call_id: str):
         return None
 
     
+def is_valid_url(url: str) -> bool:
+    try:
+        result = urlparse(url)
+        return all([result.scheme in ("https"), result.netloc])
+    except Exception:
+        return False
+
+def get_logged_in_user(request: Request):
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return None
+    return user

@@ -1,4 +1,4 @@
-from fastapi import APIRouter,Request, Response
+from fastapi import APIRouter,Request, Response,Query
 from .schemas.format import (
     ErrorResponse, 
     SuccessResponse, 
@@ -14,7 +14,7 @@ from app.databases.models import (
     TokensToConsume, ApprovedDomainModel, CallModel,
     KnowledgeBaseModel, KnowledgeBaseFileModel, WebhookModel, 
     CustomFunctionModel,ConversationModel, DailyCallLimitModel,
-    OverallTokenLimitModel
+    OverallTokenLimitModel,VoiceModel
     )
 from app.databases.schema import  AudioRecordListSchema
 import json, re
@@ -32,8 +32,16 @@ from config import MEDIA_DIR  # ✅ Import properly
 import razorpay
 from app.utils.helper import verify_razorpay_signature
 from jinja2 import Environment, meta
-from app.utils.helper import generate_summary
+from app.utils.helper import generate_summary,is_valid_url
 from app.utils.scrap import scrape_and_get_file
+from app.utils.langchain_integration import get_splits, convert_to_vectorstore
+import asyncio
+from fastapi_sqlalchemy import db
+from app.validators.api_validators import SaveNoiseVariablesRequest,ResetNoiseVariablesRequest
+from pydantic import ValidationError
+from app.core.config import DEFAULT_VARS,NOISE_SETTINGS_DESCRIPTIONS
+
+from sqlalchemy import desc, asc
 
 router = APIRouter(prefix="/api")
 
@@ -307,7 +315,7 @@ async def user_register(request: Request):
                 ResetPasswordModel.create(email=email, token=email_token)
             else:
                 ResetPasswordModel.update(email=email, token=email_token)
-            host = request.headers.get("host")
+            host = request.headers.get("origin")
             template = f"""
                         <html>
                         <body>                    
@@ -948,11 +956,11 @@ async def upload_knowledge_base(request: Request):
             })
             uploaded_files.append(attachment.filename)
 
-        # splits = get_splits(content_list)
-        # vector_id = str(uuid.uuid4())
-        # if splits:
-        #     vector_path =convert_to_vectorstore(splits, vector_id)
-        #     KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
+        splits = get_splits(content_list)
+        vector_id = str(uuid.uuid4())
+        if splits:
+            status, vector_path =convert_to_vectorstore(splits, vector_id)
+            KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
         return JSONResponse(
             status_code=200,
             content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "uploaded_files": uploaded_files}
@@ -1040,7 +1048,8 @@ async def get_agent_connection(request: Request, agent_id: str):
                 "icon_url": connection.icon_url,
                 "primary_color": connection.primary_color,
                 "secondary_color": connection.secondary_color,
-                "pulse_color": connection.pulse_color
+                "pulse_color": connection.pulse_color,
+                "start_btn_color": connection.start_btn_color
             }
             return JSONResponse(
                 status_code=200,
@@ -1589,7 +1598,18 @@ async def custom_functions(request: Request):
 
         # Ensure function_parameters is a valid JSON string
         if isinstance(function_parameters, str):
-            function_parameters = json.loads(function_parameters)
+            function_parameters = (
+                json.loads(function_parameters) if isinstance(function_parameters, str) and function_parameters.strip() else function_parameters or {}
+            )
+
+        if function_url and not is_valid_url(function_url):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "Invalid function URL. It must start with http:// or https:// and be a valid URL."
+                }
+            )
 
         agent_id = data.get("agent_id")
 
@@ -1599,6 +1619,31 @@ async def custom_functions(request: Request):
         agent = AgentModel.get_by_id(agent_id)
         if not agent:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+
+        if not re.match(r'^[A-Za-z_][A-Za-z0-9_.-]{0,63}$', function_name):
+            return JSONResponse(
+                status_code=400, 
+                content={"status": "error", "message": "Invalid function name. Must start with a letter or underscore and contain only letters, digits, underscores (_), dots (.), or dashes (-), max length 64."}
+            )
+
+        existing_function = (
+            db.session.query(CustomFunctionModel)
+            .filter(
+                CustomFunctionModel.agent_id == agent_id,
+                CustomFunctionModel.function_name == function_name,
+            )
+            .first()
+        )
+
+        if existing_function:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": f"A function with the name '{function_name}' already exists for this agent."
+                }
+            )
+            
 
         # Ensure correct parameter order when calling create()
         obj = CustomFunctionModel.create(
@@ -1622,6 +1667,97 @@ async def custom_functions(request: Request):
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
 
+@router.put("/edit-custom-functions/{function_id}", name="edit-custom-function")
+async def edit_custom_function(function_id: int, request: Request):
+    try:
+        data = await request.json()
+
+        function_name = data.get("function_name")
+        function_description = data.get("function_description")
+        function_url = data.get("function_url")
+        function_timeout = data.get("function_timeout")
+        function_parameters = data.get("function_parameters", {})
+        agent_id = data.get("agent_id")
+
+        if not function_timeout:
+            function_timeout = None
+
+        if isinstance(function_parameters, str):
+            try:
+                function_parameters = json.loads(function_parameters.strip() or '{}')
+            except json.JSONDecodeError:
+                function_parameters = {}
+        else:
+            function_parameters = function_parameters or {}
+
+
+        if function_url and not is_valid_url(function_url):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": "Invalid function URL. It must start with http:// or https:// and be a valid URL."
+                }
+            )
+
+        if not agent_id:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent ID is required"})
+
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+
+        if not re.match(r'^[A-Za-z_][A-Za-z0-9_.-]{0,63}$', function_name):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Invalid function name. Must start with a letter or underscore and contain only letters, digits, underscores (_), dots (.), or dashes (-), max length 64."}
+            )
+
+        existing_function = (
+            db.session.query(CustomFunctionModel)
+            .filter(
+                CustomFunctionModel.agent_id == agent_id,
+                CustomFunctionModel.function_name == function_name,
+                CustomFunctionModel.id != function_id 
+            )
+            .first()
+        )
+
+        if existing_function:
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "status": "error",
+                    "message": f"A function with the name '{function_name}' already exists for this agent."
+                }
+            )
+
+        obj = db.session.query(CustomFunctionModel).filter(CustomFunctionModel.id == function_id).first()
+        if not obj:
+            return JSONResponse(status_code=404, content={"status": "error", "message": "Custom function not found"})
+
+        obj.function_name = function_name
+        obj.function_description = function_description
+        obj.function_url = function_url
+        obj.function_timeout = function_timeout
+        obj.function_parameters = function_parameters
+
+        db.session.commit()
+        db.session.refresh(obj)
+
+        response_data = {
+            "id": obj.id,
+            "function_name": obj.function_name,
+            "function_description": obj.function_description,
+            "function_url": obj.function_url,
+            "function_timeout": obj.function_timeout,
+            "function_parameters": obj.function_parameters
+        }
+
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Custom function updated successfully", "data": response_data})
+
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
     
 @router.get("/get-custom-functions", name="get-custom-functions")
 async def get_custom_functions(request: Request):
@@ -1769,13 +1905,58 @@ async def delete_webhook(request: Request):
 @router.post("/call_details", name="call_details")
 async def call_details(request: Request):
     try:
+        transcript,summary = None,None
         data = await request.json()
         call_id = data.get("call_id")
         call = AudioRecordings.get_by_id(call_id)
         if call:
             conversation = ConversationModel.get_by_audio_recording_id(call_id)
             if conversation:
-                transcript = conversation.transcript
+                raw_transcript = conversation.transcript
+                
+                # Format transcript for frontend display
+                formatted_transcript = []
+                if raw_transcript and isinstance(raw_transcript, list):
+                    for msg in raw_transcript:
+                        if isinstance(msg, dict):
+                            # Handle different transcript formats
+                            if 'speaker' in msg and 'text' in msg:
+                                # Format: {speaker: "user|agent", text: "message"}
+                                formatted_transcript.append({
+                                    "role": "assistant" if msg.get("speaker") == "agent" else "user",
+                                    "content": msg.get("text", ""),
+                                    "timestamp": msg.get("timestamp", ""),
+                                    "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                                })
+                            elif 'role' in msg and 'message' in msg:
+                                # Format: {role: "user|assistant", message: "text"}
+                                formatted_transcript.append({
+                                    "role": msg.get("role", "user"),
+                                    "content": msg.get("message", ""),
+                                    "timestamp": msg.get("timestamp", ""),
+                                    "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                                })
+                            elif 'role' in msg and 'text' in msg:
+                                # Format: {role: "user|assistant", text: "message"}
+                                formatted_transcript.append({
+                                    "role": msg.get("role", "user"),
+                                    "content": msg.get("text", ""),
+                                    "timestamp": msg.get("timestamp", ""),
+                                    "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                                })
+                            else:
+                                # Fallback: try to extract any text content
+                                text_content = msg.get("content") or msg.get("message") or msg.get("text") or str(msg)
+                                if text_content and text_content.strip():
+                                    formatted_transcript.append({
+                                        "role": "user",
+                                        "content": text_content,
+                                        "timestamp": msg.get("timestamp", ""),
+                                        "time_in_call_secs": msg.get("time_in_call_secs", 0)
+                                    })
+                
+                transcript = formatted_transcript
+                
                 if conversation.summary:
                     summary = conversation.summary
                 else:
@@ -1783,6 +1964,16 @@ async def call_details(request: Request):
                     ConversationModel.update_summary(conversation.id, summary)
             agent = AgentModel.get_by_id(call.agent_id)
             call_details = CallModel.get_by_call_id(call.call_id)
+            
+            # Get dynamic variables and filter out sensitive/internal fields
+            dynamic_variables = call_details.variables if call_details else agent.dynamic_variable
+            if dynamic_variables and isinstance(dynamic_variables, dict):
+                # Remove only the most sensitive fields that shouldn't be shown to users
+                filtered_variables = {k: v for k, v in dynamic_variables.items() 
+                                    if k not in ['client_ip', 'agent_id', 'platform', 'elevenlabs_agent_id', 
+                                               'query_user_id', 'user_id', 'elevenlabs_user_id']}
+            else:
+                filtered_variables = {}
 
             return JSONResponse(status_code=200, content={
                 "status": "success", 
@@ -1794,7 +1985,7 @@ async def call_details(request: Request):
                 },
                 "transcript": transcript,
                 "summary": summary,
-                "dynamic_variable": call_details.variables if call_details else agent.dynamic_variable
+                "dynamic_variable": filtered_variables
             })
         else:
             return JSONResponse(status_code=400, content={"status": "error", "message": "Call not found"})
@@ -1832,20 +2023,50 @@ async def add_url(request: Request):
             with open(temp_file_path, "w") as file:
                 file.write("")
 
+        # First scrape and get the file
         file_path = scrape_and_get_file(url, temp_file_path)
 
-        # Extract text
-        text_content = ""
-        with open(file_path, "r") as file:
-            text_content = file.read()
+        # Wait a short time for scraping to complete and file to be written
+        await asyncio.sleep(2)
 
-        # Save file details to database
-        KnowledgeBaseFileModel.create(
+        # Extract text content
+        text_content = ""
+        try:
+            with open(file_path, "r") as file:
+                text_content = file.read()
+        except FileNotFoundError:
+            # If file not ready yet, wait longer and try again
+            await asyncio.sleep(5)
+            with open(file_path, "r") as file:
+                text_content = file.read()
+
+        # First save the file details to database
+        knowledge_base_file = KnowledgeBaseFileModel.create(
             knowledge_base_id=knowledge_base.id,
             file_name=name,
             file_path=file_path,
             text_content=text_content
         )
+
+        # Wait for DB save to complete
+        await asyncio.sleep(1)
+
+        # Only proceed with vector storage if file was saved successfully
+        if knowledge_base_file:
+            content_list = []
+            content_list.append({
+                "file_path": file_path,
+                "text_content": text_content
+            })
+
+            # Create vector storage in background
+            splits = get_splits(content_list)
+            vector_id = str(uuid.uuid4())
+            if splits:
+                status, vector_path = convert_to_vectorstore(splits, vector_id)
+                if status:
+                    # Update knowledge base with vector info only after successful conversion
+                    KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
 
         return JSONResponse(
             status_code=200,
@@ -1893,7 +2114,17 @@ async def create_text(request: Request):
             file_path=file_path,
             text_content=content
         )
+        content_list = []
+        content_list.append({
+                "file_path": file_path,
+                "text_content": content
+            })
 
+        splits = get_splits(content_list)
+        vector_id = str(uuid.uuid4())
+        if splits:
+            status, vector_path =convert_to_vectorstore(splits, vector_id)
+            KnowledgeBaseModel.update(knowledge_base.id, vector_path=vector_path, vector_id=vector_id)
         return JSONResponse(
             status_code=200,
             content={"status": "success", "message": "Knowledge base and files uploaded successfully.", "file_path": file_path}
@@ -1960,3 +2191,455 @@ async def toggle_webhook(request: Request):
         return JSONResponse(status_code=200, content={"status": "success", "message": "Custom functions fetched successfully"})
     except Exception as e:
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.post("/save-noise-variables", name="save-noise-variables")
+async def save_noise_variables(request: Request):
+    try:
+        data = await request.json()
+        req = SaveNoiseVariablesRequest(**data)
+        agent = AgentModel.get_by_id(req.agent_id)
+        if not agent:
+            return JSONResponse(status_code=400, content={"status": "error", "message": "Agent not found"})
+        
+        updated_agent = AgentModel.update_noise_settings(agent_id=req.agent_id, noise_settings=req.variables)
+
+        return JSONResponse(status_code=200, content={"status": "success", "message": "Variables saved successfully"})
+    
+    except ValidationError as ve:
+        if ve.errors():
+            first_error = ve.errors()[0]
+            ctx_error = first_error.get("ctx", {}).get("error")
+            if ctx_error and isinstance(ctx_error, ValueError):
+                inner_errors = ctx_error.args[0] if ctx_error.args else {}
+                if isinstance(inner_errors, dict) and inner_errors:
+                    field_name, msg = list(inner_errors.items())[0]
+                    human_msg = f"Invalid value for '{field_name}': {msg}"
+                else:
+                    human_msg = "Invalid input"
+            else:
+                loc = first_error.get("loc", ["field"])
+                field_name = loc[-1] if loc else "field"
+                msg = first_error.get("msg", "Invalid value")
+                human_msg = f"Invalid value for '{field_name}': {msg}"
+        else:
+            human_msg = "Invalid input"
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Validation error", "errors": human_msg},
+        )
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
+
+@router.get("/agents/{agent_id}/noise-variables")
+async def get_noise_variables(agent_id: int):
+    agent = AgentModel.get_by_id(agent_id)
+    if not agent:
+        return JSONResponse(status_code=404, content={"status": "error", "message": "Agent not found"})
+    
+    noise_vars = agent.noise_setting_variable or {}
+        
+    response_data = {}
+    for key, value in noise_vars.items():
+        response_data[key] = {
+            "value": value,
+            "description": NOISE_SETTINGS_DESCRIPTIONS.get(key,f"Description for {key}"), 
+            "is_default": True if DEFAULT_VARS.get(key) == value else False 
+        }
+
+    return {"status": "success", "data": response_data}
+
+
+@router.post("/reset-noise-variables", name="reset-noise-variables")
+async def reset_noise_variables(request: Request):
+    try:
+        data = await request.json()
+        req = ResetNoiseVariablesRequest.model_validate(data)
+
+        agent_id = req.agent_id
+        agent = AgentModel.get_by_id(agent_id)
+        if not agent:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Agent not found"}
+            )
+
+        var_to_reset = req.variables[-1]
+        current_vars = agent.noise_setting_variable or {}
+
+        if var_to_reset in DEFAULT_VARS:
+            current_vars[var_to_reset] = DEFAULT_VARS[var_to_reset]
+
+        updated_agent = AgentModel.update_noise_settings(agent_id=agent_id, noise_settings=current_vars)
+
+        return JSONResponse(
+            status_code=200,
+            content={"status": "success", "message": "Variables reset to default successfully","value":getattr(updated_agent,"noise_setting_variable",{}).get(var_to_reset)}
+        )
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Something went wrong!", "error": str(e)}
+        )
+
+
+@router.get("/dashboard/search")
+async def dashboard_search(
+    request: Request,
+    search: str = Query(default=""),
+    page: int = Query(1, ge=1),
+):
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    agents = AgentModel.get_all_by_user(user.get("user_id"))
+
+    search_query = (search or "").strip()
+    if search_query:
+        search_value = search_query.lower()
+
+        def matches(agent):
+            search_value = search_query.lower()
+
+            voice_name = ""
+            try:
+                if agent.selected_voice_obj:
+                    voice_name = (agent.selected_voice_obj.voice_name or "")
+            except:
+                voice_name = ""
+
+            llm_model_name = ""
+            try:
+                if agent.selected_llm_model_obj:
+                    llm_model_name = getattr(agent.selected_llm_model_obj, "name", "") or ""
+            except:
+                llm_model_name = ""
+
+            candidate_fields = [
+                agent.agent_name or "",
+                (getattr(agent, "phone_number") or ""),
+                agent.selected_language or "",
+                voice_name,
+                llm_model_name,
+            ]
+
+            return any(
+                (search_value in value.lower())
+                for value in candidate_fields if value is not None
+            )
+        # Avoid DetachedInstanceError:
+        # Don't access lazy loaded relationship fields in matches()
+        agents = [agent for agent in agents if matches(agent)]
+
+    # Pagination for JSON
+    items_per_page = 10
+    total_items = len(agents)
+    total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    paged_agents = agents[start:end]
+
+    # Fix for DetachedInstanceError: Access only available (eager loaded) fields, avoid lazy-loading relations.
+    # If relation fields (like selected_model_obj) are not guaranteed to be loaded, don't access them.
+    # Instead, fallback to safe string values or use .get method if using dict/row objects.
+
+    def safe_serialize_agent(agent):
+        # Use __dict__ to safely get attributes without triggering lazy loads.
+        agent_dict = agent.__dict__ if hasattr(agent, "__dict__") else agent
+
+        def get_field(obj, field, default=""):
+            # Try direct attribute, then dict, else default
+            return getattr(obj, field, obj.get(field, default) if isinstance(obj, dict) else default)
+
+        # Safely get voice name from relationship
+        voice_name = ""
+        try:
+            if hasattr(agent, "selected_voice_obj") and agent.selected_voice_obj:
+                voice_name = getattr(agent.selected_voice_obj, "voice_name", "") or ""
+        except Exception:
+            # Handle DetachedInstanceError or other relationship access issues
+            voice_name = ""
+
+        return {
+            "id": get_field(agent, "id", None),
+            "agent_name": get_field(agent, "agent_name", "") or "",
+            "phone_number": get_field(agent, "phone_number", "") or "",
+            "selected_model": get_field(agent, "selected_model", "") or "",
+            "selected_language": get_field(agent, "selected_language", "") or "",
+            "selected_llm_model": get_field(agent, "selected_llm_model", "") or "",
+            # Get voice name from relationship
+            "voice_name": voice_name,
+            "llm_name": get_field(agent, "llm_name", ""),
+            "model_name": getattr(agent.selected_llm_model_obj, "model_name", "") if agent.selected_llm_model_obj else "",
+            # Derive has_voice by presence of voice_name
+            "has_voice": bool(voice_name),
+        }
+
+    return JSONResponse({
+        "page": page,
+        "total_pages": total_pages,
+        "total_items": total_items,
+        "has_previous": page > 1,
+        "has_next": page < total_pages,
+        "previous_page": max(1, page - 1) if page > 1 else None,
+        "next_page": min(total_pages, page + 1) if page < total_pages else None,
+        "page_range": list(range(1, total_pages + 1)),
+        "results": [safe_serialize_agent(agent) for agent in paged_agents],
+        "search_query": search_query,
+    })
+
+@router.get("/call_history_all")
+async def call_history_all_api(
+    request: Request,
+    page: int = Query(1, ge=1),
+    agent_id: int = Query(None),
+    created_at_from: str = Query(None),
+    created_at_to: str = Query(None),
+    tokens_min: int = Query(None),
+    tokens_max: int = Query(None),
+    sort_by: str = Query("created_at_desc")  # created_at_desc, created_at_asc, tokens_desc, tokens_asc, duration_desc, duration_asc
+):
+    """
+    JSON API endpoint for all call history with filters, sorting, and smart pagination.
+    """
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return JSONResponse({"error": "Not authenticated"}, status_code=401)
+
+    user_id = user.get("user_id")
+
+    # Get all agents for this user
+    user_agents = AgentModel.get_all_by_user(user_id)
+    agent_ids = [agent.id for agent in user_agents]
+
+    if not agent_ids:
+        return JSONResponse({
+            "results": [],
+            "page": 1,
+            "total_pages": 0,
+            "total_items": 0,
+            "has_previous": False,
+            "has_next": False,
+            "page_range": [],
+            "pagination": {}
+        })
+
+    # Build query with joins
+    with db():
+        # Join AudioRecordings with CallModel via call_id
+        query = db.session.query(
+            AudioRecordings,
+            CallModel,
+            AgentModel
+        ).outerjoin(
+            CallModel, AudioRecordings.call_id == CallModel.call_id
+        ).join(
+            AgentModel, AudioRecordings.agent_id == AgentModel.id
+        ).filter(
+            AudioRecordings.agent_id.in_(agent_ids)
+        )
+
+        # Apply filters
+        if agent_id and agent_id in agent_ids:
+            query = query.filter(AudioRecordings.agent_id == agent_id)
+
+        if created_at_from:
+            try:
+                from_date = datetime.strptime(created_at_from, "%Y-%m-%d")
+                query = query.filter(AudioRecordings.created_at >= from_date)
+            except ValueError:
+                pass
+
+        if created_at_to:
+            try:
+                to_date = datetime.strptime(created_at_to, "%Y-%m-%d")
+                # Add 23:59:59 to include the entire day
+                to_date = to_date.replace(hour=23, minute=59, second=59)
+                query = query.filter(AudioRecordings.created_at <= to_date)
+            except ValueError:
+                pass
+
+        if tokens_min is not None:
+            query = query.filter(CallModel.tokens_consumed >= tokens_min)
+
+        if tokens_max is not None:
+            query = query.filter(CallModel.tokens_consumed <= tokens_max)
+
+        # Duration sorting will be handled in Python after fetching
+        sort_by_duration = sort_by in ["duration_desc", "duration_asc"]
+        items_per_page = 10  # make it available outside with db()
+        python_post_sort_tokens_asc = False
+
+        # Sorting logic: tokens_desc/tokens_asc get special handling for correct NULLs ordering and direction
+        if not sort_by_duration:
+            if sort_by == "tokens_desc":
+                # Tokens descending, NULLs (no call_model) should be at the end, so use nullslast
+                sort_order = desc(CallModel.tokens_consumed).nullslast()
+                query = query.order_by(sort_order, desc(AudioRecordings.created_at))
+            elif sort_by == "tokens_asc":
+                # ---- FORCE PYTHON POST-SORT for tokens_asc to guarantee correct order for all DBs ----
+                # We'll not apply order_by here, just sort after fetching
+                python_post_sort_tokens_asc = True
+                query = query.order_by(None)  # Remove any ordering, let us order in Python below
+            elif sort_by == "created_at_asc":
+                query = query.order_by(asc(AudioRecordings.created_at))
+            else:  # Default to created_at_desc
+                query = query.order_by(desc(AudioRecordings.created_at))
+
+        # Get total count before pagination
+        total_items = query.count()
+
+        # For duration sorting, we need to fetch all and sort in Python
+        if sort_by_duration:
+            all_results = query.all()
+            results_with_duration = []
+            for recording, call_model, agent in all_results:
+                duration = 0
+                if call_model and call_model.variables:
+                    if isinstance(call_model.variables, dict):
+                        duration = call_model.variables.get("call_duration_secs", 0) or 0
+                results_with_duration.append((recording, call_model, agent, float(duration) if duration else 0.0))
+
+            reverse = sort_by == "duration_desc"
+            results_with_duration.sort(key=lambda x: x[3], reverse=reverse)
+
+            total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+            page = max(1, min(page, total_pages))
+            offset = (page - 1) * items_per_page
+            end = offset + items_per_page
+
+            results = [(r[0], r[1], r[2]) for r in results_with_duration[offset:end]]
+        else:
+            if python_post_sort_tokens_asc:
+                query = query.order_by(None)
+                all_results = query.all()
+
+                def tokens_asc_sort_key(item):
+                    recording, call_model, _ = item
+                    if call_model and call_model.tokens_consumed is not None:
+                        try:
+                            return int(call_model.tokens_consumed)
+                        except:
+                            return float("inf")
+                    return float("inf")
+
+                all_results_sorted = sorted(all_results, key=tokens_asc_sort_key)
+
+                total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+                page = max(1, min(page, total_pages))
+                offset = (page - 1) * items_per_page
+                end = offset + items_per_page
+                results = all_results_sorted[offset:end]
+            else:
+                total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
+                page = max(1, min(page, total_pages))
+                offset = (page - 1) * items_per_page
+                results = query.offset(offset).limit(items_per_page).all()
+
+        # No Python post-sort required for tokens_desc or others
+
+    # Process results (handle case where call_model is None; treat tokens as 0 or simply show None for missing)
+    recordings_data = []
+    for recording, call_model, agent in results:
+        voice_name = "Unknown"
+        if agent and agent.selected_voice:
+            voice = VoiceModel.get_by_id(agent.selected_voice)
+            if voice:
+                voice_name = voice.voice_name
+
+        # Get tokens consumed and duration
+        tokens_consumed = call_model.tokens_consumed if call_model else None
+        duration = 0
+        if call_model and call_model.variables:
+            if isinstance(call_model.variables, dict):
+                duration = call_model.variables.get("call_duration_secs", 0) or 0
+            else:
+                try:
+                    duration = call_model.variables.get("call_duration_secs", 0) or 0
+                except:
+                    duration = 0
+
+        recordings_data.append({
+            "id": recording.id,
+            "recording_id": recording.id,
+            "call_id": recording.call_id or "",
+            "agent_id": recording.agent_id,
+            "agent_name": agent.agent_name if agent else "Unknown",
+            "voice_name": voice_name,
+            "audio_file": recording.audio_file,
+            "audio_name": recording.audio_name,
+            "created_at": recording.created_at.isoformat() if recording.created_at else None,
+            "tokens_consumed": tokens_consumed,
+            "duration": float(duration) if duration else 0
+        })
+
+    # Smart pagination logic
+    def get_smart_page_range(current_page, total_pages):
+        """Generate pagination list following 1 2 ... n-1 n pattern with ellipsis when needed."""
+        if total_pages <= 0:
+            return []
+        if total_pages <= 3:
+            return list(range(1, total_pages + 1))
+
+        pages = []
+
+        def add(item):
+            if item not in pages:
+                pages.append(item)
+
+        add(1)
+        add(2)
+
+        if current_page > 4:
+            add("...")
+
+        for p in range(current_page - 1, current_page + 2):
+            if 2 < p < total_pages - 1:
+                add(p)
+
+        if current_page < total_pages - 3:
+            add("...")
+
+        add(total_pages - 1)
+        add(total_pages)
+
+        cleaned = []
+        for item in pages:
+            if item == "...":
+                if cleaned and cleaned[-1] == "...":
+                    continue
+                if not cleaned:
+                    continue
+                cleaned.append(item)
+            else:
+                if 1 <= item <= total_pages:
+                    if not cleaned or cleaned[-1] != item:
+                        cleaned.append(item)
+
+        # Ensure ellipsis not at end or duplicated
+        if cleaned and cleaned[-1] == "...":
+            cleaned = cleaned[:-1]
+
+        return cleaned
+
+    page_range = get_smart_page_range(page, total_pages)
+
+    return JSONResponse({
+        "results": recordings_data,
+        "page": page,
+        "total_pages": total_pages,
+        "total_items": total_items,
+        "has_previous": page > 1,
+        "has_next": page < total_pages,
+        "previous_page": page - 1 if page > 1 else None,
+        "next_page": page + 1 if page < total_pages else None,
+        "page_range": page_range,
+        "pagination": {
+            "items_per_page": items_per_page,
+            "current_page": page,
+            "total_pages": total_pages,
+            "total_items": total_items
+        }
+    })
