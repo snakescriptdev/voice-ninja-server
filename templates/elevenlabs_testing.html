@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ host }}/static/css/elevenlabs_style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ElevenLabs Agent Preview</title>
+</head>
+<body>
+    <script src="{{ host }}/elevenlabs/preview/v1/chatbot-script.js/{{ agent_id }}"></script>
+    <script src="{{ host }}/static/js/elevenlabs_websocket.js"></script>
+    <input hidden id="username" placeholder="Username" value="admin">
+    <input hidden id="password" placeholder="Password" value="admin123">
+    <input hidden id="elevenlabs-agent-id" value="{{ agent_id }}">
+    
+    <!-- ElevenLabs Preview Info -->
+    <div id="elevenlabs-preview-info" style="
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        background: rgba(0,0,0,0.9);
+        color: white;
+        padding: 15px;
+        border-radius: 8px;
+        font-family: monospace;
+        font-size: 12px;
+        z-index: 9999;
+        max-width: 350px;
+        min-width: 280px;
+        border: 2px solid #007bff;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    ">
+        <strong style="color: #ffff00;">🎙️ ElevenLabs Preview Mode</strong><br>
+        <span style="color: #00ff00;">Agent ID:</span> {{ agent_id }}<br>
+        <span style="color: #00ff00;">Integration:</span> {{ integration_type }}<br>
+        <span style="color: #00ff00;">Status:</span> <span id="preview-status" style="color: #ffff00;">Loading...</span>
+        
+        <!-- Toggle Switch for ElevenLabs Features -->
+        <div style="margin-top: 15px; padding: 10px; background: rgba(255,255,255,0.1); border-radius: 5px;">
+            <label style="color: #ffff00; font-size: 11px; font-weight: bold; display: block; margin-bottom: 8px;">
+                🎤 Voice Interruption: <span id="interruption-status" style="color: #00ff00; font-weight: bold;">Enabled</span>
+            </label>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="color: white; font-size: 10px;">Off</span>
+                <label class="switch" style="position: relative; display: inline-block; width: 50px; height: 24px;">
+                    <input type="checkbox" id="flexSwitchCheckChecked" checked onchange="toggleVoiceInterruption(this.checked)" style="opacity: 0; width: 0; height: 0;">
+                    <span style="
+                        position: absolute;
+                        cursor: pointer;
+                        top: 0;
+                        left: 0;
+                        right: 0;
+                        bottom: 0;
+                        background-color: #ccc;
+                        transition: .4s;
+                        border-radius: 24px;
+                    " id="slider"></span>
+                </label>
+                <span style="color: white; font-size: 10px;">On</span>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        /* Custom toggle switch styles */
+        .switch input:checked + #slider {
+            background-color: #2196F3 !important;
+        }
+        
+        .switch input:focus + #slider {
+            box-shadow: 0 0 1px #2196F3;
+        }
+        
+        .switch input:checked + #slider:before {
+            transform: translateX(26px);
+        }
+        
+        .switch #slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        /* Make sure the preview info is always visible */
+        #elevenlabs-preview-info {
+            display: block !important;
+            visibility: visible !important;
+        }
+    </style>
+
+    <script>
+        // Wait for ElevenLabs client to be initialized before setting up toggle
+        function waitForElevenLabsClient() {
+            return new Promise((resolve) => {
+                const checkClient = () => {
+                    if (window.elevenLabsClient && window.elevenLabsClient.setInterruptionSensitivity) {
+                        console.log('ElevenLabs client is ready');
+                        resolve(window.elevenLabsClient);
+                    } else {
+                        console.log('Waiting for ElevenLabs client...');
+                        setTimeout(checkClient, 500);
+                    }
+                };
+                checkClient();
+            });
+        }
+
+        async function toggleVoiceInterruption(isEnabled) {
+            try {
+                // Wait for ElevenLabs client to be available
+                const client = await waitForElevenLabsClient();
+                
+                if (isEnabled) {
+                    // Enable voice interruption with default sensitivity
+                    client.setInterruptionSensitivity(0.01, 5);
+                    console.log('✅ Voice interruption enabled (threshold: 0.01, frames: 5)');
+                } else {
+                    // Disable voice interruption by setting very high threshold
+                    client.setInterruptionSensitivity(1.0, 100);
+                    console.log('❌ Voice interruption disabled (threshold: 1.0, frames: 100)');
+                }
+                
+                // Update status in preview info
+                const statusSpan = document.getElementById('interruption-status');
+                if (statusSpan) {
+                    statusSpan.textContent = isEnabled ? 'Enabled' : 'Disabled';
+                    statusSpan.style.color = isEnabled ? '#28a745' : '#dc3545';
+                }
+                
+            } catch (error) {
+                console.error("❌ Error toggling voice interruption:", error);
+            }
+        }
+
+        // Initialize toggle state when page loads
+        document.addEventListener('DOMContentLoaded', async function() {
+            console.log('🎙️ ElevenLabs testing page loaded');
+            
+            // Wait for client and set initial state
+            try {
+                await waitForElevenLabsClient();
+                const toggle = document.getElementById('flexSwitchCheckChecked');
+                if (toggle && toggle.checked) {
+                    toggleVoiceInterruption(true);
+                }
+            } catch (error) {
+                console.error('Error initializing voice interruption:', error);
+            }
+        });
+    </script>
+</body>
+</html>

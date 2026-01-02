@@ -1,30 +1,50 @@
-from fastapi import APIRouter,Request
+from fastapi import APIRouter,Request,UploadFile, Form, Depends, Query
 from fastapi.templating import Jinja2Templates
 from app.core import VoiceSettings
-from app.utils.helper import Paginator, check_session_expiry_redirect
-from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse
-from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel
+from app.core.config import DEFAULT_VARS,NOISE_SETTINGS_DESCRIPTIONS
+from app.utils.helper import Paginator, check_session_expiry_redirect,get_logged_in_user
+from fastapi.responses import RedirectResponse, FileResponse, Response, HTMLResponse,JSONResponse
+from app.databases.models import AgentModel, KnowledgeBaseModel, agent_knowledge_association, UserModel, AgentConnectionModel, CustomFunctionModel, ApprovedDomainModel, DailyCallLimitModel, OverallTokenLimitModel,VoiceModel
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import Float
 from app.databases.models import engine
-import os
+import os, shutil
 from dotenv import load_dotenv
 
+from sqlalchemy.exc import SQLAlchemyError
+from app.routers.schemas.voice_schemas import (
+    validate_create_voice_request,
+    validate_edit_voice,
+    validate_delete_voice,
+)
+from app.services.elevenlabs_utils import ElevenLabsUtils
 load_dotenv()
 router = APIRouter()
 
 templates = Jinja2Templates(directory="templates")
+
+def get_host_with_fallback():
+    """Get host with proper fallback and URL scheme"""
+    host = os.getenv("HOST", "localhost:8000")
+    if not host.startswith(('http://', 'https://')):
+        host = f"http://{host}"
+    return host
 
 @router.get("/signup")
 async def index(request: Request):  
     user = request.session.get("user")
     if user and user.get("is_authenticated"):
         return RedirectResponse(url="/dashboard")
+    
+    # Get host with fallback
+    host = get_host_with_fallback()
+    
     return templates.TemplateResponse(
         "Web/signup.html", 
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "host": os.getenv("HOST")
+            "host": host
         }
     )
 
@@ -34,12 +54,18 @@ async def login(request: Request):
     user = request.session.get("user")
     if user and user.get("is_authenticated"):
         return RedirectResponse(url="/dashboard")
+    
+    # Get host with fallback
+    host = os.getenv("HOST", "http://localhost:8000")
+    if not host.startswith(('http://', 'https://')):
+        host = f"http://{host}"
+    
     return templates.TemplateResponse(
         "Web/login.html", 
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "host": os.getenv("HOST")
+            "host": host
         }
     )
 
@@ -57,39 +83,27 @@ async def forget_password(request: Request):
 
 @router.get("/dashboard", name="dashboard")
 @check_session_expiry_redirect
-async def dashboard(request: Request, page: int = 1):
-    from app.databases.models import AgentModel
+async def dashboard(request: Request):
     from app.databases.models import ApprovedDomainModel
     user = request.session.get("user")
     if not user or not user.get("is_authenticated"):
         return RedirectResponse(url="/login")
+
     domains = os.getenv("DOMAIN_NAME").split(",")
     for domain in domains:
         approved_domain = ApprovedDomainModel.check_domain_exists(domain, user.get("user_id"))
         if not approved_domain:
             ApprovedDomainModel.create(domain, user.get("user_id"))
 
-    # Get all agents created by current user
-    agents = AgentModel.get_all_by_user(user.get("user_id"))
-
-    # Pagination
-    items_per_page = 10
-    start = (page - 1) * items_per_page
-    end = start + items_per_page
-    
-    paginator = Paginator(agents, page, items_per_page, start, end)
     return templates.TemplateResponse(
         "Web/dashboard.html",
         {
             "request": request,
             "voices": VoiceSettings.ALLOWED_VOICES,
-            "page_obj": paginator,
             "user": user,
-            "host": os.getenv("HOST")
+            "host": os.getenv("HOST"),
         }
     )
-
-
 
 @router.get("/chatbot/")
 async def index(request: Request):
@@ -120,11 +134,12 @@ async def create_agent(request: Request):
     from app.databases.models import KnowledgeBaseModel
     user_id = request.session.get("user").get("user_id")
     knowledge_bases = KnowledgeBaseModel.get_all_by_user(user_id)
+    voices = VoiceModel.get_allowed_voices(user_id=user_id)
     return templates.TemplateResponse(
         "Web/create_agent.html", 
         {
             "request": request,
-            "voices": VoiceSettings.ALLOWED_VOICES,
+            "voices": voices,
             "knowledge_bases":knowledge_bases,
             "host": os.getenv("HOST")
         }
@@ -157,6 +172,19 @@ async def update_agent(request: Request):
     knowledge_result =  session.execute(select(KnowledgeBaseModel))
     knowledge_bases = knowledge_result.scalars().all()
     dynamic_variables = agent.dynamic_variable
+
+    noise_settings_variables = agent.noise_setting_variable or {}
+    merged_noise_vars = {**DEFAULT_VARS, **noise_settings_variables}
+
+    noise_form_data = {}
+    for key, description in NOISE_SETTINGS_DESCRIPTIONS.items():
+        value = merged_noise_vars.get(key, None)
+        is_default = True if DEFAULT_VARS.get(key) == value else False 
+        noise_form_data[key] = {
+            "value": value,
+            "description": description,
+            "is_default": is_default
+        }
     # Get the selected knowledge base for this agent
     selected_knowledge = None
     if agent_knowledge_ids:
@@ -169,21 +197,25 @@ async def update_agent(request: Request):
     custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
     daily_call_limit = DailyCallLimitModel.get_by_agent_id(agent_id)
     overall_token_limit = OverallTokenLimitModel.get_by_agent_id(agent_id)
+    voices = VoiceModel.get_allowed_voices(user_id=user_id)
+   
     return templates.TemplateResponse(
         "Web/update_agent.html",
         {
             "request": request,
-            "voices": VoiceSettings.ALLOWED_VOICES,
+            "voices": voices,
             "agent": agent,
             "knowledge_bases": knowledge_bases,
             "agent_knowledge_ids": agent_knowledge_ids,
             "selected_knowledge": selected_knowledge,
             "dynamic_variables": dynamic_variables,
+            "noise_form_data":noise_form_data,
             "custom_functions": custom_functions,
             "host": os.getenv("HOST"),
             "daily_call_limit": daily_call_limit.set_value if daily_call_limit else 0,
             "overall_token_limit": overall_token_limit.overall_token_limit if overall_token_limit else 0,
-            "per_call_token_limit": agent.per_call_token_limit if agent.per_call_token_limit else 0
+            "per_call_token_limit": agent.per_call_token_limit if agent.per_call_token_limit else 0,
+            
         },
     )
 
@@ -199,17 +231,20 @@ async def knowledge_base(request: Request, page: int = 1):
     formatted_knowledge_bases = []
     for knowledge_base in knowledge_bases:
         files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base.id)
+        # print(f"🔍 Debug: Loading files for knowledge base {knowledge_base.id} ({knowledge_base.knowledge_base_name})")
         files_data = []
         for file in files:
-            files_data.append(
-                {
-                    "id": file.id,
-                    "name": file.file_name,
-                    "size": "",  # You can add file size if available   
-                    "url": f"/media/{file.file_path}",
-                    "knowledge_base_id": knowledge_base.id
-                }   
-            )
+            file_data = {
+                "id": file.id,
+                "name": file.file_name,
+                "size": "",  # You can add file size if available   
+                "url": f"/media/{file.file_path}",
+                "knowledge_base_id": knowledge_base.id,
+                "elevenlabs_doc_id": file.elevenlabs_doc_id,
+                "elevenlabs_doc_name": file.elevenlabs_doc_name
+            }
+            # print(f"🔍 Debug: File {file.file_name} - elevenlabs_doc_id: {file.elevenlabs_doc_id}")
+            files_data.append(file_data)
 
         formatted_knowledge_bases.append({
             "id": knowledge_base.id,
@@ -299,7 +334,7 @@ async def verify_account(request: Request, token: str):
 @router.get("/call_history")
 @check_session_expiry_redirect
 async def call_history(request: Request, page: int = 1):
-    from app.databases.models import AudioRecordings
+    from app.databases.models import AudioRecordings, VoiceModel
     agent_id = request.query_params.get("agent_id")
     audio_recordings = AudioRecordings.get_all_by_agent(agent_id)
     audio_recordings = sorted(audio_recordings, key=lambda x: x.created_at, reverse=True)
@@ -310,6 +345,13 @@ async def call_history(request: Request, page: int = 1):
     agent = AgentModel.get_by_id(agent_id)
     final_response = paginator.items
 
+    # Get voice name instead of voice ID
+    voice_name = "Unknown"
+    if agent and agent.selected_voice:
+        voice = VoiceModel.get_by_id(agent.selected_voice)
+        if voice:
+            voice_name = voice.voice_name
+
     return templates.TemplateResponse(
         "Web/call_history.html",
         {
@@ -317,8 +359,29 @@ async def call_history(request: Request, page: int = 1):
             "audio_recordings": final_response,  
             "page_obj": paginator,
             "agent_name": agent.agent_name,
-            "selected_voice": agent.selected_voice,
+            "selected_voice": voice_name,  # Now passing voice name instead of ID
             "agent_id": agent_id,
+            "host": os.getenv("HOST")
+        }
+    )
+
+@router.get("/call_history_all", name="call_history_all")
+@check_session_expiry_redirect
+async def call_history_all(request: Request):
+    """Render the call history page template (no data)"""
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return RedirectResponse(url="/login")
+    
+    # Get user's agents for filter dropdown
+    user_id = user.get("user_id")
+    user_agents = AgentModel.get_all_by_user(user_id)
+    
+    return templates.TemplateResponse(
+        "Web/call_history_all.html",
+        {
+            "request": request,
+            "user_agents": user_agents,
             "host": os.getenv("HOST")
         }
     )
@@ -552,13 +615,7 @@ def chatbot_script(request: Request, agent_id: str):
                         webJsScript.src = "{host}/static/js/websocket.js";
                         document.head.appendChild(webJsScript);
 
-                        // Include Bot Styles
-                        const botStyle = document.createElement('link');
-                        botStyle.rel = 'stylesheet';
-                        botStyle.type = 'text/css';
-                        botStyle.href = "{host}/static/Web/css/bot_style.css";
-                        document.head.appendChild(botStyle);
-
+                        
                         webJsScript.onload = function() {{
                             if (typeof WebSocketClient === 'function') {{
                                 const client = new WebSocketClient({agent.id});
@@ -1134,3 +1191,162 @@ async def home(request: Request):
         "Web/home.html",
         {"request": request, "host": os.getenv("HOST")}
     )
+
+@router.get("/custom-voice-dashboard", name="custom_voice_dashboard")
+@check_session_expiry_redirect
+async def dashboard(request: Request, page: int = 1, search: str = None):
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return RedirectResponse(url="/login")
+
+    voices = VoiceModel.get_all_by_user(user.get("user_id"))
+
+    if search:
+        voices = [v for v in voices if search.lower() in v.voice_name.lower()]
+
+    items_per_page = 10
+    start = (page - 1) * items_per_page
+    end = start + items_per_page
+    paginator = Paginator(voices, page, items_per_page, start, end)
+
+    return templates.TemplateResponse(
+        "Web/custom_voice_dashboard.html",
+        {
+            "request": request,
+            "page_obj": paginator,
+            "user": user,
+            "host": os.getenv("HOST")
+        }
+    )
+
+@router.post("/api/create_voice")
+async def create_voice(request: Request, voice_name: str = Form(...), audio_file: UploadFile | None = None):
+    user = get_logged_in_user(request)
+    if not user:
+        return JSONResponse({"status": False, "message": "Login required"}, status_code=401)
+
+    try:
+        payload, error = validate_create_voice_request(voice_name, audio_file)
+        if error:
+            return error
+
+        # check if same voice exists for this user
+        exists = VoiceModel.get_by_name_and_user(payload.voice_name, user["user_id"])
+        if exists:
+            return JSONResponse({"status": False, "message": f"Voice name '{payload.voice_name}' already exists."})
+
+        file_path = None
+        save_dir = "static/uploads/custom_voices"
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, audio_file.filename)
+        with open(save_path, "wb") as f:
+            shutil.copyfileobj(audio_file.file, f)
+        file_path = save_path
+
+        elevenlabs_obj = ElevenLabsUtils()
+        response = elevenlabs_obj.create_cloned_voice(file_path=file_path, name=payload.voice_name)
+        if response.status:
+            elevenlabs_voice_id = response.data.get("voice_id")
+        else:
+            return JSONResponse({"status": False,"error":f"{str(response.error_message)}","message": "Error in creating voice at elevenlabs."})
+
+        voice = VoiceModel.create(
+            voice_name=payload.voice_name,
+            user_id=user["user_id"],
+            audio_file=file_path,
+            is_custom_voice=True,
+            elevenlabs_voice_id = elevenlabs_voice_id
+        )
+        return JSONResponse({"status": True, "message": f"Voice '{payload.voice_name}' created successfully."})
+    except SQLAlchemyError:
+        return JSONResponse({"status": False, "message": "Database error occurred."})
+    except Exception as e:
+        return JSONResponse({"status": False,"message":"Some Error Occurred","error": str(e)})
+
+
+@router.post("/api/edit_voice")
+async def edit_voice(request: Request, payload: dict):
+    user = get_logged_in_user(request)
+    if not user:
+        return JSONResponse(
+            {"status": False, "message": "Login required"},
+            status_code=401,
+        )
+
+    validation_error = validate_edit_voice(payload)
+    if validation_error:
+        return validation_error
+
+    try:
+        voice = VoiceModel.get_by_id(payload["voice_id"])
+        if not voice:
+            return JSONResponse({"status": False, "message": "Voice not found."}, status_code=404)
+
+        if voice.user_id != user["user_id"]:
+            return JSONResponse({"status": False, "message": "Unauthorized."}, status_code=403)
+
+        if payload["voice_name"] == voice.voice_name:
+            return JSONResponse({"status": False, "message": "No voice name change detected."}, status_code=400)
+
+        exists = VoiceModel.get_by_name_and_user(payload["voice_name"], user["user_id"])
+        if exists and exists.id != voice.id:
+            return JSONResponse({"status": False, "message": "Voice name already exists."}, status_code=400)
+
+        elevenlabs_obj = ElevenLabsUtils()
+        voice_id = voice.elevenlabs_voice_id
+        if not voice_id:
+            return JSONResponse({"status": True, "message": f"Voice not found on elevenlabs. Please create new one."})
+
+        new_voice_response = elevenlabs_obj.edit_voice_name(voice_id=voice.elevenlabs_voice_id, new_name=payload.get("voice_name"))
+        if not new_voice_response.status:
+            return JSONResponse({"status": False, "message": f"Error in updating voice on elevenlabs '{new_voice_response.error_message}'."})
+        
+        updated_voice = VoiceModel.update(payload["voice_id"], voice_name=payload["voice_name"])
+        return JSONResponse({"status": True, "message": f"Voice name updated to '{payload['voice_name']}'."})
+
+    except Exception as e:
+        return JSONResponse(
+            {"status": False, "message": "Some Error Occurred", "error": str(e)},
+            status_code=500,
+        )
+
+
+@router.delete("/api/delete_voice")
+async def delete_voice(request:Request, voice_id: int = Query(...)):
+    user = get_logged_in_user(request)
+    if not user:
+        return JSONResponse(
+            {"status": False, "message": "Login required"},
+            status_code=401,
+        )
+
+    validation_error = validate_delete_voice(voice_id)
+    if validation_error:
+        return validation_error
+
+    try:
+        voice = VoiceModel.get_by_id(voice_id)
+        if not voice:
+            return JSONResponse({"status": False, "message": "Voice not found."}, status_code=404)
+
+        if voice.user_id != user["user_id"]:
+            return JSONResponse({"status": False, "message": "Unauthorized."}, status_code=403)
+
+        if voice.audio_file and os.path.exists(voice.audio_file):
+            os.remove(voice.audio_file)
+
+        voice_id_to_delete = voice.elevenlabs_voice_id
+        if voice_id_to_delete:
+            elevenlabs_obj = ElevenLabsUtils()
+            response = elevenlabs_obj.delete_voice(voice_id=voice_id_to_delete)
+            if not response.status:
+                return JSONResponse({"status": False,"error":f"{str(response.error_message)}","message": "Error in deleting voice at elevenlabs."})
+
+        VoiceModel.delete(voice_id)
+        return JSONResponse({"status": True, "message": f"Voice '{voice.voice_name}' deleted successfully."})
+
+    except Exception as e:
+        return JSONResponse(
+            {"status": False, "message": "Some Error Occurred", "error": str(e)},
+            status_code=500,
+        )
