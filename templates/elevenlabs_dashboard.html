@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ElevenLabs Recording Dashboard</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+        button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .danger {
+            background-color: #dc3545;
+        }
+        .danger:hover {
+            background-color: #c82333;
+        }
+        .success {
+            background-color: #28a745;
+        }
+        .success:hover {
+            background-color: #218838;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: left;
+        }
+        th {
+            background-color: #f8f9fa;
+        }
+        .status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status.active {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .status.completed {
+            background-color: #cce5ff;
+            color: #004085;
+        }
+        #logs {
+            background-color: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .audio-controls {
+            margin: 10px 0;
+        }
+        .recording-stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-number {
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .stat-label {
+            font-size: 14px;
+            opacity: 0.9;
+        }
+    </style>
+</head>
+<body>
+    <h1>🎙️ ElevenLabs Recording Dashboard</h1>
+    
+    <div class="grid">
+        <!-- Recording Statistics -->
+        <div class="container">
+            <h2>📊 Recording Statistics</h2>
+            <div class="recording-stats">
+                <div class="stat-card">
+                    <div class="stat-number" id="totalRecordings">-</div>
+                    <div class="stat-label">Total Recordings</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="totalDuration">-</div>
+                    <div class="stat-label">Total Hours</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="activeConnections">-</div>
+                    <div class="stat-label">Active Connections</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="agentCount">-</div>
+                    <div class="stat-label">Agents with Recordings</div>
+                </div>
+            </div>
+            <button onclick="loadStats()">🔄 Refresh Stats</button>
+        </div>
+
+        <!-- Live Connection Testing -->
+        <div class="container">
+            <h2>� Live Connection Testing</h2>
+            <div>
+                <input type="text" id="testAgentId" placeholder="Enter Agent Dynamic ID" style="padding: 8px; width: 200px;">
+                <button onclick="testBrowserConnection()" class="success">� Test Browser Connection</button>
+            </div>
+            <div id="connectionStatus" style="margin-top: 10px;"></div>
+        </div>
+    </div>
+
+    <!-- Recording Management -->
+    <div class="container">
+        <h2>🎵 Recording Management</h2>
+        <div>
+            <button onclick="loadRecordings()" class="success">📋 Load Recordings</button>
+            <button onclick="clearRecordingsList()">🗑️ Clear List</button>
+            <input type="text" id="agentFilter" placeholder="Filter by Agent ID" style="margin-left: 10px; padding: 8px;">
+            <button onclick="filterRecordings()">🔍 Filter</button>
+        </div>
+        
+        <div id="recordingsList">
+            <p>Click "Load Recordings" to view all recordings</p>
+        </div>
+    </div>
+
+    <!-- Live Testing -->
+    <div class="container">
+        <h2>🔴 Live Testing</h2>
+        <div>
+            <input type="text" id="testAgentId" placeholder="Enter Agent Dynamic ID" style="padding: 8px; width: 200px;">
+            <button onclick="testBrowserConnection()" class="success">🎧 Test Browser Connection</button>
+        </div>
+        <div id="connectionStatus" style="margin-top: 10px;"></div>
+    </div>
+
+    <!-- System Logs -->
+    <div class="container">
+        <h2>📝 System Logs</h2>
+        <button onclick="clearLogs()" class="danger">🗑️ Clear Logs</button>
+        <div id="logs"></div>
+    </div>
+
+    <script>
+        // Utility functions
+        function log(message) {
+            const logs = document.getElementById('logs');
+            const timestamp = new Date().toLocaleTimeString();
+            logs.innerHTML += `[${timestamp}] ${message}\n`;
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+        }
+
+        // API calls
+        async function apiCall(endpoint, method = 'GET') {
+            try {
+                log(`API Call: ${method} ${endpoint}`);
+                const response = await fetch(endpoint, { method });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${data.detail || 'Unknown error'}`);
+                }
+                log(`Success: ${endpoint}`);
+                return data;
+            } catch (error) {
+                log(`Error: ${endpoint} - ${error.message}`);
+                throw error;
+            }
+        }
+
+        // Recording Statistics
+        async function loadStats() {
+            try {
+                const stats = await apiCall('/elevenlabs/recordings/stats/summary');
+                
+                document.getElementById('totalRecordings').textContent = stats.total_recordings;
+                document.getElementById('totalDuration').textContent = stats.total_duration_hours;
+                document.getElementById('agentCount').textContent = Object.keys(stats.agent_stats).length;
+                document.getElementById('activeConnections').textContent = '0'; // Placeholder for browser connections
+                
+                log('Statistics updated successfully');
+            } catch (error) {
+                log(`Failed to load stats: ${error.message}`);
+            }
+        }
+
+        // Recording Management
+        async function loadRecordings() {
+            try {
+                const recordings = await apiCall('/elevenlabs/recordings/');
+                displayRecordings(recordings);
+            } catch (error) {
+                document.getElementById('recordingsList').innerHTML = `<p>Error loading recordings: ${error.message}</p>`;
+            }
+        }
+
+        async function filterRecordings() {
+            const agentId = document.getElementById('agentFilter').value.trim();
+            if (!agentId) {
+                loadRecordings();
+                return;
+            }
+            
+            try {
+                const recordings = await apiCall(`/elevenlabs/recordings/agent/${agentId}`);
+                displayRecordings(recordings);
+                log(`Filtered recordings for agent: ${agentId}`);
+            } catch (error) {
+                document.getElementById('recordingsList').innerHTML = `<p>Error filtering recordings: ${error.message}</p>`;
+            }
+        }
+
+        function displayRecordings(recordings) {
+            const container = document.getElementById('recordingsList');
+            
+            if (recordings.length === 0) {
+                container.innerHTML = '<p>No recordings found</p>';
+                return;
+            }
+            
+            let html = '<table><tr><th>Call ID</th><th>Agent</th><th>Duration</th><th>Type</th><th>Date</th><th>Actions</th></tr>';
+            
+            recordings.forEach(recording => {
+                const duration = Math.round(recording.duration_seconds);
+                const date = new Date(recording.start_time).toLocaleDateString();
+                const callType = recording.call_metadata?.call_type || 'unknown';
+                
+                html += `
+                    <tr>
+                        <td>${recording.call_id}</td>
+                        <td>${recording.agent_dynamic_id}</td>
+                        <td>${duration}s</td>
+                        <td>${callType}</td>
+                        <td>${date}</td>
+                        <td>
+                            <button onclick="downloadAudio('${recording.call_id}', 'combined')" class="success">📻 Download</button>
+                            <button onclick="viewTranscript('${recording.call_id}')">📝 Transcript</button>
+                            <button onclick="deleteRecording('${recording.call_id}')" class="danger">🗑️ Delete</button>
+                        </td>
+                    </tr>
+                `;
+            });
+            html += '</table>';
+            container.innerHTML = html;
+            
+            log(`Loaded ${recordings.length} recordings`);
+        }
+
+        function clearRecordingsList() {
+            document.getElementById('recordingsList').innerHTML = '<p>Click "Load Recordings" to view all recordings</p>';
+            document.getElementById('agentFilter').value = '';
+        }
+
+        async function downloadAudio(callId, audioType) {
+            try {
+                const url = `/elevenlabs/recordings/${callId}/audio/${audioType}`;
+                window.open(url, '_blank');
+                log(`Downloading ${audioType} audio for call: ${callId}`);
+            } catch (error) {
+                log(`Failed to download audio: ${error.message}`);
+            }
+        }
+
+        async function viewTranscript(callId) {
+            try {
+                const transcript = await apiCall(`/elevenlabs/recordings/${callId}/transcript`);
+                
+                let transcriptText = `Transcript for Call: ${callId}\n`;
+                transcriptText += `Messages: ${transcript.message_count}\n\n`;
+                
+                transcript.transcript.forEach(msg => {
+                    const time = new Date(msg.timestamp).toLocaleTimeString();
+                    transcriptText += `[${time}] ${msg.speaker.toUpperCase()}: ${msg.message}\n`;
+                });
+                
+                // Create a modal or new window to show transcript
+                const newWindow = window.open('', '_blank', 'width=600,height=400');
+                newWindow.document.write(`
+                    <html>
+                        <head><title>Transcript - ${callId}</title></head>
+                        <body style="font-family: monospace; padding: 20px; white-space: pre-wrap;">
+                            ${transcriptText}
+                        </body>
+                    </html>
+                `);
+                
+                log(`Opened transcript for call: ${callId}`);
+            } catch (error) {
+                log(`Failed to load transcript: ${error.message}`);
+            }
+        }
+
+        async function deleteRecording(callId) {
+            if (!confirm(`Are you sure you want to delete recording: ${callId}?`)) {
+                return;
+            }
+            
+            try {
+                await apiCall(`/elevenlabs/recordings/${callId}`, 'DELETE');
+                log(`Deleted recording: ${callId}`);
+                loadRecordings(); // Refresh the list
+            } catch (error) {
+                log(`Failed to delete recording: ${error.message}`);
+            }
+        }
+
+        // Live Testing
+        function testBrowserConnection() {
+            const agentId = document.getElementById('testAgentId').value.trim();
+            if (!agentId) {
+                alert('Please enter an Agent Dynamic ID');
+                return;
+            }
+            
+            const wsUrl = `ws://localhost:8000/elevenlabs/live/ws/${agentId}`;
+            log(`Testing browser connection to: ${wsUrl}`);
+            
+            const status = document.getElementById('connectionStatus');
+            status.innerHTML = `<p>Testing connection to agent: ${agentId}...</p>`;
+            
+            try {
+                const ws = new WebSocket(wsUrl);
+                
+                ws.onopen = () => {
+                    status.innerHTML = `<p style="color: green;">✅ Connected to agent: ${agentId}</p>`;
+                    log(`Successfully connected to agent: ${agentId}`);
+                    ws.close();
+                };
+                
+                ws.onerror = (error) => {
+                    status.innerHTML = `<p style="color: red;">❌ Failed to connect to agent: ${agentId}</p>`;
+                    log(`Failed to connect to agent: ${agentId}`);
+                };
+                
+                ws.onclose = () => {
+                    log(`Connection closed for agent: ${agentId}`);
+                };
+                
+            } catch (error) {
+                status.innerHTML = `<p style="color: red;">❌ Error: ${error.message}</p>`;
+                log(`Connection error: ${error.message}`);
+            }
+        }
+
+        // Initialize dashboard
+        document.addEventListener('DOMContentLoaded', () => {
+            log('ElevenLabs Recording Dashboard initialized');
+            loadStats();
+        });
+
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            loadStats();
+        }, 30000);
+    </script>
+</body>
+</html>

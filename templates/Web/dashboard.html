@@ -67,14 +67,24 @@
                 </div>
             </div>
             <div class="table_filters pt-0 d-flex justify-content-between align-items-center gap-2">
-                <div class="table_search_box position-relative">
-                    <input type="search" class="form-control" placeholder="Search">
-                    <div class="search_icon">
+                <form class="table_search_box position-relative" method="get" action="{{ host }}/dashboard" id="searchForm">
+                    <input type="text"
+                           class="form-control"
+                           id="searchInput"
+                           placeholder="Search agents, models, voices or numbers"
+                           name="search"
+                           value="">
+                    <button type="button" class="clear_search_icon bg-transparent border-0 p-0 d-none" id="clearSearchBtn" aria-label="Clear search" style="position: absolute; right: 40px; top: 50%; transform: translateY(-50%); cursor: pointer; z-index: 10;">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M2.146 2.854a.5.5 0 1 1 .708-.708L8 7.293l5.146-5.147a.5.5 0 0 1 .708.708L8.707 8l5.147 5.146a.5.5 0 0 1-.708.708L8 8.707l-5.146 5.147a.5.5 0 0 1-.708-.708L7.293 8 2.146 2.854Z"/>
+                        </svg>
+                    </button>
+                    <button type="submit" class="search_icon bg-transparent border-0 p-0" aria-label="Search">
                         <img src="{{ host }}/static/Web/images/search-icon.svg" class="img-fluid">
-                    </div>
-                </div>
+                    </button>
+                </form>
                 <div class="dropdown filter_dropdown">
-                    <a href="{{ host }}/create_agent" class="create_agent_btn"> 
+                    <a href="{{ host }}/elevenlabs/web/v1/create_agent" class="create_agent_btn"> 
                         Create an Agent
                     </a>
                 </div>
@@ -92,93 +102,23 @@
                                     <th>Delete</th>
                                 </tr>
                             </thead>
-                            <tbody>
-                                {% for agent in page_obj.items %}
-                                <tr onclick="window.location.href='{{ url_for('update_agent') }}?agent_id={{ agent.id }}'" style="cursor: pointer;">
-                                    <td>
-                                        <div class="d-flex align-items-center justify-content-center gap-2 agent_name_data">
-                                            <span>
-                                                {% if agent.agent_name %}
-                                                <img src="{{ host }}/static/Web/images/lucide_bot.svg" class="img-fluid">
-                                                {% endif %}
-                                            </span>
-                                            {{ agent.agent_name }}
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="max-content">
-                                            {% if agent.selected_model %}
-                                                {{ agent.selected_model }}
-                                            {% else %}
-                                                -
-                                            {% endif %}
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="d-flex align-items-center justify-content-center gap-1 max-content">
-                                            <span>
-                                                {% if agent.selected_voice %}
-                                                <img src="{{ host }}/static/Web/images/voice-icon.svg" class="img-fluid">
-                                                {% endif %}
-                                            </span>
-                                            {{ agent.selected_voice }}
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="max-content">
-                                            {% if agent.phone_number %}
-                                                {{ agent.phone_number }}
-                                            {% else %}
-                                                -
-                                            {% endif %}
-                                        </div>
-                                    </td>
-                                    <td>
-                                        <div class="max-content">
-                                            {% if agent.id %}
-                                            <button class="delete-btn btn btn-danger" 
-                                                    data-bs-toggle="modal" 
-                                                    data-bs-target="#deleteModal" 
-                                                    data-agent-id="{{ agent.id }}" 
-                                                    data-agent-name="{{ agent.agent_name }}"
-                                                    onclick="event.stopPropagation();">
-                                                <img src="{{ host }}/static/Web/images/delete-icon.svg" alt="Delete" class="img-fluid">
-                                            </button>
-                                            {% endif %}
-                                        </div>
-                                    </td>                                    
-                                </tr>
-                                {% else %}
+                            <tbody id="agentsTableBody">
                                 <tr>
-                                    <td colspan="5" class="text-center">No agents found</td>
+                                    <td colspan="5" class="text-center">
+                                        <div class="spinner-border spinner-border-sm" role="status">
+                                            <span class="visually-hidden">Loading...</span>
+                                        </div>
+                                        Loading agents...
+                                    </td>
                                 </tr>
-                                {% endfor %}
                             </tbody>
                         </table>
                     </div>
                     <div class="table_pagination">
                         <nav aria-label="Page navigation">
-                            <ul class="pagination justify-content-end gap-2 mb-0">
-                                {%- if page_obj.has_previous -%}
-                                <li class="page-item">
-                                    <a class="page-link pagination_arrow" href="{{ host }}/dashboard?page={{ page_obj.previous_page_number }}" tabindex="-1" aria-disabled="false">&lt;</a>
-                                </li>
-                                {%- endif -%}
-                                
-                                {%- for page in page_obj.page_range -%}
-                                <li class="page-item {{ 'active' if page == page_obj.page else '' }}">
-                                    <a class="page-link" href="{{ host }}/dashboard?page={{ page }}" {% if page == page_obj.page %}aria-current="page"{% endif %}>{{ page }}</a>
-                                </li>
-                                {%- endfor -%}
-                                
-                                {%- if page_obj.has_next -%}
-                                <li class="page-item">
-                                    <a class="page-link pagination_arrow" href="{{ host }}/dashboard?page={{ page_obj.next_page_number }}">&gt;</a>
-                                </li>
-                                {%- endif -%}
+                            <ul class="pagination justify-content-end gap-2 mb-0" id="paginationContainer">
+                                <!-- Pagination will be dynamically generated -->
                             </ul>
-                        </nav>
-
                         </nav>
                     </div>
                     
@@ -211,17 +151,330 @@
     </div>
 </div>
 
-
-
 <script>
+// Function to fetch LLM model names by IDs
+async function fetchLLMNames(ids) {
+    if (!ids || ids.length === 0) return {};
+    
+    try {
+        const res = await fetch(`/elevenlabs/api/v1/llm_models?ids=${ids.join(',')}`);
+        if (res.ok) {
+            const data = await res.json();
+            return (data && data.models) || {};
+        }
+    } catch (e) {
+        console.error("Error fetching LLM names:", e);
+    }
+    return {};
+}
+
+
+
+
+
     let host = "{{ host }}";
+
+// Debounce function implementation with cancel support
+function debounce(func, wait) {
+    let timeout;
+    const debounced = function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+    
+    // Add cancel method to clear pending timeout
+    debounced.cancel = function() {
+        clearTimeout(timeout);
+    };
+    
+    return debounced;
+}
+
+// Function to render agent row
+function renderAgentRow(agent, llmNameMap) {
+    const llmId = agent.selected_llm_model || '';
+    const modelName = agent.llm_name || agent.model_name || agent.selected_model || '-';
+    const displayModel = llmId && llmNameMap[llmId] ? llmNameMap[llmId] : modelName;
+    
+    return `
+        <tr onclick="window.location.href='/elevenlabs/web/v1/update_agent?agent_id=${agent.id}'" style="cursor: pointer;">
+            <td>
+                <div class="d-flex align-items-center justify-content-center gap-2 agent_name_data">
+                    <span>
+                        ${agent.agent_name ? `<img src="${host}/static/Web/images/lucide_bot.svg" class="img-fluid">` : ''}
+                    </span>
+                    ${agent.agent_name || ''}
+                </div>
+            </td>
+            <td>
+                <div class="max-content" data-llm-id="${llmId}" data-selected-model="${agent.selected_model || ''}">
+                    ${displayModel}
+                </div>
+            </td>
+            <td>
+                <div class="d-flex align-items-center justify-content-center gap-1 max-content">
+                    <span>
+                        ${agent.has_voice ? `<img src="${host}/static/Web/images/voice-icon.svg" class="img-fluid">` : ''}
+                    </span>
+                    ${agent.voice_name || ''}
+                </div>
+            </td>
+            <td>
+                <div class="max-content">
+                    ${agent.phone_number || '-'}
+                </div>
+            </td>
+            <td>
+                <div class="max-content">
+                    ${agent.id ? `
+                        <button class="delete-btn btn btn-danger" 
+                                data-bs-toggle="modal" 
+                                data-bs-target="#deleteModal" 
+                                data-agent-id="${agent.id}" 
+                                data-agent-name="${agent.agent_name || ''}"
+                                onclick="event.stopPropagation();">
+                            <img src="${host}/static/Web/images/delete-icon.svg" alt="Delete" class="img-fluid">
+                        </button>
+                    ` : ''}
+                </div>
+            </td>
+        </tr>
+    `;
+}
+
+// Function to render pagination
+function renderPagination(paginationData, searchQuery) {
+    const container = document.querySelector('#paginationContainer');
+    if (!container) return;
+    
+    let html = '';
+    
+    // Previous button
+    if (paginationData.has_previous) {
+        html += `
+            <li class="page-item">
+                <a class="page-link pagination_arrow" href="#" data-page="${paginationData.previous_page}" tabindex="-1">&lt;</a>
+            </li>
+        `;
+    }
+    
+    // Page numbers
+    paginationData.page_range.forEach(pageNum => {
+        const isActive = pageNum === paginationData.page;
+        html += `
+            <li class="page-item ${isActive ? 'active' : ''}">
+                <a class="page-link" href="#" data-page="${pageNum}" ${isActive ? 'aria-current="page"' : ''}>${pageNum}</a>
+            </li>
+        `;
+    });
+    
+    // Next button
+    if (paginationData.has_next) {
+        html += `
+            <li class="page-item">
+                <a class="page-link pagination_arrow" href="#" data-page="${paginationData.next_page}">&gt;</a>
+            </li>
+        `;
+    }
+    
+    container.innerHTML = html;
+}
+
+// Function to fetch dashboard data from API
+async function fetchDashboardData(searchQuery = "", page = 1) {
+    try {
+        const tableBody = document.querySelector('#agentsTableBody');
+        if (!tableBody) return;
+        
+        // Show loading state
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="5" class="text-center">
+                    <div class="spinner-border spinner-border-sm" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    Loading agents...
+                </td>
+            </tr>
+        `;
+        
+        // Build API URL
+        const url = new URL(`${host}/api/dashboard/search`, window.location.origin);
+        url.searchParams.set("page", page.toString());
+        if (searchQuery && searchQuery.trim()) {
+            url.searchParams.set("search", searchQuery.trim());
+        }
+
+        const response = await fetch(url.toString());
+        if (!response.ok) {
+            throw new Error('Failed to fetch dashboard data');
+        }
+
+        const data = await response.json();
+        
+        // Collect all LLM IDs for batch fetching
+        const llmIds = [...new Set(data.results.map(agent => agent.selected_llm_model).filter(Boolean))];
+        const llmNameMap = await fetchLLMNames(llmIds);
+        
+        // Render agent rows
+        if (data.results && data.results.length > 0) {
+            tableBody.innerHTML = data.results.map(agent => renderAgentRow(agent, llmNameMap)).join('');
+        } else {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="text-center">No agents found</td>
+                </tr>
+            `;
+        }
+        
+        // Update LLM model names in rendered rows
+        const cells = Array.from(document.querySelectorAll('[data-llm-id]'));
+        cells.forEach(cell => {
+            const llmId = cell.getAttribute('data-llm-id');
+            const fallback = cell.getAttribute('data-selected-model');
+            if (llmId && llmNameMap[llmId]) {
+                cell.textContent = llmNameMap[llmId];
+            } else if (fallback) {
+                cell.textContent = fallback;
+            } else if (llmId) {
+                cell.textContent = `ID ${llmId}`;
+            } else {
+                cell.textContent = '-';
+            }
+        });
+        
+        // Render pagination
+        renderPagination({
+            page: data.page,
+            total_pages: data.total_pages,
+            has_previous: data.has_previous,
+            has_next: data.has_next,
+            previous_page: data.previous_page,
+            next_page: data.next_page,
+            page_range: data.page_range
+        }, searchQuery);
+        
+        // Re-initialize delete button handlers
+        initializeDeleteButtons();
+        
+        // Update URL without page reload
+        const newUrl = new URL(`${host}/dashboard`, window.location.origin);
+        if (searchQuery && searchQuery.trim()) {
+            newUrl.searchParams.set("search", searchQuery.trim());
+        }
+        if (page > 1) {
+            newUrl.searchParams.set("page", page.toString());
+        }
+        window.history.pushState({ path: newUrl.toString() }, '', newUrl.toString());
+
+    } catch (error) {
+        console.error("Error fetching dashboard data:", error);
+        const tableBody = document.querySelector('#agentsTableBody');
+        if (tableBody) {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="5" class="text-center text-danger">Error loading agents. Please try again.</td>
+                </tr>
+            `;
+        }
+        if (typeof toastr !== 'undefined') {
+            toastr.error("Failed to load dashboard data", { positionClass: "toast-top-right" });
+        }
+    }
+}
+
+// Debounced search function - resets to page 1 when searching
+const debouncedSearch = debounce((searchQuery) => {
+    fetchDashboardData(searchQuery.trim(), 1);
+}, 500);
+
 // Add this JavaScript code to your file
 document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('searchInput');
+    const clearSearchBtn = document.getElementById('clearSearchBtn');
+    const searchForm = document.getElementById('searchForm');
+
+    // Show/hide clear button based on input value
+    function toggleClearButton() {
+        if (searchInput.value.trim()) {
+            clearSearchBtn.classList.remove('d-none');
+        } else {
+            clearSearchBtn.classList.add('d-none');
+        }
+    }
+
+    // Initialize clear button visibility
+    toggleClearButton();
+
+    // Handle search input with debounce
+    searchInput.addEventListener('input', function(e) {
+        const query = e.target.value;
+        toggleClearButton();
+        // Debounce will handle trimming and resetting to page 1
+        debouncedSearch(query);
+    });
+
+    // Handle clear button click - resets search and goes to page 1
+    clearSearchBtn.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        searchInput.value = '';
+        toggleClearButton();
+        // Reset to page 1 with no search query
+        fetchDashboardData('', 1);
+    });
+
+    // Prevent form submission on Enter - use immediate search (no debounce)
+    searchForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const query = searchInput.value.trim();
+        // Cancel any pending debounced search
+        debouncedSearch.cancel && debouncedSearch.cancel();
+        // Immediate search, reset to page 1
+        fetchDashboardData(query, 1);
+    });
+
+    // Handle pagination clicks (delegated event listener)
+    document.addEventListener('click', function(e) {
+        const paginationLink = e.target.closest('#paginationContainer a.page-link');
+        if (paginationLink) {
+            e.preventDefault();
+            const page = parseInt(paginationLink.getAttribute('data-page') || '1');
+            const currentSearchQuery = searchInput.value.trim();
+            
+            // Fetch dashboard data with the correct page and search query
+            fetchDashboardData(currentSearchQuery, page);
+        }
+    });
+    
+    // Load initial data on page load
+    const urlParams = new URLSearchParams(window.location.search);
+    const initialSearch = urlParams.get('search') || '';
+    const initialPage = parseInt(urlParams.get('page') || '1');
+    searchInput.value = initialSearch;
+    toggleClearButton();
+    fetchDashboardData(initialSearch, initialPage);
+    // Initialize delete buttons
+    initializeDeleteButtons();
+});
+
+// Function to initialize delete button handlers
+function initializeDeleteButtons() {
     // Select all delete buttons
     const deleteButtons = document.querySelectorAll('.delete-btn');
     
-    // Add click event listener to each delete button
+    // Remove existing event listeners by cloning and replacing
     deleteButtons.forEach(button => {
+        const newButton = button.cloneNode(true);
+        button.parentNode.replaceChild(newButton, button);
+    });
+    
+    // Add click event listener to each delete button
+    document.querySelectorAll('.delete-btn').forEach(button => {
         button.addEventListener('click', function() {
             // Get agent ID and name from data attributes
             const agentId = this.getAttribute('data-agent-id');
@@ -234,14 +487,14 @@ document.addEventListener('DOMContentLoaded', function() {
             document.getElementById('confirm-delete').setAttribute('data-agent-id', agentId);
         });
     });
-});
+}
     
     
 
     document.getElementById('confirm-delete').addEventListener('click', function() {
         const agentId = this.getAttribute('data-agent-id');
         
-        fetch(`${host}/api/delete_agent/?agent_id=${agentId}`, {
+        fetch(`${host}/elevenlabs/api/v1/delete_agent/?agent_id=${agentId}`, {
             method: "DELETE",
             headers: {
                 'X-CSRFToken': '{{ csrf_token }}',
@@ -250,20 +503,22 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(response => response.json())
         .then(data => {
             if (data.status === "success") {
-                // Find and remove the specific row with the deleted agent
-                const rowToRemove = document.querySelector(`tr[onclick*="agent_id=${agentId}"]`);
-                if (rowToRemove) {
-                    rowToRemove.remove();
-                }
-                
                 // Close the modal
                 const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
                 deleteModal.hide();
                 
+                // Reload dashboard data to refresh the table
+                const searchQuery = document.getElementById('searchInput').value.trim();
+                fetchDashboardData(searchQuery, 1);
+                
                 // Show success message
-                toastr.success(data.message, { positionClass: "toast-top-right" });
+                if (typeof toastr !== 'undefined') {
+                    toastr.success(data.message, { positionClass: "toast-top-right" });
+                }
             } else {
-                toastr.error(data.message || "Failed to delete agent", { positionClass: "toast-top-right" });
+                if (typeof toastr !== 'undefined') {
+                    toastr.error(data.message || "Failed to delete agent", { positionClass: "toast-top-right" });
+                }
             }
         })
         .catch(error => {

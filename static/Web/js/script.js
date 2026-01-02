@@ -52,7 +52,64 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 
-// editHeading script
+  
+const updateHeading = (value) => {
+    const currentUrl = new URL(window.location.href);
+    let heading = document.getElementById("agent-name");
+
+    // Skip API call if URL contains "create"
+    if (currentUrl.href.includes("create")) {
+        const span = document.createElement('span');
+        span.onclick = editHeading;
+        span.className = "edit-heading-icon";
+        const img = document.createElement('img');
+        img.src = "/static/Web/images/pencil-icon.svg";
+        img.style.cursor = "pointer";
+        span.appendChild(img);
+
+        heading.textContent = value + ' ';
+        heading.appendChild(span);
+        return; // ✅ stop here (no API call)
+    }
+
+    const agentId = currentUrl.searchParams.get("agent_id");
+
+    // Call API to update agent name
+    fetch(`${host}/elevenlabs/api/v1/update-agent`, {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCSRFToken()
+        },
+        body: JSON.stringify({
+            agent_id: agentId,
+            agent_name: value
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.status === "success") {
+            const span = document.createElement('span');
+            span.onclick = editHeading;
+            span.className = "edit-heading-icon";
+            const img = document.createElement('img');
+            img.src = "/static/Web/images/pencil-icon.svg";
+            img.style.cursor = "pointer";
+            span.appendChild(img);
+
+            heading.textContent = value + ' ';
+            heading.appendChild(span);
+            toastr.success('Agent name updated successfully');
+        } else {
+            toastr.error(data.message || 'Error updating agent name');
+        }
+    })
+    .catch(error => {
+        toastr.error('Error updating agent name');
+        console.error('Error:', error);
+    });
+};
+
 function editHeading() {
     let heading = document.getElementById("agent-name");
     let currentText = heading.childNodes[0].nodeValue.trim(); // Get current text
@@ -61,48 +118,7 @@ function editHeading() {
     input.type = "text";
     input.className = "form-control";
     input.value = currentText;
-    
-    // Create update function to avoid duplicate code
-    const updateHeading = (value) => {
-        const currentUrl = new URL(window.location.href);
-        const agentId = currentUrl.searchParams.get("agent_id");
-
-        // Call API to update agent name
-        fetch(`${host}/api/update-agent`, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/json",
-                "X-CSRFToken": getCSRFToken()
-            },
-            body: JSON.stringify({
-                agent_id: agentId,
-                agent_name: value
-            })
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === "success") {
-                const span = document.createElement('span');
-                span.onclick = editHeading;
-                span.className = "edit-heading-icon";
-                const img = document.createElement('img');
-                img.src = "/static/Web/images/pencil-icon.svg";
-                img.style.cursor = "pointer";
-                span.appendChild(img);
-                
-                heading.textContent = value + ' ';
-                heading.appendChild(span);
-                toastr.success('Agent name updated successfully');
-            } else {
-                toastr.error(data.message || 'Error updating agent name');
-            }
-        })
-        .catch(error => {
-            toastr.error('Error updating agent name');
-            console.error('Error:', error);
-        });
-    };
-
+  
     input.onblur = function() {
         updateHeading(this.value);
     };
@@ -117,7 +133,6 @@ function editHeading() {
     heading.appendChild(input);
     input.focus();
 }
-
 
 // sidebar active link script
 document.addEventListener("DOMContentLoaded", function () {
@@ -150,4 +165,21 @@ if (document.getElementById('uploadFile')) {
     fileNameElement.classList.remove('d-none');
     uploadLabel.classList.add('d-none');
     });
+}
+
+function getCSRFToken() {
+    let token = null;
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    if (meta) {
+        token = meta.getAttribute('content');
+    }
+
+    if (!token) {
+        const input = document.querySelector('input[name="csrfmiddlewaretoken"]');
+        if (input) {
+            token = input.value;
+        }
+    }
+
+    return token;
 }

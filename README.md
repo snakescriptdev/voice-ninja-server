@@ -102,24 +102,40 @@ HOST=your_host_here
 mkdir alembic/versions
 ```
 
-### 6. After the database is created, run the following command to make migrations
+### 6. Run Initialization Scripts (Before Migrations)
+Before creating and applying migrations, run these scripts to populate the database with essential data:
+
+```bash
+# Add ElevenLabs language models and supported languages
+python scripts/add_languages_11labs.py
+
+# Add LLM models (GPT, Gemini, etc.)
+python scripts/elevenlab_llm_models_add.py
+
+# Add ElevenLabs voices (requires ELEVENLABS_API_KEY in .env)
+python scripts/elevenlab_voices_add.py
+```
+
+**Note:** Make sure your `.env` file has the `ELEVENLABS_API_KEY` configured before running the voices script.
+
+### 7. After the database is created, run the following command to make migrations
 ```bash
 python manage_db.py makemigrations
 ```
 
-### 7. After the migrations are created, run the following command to apply the migrations
+### 8. After the migrations are created, run the following command to apply the migrations
 ```bash
 python manage_db.py migrate
 ```
 
-### 8. Run the Application
+### 9. Run the Application
 ```bash
 uvicorn app.main:app --reload
 or
 fastapi dev
 ```
 
-### 9. Access the Application
+### 10. Access the Application
 ```bash
 http://localhost:8000
 ```

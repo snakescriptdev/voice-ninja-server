@@ -81,14 +81,14 @@
                             </thead>
                             <tbody style="overflow-y: hidden;">
                                 {% for audio_recording in page_obj.items %}
-                                    <tr data-id="{{ audio_recording.id }}" onclick="openOffcanvas(this)" data-bs-toggle="offcanvas" data-bs-target="#offcanvasRight" aria-controls="offcanvasRight">
-                                        <td>{{ agent_name }}</td>
-                                        <td>{{ selected_voice }}</td>
-                                        <td>{{ audio_recording.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td> 
-                                        <td>
+                                    <tr data-id="{{ audio_recording.id }}" data-bs-toggle="offcanvas" data-bs-target="#offcanvasRight" aria-controls="offcanvasRight">
+                                        <td class="clickable-cell">{{ agent_name }}</td>
+                                        <td class="clickable-cell">{{ selected_voice }}</td>
+                                        <td class="clickable-cell">{{ audio_recording.created_at.strftime('%Y-%m-%d %H:%M:%S') }}</td> 
+                                        <td class="clickable-cell">
                                             <div class="max-content audio_player">
                                                 {% if audio_recording.audio_file %}
-                                                    <audio controls>
+                                                    <audio controls onclick="event.stopPropagation();">
                                                         <source src="{{ audio_recording.audio_file }}" type="audio/ogg">
                                                         Your browser does not support the audio element.
                                                     </audio>
@@ -98,11 +98,12 @@
                                             </div>
                                         </td>
                                         <td>
-                                            <div class="max-content" onclick="event.stopPropagation();">
+                                            <div class="max-content">
                                                 <button class="delete-btn btn btn-danger" 
                                                         data-bs-toggle="modal" 
                                                         data-bs-target="#deleteModal" 
                                                         data-audio-recording-id="{{ audio_recording.id }}" 
+                                                        onclick="event.stopPropagation();"
                                                         aria-label="Delete audio recording {{ audio_recording.id }}">
                                                     <img src="{{ host }}/static/Web/images/delete-icon.svg" 
                                                         alt="Delete" 
@@ -180,31 +181,38 @@
     <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
   </div>
   <div class="offcanvas-body">
+
     <div class="call_details mb-4">
-      <div class="card shadow-sm">
-        <div class="card-body">
-          <h6 class="text-muted">Overview</h6>
-          <audio controls class="w-100 mb-3" id="audioPlayer">
-            <source id="audioSource" src="" type="audio/wav">
-            Your browser does not support the audio element.
-          </audio>
-          <h6 class="text-muted">Call Summary</h6>
-          <p id="callSummary"></p>
-          
-          <div class="row mt-3">
-            <div class="col-6">
-              <p class="text-muted mb-1">Call Duration</p>
-              <p class="fw-medium" id="callDuration"></p>
-            </div>
-            <div class="col-6">
-              <p class="text-muted mb-1">Call Date</p>
-              <p class="fw-medium" id="callDate"></p>
+        <div class="card shadow-sm">
+          <div class="card-body">
+            <h6 class="text-muted">Overview</h6>
+      
+            <audio controls class="w-100 mb-3" id="audioPlayer">
+              <source id="audioSource" src="" type="audio/wav">
+              Your browser does not support the audio element.
+            </audio>
+      
+            <h6 class="text-muted">Call Summary</h6>
+            <p id="callSummary"></p>
+      
+            <div class="row mt-3">
+                <div class="col-6">
+                    <p class="text-muted mb-1">Tokens Consumed</p>
+                    <p class="fw-medium" id="tokensConsumed"></p>
+                  </div>
+              <div class="col-6">
+                <p class="text-muted mb-1">Call Duration</p>
+                <p class="fw-medium" id="callDuration"></p>
+              </div>
+              <div class="col-6">
+                <p class="text-muted mb-1">Call Date</p>
+                <p class="fw-medium" id="callDate"></p>
+              </div>
             </div>
           </div>
         </div>
       </div>
-    </div>
-
+    
     <div class="collected_variables mb-4">
       <h6 class="mb-3">Client Data</h6>
       <div class="card shadow-sm">
@@ -234,16 +242,32 @@
 const host = "{{ host }}";  
 // Add this JavaScript code to your file
 document.addEventListener('DOMContentLoaded', function() {
+    // Handle clickable cells for opening offcanvas (excluding delete button area)
+    const clickableCells = document.querySelectorAll('.clickable-cell');
+    clickableCells.forEach(cell => {
+        cell.addEventListener('click', function(event) {
+            // Don't trigger if clicking on audio controls
+            if (event.target.tagName === 'AUDIO') {
+                return;
+            }
+            const row = this.parentElement;
+            openOffcanvas(row);
+        });
+        
+        // Add cursor pointer style to indicate clickable
+        cell.style.cursor = 'pointer';
+    });
+    
     // Select all delete buttons
     const deleteButtons = document.querySelectorAll('.delete-btn');
     
     // Add click event listener to each delete button
     deleteButtons.forEach(button => {
-        button.addEventListener('click', function() {
-            // Get agent ID and name from data attributes
+        button.addEventListener('click', function(event) {
+            // Get audio recording ID from data attributes
             const audioRecordingId = this.getAttribute('data-audio-recording-id');
             
-            // Store the agent ID in the confirm delete button
+            // Store the audio recording ID in the confirm delete button
             document.getElementById('confirm-delete').setAttribute('data-audio-recording-id', audioRecordingId);
         });
     });
@@ -254,7 +278,7 @@ document.addEventListener('DOMContentLoaded', function() {
 document.getElementById('confirm-delete').addEventListener('click', function() {
     const audioRecordingId = this.getAttribute('data-audio-recording-id');
     const deleteModal = bootstrap.Modal.getInstance(document.getElementById('deleteModal'));
-    fetch(`${host}/api/delete_audio_recording/?audio_recording_id=${audioRecordingId}`, {
+    fetch(`${host}/elevenlabs/api/v1/delete_audio_recording/?audio_recording_id=${audioRecordingId}`, {
         method: 'DELETE',
         headers: { "X-CSRFToken": '{{ csrf_token }}' }, 
     })
@@ -286,11 +310,13 @@ document.getElementById('confirm-delete').addEventListener('click', function() {
 });
 
 
+
 // Define openOffcanvas function in global scope
-window.openOffcanvas = function(element) {
+
+window.openOffcanvas = function (element) {
     const call_id = element.getAttribute('data-id');
-    
-    // Create and show full screen loader
+
+    // Fullscreen loader
     const fullScreenLoader = document.createElement('div');
     fullScreenLoader.style.cssText = `
         position: fixed;
@@ -311,127 +337,140 @@ window.openOffcanvas = function(element) {
     `;
     document.body.appendChild(fullScreenLoader);
 
-    fetch(`${host}/api/call_details`, {
+    // API Call
+    fetch(`${host}/elevenlabs/api/v1/call_details`, {
         method: 'POST',
-        headers: { 
+        headers: {
             "X-CSRFToken": '{{ csrf_token }}',
-            'Content-Type': 'application/json'
+            "Content-Type": "application/json"
         },
-        body: JSON.stringify({
-            call_id: call_id
-        })
+        body: JSON.stringify({ call_id })
     })
-    .then(response => response.json())
+    .then(res => res.json())
     .then(data => {
         if (data.status === "success") {
             try {
-                // Format timestamp
+                console.log("Call details:", data);
+
+                // Format date
                 const createdAt = new Date(data.call.created_at);
                 const formattedDate = createdAt.toLocaleString();
 
-                // Prepare content before showing offcanvas
-                const callDetailsSection = document.querySelector('.call_details');
-                const conversationSection = document.querySelector('.conversation_history');
-                const dynamicVariablesContainer = document.getElementById('dynamicVariables');
+                // DOM elements for call details
+                const audioSource = document.getElementById("audioSource");
+                const audioPlayer = document.getElementById("audioPlayer");
+                const callSummary = document.getElementById("callSummary");
+                const callDuration = document.getElementById("callDuration");
+                const tokensConsumedEle = document.getElementById("tokensConsumed")
 
-                // Update call details section
-                callDetailsSection.innerHTML = `
-                    <div class="card shadow-sm">
-                        <div class="card-body">
-                            <h6 class="text-muted">Overview</h6>
-                            <audio controls class="w-100 mb-3" id="audioPlayer">
-                                <source src="${data.call.audio_file}" type="audio/wav">
-                                Your browser does not support the audio element.
-                            </audio>
-                            <div id="durationScript"></div>
-                            <h6 class="text-muted">Call Summary</h6>
-                            <p>${data.summary || 'No summary available'}</p>
-                            
-                            <div class="row mt-3">
-                                <div class="col-6">
-                                    <p class="text-muted mb-1">Duration:</p>
-                                    <p class="fw-medium"><span id="audioDuration">0:00</span></p>
-                                </div>
-                                <div class="col-6">
-                                    <p class="text-muted mb-1">Call Date</p>
-                                    <p class="fw-medium">${formattedDate}</p>
-                                </div>
+                // Set audio
+                audioSource.src = data.call.audio_file;
+                audioPlayer.load();
+
+                // Fill basic info
+                callSummary.textContent = data.summary || "No summary available";
+                callDuration.textContent = `${data.call.duration}s`;
+                callDate.textContent = formattedDate;
+                tokensConsumedEle.textContent = `${data.call.tokens_consumed}`;
+
+                // Dynamic variables section
+                const dynamicVariablesContainer = document.getElementById('dynamicVariables');
+                dynamicVariablesContainer.innerHTML = "";
+
+                const dynamic_variable = data.dynamic_variable || {};
+
+                const visibleVariables = Object.entries(dynamic_variable).filter(([key]) => {
+                    const k = key.toLowerCase();
+                    return (
+                        k.includes("conversation id") ||
+                        k.includes("start time") ||
+                        k.includes("end time")
+                    );
+                });
+
+                if (visibleVariables.length === 0) {
+                    dynamicVariablesContainer.innerHTML = `
+                        <div class="card shadow-sm">
+                            <div class="card-body text-center text-muted">
+                                <p class="mb-0">No additional data collected during this call</p>
                             </div>
                         </div>
-                    </div>
-                `;
-
-                // Add duration script after HTML is set
-                const durationScript = document.createElement('script');
-                durationScript.textContent = `
-                    document.getElementById('audioPlayer').addEventListener('loadedmetadata', function() {
-                        const duration = this.duration;
-                        const minutes = Math.floor(duration / 60);
-                        const seconds = Math.floor(duration % 60);
-                        document.getElementById('audioDuration').textContent = 
-                            minutes + ':' + (seconds < 10 ? '0' : '') + seconds;
-                    });
-                `;
-                document.getElementById('durationScript').appendChild(durationScript);
-
-                const dynamic_variable = data.dynamic_variable;
-                dynamicVariablesContainer.innerHTML = '';
-
-                for (const [key, value] of Object.entries(dynamic_variable)) {
-                    const variableItem = document.createElement('div');
-                    variableItem.classList.add('card', 'mb-2', 'shadow-sm');
-                    variableItem.innerHTML = `
-                        <div class="card-body">
-                            <p class="text-muted mb-1">${key}</p>
-                            <p class="fw-medium">${value}</p>
-                        </div>
                     `;
-                    dynamicVariablesContainer.appendChild(variableItem);
+                } else {
+                    visibleVariables.forEach(([key, value]) => {
+                        const card = document.createElement("div");
+                        card.classList.add("card", "mb-2", "shadow-sm");
+
+                        card.innerHTML = `
+                            <div class="card-body">
+                                <p class="text-muted mb-1">${key}</p>
+                                <p class="fw-medium">${(typeof value === "object") ? JSON.stringify(value) : value}</p>
+                            </div>
+                        `;
+                        dynamicVariablesContainer.appendChild(card);
+                    });
                 }
 
-                // Update conversation history section
+                // Transcript Section
+                const conversationSection = document.querySelector('.conversation_history');
                 conversationSection.innerHTML = `
                     <h6 class="mb-3">Conversation Transcript</h6>
                     <div class="conversation_history_item mb-3 p-3 rounded">
-                        ${data.transcript.map(msg => `
-                            <div class="d-flex mb-3 ${msg.role === 'assistant' ? 'justify-content-start' : 'justify-content-end'}">
-                                <div class="p-3 rounded ${msg.role === 'assistant' ? 'bg-light' : 'bg-primary text-white'}" style="max-width: 75%;">
-                                    <p class="mb-1 small ${msg.role === 'assistant' ? 'text-muted' : 'text-white'}">${msg.role === 'assistant' ? 'Assistant' : 'User'}</p>
-                                    <p class="mb-0">${msg.content}</p>
+                        ${
+                            data.transcript && Array.isArray(data.transcript)
+                            ? data.transcript.map(msg => `
+                                <div class="d-flex mb-3 ${msg.role === 'assistant' ? 'justify-content-start' : 'justify-content-end'}">
+                                    <div class="p-3 rounded ${msg.role === 'assistant' ? 'bg-light' : 'bg-primary text-white'}" style="max-width: 75%;">
+                                        <p class="mb-1 small ${msg.role === 'assistant' ? 'text-muted' : 'text-white'}">
+                                            ${msg.role === 'assistant' ? 'Assistant' : 'User'}
+                                        </p>
+                                        <p class="mb-0">${(typeof msg.content === "string") ? msg.content : JSON.stringify(msg.content)}</p>
+                                    </div>
                                 </div>
-                            </div>
-                        `).join('') || 'No transcript available'}
+                            `).join("")
+                            : "No transcript available"
+                        }
                     </div>
                 `;
 
-                // Remove loader and show offcanvas
+                // Remove loader
                 fullScreenLoader.remove();
-                const offcanvas = new bootstrap.Offcanvas(document.getElementById('offcanvasRight'));
-                
-                // Add event listener for when offcanvas is hidden
-                document.getElementById('offcanvasRight').addEventListener('hidden.bs.offcanvas', function () {
-                    // Remove backdrop
-                    document.querySelector('.offcanvas-backdrop')?.remove();
+
+                // Show offcanvas
+                const offcanvasElement = document.getElementById('offcanvasRight');
+                const offcanvas = new bootstrap.Offcanvas(offcanvasElement);
+
+                // Fix audio size AFTER offcanvas animation completes
+                offcanvasElement.addEventListener("shown.bs.offcanvas", () => {
+                    audioPlayer.load();              // recalculates size safely
+                    audioPlayer.style.width = "100%"; // enforce full width
+                });
+
+                // Fix backdrop removal
+                offcanvasElement.addEventListener("hidden.bs.offcanvas", () => {
+                    document.body.style.removeProperty("overflow");
+                    document.querySelector(".offcanvas-backdrop")?.remove();
                 });
 
                 offcanvas.show();
 
-            } catch (error) {
-                console.error('Error updating content:', error);
+            } catch (err) {
+                console.error("Error:", err);
                 fullScreenLoader.remove();
-                toastr.error("Error displaying call details", { positionClass: "toast-top-right" });
+                toastr.error("Error displaying call details");
             }
         } else {
             fullScreenLoader.remove();
-            toastr.error("Failed to fetch call details", { positionClass: "toast-top-right" });
+            toastr.error("Failed to fetch call details");
         }
     })
-    .catch(error => {
-        console.error('Error fetching call details:', error);
+    .catch(err => {
+        console.error("Error fetching call details:", err);
         fullScreenLoader.remove();
-        toastr.error("Error fetching call details", { positionClass: "toast-top-right" });
+        toastr.error("Error fetching call details");
     });
 };
+
 </script>
 
 

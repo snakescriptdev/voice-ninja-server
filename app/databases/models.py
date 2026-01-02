@@ -1,8 +1,8 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text
 from sqlalchemy.orm import relationship, joinedload
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
-from typing import Optional, List
+from typing import Optional, List,Dict
 from fastapi_sqlalchemy import db
 import bcrypt
 import os, shutil
@@ -10,10 +10,45 @@ from config import MEDIA_DIR
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 import uuid
+from app.core.config import DEFAULT_VARS,Settings
+import logging
+logger = logging.getLogger(__name__)
 
-# DB_URL="postgresql://postgres:Snak3sCr1pT@localhost/voice_ninja"
-DB_URL= os.getenv("DB_URL")
-engine = create_engine(DB_URL, echo=False)
+# Database configuration with fallback
+DB_URL = os.getenv("DB_URL")
+if not DB_URL:
+    # Try to load from .env file if not already loaded
+    from dotenv import load_dotenv
+    load_dotenv()
+    DB_URL = os.getenv("DB_URL")
+
+if not DB_URL:
+    # Final fallback - use default local database
+    DB_URL = "postgresql://postgres:1234@localhost/voice_ninja"
+    print(f"Warning: Using default database URL: {DB_URL}")
+    print("To use a custom database, set the DB_URL environment variable")
+
+try:
+    # Enhanced connection pooling for better performance
+    engine = create_engine(
+        DB_URL, 
+        echo=False,
+        pool_size=20,           # Increased from default
+        max_overflow=30,        # Allow more connections
+        pool_pre_ping=True,     # Validate connections
+        pool_recycle=3600,      # Recycle connections every hour
+        pool_timeout=30,        # Connection timeout
+        connect_args={
+            "connect_timeout": 10,
+            "application_name": "voice_ninja"
+        }
+    )
+    print(f"Database connection established successfully with enhanced pooling")
+except Exception as e:
+    print(f"Error connecting to database: {e}")
+    print(f"Please check your database configuration and ensure PostgreSQL is running")
+    raise
+
 Base = declarative_base()
 
 
@@ -129,6 +164,7 @@ class UserModel(Base):
     tokens = Column(Integer, nullable=True,default=0)
     is_admin = Column(Boolean,default=False)
     approved_domains = relationship("ApprovedDomainModel", back_populates="creator")
+    voices = relationship("VoiceModel", back_populates="user")
 
     def __repr__(self):
         return f"<User(id={self.id}, email={self.email})>"
@@ -244,16 +280,16 @@ class AgentModel(Base):
     id = Column(Integer, primary_key=True)
     created_by = Column(Integer, nullable=True,default=0)
     agent_name = Column(String, nullable=True,default="")
-    selected_model = Column(String, nullable=True,default="")
-    selected_voice = Column(String, nullable=True,default="")
+    selected_voice = Column(Integer, ForeignKey("custom_voices.id"), nullable=True)
+    selected_voice_obj = relationship("VoiceModel", back_populates="agents",lazy="joined" )
     phone_number = Column(String, nullable=True,default="")
     agent_prompt = Column(String, nullable=True,default="")
-    selected_language = Column(String, nullable=True,default="")
     welcome_msg = Column(String, nullable=True,default="")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     is_design_enabled = Column(Boolean,default=False)
     dynamic_variable = Column(JSONB, nullable=True , default={})
+    noise_setting_variable = Column(JSONB, nullable=True , default=DEFAULT_VARS)
     max_output_tokens = Column(Integer, nullable=True,default=1000) 
     temperature = Column(Float, nullable=True,default=0.0)
     dynamic_id = Column(String, nullable=True,default=str(uuid.uuid4()))
@@ -269,8 +305,23 @@ class AgentModel(Base):
 
     calls = relationship("CallModel", back_populates="agent", cascade="all, delete")
     custom_functions = relationship("CustomFunctionModel", back_populates="agent", cascade="all, delete-orphan")
+    elevenlabs_webhook_tools = relationship("ElevenLabsWebhookToolModel", back_populates="agent", cascade="all, delete-orphan")
     overall_token_limit = relationship("OverallTokenLimitModel", back_populates="agent", cascade="all, delete-orphan")
     daily_call_limit = relationship("DailyCallLimitModel", back_populates="agent", cascade="all, delete-orphan")
+    dynamic_variable_logs = relationship("DynamicVariableLogs", back_populates="agent", cascade="all, delete-orphan")
+
+    elvn_lab_agent_id = Column(String, nullable=True,default="") #stores agent id of elevenlab agent.
+    elvn_lab_knowledge_base = Column(JSONB, nullable=True, default={}) #stores elevenlabs knowledge base information
+
+    # Reference to selected LLM model
+    selected_llm_model = Column(Integer, ForeignKey("llm_models.id"), nullable=True)
+    selected_llm_model_obj = relationship("LLMModel", back_populates="agents", lazy="joined")
+
+    selected_model_id = Column(Integer, ForeignKey("elevenlab_models.id"), nullable=True)
+    selected_model_obj = relationship("ElevenLabModel", back_populates="agents")
+    # Store selected language (like "en", "hi", etc.)
+    selected_language = Column(String, nullable=True)
+    agent_timezone = Column(String(100), nullable=True, server_default="UTC")
 
     def __repr__(self):
         return f"<Agent(id={self.id}, agent_name={self.agent_name})>"
@@ -477,6 +528,49 @@ class AgentModel(Base):
                 db.session.refresh(agent)
                 return agent
             return None
+
+    @classmethod
+    def update_noise_settings(cls, agent_id: int, noise_settings: dict) -> "AgentModel":
+        """
+        Update an agent's noise_setting_variable field
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.noise_setting_variable = noise_settings
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+    
+    @classmethod
+    def update_elevenlabs_knowledge_base(cls, agent_id: int, knowledge_base_data: dict) -> "AgentModel":
+        """
+        Update an agent's ElevenLabs knowledge base information
+        """
+        with db():
+            agent = db.session.query(cls).filter(cls.id == agent_id).first()
+            if agent:
+                agent.elvn_lab_knowledge_base = knowledge_base_data
+                db.session.commit()
+                db.session.refresh(agent)
+                return agent
+            return None
+
+    @classmethod
+    def get_by_knowledge_base_id(cls, kb_id: int) -> List["AgentModel"]:
+        """
+        Get all agents linked to a specific knowledge base ID
+        """
+        with db():
+            return (
+                db.session.query(cls)
+                .join(agent_knowledge_association,
+                    agent_knowledge_association.c.agent_id == cls.id)
+                .filter(agent_knowledge_association.c.knowledge_base_id == kb_id)
+                .all()
+            )
+
     
 class ResetPasswordModel(Base):
     __tablename__ = "reset_password"
@@ -589,6 +683,7 @@ class KnowledgeBaseModel(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     files = relationship("KnowledgeBaseFileModel", back_populates="knowledge_base")
+    # elevenlabs_files = relationship("ElevenLabKnowledgeBaseModel", back_populates="knowledge_base")
     vector_path = Column(String, nullable=True,default="")
     vector_id = Column(String, nullable=True,default="")
     url = Column(String, nullable=True,default="")
@@ -754,27 +849,76 @@ class AudioRecordings(Base):
             audio_model = db.session.query(cls).filter(cls.call_id == call_id).first()
             return audio_model
     
-    @classmethod    
+    @classmethod
     def delete(cls, recording_id: int) -> bool:
         """Delete an audio recording by ID and remove the file from directory"""
         try:
             with db():
                 recording = db.session.query(cls).filter(cls.id == recording_id).first()
-                if recording:
-                    # Remove the audio file from directory
-                    audio_file_path = recording.audio_file
-                    if os.path.exists(audio_file_path):
-                        os.remove(audio_file_path)
-                    
-                    # Delete record from database
-                    db.session.delete(recording)
+                if not recording:
+                    print(f"No recording found with ID: {recording_id}")
+                    return False
+                
+                print(f"Found recording: {recording.id}, audio_file: {recording.audio_file}")
+                
+                # First delete associated conversations to avoid foreign key constraint
+                from app.databases.models import ConversationModel
+                conversations = db.session.query(ConversationModel).filter(
+                    ConversationModel.audio_recording_id == recording_id
+                ).all()
+                
+                print(f"Found {len(conversations)} conversations to delete for recording {recording_id}")
+                
+                # Delete conversations first
+                for conversation in conversations:
+                    print(f"Deleting conversation: {conversation.id}")
+                    db.session.delete(conversation)
+                
+                # Commit conversation deletions first
+                if conversations:
                     db.session.commit()
-                    return True
-            return False
+                    print(f"Committed deletion of {len(conversations)} conversations")
+                
+                # Remove the audio file from directory
+                audio_file_path = recording.audio_file
+                if audio_file_path:
+                    # Convert URL path to actual file path for deletion
+                    if audio_file_path.startswith('/audio/'):
+                        # Convert /audio/elevenlabs_conversations/filename.wav to actual file path
+                        filename = audio_file_path.replace('/audio/elevenlabs_conversations/', '')
+                        actual_file_path = os.path.join(os.getcwd(), 'audio_storage', 'elevenlabs_conversations', filename)
+                    else:
+                        actual_file_path = audio_file_path
+                    
+                    print(f"Attempting to delete file: {actual_file_path}")
+                    if os.path.exists(actual_file_path):
+                        os.remove(actual_file_path)
+                        print(f"Deleted audio file: {actual_file_path}")
+                    else:
+                        print(f"Audio file not found: {actual_file_path}")
+                
+                # Now delete the audio recording
+                db.session.delete(recording)
+                db.session.commit()
+                print(f"Deleted audio recording: {recording_id}")
+                return True
+                
         except Exception as e:
-            print(f"Error deleting audio recording: {str(e)}")
+            print(f"Error deleting audio recording {recording_id}: {str(e)}")
+            if db.session:
+                db.session.rollback()
             return False
-
+            return False
+    
+    @classmethod
+    def get_call_record(cls, recording_id: int) -> Optional["CallModel"]:
+        """Get the corresponding CallModel for an AudioRecordings record"""
+        from app.databases.models import CallModel
+        with db():
+            recording = db.session.query(cls).filter(cls.id == recording_id).first()
+            if recording and recording.call_id:
+                return CallModel.get_by_call_id(recording.call_id)
+            return None
     
 # class AgentPhoneNumberModel(Base):
 #     __tablename__ = "agent_phone_number"
@@ -814,6 +958,8 @@ class AgentConnectionModel(Base):
     primary_color = Column(String, default="#8338ec")
     secondary_color = Column(String, default="#5e60ce") 
     pulse_color = Column(String, default="rgba(131, 56, 236, 0.3)")
+    widget_size = Column(String, default="medium")
+    start_btn_color = Column(String, default="#1a1a1a")  # New: Start button color
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
@@ -1039,6 +1185,9 @@ class KnowledgeBaseFileModel(Base):
     text_content = Column(String, nullable=True)
 
     knowledge_base = relationship("KnowledgeBaseModel", back_populates="files")
+    elevenlabs_doc_id = Column(String, nullable=True)
+    elevenlabs_doc_name = Column(String, nullable=True)
+    
 
     def __repr__(self):
         return f"<KnowledgeBaseFile(id={self.id}, file_name={self.file_name})>"
@@ -1056,10 +1205,10 @@ class KnowledgeBaseFileModel(Base):
             return db.session.query(cls).filter(cls.knowledge_base_id == knowledge_base_id).all()
 
     @classmethod
-    def create(cls, knowledge_base_id: int, file_name: str, file_path: str, text_content: str) -> "KnowledgeBaseFileModel":
+    def create(cls, knowledge_base_id: int, file_name: str, file_path: str, text_content: str, elevenlabs_doc_id: str, elevenlabs_doc_name: str) -> "KnowledgeBaseFileModel":
         """Create a new knowledge base file"""
         with db():
-            file = cls(knowledge_base_id=knowledge_base_id, file_name=file_name, file_path=file_path, text_content=text_content)
+            file = cls(knowledge_base_id=knowledge_base_id, file_name=file_name, file_path=file_path, text_content=text_content, elevenlabs_doc_id=elevenlabs_doc_id, elevenlabs_doc_name=elevenlabs_doc_name)
             db.session.add(file)
             db.session.commit()
             db.session.refresh(file)
@@ -1084,6 +1233,7 @@ class CallModel(Base):
     call_id = Column(String, unique=True, nullable=False)  # Unique identifier for each call
     variables = Column(JSONB, nullable=True, default={})  # Store variables as JSON
     created_at = Column(DateTime, default=func.now())
+    tokens_consumed = Column(Integer, default=0)
 
     # Relationship with AgentModel
     agent = relationship("AgentModel", back_populates="calls")
@@ -1123,6 +1273,18 @@ class CallModel(Base):
             call = db.session.query(cls).filter(cls.id == call_id).first()
             if call:
                 call.variables = variables
+                db.session.commit()
+                db.session.refresh(call)
+                return call
+            return None
+    
+    @classmethod
+    def update_tokens_consumed(cls, call_id_str: str, tokens_consumed: int) -> Optional["CallModel"]:
+        """Update tokens consumed for a call by call_id string"""
+        with db():
+            call = db.session.query(cls).filter(cls.call_id == call_id_str).first()
+            if call:
+                call.tokens_consumed = tokens_consumed
                 db.session.commit()
                 db.session.refresh(call)
                 return call
@@ -1312,6 +1474,93 @@ class CustomFunctionModel(Base):
             return db.session.query(cls).filter(cls.function_name == function_name, cls.agent_id == agent_id).first()
 
 
+class ElevenLabsWebhookToolModel(Base):
+    __tablename__ = "elevenlabs_webhook_tools"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey('agents.id', ondelete='CASCADE'))
+    tool_name = Column(String, nullable=False)
+    tool_description = Column(String, nullable=False)
+    elevenlabs_tool_id = Column(String, nullable=True)  # ID from ElevenLabs API
+    tool_config = Column(JSONB, nullable=False)  # Complete ElevenLabs tool_config
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    agent = relationship("AgentModel", back_populates="elevenlabs_webhook_tools")
+
+    def __repr__(self):
+        return f"<ElevenLabsWebhookTool(id={self.id}, tool_name={self.tool_name})>"
+    
+    @classmethod
+    def get_by_id(cls, id: int) -> Optional["ElevenLabsWebhookToolModel"]:
+        """Get webhook tool by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == id).first()
+    
+    @classmethod
+    def get_all_by_agent(cls, agent_id: int) -> List["ElevenLabsWebhookToolModel"]:
+        """Get all webhook tools by agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
+    
+    @classmethod
+    def get_by_name(cls, tool_name: str, agent_id: int) -> Optional["ElevenLabsWebhookToolModel"]:
+        """Get webhook tool by name and agent ID"""
+        with db():
+            return db.session.query(cls).filter(cls.tool_name == tool_name, cls.agent_id == agent_id).first()
+        
+    @classmethod
+    def create(
+        cls, 
+        agent_id: int, 
+        tool_name: str, 
+        tool_description: str, 
+        tool_config: dict,
+        elevenlabs_tool_id: Optional[str] = None
+    ) -> "ElevenLabsWebhookToolModel":
+        """Create a new webhook tool"""
+        with db():
+            tool = cls(
+                agent_id=agent_id, 
+                tool_name=tool_name, 
+                tool_description=tool_description, 
+                tool_config=tool_config,
+                elevenlabs_tool_id=elevenlabs_tool_id
+            )
+            db.session.add(tool)
+            db.session.commit()
+            db.session.refresh(tool)
+            return tool
+        
+    @classmethod
+    def delete(cls, id: int) -> bool:
+        """Delete a webhook tool"""
+        with db():
+            tool = db.session.query(cls).filter(cls.id == id).first()
+            if tool:
+                db.session.delete(tool)
+                db.session.commit()
+                return True
+            return False
+
+    @classmethod
+    def get_by_name(cls, tool_name: str, agent_id: int) -> Optional["ElevenLabsWebhookToolModel"]:
+        """Get webhook tool by name"""
+        with db():
+            return db.session.query(cls).filter(cls.tool_name == tool_name, cls.agent_id == agent_id).first()
+
+    @classmethod
+    def update_elevenlabs_tool_id(cls, id: int, elevenlabs_tool_id: str) -> Optional["ElevenLabsWebhookToolModel"]:
+        """Update the ElevenLabs tool ID after creation"""
+        with db():
+            tool = db.session.query(cls).filter(cls.id == id).first()
+            if tool:
+                tool.elevenlabs_tool_id = elevenlabs_tool_id
+                db.session.commit()
+                return tool
+            return None
+
+
 class ApprovedDomainModel(Base):
     __tablename__ = "approved_domains"
 
@@ -1374,7 +1623,11 @@ class ConversationModel(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     audio_recording_id = Column(Integer, ForeignKey("audio_recordings.id"), nullable=False)
-
+    error_details = Column(JSONB, nullable=True)
+    client_data = Column(JSONB, nullable=True)
+    status = Column(String, nullable=False, default="done")
+    conversation_config_override = Column(JSONB, nullable=True)
+    
     def __repr__(self):
         return f"<Conversation(id={self.id})>"
     
@@ -1572,5 +1825,328 @@ class DailyCallLimitModel(Base):
             return None
 
 
-Base.metadata.create_all(engine)
+class VoiceModel(Base):
+    '''
+    This model stores default voices of Gemini and custom voices added by users via mic,
+    uploaded to ElevenLabs. Also stores the audio file path for playback.
+    '''
+    __tablename__ = "custom_voices"
 
+    id = Column(Integer, primary_key=True, index=True)
+    voice_name = Column(String, nullable=False)
+    is_custom_voice = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    modified_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Nullable user_id for default voices
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    user = relationship("UserModel", back_populates="voices")
+
+    elevenlabs_voice_id = Column(String, nullable=True)
+    # Path to audio file for playback
+    audio_file = Column(String, nullable=True)#only exists for custom voices.
+    agents = relationship("AgentModel", back_populates="selected_voice_obj")
+
+    def __repr__(self):
+        return f"<Voice(id={self.id}, name={self.voice_name}, custom={self.is_custom_voice})>"
+
+    # ------------------ CLASS METHODS ------------------ #
+    @classmethod
+    def get_by_id(cls, voice_id: int) -> Optional["VoiceModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.id == voice_id).first()
+    
+    @classmethod
+    def get_allowed_voices(cls, user_id: int) -> List["VoiceModel"]:
+        """
+        Returns voices that are either:
+        - Custom voices created by the given user
+        - Default (non-custom) voices
+        """
+        with db():
+            return db.session.query(cls).filter(
+                ((cls.is_custom_voice == True) & (cls.user_id == user_id)) |
+                (cls.is_custom_voice == False)
+            ).all()
+
+    @classmethod
+    def get_all_by_user(cls, user_id: int) -> List["VoiceModel"]:
+        with db():
+            return db.session.query(cls).filter(
+                (cls.user_id == user_id) | (cls.user_id == None)  # Include default voices
+            ).all()
+
+    @classmethod
+    def create(cls, voice_name: str, is_custom_voice: bool = False, user_id: Optional[int] = None,
+               elevenlabs_voice_id: Optional[str] = None,
+               audio_file: Optional[str] = None) -> "VoiceModel":
+        with db():
+            voice = cls(
+                voice_name=voice_name,
+                is_custom_voice=is_custom_voice,
+                user_id=user_id,
+                elevenlabs_voice_id=elevenlabs_voice_id,
+                audio_file=audio_file
+            )
+            db.session.add(voice)
+            db.session.commit()
+            db.session.refresh(voice)
+            return voice
+
+    @classmethod
+    def update(cls, voice_id: int, **kwargs) -> Optional["VoiceModel"]:
+        with db():
+            voice = db.session.query(cls).filter(cls.id == voice_id).first()
+            if voice:
+                for key, value in kwargs.items():
+                    if hasattr(voice, key):
+                        setattr(voice, key, value)
+                db.session.commit()
+                db.session.refresh(voice)
+                return voice
+            return None
+
+    @classmethod
+    def delete(cls, voice_id: int) -> bool:
+        try:
+            with db():
+                voice = db.session.query(cls).filter(cls.id == voice_id).first()
+                if voice:
+                    db.session.delete(voice)
+                    db.session.commit()
+                return True
+        except Exception:
+            return False
+
+    @classmethod
+    def get_by_name_and_user(cls, voice_name: str, user_id: Optional[int] = None) -> Optional["VoiceModel"]:
+        """
+        Get a voice by its name and user ID.
+        If user_id is None, it will search only default voices.
+        """
+        with db():
+            query = db.session.query(cls).filter(cls.voice_name == voice_name)
+            if user_id is not None:
+                query = query.filter(cls.user_id == user_id)
+            else:
+                query = query.filter(cls.user_id == None)
+            return query.first()
+
+    @classmethod
+    def ensure_default_voices(cls):
+        """
+        Ensure that all ALLOWED_VOICES exist in DB as default voices.
+        Runs once on server start.
+        """
+
+        settings = Settings()
+        allowed_voices = getattr(settings, "ALLOWED_VOICES", [])
+
+        if not allowed_voices:
+            logger.warning("⚠️ No allowed voices found in Settings.ALLOWED_VOICES")
+            return
+
+        with db():
+            for name in allowed_voices:
+                existing = db.session.query(cls).filter(
+                    cls.voice_name == name,
+                    cls.is_custom_voice == False,
+                    cls.user_id == None
+                ).first()
+                if not existing:
+                    voice = cls(
+                        voice_name=name,
+                        is_custom_voice=False,
+                        user_id=None
+                    )
+                    db.session.add(voice)
+                    logger.info(f"✅ Added default voice from Settings: {name}")
+            db.session.commit()
+
+class LLMModel(Base):
+    __tablename__ = "llm_models"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    modified_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    agents = relationship("AgentModel", back_populates="selected_llm_model_obj")
+
+    def __repr__(self):
+        return f"<LLMModel(id={self.id}, name={self.name})>"
+
+    @classmethod
+    def get_by_id(cls, llm_id: int) -> Optional["LLMModel"]:
+        """Fetch LLM model by ID"""
+        with db():
+            return db.session.query(cls).filter(cls.id == llm_id).first()
+
+    @classmethod
+    def get_by_name(cls, name: str) -> Optional["LLMModel"]:
+        """Fetch LLM model by name"""
+        with db():
+            return db.session.query(cls).filter(cls.name == name).first()
+
+    @classmethod
+    def create(cls, name: str) -> "LLMModel":
+        """Create new LLM model"""
+        with db():
+            llm = cls(name=name)
+            db.session.add(llm)
+            db.session.commit()
+            db.session.refresh(llm)
+            return llm
+
+    @classmethod
+    def update(cls, llm_id: int, new_name: str) -> Optional["LLMModel"]:
+        """Update existing LLM model name"""
+        with db():
+            llm = db.session.query(cls).filter(cls.id == llm_id).first()
+            if not llm:
+                return None
+            llm.name = new_name
+            db.session.commit()
+            db.session.refresh(llm)
+            return llm
+    
+    @classmethod
+    def get_all(cls) -> List["LLMModel"]:
+        """Fetch all LLM models"""
+        with db():
+            return db.session.query(cls).all()
+
+class ElevenLabModel(Base):
+    __tablename__ = "elevenlab_models"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, nullable=False)
+    languages = Column(JSONB, nullable=False)  # [{code, name}, ...]
+
+    created_at = Column(DateTime, server_default=func.now())
+    modified_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+    agents = relationship("AgentModel", back_populates="selected_model_obj")
+
+    def __repr__(self):
+        return f"<ElevenLabModel(id={self.id}, name={self.name})>"
+
+    def get_language_name(self, code: str) -> Optional[str]:
+        """Resolve language code → name"""
+        for lang in (self.languages or []):
+            if lang.get("code") == code:
+                return lang.get("name")
+        return None
+
+
+    @classmethod
+    def get_by_id(cls, model_id: int) -> Optional["ElevenLabModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.id == model_id).first()
+
+    @classmethod
+    def get_by_name(cls, name: str) -> Optional["ElevenLabModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.name == name).first()
+
+    @classmethod
+    def create(cls, name: str, languages: List[Dict[str, str]]) -> "ElevenLabModel":
+        """Create a new ElevenLabModel"""
+        with db():
+            entry = cls(name=name, languages=languages)
+            db.session.add(entry)
+            db.session.commit()
+            db.session.refresh(entry)
+            return entry
+
+    @classmethod
+    def update(
+        cls,
+        model_id: int,
+        new_name: Optional[str] = None,
+        new_languages: Optional[List[Dict[str, str]]] = None
+    ) -> Optional["ElevenLabModel"]:
+        """Update name and/or languages"""
+        with db():
+            entry = db.session.query(cls).filter(cls.id == model_id).first()
+            if not entry:
+                return None
+            if new_name:
+                entry.name = new_name
+            if new_languages is not None:
+                entry.languages = new_languages
+            db.session.commit()
+            db.session.refresh(entry)
+            return entry
+
+    @classmethod
+    def delete(cls, model_id: int) -> bool:
+        """Delete model by id"""
+        with db():
+            entry = db.session.query(cls).filter(cls.id == model_id).first()
+            if not entry:
+                return False
+            db.session.delete(entry)
+            db.session.commit()
+            return True
+
+    @classmethod
+    def get_all(cls) -> List["ElevenLabModel"]:
+        """Return all models"""
+        with db():
+            return db.session.query(cls).all()
+
+
+
+class DynamicVariableLogs(Base):
+    __tablename__ = "dynamic_variable_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+    variable_name = Column(String, nullable=False)
+    variable_value = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+
+    agent = relationship("AgentModel", back_populates="dynamic_variable_logs")
+
+    def __repr__(self):
+        return f"<DynamicVariableLog(id={self.id}, variable_name={self.variable_name})>"
+
+    @classmethod
+    def create(cls, agent_id: int, variable_name: str, variable_value: str) -> "DynamicVariableLogs":
+        """Create a new dynamic variable log entry"""
+        with db():
+            log_entry = cls(agent_id=agent_id, variable_name=variable_name, variable_value=variable_value)
+            db.session.add(log_entry)
+            db.session.commit()
+            db.session.refresh(log_entry)
+            return log_entry
+
+    @classmethod
+    def get_by_agent_id(cls, agent_id: int) -> List["DynamicVariableLogs"]:
+        """Get all dynamic variable logs for a specific agent"""
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
+
+    @classmethod
+    def delete(cls, log_id: int) -> bool:
+        """Delete a dynamic variable log entry by ID"""
+        with db():
+            log_entry = db.session.query(cls).filter(cls.id == log_id).first()
+            if log_entry:
+                db.session.delete(log_entry)
+                db.session.commit()
+                return True
+            return False
+
+class SystemVariable(Base):
+    __tablename__ = "system_variables"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), unique=True, nullable=False)
+    description = Column(Text, nullable=True)
+
+    def __repr__(self):
+        return f"<SystemVariable(id={self.id}, name='{self.name}', description='{self.description}')>"
+
+Base.metadata.create_all(engine)

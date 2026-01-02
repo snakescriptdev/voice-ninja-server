@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    {% block title %}
+        <title>Dashboard</title>
+    {% endblock %}
+  
+    <link rel="stylesheet" href="{{ host }}/static/Web/css/bootstrap.min.css">
+    <link rel="stylesheet" href="{{ host }}/static/Web/css/style.css">
+    <link rel="stylesheet" href="{{ host }}/static/Web/css/responsive.css">
+    <link rel="stylesheet" href="{{ host }}/static/Web/css/slick.css">
+    <link rel="stylesheet" href="{{ host }}/static/Web/css/slick-theme.css">
+    <!-- Toastr CSS -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
+    <!-- Select2 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/select2@4.1.0-beta.1/dist/css/select2.min.css" rel="stylesheet" />
+</head>
+
+
+<script src="{{ host }}/static/Web/js/bootstrap.bundle.min.js"></script>
+<script src="{{ host }}/static/Web/js/jquery.min.js"></script>
+<script src="{{ host }}/static/Web/js/script.js"></script>
+<script src="{{ host }}/static/Web/js/slick-script.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/toastr.js/latest/toastr.min.js"></script>
+<script type="text/javascript">
+    {% if messages %}
+        {% for message in messages %}
+            {% if message.tags == "error" %}
+                toastr.error("{{ message }}", "Error", {
+                    "positionClass": "toast-top-right"
+                });
+            {% elif message.tags == "success" %}
+                toastr.success("{{ message }}", "Success", {
+                    "positionClass": "toast-top-right"
+                });
+            {% else %}
+                toastr.info("{{ message }}", "Info", {
+                    "positionClass": "toast-top-right"
+                });
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+</script>
+<script> 
+    function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+        const cookies = document.cookie.split(';');
+        for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                break;
+            }
+        }
+    }
+    return cookieValue;
+}
+
+
+</script>
+{% block content %}
+{% endblock %}
