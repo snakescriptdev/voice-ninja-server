@@ -4,7 +4,7 @@ from app.services import RunAssistant
 from typing import Dict
 import secrets,uuid, json
 from app.routers.bot import run_bot
-from app.databases.models import AgentModel, CustomFunctionModel, DailyCallLimitModel, OverallTokenLimitModel
+from app.databases.models import AgentModel, CustomFunctionModel, DailyCallLimitModel, OverallTokenLimitModel,VoiceModel
 from user_agents import parse
 
 router = APIRouter(prefix="/ws")
@@ -111,6 +111,7 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
                 select(agent_knowledge_association).where(agent_knowledge_association.c.agent_id == agent_id)
             )
         knowledge_base_result = result.fetchone()
+        knowledge_base_id = None
         knowledge_base_text = ""
         if knowledge_base_result:
             knowledge_base_id = knowledge_base_result.knowledge_base_id
@@ -124,6 +125,7 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
         welcome_msg = agent.welcome_msg
         system_instruction = agent.agent_prompt
         dynamic_variables = agent.dynamic_variable
+        noise_setting_variables = agent.noise_setting_variable
         temperature = agent.temperature
         max_output_tokens = agent.max_output_tokens
         custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
@@ -156,7 +158,35 @@ async def twilio_websocket_endpoint(websocket: WebSocket):
                 "parameters": function.function_parameters
             })
         print("WebSocket connection accepted")
-        await run_bot(websocket, voice, stream_sid, welcome_msg, system_instruction, knowledge_base_text, agent.id, user_id, dynamic_variables, None, None, temperature, max_output_tokens)
+
+
+        voice_id = agent.selected_voice  
+        voice_obj = VoiceModel.get_by_id(voice_id)
+        custom_voice_id,voice = None,None
+
+        if voice_obj.is_custom_voice:
+            custom_voice_id = voice_obj.elevenlabs_voice_id
+        else:
+            voice = voice_obj.voice_name
+
+        params = {
+            "voice": voice,
+            "stream_sid": stream_sid,
+            "welcome_msg": welcome_msg,
+            "system_instruction": system_instruction,
+            "knowledge_base": knowledge_base_id,
+            "agent_id": agent.id,
+            "user_id": user_id,
+            "dynamic_variables": dynamic_variables,
+            "noise_setting_variables": noise_setting_variables,
+            "uid": None,
+            "custom_functions_list": None,
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "is_custom_voice":voice_obj.is_custom_voice,
+            "custom_voice_id":custom_voice_id
+        }
+        await run_bot(websocket, **params)
 
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}", exc_info=True)
@@ -196,6 +226,7 @@ async def agent_websocket_endpoint(websocket: WebSocket):
             )
         knowledge_base_result = result.fetchone()
         knowledge_base_text = ""
+        knowledge_base_id = None
         if knowledge_base_result:
             knowledge_base_id = knowledge_base_result.knowledge_base_id
             knowledge_base = KnowledgeBaseModel.get_by_id(knowledge_base_id)
@@ -208,6 +239,7 @@ async def agent_websocket_endpoint(websocket: WebSocket):
         welcome_msg = agent.welcome_msg
         system_instruction = agent.agent_prompt
         dynamic_variables = agent.dynamic_variable
+        noise_setting_variables = agent.noise_setting_variable
         temperature = agent.temperature
         max_output_tokens = agent.max_output_tokens
         custom_functions = CustomFunctionModel.get_all_by_agent_id(agent_id)
@@ -247,9 +279,35 @@ async def agent_websocket_endpoint(websocket: WebSocket):
             "device_type": device_type,
         }
         await websocket.send_json(json_data)
-        await run_bot(websocket, voice, None, welcome_msg, system_instruction, knowledge_base_text, agent.id, user, dynamic_variables, str(uid), custom_functions_list, temperature, max_output_tokens)
 
+        voice_id = agent.selected_voice  
+        voice_obj = VoiceModel.get_by_id(voice_id)
+        custom_voice_id,voice = None,None
+
+        if voice_obj.is_custom_voice:
+            custom_voice_id = voice_obj.elevenlabs_voice_id
+        else:
+            voice = voice_obj.voice_name
+
+        params = {
+            "voice": voice,
+            "stream_sid": None,
+            "welcome_msg": welcome_msg,
+            "system_instruction": system_instruction,
+            "knowledge_base": knowledge_base_id,
+            "agent_id": agent.id,
+            "user_id": user,
+            "dynamic_variables": dynamic_variables,
+            "noise_setting_variables": noise_setting_variables,
+            "uid": str(uid),
+            "custom_functions_list": custom_functions_list,
+            "temperature": temperature,
+            "max_output_tokens": max_output_tokens,
+            "is_custom_voice":voice_obj.is_custom_voice,
+            "custom_voice_id":custom_voice_id
+        }
         
+        await run_bot(websocket, **params)
     except Exception as e:
         logger.error(f"WebSocket error: {str(e)}", exc_info=True)
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)

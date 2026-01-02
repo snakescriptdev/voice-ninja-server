@@ -2,7 +2,7 @@ __pycache__/
 venv
 server.log
 .env
-.vscode
+# .vscode
 audio_storage/
 .DS_Store
 alembic/versions/*.py
@@ -10,3 +10,5 @@ media/
 env/
 /Users/snake/Desktop/SAGE-AI/requirements.txt
 /Users/snake/Desktop/SAGE-AI/.gitignore
+vectorstore/
+voice_ninja_env/
