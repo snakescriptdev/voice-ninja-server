@@ -12,3 +12,4 @@ env/
 /Users/snake/Desktop/SAGE-AI/.gitignore
 vectorstore/
 voice_ninja_env/
+.venv/

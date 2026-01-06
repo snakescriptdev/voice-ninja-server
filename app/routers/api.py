@@ -30,6 +30,8 @@ import json
 from app.utils.helper import extract_text_from_file, generate_agent_prompt
 from config import MEDIA_DIR  # ✅ Import properly
 import razorpay
+from app.utils.jwt_utils import create_access_token
+import variables as var
 from app.utils.helper import verify_razorpay_signature
 from jinja2 import Environment, meta
 from app.utils.helper import generate_summary,is_valid_url
@@ -137,14 +139,13 @@ async def user_login(request: Request, response: Response):
     try:
         # Validate request has JSON content type
         if not request.headers.get("content-type") == "application/json":
-            error_response = {
-                "status": "error", 
-                "error": "Content-Type must be application/json",
-                "status_code": 400
-            }
             return JSONResponse(
-                status_code=400,
-                content=error_response
+                status_code=var.HTTP_400_BAD_REQUEST,
+                content={
+                    var.STATUS: var.FAILED,
+                    "status_code": var.HTTP_400_BAD_REQUEST,
+                    var.ERROR: "Content-Type must be application/json"
+                }
             )
 
         data = await request.json()
@@ -154,47 +155,56 @@ async def user_login(request: Request, response: Response):
         # Validate required fields
         if not all(key in data for key in ["email", "password"]):
             error_response = {
-                "status": "error", 
-                "error": "Missing required fields",
-                "status_code": 400
+                var.STATUS: var.FAILED,
+                "status_code": var.HTTP_400_BAD_REQUEST,
+                var.ERROR: "Missing required fields"
             }
             return JSONResponse(
-                status_code=400,
+                status_code=var.HTTP_400_BAD_REQUEST,
                 content=error_response
             )
 
         user = UserModel.get_by_email(email)
         if not user:
-            error_response = {
-                "status": "error", 
-                "error": "User not found",
-                "status_code": 401
-            }
             return JSONResponse(
-                status_code=401,
-                content=error_response
+                status_code=var.HTTP_401_UNAUTHORIZED,
+                content={
+                    var.STATUS: var.FAILED,
+                    "status_code": var.HTTP_401_UNAUTHORIZED,
+                    var.ERROR: "User not found"
+                }
             )
-        if user and not bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
+        
+        if not bcrypt.checkpw(password.encode('utf-8'), user.password.encode('utf-8')):
             error_response = {
-                "status": "error", 
-                "error": "Invalid email or password",
-                "status_code": 401
+                var.STATUS: var.FAILED,
+                "status_code": var.HTTP_401_UNAUTHORIZED,
+                var.ERROR: "Invalid email or password"
             }
             return JSONResponse(
-                status_code=401,
+                status_code=var.HTTP_401_UNAUTHORIZED,
                 content=error_response
             )
         if not user.is_verified:
             error_response = {
-                "status": "error", 
-                "error": "Your account is not verified, please check your email for verification",
-                "status_code": 401
+                var.STATUS: var.FAILED,
+                "status_code": var.HTTP_401_UNAUTHORIZED,
+                var.ERROR: "Your account is not verified, please check your email for verification"
             }
             return JSONResponse(
-                status_code=401,
+                status_code=var.HTTP_401_UNAUTHORIZED,
                 content=error_response
             )
-        # Create session data
+        
+        # Create JWT token
+        token_data = {
+            "user_id": user.id,
+            "email": user.email,
+            "role": var.ROLE_ADMIN if user.is_admin else var.ROLE_USER
+        }
+        access_token = create_access_token(data=token_data)
+        
+        # Create session data (for backward compatibility)
         session_data = {
             "user_id": user.id,
             "email": user.email,
@@ -203,38 +213,44 @@ async def user_login(request: Request, response: Response):
             "expiry": 86400,
             "created_at": datetime.now().timestamp()
         }
-
-        # Set session cookie with encrypted data
         request.session["user"] = session_data
+        
+        # Update last login
         UserModel.update(user.id, last_login=datetime.now())
+        
+        # Return response with JWT token
         response_data = {
-            "status": "success",
-            "message": "User logged in successfully",
-            "status_code": 200
+            var.STATUS: var.SUCCESS,
+            "status_code": var.HTTP_200_OK,
+            var.ACCESS_TOKEN: access_token,
+            var.USER: {
+                "id": user.id,
+                "email": user.email,
+                "name": user.name,
+                "role": var.ROLE_ADMIN if user.is_admin else var.ROLE_USER
+            }
         }
         return JSONResponse(
-            status_code=200,
+            status_code=var.HTTP_200_OK,
             content=response_data
         )
     except json.JSONDecodeError:
-        error_response = {
-            "status": "error", 
-            "error": "Invalid JSON data",
-            "status_code": 400
-        }
         return JSONResponse(
-            status_code=400,
-            content=error_response
+            status_code=var.HTTP_400_BAD_REQUEST,
+            content={
+                var.STATUS: var.FAILED,
+                "status_code": var.HTTP_400_BAD_REQUEST,
+                var.ERROR: "Invalid JSON data"
+            }
         )
     except Exception as e:
-        error_response = {
-            "status": "error", 
-            "error": f"Error logging in: {str(e)}",
-            "status_code": 500
-        }
         return JSONResponse(
-            status_code=500,
-            content=error_response
+            status_code=var.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                var.STATUS: var.FAILED,
+                "status_code": var.HTTP_500_INTERNAL_SERVER_ERROR,
+                var.ERROR: f"Error logging in: {str(e)}"
+            }
         )
 
 @router.post("/user-register",
@@ -249,12 +265,12 @@ async def user_register(request: Request):
         # Validate request has JSON content type
         if not request.headers.get("content-type") == "application/json":
             error_response = {
-                "status": "error", 
-                "error": "Content-Type must be application/json",
-                "status_code": 400
+                var.STATUS: var.FAILED,
+                "status_code": var.HTTP_400_BAD_REQUEST,
+                var.ERROR: "Content-Type must be application/json"
             }
             return JSONResponse(
-                status_code=400,
+                status_code=var.HTTP_400_BAD_REQUEST,
                 content=error_response
             )
             
@@ -263,12 +279,12 @@ async def user_register(request: Request):
         # Validate required fields
         if not all(key in data for key in ["email", "name", "password"]):
             error_response = {
-                "status": "error", 
-                "error": "Missing required fields",
-                "status_code": 400
+                var.STATUS: var.FAILED,
+                "status_code": var.HTTP_400_BAD_REQUEST,
+                var.ERROR: "Missing required fields"
             }
             return JSONResponse(
-                status_code=400, 
+                status_code=var.HTTP_400_BAD_REQUEST, 
                 content=error_response
             )
             
@@ -276,31 +292,30 @@ async def user_register(request: Request):
         name = data.get("name") 
         password = data.get("password")
 
-        try:
-            # Validate email format
-            if not email or "@" not in email:
-                error_response = {
-                    "status": "error", 
-                    "error": "Invalid email format",
-                    "status_code": 400
+        # Validate email format
+        if not email or "@" not in email:
+            return JSONResponse(
+                status_code=var.HTTP_400_BAD_REQUEST,
+                content={
+                    var.STATUS: var.FAILED,
+                    "status_code": var.HTTP_400_BAD_REQUEST,
+                    var.ERROR: "Invalid email format"
                 }
-                return JSONResponse(
-                    status_code=400,
-                    content=error_response
-                )
+            )
 
-            # Use filter method instead of get_by_email
-            user = UserModel.get_by_email(email)
-            if user:
-                error_response = {
-                    "status": "error", 
-                    "error": "User already exists",
-                    "status_code": 400
+        # Check if user already exists
+        existing_user = UserModel.get_by_email(email)
+        if existing_user:
+            return JSONResponse(
+                status_code=var.HTTP_400_BAD_REQUEST,
+                content={
+                    var.STATUS: var.FAILED,
+                    "status_code": var.HTTP_400_BAD_REQUEST,
+                    var.ERROR: "User already exists"
                 }
-                return JSONResponse(
-                    status_code=400,
-                    content=error_response
-                )
+            )
+        
+        try:
             email_token = uuid.uuid4()
 
             token_values = AdminTokenModel.get_by_id(1)
@@ -343,12 +358,17 @@ async def user_register(request: Request):
             fm = FastMail(conf)
             await fm.send_message(message)
             response_data = {
-                "status": "success",
-                "message": "User registered successfully",
-                "status_code": 200
+                var.STATUS: var.SUCCESS,
+                "status_code": var.HTTP_201_CREATED,
+                var.MESSAGE: "User registered successfully. Please verify your email.",
+                var.USER: {
+                    "id": user.id,
+                    "email": user.email,
+                    "name": user.name
+                }
             }
             return JSONResponse(
-                status_code=200,
+                status_code=var.HTTP_201_CREATED,
                 content=response_data
             )
     
@@ -358,24 +378,22 @@ async def user_register(request: Request):
                 raise e
         
     except json.JSONDecodeError:
-        error_response = {
-            "status": "error", 
-            "error": "Invalid JSON payload",
-            "status_code": 400
-        }
         return JSONResponse(
-            status_code=400,
-            content=error_response
+            status_code=var.HTTP_400_BAD_REQUEST,
+            content={
+                var.STATUS: var.FAILED,
+                "status_code": var.HTTP_400_BAD_REQUEST,
+                var.ERROR: "Invalid JSON payload"
+            }
         )
     except Exception as e:
-        error_response = {
-            "status": "error", 
-            "error": f"Error registering user: {str(e)}",
-            "status_code": 500
-        }
         return JSONResponse(
-            status_code=500,
-            content=error_response
+            status_code=var.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                var.STATUS: var.FAILED,
+                "status_code": var.HTTP_500_INTERNAL_SERVER_ERROR,
+                var.ERROR: f"Error registering user: {str(e)}"
+            }
         )
 
 @router.get("/logout",
