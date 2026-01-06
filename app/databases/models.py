@@ -155,9 +155,12 @@ class UserModel(Base):
     
     id = Column(Integer, primary_key=True)
     email = Column(String, nullable=True,default="")
+    phone = Column(String, nullable=True,default="")  # Phone number for OTP
     password = Column(String, nullable=True,default="")
     name = Column(String, nullable=True,default="")
     is_verified = Column(Boolean, nullable=True,default=False)
+    otp_code = Column(String, nullable=True,default="")  # Current OTP
+    otp_expires_at = Column(DateTime, nullable=True)  # OTP expiry time
     last_login = Column(DateTime, nullable=True,default=func.now())
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -184,6 +187,24 @@ class UserModel(Base):
         """
         with db():
             return db.session.query(cls).filter(cls.email == email).first()
+    
+    @classmethod
+    def get_by_phone(cls, phone: str) -> Optional["UserModel"]:
+        """
+        Get user by phone
+        """
+        with db():
+            return db.session.query(cls).filter(cls.phone == phone).first()
+    
+    @classmethod
+    def get_by_username(cls, username: str) -> Optional["UserModel"]:
+        """
+        Get user by username (email or phone)
+        """
+        with db():
+            return db.session.query(cls).filter(
+                (cls.email == username) | (cls.phone == username)
+            ).first()
 
     @classmethod
     def create(cls, email: str, name: str, password: str, is_verified: bool = False, tokens: int = 0) -> "UserModel":
