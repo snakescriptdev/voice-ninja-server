@@ -16,6 +16,7 @@ STATUS_FAILED = 'failed'
 
 # HTTP Status Codes
 HTTP_200_OK = 200
+HTTP_201_CREATED = 201
 HTTP_400_BAD_REQUEST = 400
 HTTP_401_UNAUTHORIZED = 401
 HTTP_404_NOT_FOUND = 404
@@ -33,6 +34,13 @@ MSG_INVALID_OTP = 'Invalid OTP'
 MSG_OTP_EXPIRED = 'OTP expired'
 MSG_LOGIN_SUCCESSFUL = 'Login successful'
 MSG_FAILED_TO_SEND_OTP_VIA_METHOD = 'Failed to send OTP via {method}'
+
+# Register Messages
+MSG_REGISTRATION_SUCCESSFUL = 'User registered successfully'
+MSG_USER_ALREADY_EXISTS = 'User already exists'
+MSG_INVALID_EMAIL_FORMAT = 'Invalid email format'
+MSG_NAME_REQUIRED = 'Name is required'
+MSG_REGISTRATION_FAILED = 'Registration failed'
 
 # OTP Configuration
 OTP_EXPIRY_MINUTES = 10

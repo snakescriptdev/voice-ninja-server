@@ -51,7 +51,7 @@ from app_v2.schemas.otp import (
     VerifyOTPResponse,
 )
 
-router = APIRouter(prefix='/api/v2', tags=['OTP Authentication'])
+router = APIRouter(prefix='/api/v2', tags=['Authentication'])
 
 
 @router.post(
