@@ -8,24 +8,17 @@ class RegisterRequest(BaseModel):
     """Request schema for user registration.
 
     Attributes:
-        email: User email address.
-        name: User full name.
+        username: User email or phone number.
     """
 
-    email: str = Field(
+    username: str = Field(
         ...,
-        description='User email address',
+        description='User email or phone number',
         min_length=1,
-        examples=['user@example.com']
-    )
-    name: str = Field(
-        ...,
-        description='User full name',
-        min_length=1,
-        examples=['John Doe']
+        examples=['user@example.com', '+1234567890']
     )
 
-    @field_validator('email', 'name')
+    @field_validator('username')
     @classmethod
     def validate_fields(cls, v: str) -> str:
         """Strip whitespace from fields."""
