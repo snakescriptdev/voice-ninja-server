@@ -37,7 +37,8 @@ MSG_FAILED_TO_SEND_OTP_VIA_METHOD = 'Failed to send OTP via {method}'
 
 # Register Messages
 MSG_REGISTRATION_SUCCESSFUL = 'User registered successfully'
-MSG_USER_ALREADY_EXISTS = 'User already exists'
+MSG_USER_ALREADY_EXISTS = 'User with this email already exists'
+MSG_USER_PHONE_ALREADY_EXISTS = 'User with this phone number already exists'
 MSG_INVALID_EMAIL_FORMAT = 'Invalid email format'
 MSG_NAME_REQUIRED = 'Name is required'
 MSG_REGISTRATION_FAILED = 'Registration failed'
