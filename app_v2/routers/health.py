@@ -45,8 +45,8 @@ async def heartbeat() -> HeartbeatResponse:
     """
     logger.info('Heartbeat endpoint called')
     return HeartbeatResponse(
-        status_code=HTTP_200_OK,
         status=STATUS_SUCCESS,
+        status_code=HTTP_200_OK,
         message='Voice Ninja is running',
         data={}
     )
