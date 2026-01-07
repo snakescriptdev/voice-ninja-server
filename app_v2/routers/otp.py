@@ -6,10 +6,8 @@ This module provides endpoints for OTP-based authentication:
 """
 
 from datetime import datetime, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, Request, HTTPException, status
-from fastapi.responses import JSONResponse
 from fastapi_sqlalchemy import db
 
 from app.core import logger
@@ -51,15 +49,13 @@ from app_v2.schemas.otp import (
     RequestOTPResponse,
     VerifyOTPRequest,
     VerifyOTPResponse,
-    OTPMethodInfo,
-    UserInfo,
 )
 
 router = APIRouter(prefix='/api/v2', tags=['OTP Authentication'])
 
 
 @router.post(
-    '/request-otp',
+    '/login',
     response_model=RequestOTPResponse,
     status_code=status.HTTP_200_OK,
     summary='Request OTP',
@@ -167,10 +163,10 @@ async def request_otp(request: RequestOTPRequest) -> RequestOTPResponse:
             )
 
         return RequestOTPResponse(
-            status_code=HTTP_200_OK,
             status=STATUS_SUCCESS,
+            status_code=HTTP_200_OK,
             message=success_message,
-            data=OTPMethodInfo(method=method)
+            data={'method': method}
         )
 
     except HTTPException:
@@ -307,18 +303,18 @@ async def verify_otp(
         }
 
         return VerifyOTPResponse(
-            status_code=HTTP_200_OK,
             status=STATUS_SUCCESS,
+            status_code=HTTP_200_OK,
             message=MSG_LOGIN_SUCCESSFUL,
-            access_token=access_token,
-            refresh_token=refresh_token,
-            user=UserInfo(
-                id=user.id,
-                email=user.email,
-                phone=user.phone,
-                name=user.name,
-                role='admin' if user.is_admin else 'user'
-            )
+            data={
+                'access_token': access_token,
+                'refresh_token': refresh_token,
+                'id': user.id,
+                'email': user.email,
+                'phone': user.phone,
+                'name': user.name,
+                'role': 'admin' if user.is_admin else 'user'
+            }
         )
 
     except HTTPException:

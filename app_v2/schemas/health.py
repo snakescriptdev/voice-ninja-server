@@ -7,14 +7,14 @@ class HeartbeatResponse(BaseModel):
     """Response schema for heartbeat endpoint.
 
     Attributes:
-        status_code: HTTP status code.
         status: Response status (success).
+        status_code: HTTP status code.
         message: Response message.
         data: Additional response data.
     """
 
-    status_code: int = Field(..., description='HTTP status code', examples=[200])
     status: str = Field(..., description='Response status', examples=['success'])
+    status_code: int = Field(..., description='HTTP status code', examples=[200])
     message: str = Field(..., description='Response message')
     data: dict = Field(
         default_factory=dict,
