@@ -43,17 +43,17 @@ class RequestOTPResponse(BaseModel):
     """Response schema for OTP request.
 
     Attributes:
-        status_code: HTTP status code.
         status: Response status (success or failed).
+        status_code: HTTP status code.
         message: Response message.
         data: Additional response data containing method information.
     """
 
-    status_code: int = Field(..., description='HTTP status code', examples=[200])
     status: str = Field(..., description='Response status', examples=['success'])
+    status_code: int = Field(..., description='HTTP status code', examples=[200])
     message: str = Field(..., description='Response message')
-    data: Optional[OTPMethodInfo] = Field(
-        None,
+    data: dict = Field(
+        default_factory=dict,
         description='Additional response data'
     )
 
@@ -108,27 +108,17 @@ class VerifyOTPResponse(BaseModel):
     """Response schema for OTP verification.
 
     Attributes:
-        status_code: HTTP status code.
         status: Response status (success or failed).
+        status_code: HTTP status code.
         message: Response message.
-        access_token: JWT access token.
-        refresh_token: JWT refresh token.
-        user: User information.
+        data: Response data containing access_token, refresh_token, and user.
     """
 
-    status_code: int = Field(..., description='HTTP status code', examples=[200])
     status: str = Field(..., description='Response status', examples=['success'])
+    status_code: int = Field(..., description='HTTP status code', examples=[200])
     message: str = Field(..., description='Response message')
-    access_token: Optional[str] = Field(
-        None,
-        description='JWT access token'
-    )
-    refresh_token: Optional[str] = Field(
-        None,
-        description='JWT refresh token'
-    )
-    user: Optional[UserInfo] = Field(
-        None,
-        description='User information'
+    data: dict = Field(
+        default_factory=dict,
+        description='Response data containing access_token, refresh_token, and user'
     )
 
