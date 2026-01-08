@@ -25,6 +25,8 @@ HTTP_500_INTERNAL_SERVER_ERROR = 500
 # Response Messages
 MSG_USERNAME_REQUIRED = 'Username required'
 MSG_INVALID_EMAIL_OR_PHONE = 'Invalid email or phone format'
+MSG_USER_CREATED_OTP_SENT_EMAIL = 'User created successfully. OTP sent to your email'
+MSG_USER_CREATED_OTP_SENT_SMS = 'User created successfully. OTP sent to your SMS'
 MSG_OTP_SENT_EMAIL = 'OTP sent to your email'
 MSG_OTP_SENT_SMS = 'OTP sent to your SMS'
 MSG_FAILED_TO_SEND_OTP = 'Failed to send OTP'
