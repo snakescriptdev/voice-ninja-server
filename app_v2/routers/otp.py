@@ -11,7 +11,7 @@ from fastapi import APIRouter, Request, HTTPException, status
 from fastapi_sqlalchemy import db
 
 from app.core import logger
-from app.databases.models import UserModel
+from app.databases.models import UserModel, OAuthProviderModel
 from app.utils.helper import (
     generate_otp,
     is_email,
@@ -38,6 +38,7 @@ from app_v2.constants import (
     MSG_OTP_SENT_SMS,
     MSG_FAILED_TO_SEND_OTP,
     MSG_USER_NOT_FOUND,
+    MSG_USER_SIGNED_UP_WITH_GOOGLE,
     MSG_INVALID_OTP,
     MSG_OTP_EXPIRED,
     MSG_LOGIN_SUCCESSFUL,
@@ -136,6 +137,15 @@ async def request_otp(request: RequestOTPRequest) -> RequestOTPResponse:
                 db.session.add(user)
                 db.session.commit()
                 db.session.refresh(user)
+        else:
+            # Check if user signed up with Google (only for email login)
+            if is_email_login:
+                oauth_record = OAuthProviderModel.get_by_provider_and_email('google', username)
+                if oauth_record:
+                    raise HTTPException(
+                        status_code=HTTP_400_BAD_REQUEST,
+                        detail=MSG_USER_SIGNED_UP_WITH_GOOGLE
+                    )
 
         # Generate OTP
         otp = generate_otp()

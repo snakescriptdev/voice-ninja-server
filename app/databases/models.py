@@ -287,14 +287,66 @@ class UserModel(Base):
         
     
 
+
+
+class OAuthProviderModel(Base):
+    """Model to track OAuth provider authentication."""
+    __tablename__ = "oauth_providers"
+    
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    provider = Column(String, nullable=False)  # 'google', 'facebook', etc.
+    provider_user_id = Column(String, nullable=False)  # ID from OAuth provider
+    email = Column(String, nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    # Relationship to user
+    user = relationship("UserModel", backref="oauth_providers")
+    
+    def __repr__(self):
+        return f"<OAuthProvider(id={self.id}, provider={self.provider}, email={self.email})>"
+    
+    @classmethod
+    def get_by_provider_and_email(cls, provider: str, email: str) -> Optional["OAuthProviderModel"]:
+        """Get OAuth provider record by provider and email."""
+        with db():
+            return db.session.query(cls).filter(
+                cls.provider == provider,
+                cls.email == email
+            ).first()
+    
+    @classmethod
+    def get_by_provider_and_user_id(cls, provider: str, provider_user_id: str) -> Optional["OAuthProviderModel"]:
+        """Get OAuth provider record by provider and provider user ID."""
+        with db():
+            return db.session.query(cls).filter(
+                cls.provider == provider,
+                cls.provider_user_id == provider_user_id
+            ).first()
+    
+    @classmethod
+    def create(cls, user_id: int, provider: str, provider_user_id: str, email: str) -> "OAuthProviderModel":
+        """Create a new OAuth provider record."""
+        with db():
+            oauth_provider = cls(
+                user_id=user_id,
+                provider=provider,
+                provider_user_id=provider_user_id,
+                email=email
+            )
+            db.session.add(oauth_provider)
+            db.session.commit()
+            db.session.refresh(oauth_provider)
+            return oauth_provider
+
+
 agent_knowledge_association = Table(
     "agent_knowledge_association",
     Base.metadata,
     Column("agent_id", Integer, ForeignKey("agents.id"), primary_key=True),
     Column("knowledge_base_id", Integer, ForeignKey("knowledge_base.id"), primary_key=True),
 )
-
-
 class AgentModel(Base):
     __tablename__ = "agents"
     
