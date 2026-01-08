@@ -32,6 +32,8 @@ from app_v2.constants import (
     HTTP_401_UNAUTHORIZED,
     HTTP_500_INTERNAL_SERVER_ERROR,
     MSG_INVALID_EMAIL_OR_PHONE,
+    MSG_USER_CREATED_OTP_SENT_EMAIL,
+    MSG_USER_CREATED_OTP_SENT_SMS,
     MSG_OTP_SENT_EMAIL,
     MSG_OTP_SENT_SMS,
     MSG_FAILED_TO_SEND_OTP,
@@ -121,8 +123,10 @@ async def request_otp(request: RequestOTPRequest) -> RequestOTPResponse:
 
         # Get or create user
         user = UserModel.get_by_username(username)
+        user_created = False
         if not user:
             # Create new user
+            user_created = True
             with db():
                 user = UserModel(
                     email=username if is_email_login else '',
@@ -148,11 +152,11 @@ async def request_otp(request: RequestOTPRequest) -> RequestOTPResponse:
         if is_email_login:
             success = await send_otp_email(username, otp)
             method = METHOD_EMAIL
-            success_message = MSG_OTP_SENT_EMAIL
+            success_message = MSG_USER_CREATED_OTP_SENT_EMAIL if user_created else MSG_OTP_SENT_EMAIL
         else:
             success = send_otp_sms(username, otp)
             method = METHOD_SMS
-            success_message = MSG_OTP_SENT_SMS
+            success_message = MSG_USER_CREATED_OTP_SENT_SMS if user_created else MSG_OTP_SENT_SMS
 
         if not success:
             error_message = MSG_FAILED_TO_SEND_OTP_VIA_METHOD.format(method=method)
@@ -312,7 +316,6 @@ async def verify_otp(
                 'id': user.id,
                 'email': user.email,
                 'phone': user.phone,
-                'name': user.name,
                 'role': 'admin' if user.is_admin else 'user'
             }
         )
