@@ -23,7 +23,7 @@ from starlette.responses import Response
 import os
 from config import MEDIA_DIR 
 from app.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
-from app_v2.routers import otp_router, health_router, register_router
+from app_v2.routers import otp_router, health_router
 
 app = FastAPI(title="Voice Ninja API Documentation", version="2.0.0")
 
@@ -92,7 +92,6 @@ app.include_router(ElevenLabsWebIntegrationRouter, prefix="/elevenlabs/preview/v
 # Include app_v2 routers (new refactored API) - shown in OpenAPI docs
 app.include_router(otp_router)
 app.include_router(health_router)
-app.include_router(register_router)
 
 @app.on_event("startup")
 async def startup_event():
