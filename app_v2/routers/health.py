@@ -2,7 +2,8 @@
 
 from fastapi import APIRouter, status
 
-from app.core import logger
+from app_v2.core.logger import setup_logger
+logger = setup_logger(__name__)
 from app_v2.constants import (
     STATUS_SUCCESS,
     HTTP_200_OK,

@@ -1,24 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi_sqlalchemy import DBSessionMiddleware, db
+from app_v2.core.config import VoiceSettings
+from starlette.middleware.sessions import SessionMiddleware
 import os
 from dotenv import load_dotenv
+from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
+from app_v2.routers import otp_router, health_router, google_auth_router
 
 # Load environment variables
 load_dotenv()
 
-# Import app_v2 routers
-# Note: These imports currently depend on 'app' which has been moved to 'archive'
-# You may need to update the imports or move necessary dependencies back.
-try:
-    from app_v2.routers import otp_router, health_router, google_auth_router
-except ImportError as e:
-    print(f"Warning: Failed to import app_v2 routers: {e}")
-    otp_router = None
-    health_router = None
-    google_auth_router = None
-
 app = FastAPI(title="Voice Ninja V2 API", version="2.0.0")
 
+# Add Middlewares
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -27,17 +22,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include app_v2 routers if they were imported successfully
-if otp_router:
-    app.include_router(otp_router)
-if health_router:
-    app.include_router(health_router)
-if google_auth_router:
-    app.include_router(google_auth_router)
+app.add_middleware(
+    DBSessionMiddleware,
+    db_url=VoiceSettings.DB_URL,
+    engine_args={"pool_pre_ping": True, "pool_size": 5, "max_overflow": 10}
+)
 
-@app.get("/")
+app.add_middleware(SessionMiddleware, secret_key=VoiceSettings.SECRET_KEY)
+
+# Include app_v2 routers
+app.include_router(otp_router)
+app.include_router(health_router)
+app.include_router(google_auth_router)
+
+@app.get("/", tags=["System"])
 async def root():
     return {"message": "Voice Ninja V2 API is running", "app_v2_status": "active"}
+
+@app.on_event("startup")
+async def startup_event():
+    import asyncio
+    
+    async def init_background_tasks():
+        # Ensure default models exists
+        try:
+            AdminTokenModel.ensure_default_exists()
+            TokensToConsume.ensure_default_exists()
+            VoiceModel.ensure_default_voices()
+            print("🚀 Background initialization complete!")
+        except Exception as e:
+            print(f"❌ Initialization failed: {e}")
+    
+    asyncio.create_task(init_background_tasks())
+    print("Voice Ninja V2 started successfully!")
 
 if __name__ == "__main__":
     import uvicorn
