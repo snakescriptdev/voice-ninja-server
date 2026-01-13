@@ -1,0 +1,510 @@
+from datetime import datetime
+from dataclasses import dataclass
+from fastapi.responses import RedirectResponse
+from fastapi import Request
+from datetime import datetime
+from functools import wraps
+import os
+from twilio.rest import Client
+import fitz, io
+from PIL import Image
+import pytesseract
+import docx2txt
+import io,json
+import wave
+import aiofiles
+import logging
+from datetime import datetime
+from pathlib import Path
+from config import MEDIA_DIR
+from app.databases.models import AudioRecordings, ConversationModel
+import hmac
+import hashlib
+import google.generativeai as genai
+import aiohttp
+from aiohttp import ClientConnectorError
+import base64
+from typing import Optional
+from fastapi_sqlalchemy import db
+from urllib.parse import urlparse
+
+logger = logging.getLogger(__name__)
+@dataclass
+class AudioFileMetaData:
+    SID:str
+    voice:str
+    created_at:datetime
+    audio_type:str
+
+@dataclass
+class AudioFile:
+    name: str
+    url: str
+    session_id: str
+    voice: str
+    created_at: datetime
+    duration: float
+    
+
+
+class Paginator:
+    def __init__(self, items, page, per_page, start, end):
+        self.items = items[start:end] 
+        self.page = page
+        self.per_page = per_page
+        self.total = len(items)
+        
+    @property
+    def pages(self):
+        return (self.total + self.per_page - 1) // self.per_page
+        
+    @property
+    def has_previous(self):
+        return self.page > 1
+        
+    @property
+    def has_next(self):
+        return self.page < self.pages
+        
+    @property
+    def previous_page_number(self):
+        return max(1, self.page - 1)
+        
+    @property
+    def next_page_number(self):
+        return min(self.pages, self.page + 1)
+        
+    @property
+    def page_range(self):
+        return range(1, self.pages + 1)
+
+def check_session_expiry_redirect(func):
+    
+    @wraps(func)  # Preserve function metadata
+    async def wrapper(request: Request, *args, **kwargs):
+        session_data = request.session.get("user")
+        if not session_data:
+            return RedirectResponse(url="/login")
+
+        expiry = session_data.get("expiry")
+        if not expiry:
+            return RedirectResponse(url="/login")
+
+        current_time = datetime.now().timestamp()
+        session_created = session_data.get("created_at", current_time - expiry)
+        
+        if current_time > (session_created + expiry):
+            request.session.clear()
+            return RedirectResponse(url="/login")
+        return await func(request, *args, **kwargs)
+    return wrapper
+
+
+
+def generate_twiml(agent, url, user_id):
+    # Convert URL object to string if needed
+    url_str = str(url)
+    
+    if '8000' in url_str:
+        base_url = os.environ.get("NGROK_BASE_URL")
+        websocket_url = f"{base_url}/ws/"
+    else:
+        websocket_url = f"{url_str}/ws/"
+
+    twiml_content = f"""<?xml version="1.0" encoding="UTF-8"?>
+        <Response>
+            <Connect>
+                <Stream url="{websocket_url}">
+                <Parameter name="agent_id" value="{agent.id}"/>
+                <Parameter name="user_id" value="{user_id}"/>
+                </Stream>
+            </Connect>
+            <Pause length="40"/>
+        </Response>
+    """
+    os.makedirs(f"media/xml_files", exist_ok=True)
+
+    file_path = f"media/xml_files/streams_{agent.id}.xml"
+    with open(file_path, "w") as file:
+        file.write(twiml_content)
+    return file_path
+
+
+
+def make_outbound_call(xml):
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN")
+    client = Client(account_sid, auth_token)
+
+
+    TO_NUMBER = "+918629049332"  
+
+    call = client.calls.create(
+        twiml=open(xml).read(),
+        to=TO_NUMBER,
+        from_=os.environ.get("TWILIO_PHONE_NUMBER", '+17752648387')
+    )
+    return call.sid
+
+
+def extract_text_from_pdf(file_path):
+    """Extracts text from a PDF, including OCR for images."""
+    full_text = ""
+    doc = fitz.open(file_path)
+
+    for page_num, page in enumerate(doc):
+
+        text = page.get_text("text")
+        full_text += text + "\n"
+
+        for img_index, img in enumerate(page.get_images(full=True)):
+            try:
+                xref = img[0]
+                base_image = doc.extract_image(xref)
+                image_bytes = base_image["image"]
+
+                image = Image.open(io.BytesIO(image_bytes))
+
+                image_text = pytesseract.image_to_string(image)
+
+                if image_text.strip():
+                    full_text += f"\n{image_text}\n"
+
+            except Exception as img_e:
+                print(f"Error processing image {img_index + 1} on page {page_num + 1}: {str(img_e)}")
+
+    return full_text.strip() if full_text.strip() else "No readable text found"
+
+def extract_text_from_docx(file_path):
+    """Extracts text from a DOCX file."""
+    return docx2txt.process(file_path).strip()
+
+def extract_text_from_txt(file_path):
+    """Extracts text from a TXT file."""
+    with open(file_path, 'r', encoding="utf-8") as file:
+        return file.read().strip()
+
+def extract_text_from_file(file_path):
+    """Determines file type and extracts text accordingly."""
+    if file_path.endswith('.pdf'):
+        return extract_text_from_pdf(file_path)
+    elif file_path.endswith('.docx'):
+        return extract_text_from_docx(file_path)
+    elif file_path.endswith('.txt'):
+        return extract_text_from_txt(file_path)
+    else:
+        return "Unsupported file type"
+
+
+async def save_audio(audio: bytes, sample_rate: int, num_channels: int, SID: str, voice: str, agent_id: int):
+    if not audio:
+        return None
+
+    try:
+        # Define file paths
+        audio_name = f"{SID}.wav"
+        relative_path = f"audio_recordings/{audio_name}"  
+        full_file_path = Path(MEDIA_DIR) / relative_path  
+
+        full_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with io.BytesIO() as buffer:
+            with wave.open(buffer, "wb") as wf:
+                wf.setsampwidth(2)  
+                wf.setnchannels(num_channels)  
+                wf.setframerate(sample_rate)  
+                wf.writeframes(audio)  
+
+            async with aiofiles.open(full_file_path, "wb") as file:
+                await file.write(buffer.getvalue())
+
+        logger.info(f"Audio saved to {full_file_path}")
+
+        AudioRecordings.create(
+            agent_id=agent_id,
+            audio_file=str(full_file_path),
+            audio_name=audio_name,
+            created_at=datetime.now(),
+            call_id=SID
+        )
+
+        return relative_path
+
+    except Exception as e:
+        logger.error(f"Error saving audio: {e}")
+        return None
+    
+
+
+def verify_razorpay_signature(order_id, payment_id, signature):
+    key_secret = os.getenv("RAZOR_KEY_SECRET")
+    
+    msg = f"{order_id}|{payment_id}"
+    generated_signature = hmac.new(
+        key_secret.encode(),
+        msg.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+    return generated_signature == signature
+
+
+
+
+def generate_agent_prompt(agent_function, agent_tone, level_of_detail, industry, agent_name=None):
+    """
+    Generates a tailored AI agent prompt based on user selections using Gemini.
+    
+    Parameters:
+    - agent_function: The primary function/role of the agent (e.g., 'customer_support', 'sales', 'technical_advisor')
+    - agent_tone: The conversational tone of the agent (e.g., 'professional', 'friendly', 'technical')
+    - level_of_detail: How detailed the agent responses should be (e.g., 'concise', 'moderate', 'comprehensive')
+    - industry: The industry the agent will operate in (e.g., 'healthcare', 'finance', 'retail')
+    - agent_name: Optional name for the agent (defaults to a any name if None)
+    
+    Returns:
+    - The prompt generated by Gemini based on the user's selections
+    """
+
+    
+    genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+    model = genai.GenerativeModel("gemini-2.0-flash-exp")
+    
+    gemini_instruction = f"""
+    Create a detailed and effective AI agent prompt based on the following specifications:
+    
+    AGENT SPECIFICATIONS:
+    - Name: {agent_name}
+    - Primary function: {agent_function}
+    - Communication tone: {agent_tone}
+    - Level of detail in responses: {level_of_detail}
+    - Industry specialization: {industry}
+    
+    The prompt should:
+    1. Begin with a clear definition of the agent's identity and role
+    2. Include specific instructions on how the agent should communicate based on the specified tone
+    3. Provide guidance on the appropriate level of detail for responses
+    4. Include industry-specific knowledge, terminology, and best practices
+    5. Outline any limitations or boundaries for the agent
+    6. Include instructions for handling uncertainty or questions outside its scope
+    
+    Format the prompt as a comprehensive instruction set that could be directly used with an LLM.
+    ** IMPORTANT **: Return only the prompt text, formatted cleanly with appropriate sections and structure.
+    """
+    
+    try:
+        result = model.generate_content(gemini_instruction)
+        return result.text
+    
+    except Exception as e:
+        fallback_prompt = f"""You are an AI agent named {agent_name} specializing in {industry}.
+
+        Your primary function is to provide {agent_function} assistance. 
+        You should maintain a {agent_tone} tone in your communications.
+        When responding to queries, provide {level_of_detail} level of detail.
+
+        Always introduce yourself as {agent_name} at the beginning of conversations.
+        If you don't know something, acknowledge it rather than providing incorrect information.
+        """
+        return fallback_prompt
+    
+async def send_request(url, data):
+    """Sends an async HTTP request with domain validation."""
+    if not url:
+        logger.error("Invalid URL: URL is None or empty")
+        return {"status": "error", "message": "Invalid URL"}
+    
+    headers = {"Content-Type": "application/json"}
+    async with aiohttp.ClientSession() as session:
+        try:
+            logger.info(f"Sending request to {url} with data: {data}")
+            async with session.post(url, json=data, headers=headers) as response:
+                if response.status == 404:
+                    return {"status": "error", "message": "Domain not found (404)"}
+                elif response.status >= 500:
+                    return {"status": "error", "message": "Server error, try again later"}
+                
+                return await response.json()
+        
+        except ClientConnectorError:
+            logger.error(f"Domain not found or unreachable: {url}")
+            return {"status": "error", "message": "Domain not found or unreachable"}
+        
+        except Exception as e:
+            logger.exception(f"Error sending request: {e}")
+            return {"status": "error", "message": f"Request failed: {str(e)}"}
+
+
+
+def generate_summary(transcript):
+    """
+    Generates a summary from an audio file by first transcribing it and then summarizing the transcript.
+    
+    Args:
+        audio_file_path (str): Path to the audio file
+        
+    Returns:
+        dict: Dictionary containing status and either summary or error message
+    """
+    try:
+            
+        # Initialize Gemini model for summarization
+        genai.configure(api_key=os.getenv('GOOGLE_API_KEY'))
+        model = genai.GenerativeModel('gemini-1.5-pro-latest')
+
+        
+        # Prompt for summarization
+        prompt = f"""Please provide a concise summary of the following transcript:
+        
+        {transcript}
+        
+        Focus on the key points and main ideas. Keep the summary clear and brief."""
+        
+        # Generate summary
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.3,
+                "max_output_tokens": 500
+            }
+        )
+        
+        summary = response.text.strip()
+        
+        return summary
+        
+    except Exception as e:
+        logger.exception(f"Error generating summary: {e}")
+        return {
+            "status": "error", 
+            "message": f"Failed to generate summary: {str(e)}"
+        }
+
+
+async def save_conversation( transcript: list, call_id: str):
+
+    logger.info(f"call_id: {call_id}")
+    try:
+        # Ensure audio_model is retrieved within a session
+        audio_model = AudioRecordings.get_by_call_id(call_id)
+
+        if not audio_model:
+            logger.error(f"No AudioRecordings found for call_id: {call_id}")
+            return None
+        summary = generate_summary(transcript)  # No need for await
+
+        conversation = ConversationModel.create(
+            audio_recording_id=audio_model.id,
+            transcript=transcript,
+            summary=summary  # Ensure summary is passed properly
+        )
+        logger.info("Conversation saved")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error saving conversation: {e}")
+        return None
+
+    
+def is_valid_url(url: str) -> bool:
+    try:
+        result = urlparse(url)
+        return all([result.scheme in ("https"), result.netloc])
+    except Exception:
+        return False
+
+def get_logged_in_user(request: Request):
+    user = request.session.get("user")
+    if not user or not user.get("is_authenticated"):
+        return None
+    return user
+
+
+# OTP Helper Functions
+import random
+import string
+import re
+from datetime import timedelta
+
+def generate_otp():
+    """Generate a 6-digit OTP"""
+    return ''.join(random.choices(string.digits, k=6))
+
+def is_email(text: str) -> bool:
+    """Check if text is an email"""
+    pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(pattern, text) is not None
+
+def is_phone(text: str) -> bool:
+    """Check if text is a phone number"""
+    cleaned = re.sub(r'[\s\-\(\)]', '', text)
+    pattern = r'^\+?[1-9]\d{9,14}$'
+    return re.match(pattern, cleaned) is not None
+
+def normalize_phone(phone: str) -> str:
+    """Remove spaces and formatting from phone"""
+    return re.sub(r'[\s\-\(\)]', '', phone)
+
+async def send_otp_email(email: str, otp: str):
+    """Send OTP via email"""
+    try:
+        from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+        
+        conf = ConnectionConfig(
+            MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+            MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
+            MAIL_FROM=os.getenv("MAIL_FROM"),
+            MAIL_PORT=587,
+            MAIL_SERVER="smtp.gmail.com",
+            MAIL_STARTTLS=True,
+            MAIL_SSL_TLS=False,
+            USE_CREDENTIALS=True
+        )
+        
+        html = f"""
+        <div style="font-family: Arial; max-width: 600px; margin: 0 auto; padding: 20px;">
+            <h2>Your Verification Code</h2>
+            <p>Use this code to complete your login:</p>
+            <div style="background: #f5f5f5; padding: 15px; text-align: center; font-size: 32px; 
+                        font-weight: bold; letter-spacing: 5px; margin: 20px 0;">
+                {otp}
+            </div>
+            <p style="color: #666;">This code expires in 10 minutes.</p>
+        </div>
+        """
+        
+        message = MessageSchema(
+            subject="Your Login Code",
+            recipients=[email],
+            body=html,
+            subtype=MessageType.html
+        )
+        
+        fm = FastMail(conf)
+        await fm.send_message(message)
+        return True
+    except Exception as e:
+        logger.error(f"Email send failed: {e}")
+        return False
+
+def send_otp_sms(phone: str, otp: str):
+    """Send OTP via SMS"""
+    try:
+        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
+        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
+        twilio_phone = os.getenv("TWILIO_PHONE_NUMBER")
+        
+        if not all([account_sid, auth_token, twilio_phone]):
+            logger.error("Twilio not configured")
+            return False
+        
+        client = Client(account_sid, auth_token)
+        message = client.messages.create(
+            body=f"Your verification code is: {otp}\\n\\nExpires in 10 minutes.",
+            from_=twilio_phone,
+            to=phone
+        )
+        return True
+    except Exception as e:
+        logger.error(f"SMS send failed: {e}")
+        return False
