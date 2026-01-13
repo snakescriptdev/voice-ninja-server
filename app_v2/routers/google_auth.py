@@ -12,9 +12,10 @@ import requests
 from fastapi import APIRouter, HTTPException, Request
 from fastapi_sqlalchemy import db
 
-from app.core import logger
-from app.databases.models import UserModel, OAuthProviderModel
-from app.utils.jwt_utils import create_access_token, create_refresh_token
+from app_v2.core.logger import setup_logger
+logger = setup_logger(__name__)
+from app_v2.databases.models import UserModel, OAuthProviderModel
+from app_v2.utils.jwt_utils import create_access_token, create_refresh_token
 
 from app_v2.constants import (
     STATUS_SUCCESS,
