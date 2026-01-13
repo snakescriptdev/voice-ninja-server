@@ -23,8 +23,9 @@ from starlette.responses import Response
 import os
 from config import MEDIA_DIR 
 from app.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
+from app_v2.routers import otp_router, health_router, google_auth_router
 
-app = FastAPI(title="Voice Ninja + ElevenLabs Integration", version="2.0.0")
+app = FastAPI(title="Voice Ninja API Documentation", version="2.0.0")
 
 # Ensure the media directory exists
 os.makedirs(MEDIA_DIR, exist_ok=True)
@@ -70,23 +71,28 @@ app.add_middleware(SessionMiddleware, secret_key=VoiceSettings.SECRET_KEY)
 
 security = HTTPBasic()
 
-# Include Voice Ninja app routers (existing)
-app.include_router(APISRouter, prefix="")
-app.include_router(WebRouter, prefix="")
+# Include Voice Ninja app routers (existing) - excluded from OpenAPI docs
+app.include_router(APISRouter, prefix="", include_in_schema=False)
+app.include_router(WebRouter, prefix="", include_in_schema=False)
 # app.include_router(WebSocketRouter, prefix="/ws")
-app.include_router(ElevenLabsWebSocketRouter, prefix="/ws")
-app.include_router(AdminRouter, prefix="/admin")
+app.include_router(ElevenLabsWebSocketRouter, prefix="/ws", include_in_schema=False)
+app.include_router(AdminRouter, prefix="/admin", include_in_schema=False)
 
-# Include ElevenLabs Integration app routers (new)
-app.include_router(ElevenLabsAPIRouter, prefix="/elevenlabs/api/v1")
-app.include_router(ElevenLabsWebRouter, prefix="/elevenlabs/web/v1")
+# Include ElevenLabs Integration app routers (new) - excluded from OpenAPI docs
+app.include_router(ElevenLabsAPIRouter, prefix="/elevenlabs/api/v1", include_in_schema=False)
+app.include_router(ElevenLabsWebRouter, prefix="/elevenlabs/web/v1", include_in_schema=False)
 # Live browser streaming WS
-app.include_router(ElevenLabsLiveRouter, prefix="")
+app.include_router(ElevenLabsLiveRouter, prefix="", include_in_schema=False)
 # Recording management API
-app.include_router(ElevenLabsRecordingRouter, prefix="")
+app.include_router(ElevenLabsRecordingRouter, prefix="", include_in_schema=False)
 # Web integration (preview system) - using separate preview path to avoid conflicts
-app.include_router(ElevenLabsWebIntegrationRouter, prefix="/elevenlabs/preview/v1")
+app.include_router(ElevenLabsWebIntegrationRouter, prefix="/elevenlabs/preview/v1", include_in_schema=False)
 # app.include_router(ElevenLabsAdminRouter, prefix="/elevenlabs/admin")
+
+# Include app_v2 routers (new refactored API) - shown in OpenAPI docs
+app.include_router(otp_router)
+app.include_router(health_router)
+app.include_router(google_auth_router)
 
 @app.on_event("startup")
 async def startup_event():
