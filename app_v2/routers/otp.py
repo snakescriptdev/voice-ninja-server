@@ -10,9 +10,10 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, HTTPException, status
 from fastapi_sqlalchemy import db
 
-from app.core import logger
-from app.databases.models import UserModel, OAuthProviderModel
-from app.utils.helper import (
+from app_v2.core.logger import setup_logger
+logger = setup_logger(__name__)
+from app_v2.databases.models import UserModel, OAuthProviderModel
+from app_v2.utils.otp_utils import (
     generate_otp,
     is_email,
     is_phone,
@@ -20,7 +21,7 @@ from app.utils.helper import (
     send_otp_email,
     send_otp_sms,
 )
-from app.utils.jwt_utils import (
+from app_v2.utils.jwt_utils import (
     create_access_token,
     create_refresh_token,
 )

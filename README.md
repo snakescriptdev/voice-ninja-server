@@ -29,6 +29,19 @@ uvicorn main:app --reload
 
 The API documentation will be available at `http://localhost:8000/docs`.
 
+## Database Migrations
+Manage database schema changes with Alembic:
+```bash
+# Create a new migration revision
+python manage_db.py makemigrations -m "description of changes"
+
+# Apply pending migrations
+python manage_db.py migrate
+
+# View migration status
+python manage_db.py show
+```
+
 ## Project Structure
 
 - `app_v2/`: Contains the new refactored API endpoints, schemas, and utilities.
