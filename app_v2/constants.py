@@ -37,6 +37,9 @@ MSG_INVALID_OTP = 'Invalid OTP'
 MSG_OTP_EXPIRED = 'OTP expired'
 MSG_LOGIN_SUCCESSFUL = 'Login successful'
 MSG_FAILED_TO_SEND_OTP_VIA_METHOD = 'Failed to send OTP via {method}'
+MSG_OTP_RESENT_EMAIL = 'OTP resent to your email'
+MSG_OTP_RESENT_SMS = 'OTP resent to your SMS'
+MSG_NO_ACTIVE_OTP = 'No active OTP found. Please request a new OTP.'
 
 # Register Messages
 MSG_REGISTRATION_SUCCESSFUL = 'User registered successfully'
