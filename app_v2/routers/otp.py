@@ -68,7 +68,7 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
 
 @router.post(
     '/login',
-    response_model=Union[RequestOTPResponse, ErrorResponse],
+    response_model=RequestOTPResponse,
     status_code=status.HTTP_200_OK,
     summary='Request OTP',
     description='Send OTP to user email or phone number for authentication',
@@ -112,7 +112,7 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
         }
     }
 )
-async def request_otp(request: RequestOTPRequest) -> Union[RequestOTPResponse, ErrorResponse]:
+async def request_otp(request: RequestOTPRequest) -> RequestOTPResponse:
     """Request OTP to be sent to email or phone.
 
     This endpoint validates the username (email or phone), generates an OTP,
@@ -133,10 +133,13 @@ async def request_otp(request: RequestOTPRequest) -> Union[RequestOTPResponse, E
         is_phone_login = is_phone(username)
 
         if not is_email_login and not is_phone_login:
-            return ErrorResponse(
-                status=STATUS_FAILED,
-                status_code=HTTP_400_BAD_REQUEST,
-                message=MSG_INVALID_EMAIL_OR_PHONE
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_400_BAD_REQUEST,
+                    "message": MSG_INVALID_EMAIL_OR_PHONE
+                }
             )
 
         # Normalize phone if needed
@@ -163,10 +166,13 @@ async def request_otp(request: RequestOTPRequest) -> Union[RequestOTPResponse, E
             if is_email_login:
                 oauth_record = OAuthProviderModel.get_by_provider_and_email('google', username)
                 if oauth_record:
-                    return ErrorResponse(
-                        status=STATUS_FAILED,
-                        status_code=HTTP_400_BAD_REQUEST,
-                        message=MSG_USER_SIGNED_UP_WITH_GOOGLE
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "status": STATUS_FAILED,
+                            "status_code": HTTP_400_BAD_REQUEST,
+                            "message": MSG_USER_SIGNED_UP_WITH_GOOGLE
+                        }
                     )
 
         # Generate OTP
@@ -193,10 +199,13 @@ async def request_otp(request: RequestOTPRequest) -> Union[RequestOTPResponse, E
         if not success:
             error_message = MSG_FAILED_TO_SEND_OTP_VIA_METHOD.format(method=method)
             logger.error(f'Failed to send OTP via {method} for user: {username}')
-            return ErrorResponse(
-                status=STATUS_FAILED,
-                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                message=error_message
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
+                    "message": error_message
+                }
             )
 
         return RequestOTPResponse(
@@ -206,18 +215,23 @@ async def request_otp(request: RequestOTPRequest) -> Union[RequestOTPResponse, E
             data={'method': method}
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f'Error in request_otp: {e}', exc_info=True)
-        return ErrorResponse(
-            status=STATUS_FAILED,
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            message=MSG_FAILED_TO_SEND_OTP
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": STATUS_FAILED,
+                "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": MSG_FAILED_TO_SEND_OTP
+            }
         )
 
 
 @router.post(
     '/verify-otp',
-    response_model=Union[VerifyOTPResponse, ErrorResponse],
+    response_model=VerifyOTPResponse,
     status_code=status.HTTP_200_OK,
     summary='Verify OTP',
     description='Verify OTP and complete login process',
@@ -241,18 +255,6 @@ async def request_otp(request: RequestOTPRequest) -> Union[RequestOTPResponse, E
                 }
             }
         },
-        400: {
-            'description': 'Bad request - missing required fields',
-            'content': {
-                'application/json': {
-                    'example': {
-                        'status': 'failed',
-                        'status_code': 400,
-                        'message': 'Username and OTP required'
-                    }
-                }
-            }
-        },
         401: {
             'description': 'Unauthorized - invalid or expired OTP',
             'content': {
@@ -261,6 +263,18 @@ async def request_otp(request: RequestOTPRequest) -> Union[RequestOTPResponse, E
                         'status': 'failed',
                         'status_code': 401,
                         'message': 'Invalid OTP'
+                    }
+                }
+            }
+        },
+        404: {
+            'description': 'User not found',
+            'content': {
+                'application/json': {
+                    'example': {
+                        'status': 'failed',
+                        'status_code': 404,
+                        'message': 'User not found'
                     }
                 }
             }
@@ -282,7 +296,7 @@ async def request_otp(request: RequestOTPRequest) -> Union[RequestOTPResponse, E
 async def verify_otp(
     request: VerifyOTPRequest,
     http_request: Request
-) -> Union[VerifyOTPResponse, ErrorResponse]:
+) -> VerifyOTPResponse:
     """Verify OTP and complete login.
 
     This endpoint verifies the OTP, creates authentication tokens,
@@ -307,26 +321,44 @@ async def verify_otp(
         # Get user
         user = UserModel.get_by_username(username)
         if not user:
-            return ErrorResponse(
-                status=STATUS_FAILED,
-                status_code=HTTP_401_UNAUTHORIZED,
-                message=MSG_USER_NOT_FOUND
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_401_UNAUTHORIZED,
+                    "message": MSG_USER_NOT_FOUND
+                }
             )
 
         # Verify OTP
-        if not user.otp_code or user.otp_code != otp:
-            return ErrorResponse(
-                status=STATUS_FAILED,
-                status_code=HTTP_401_UNAUTHORIZED,
-                message=MSG_INVALID_OTP
+        if not user.otp_code:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_401_UNAUTHORIZED,
+                    "message": "OTP not found. Please request OTP first."
+                }
+            )
+        elif user.otp_code != otp:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_401_UNAUTHORIZED,
+                    "message": "Wrong OTP. Please check and try again."
+                }
             )
 
         # Check if OTP expired
         if not user.otp_expires_at or datetime.now() > user.otp_expires_at:
-            return ErrorResponse(
-                status=STATUS_FAILED,
-                status_code=HTTP_401_UNAUTHORIZED,
-                message=MSG_OTP_EXPIRED
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_401_UNAUTHORIZED,
+                    "message": MSG_OTP_EXPIRED
+                }
             )
 
         # OTP is valid - clear it and verify user
@@ -372,18 +404,23 @@ async def verify_otp(
             }
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f'Error in verify_otp: {e}', exc_info=True)
-        return ErrorResponse(
-            status=STATUS_FAILED,
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            message='Login failed'
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": STATUS_FAILED,
+                "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": 'Login failed'
+            }
         )
 
 
 @router.post(
     '/resend-otp',
-    response_model=Union[RequestOTPResponse, ErrorResponse],
+    response_model=RequestOTPResponse,
     status_code=status.HTTP_200_OK,
     summary='Resend OTP',
     description='Resend OTP to user email or phone number',
@@ -439,7 +476,7 @@ async def verify_otp(
         }
     }
 )
-async def resend_otp(request: ResendOTPRequest) -> Union[RequestOTPResponse, ErrorResponse]:
+async def resend_otp(request: ResendOTPRequest) -> RequestOTPResponse:
     """Resend OTP to user email or phone.
 
     This endpoint validates the username, checks for an existing user with
@@ -460,10 +497,13 @@ async def resend_otp(request: ResendOTPRequest) -> Union[RequestOTPResponse, Err
         is_phone_login = is_phone(username)
 
         if not is_email_login and not is_phone_login:
-            return ErrorResponse(
-                status=STATUS_FAILED,
-                status_code=HTTP_400_BAD_REQUEST,
-                message=MSG_INVALID_EMAIL_OR_PHONE
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_400_BAD_REQUEST,
+                    "message": MSG_INVALID_EMAIL_OR_PHONE
+                }
             )
 
         # Normalize phone if needed
@@ -473,28 +513,37 @@ async def resend_otp(request: ResendOTPRequest) -> Union[RequestOTPResponse, Err
         # Get user
         user = UserModel.get_by_username(username)
         if not user:
-            return ErrorResponse(
-                status=STATUS_FAILED,
-                status_code=HTTP_404_NOT_FOUND,
-                message=MSG_USER_NOT_FOUND
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_404_NOT_FOUND,
+                    "message": MSG_USER_NOT_FOUND
+                }
             )
 
         # Check if user has an active OTP (not expired)
         if not user.otp_code or not user.otp_expires_at or datetime.now() > user.otp_expires_at:
-            return ErrorResponse(
-                status=STATUS_FAILED,
-                status_code=HTTP_400_BAD_REQUEST,
-                message=MSG_NO_ACTIVE_OTP
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_400_BAD_REQUEST,
+                    "message": MSG_NO_ACTIVE_OTP
+                }
             )
 
         # Check if user signed up with Google (only for email login)
         if is_email_login:
             oauth_record = OAuthProviderModel.get_by_provider_and_email('google', username)
             if oauth_record:
-                return ErrorResponse(
-                    status=STATUS_FAILED,
-                    status_code=HTTP_400_BAD_REQUEST,
-                    message=MSG_USER_SIGNED_UP_WITH_GOOGLE
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail={
+                        "status": STATUS_FAILED,
+                        "status_code": HTTP_400_BAD_REQUEST,
+                        "message": MSG_USER_SIGNED_UP_WITH_GOOGLE
+                    }
                 )
 
         # Generate new OTP
@@ -522,8 +571,12 @@ async def resend_otp(request: ResendOTPRequest) -> Union[RequestOTPResponse, Err
             error_message = MSG_FAILED_TO_SEND_OTP_VIA_METHOD.format(method=method)
             logger.error(f'Failed to resend OTP via {method} for user: {username}')
             raise HTTPException(
-                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=error_message
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
+                    "message": error_message
+                }
             )
 
         return RequestOTPResponse(
@@ -533,11 +586,16 @@ async def resend_otp(request: ResendOTPRequest) -> Union[RequestOTPResponse, Err
             data={'method': method}
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f'Error in resend_otp: {e}', exc_info=True)
-        return ErrorResponse(
-            status=STATUS_FAILED,
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            message=MSG_FAILED_TO_SEND_OTP
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": STATUS_FAILED,
+                "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": MSG_FAILED_TO_SEND_OTP
+            }
         )
 
