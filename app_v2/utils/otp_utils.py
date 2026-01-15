@@ -64,6 +64,7 @@ async def send_otp_email(email: str, otp: str):
         
         fm = FastMail(conf)
         await fm.send_message(message)
+        logger.info(f"Email sent successfully to {email}")
         return True
     except Exception as e:
         logger.error(f"Email send failed: {e}")
@@ -76,8 +77,10 @@ def send_otp_sms(phone: str, otp: str):
         auth_token = os.getenv("TWILIO_AUTH_TOKEN")
         twilio_phone = os.getenv("TWILIO_PHONE_NUMBER")
         
+        logger.info(f"Attempting to send SMS to {phone} with SID: {account_sid[:10]}...")
+        
         if not all([account_sid, auth_token, twilio_phone]):
-            logger.error("Twilio not configured")
+            logger.error("Twilio not configured - missing credentials")
             return False
         
         client = Client(account_sid, auth_token)
@@ -86,7 +89,8 @@ def send_otp_sms(phone: str, otp: str):
             from_=twilio_phone,
             to=phone
         )
+        logger.info(f"SMS sent successfully to {phone}, Message SID: {message.sid}")
         return True
     except Exception as e:
-        logger.error(f"SMS send failed: {e}")
+        logger.error(f"SMS send failed to {phone}: {str(e)}")
         return False
