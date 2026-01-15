@@ -1,15 +1,16 @@
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_sqlalchemy import DBSessionMiddleware, db
 from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
-import os
-from dotenv import load_dotenv
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
 from app_v2.routers import otp_router, health_router, google_auth_router
-
-# Load environment variables
-load_dotenv()
 
 app = FastAPI(title="Voice Ninja V2 API", version="2.0.0")
 
