@@ -25,6 +25,27 @@ class RequestOTPRequest(BaseModel):
         return v.strip()
 
 
+class ResendOTPRequest(BaseModel):
+    """Request schema for resending OTP.
+
+    Attributes:
+        username: Email address or phone number for OTP delivery.
+    """
+
+    username: str = Field(
+        ...,
+        description='Email address or phone number',
+        min_length=1,
+        examples=['user@example.com', '+1234567890']
+    )
+
+    @field_validator('username')
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        """Strip whitespace from username."""
+        return v.strip()
+
+
 class OTPMethodInfo(BaseModel):
     """Information about OTP delivery method.
 
@@ -120,5 +141,24 @@ class VerifyOTPResponse(BaseModel):
     data: dict = Field(
         default_factory=dict,
         description='Response data containing access_token, refresh_token, and user'
+    )
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response schema.
+
+    Attributes:
+        status: Response status (always 'failed' for errors).
+        status_code: HTTP status code.
+        message: Error message.
+        data: Optional additional error data.
+    """
+
+    status: str = Field(..., description='Response status', examples=['failed'])
+    status_code: int = Field(..., description='HTTP status code', examples=[400])
+    message: str = Field(..., description='Error message')
+    data: Optional[dict] = Field(
+        default=None,
+        description='Optional additional error data'
     )
 

@@ -7,6 +7,7 @@ This module provides endpoints for Google OAuth authentication:
 
 import os
 from datetime import datetime
+from typing import Union
 
 import requests
 from fastapi import APIRouter, HTTPException, Request
@@ -28,8 +29,9 @@ from app_v2.schemas.google_auth import (
     GoogleLoginResponse,
     GoogleCallbackResponse,
 )
+from app_v2.schemas.otp import ErrorResponse
 
-router = APIRouter(prefix='/api/v2', tags=['Authentication'])
+router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
 
 # Google OAuth configuration
 GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
@@ -42,12 +44,12 @@ GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v1/userinfo'
 
 
 @router.get(
-    '/auth/google/login',
-    response_model=GoogleLoginResponse,
+    '/google/login',
+    response_model=Union[GoogleLoginResponse, ErrorResponse],
     summary='Login with Google',
     description='Get Google OAuth authorization URL to redirect user for authentication.',
 )
-async def google_login() -> GoogleLoginResponse:
+async def google_login() -> Union[GoogleLoginResponse, ErrorResponse]:
     """Generate Google OAuth authorization URL.
     
     Returns:
@@ -72,19 +74,20 @@ async def google_login() -> GoogleLoginResponse:
     
     except Exception as e:
         logger.error(f'Error generating Google auth URL: {e}', exc_info=True)
-        raise HTTPException(
+        return ErrorResponse(
+            status=STATUS_FAILED,
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Failed to generate authorization URL'
+            message='Failed to generate authorization URL'
         )
 
 
 @router.get(
-    '/auth/google/callback',
-    response_model=GoogleCallbackResponse,
+    '/google/callback',
+    response_model=Union[GoogleCallbackResponse, ErrorResponse],
     summary='Google OAuth Callback',
     description='Handle Google OAuth callback and authenticate user.',
 )
-async def google_callback(code: str, http_request: Request) -> GoogleCallbackResponse:
+async def google_callback(code: str, http_request: Request) -> Union[GoogleCallbackResponse, ErrorResponse]:
     """Handle Google OAuth callback.
     
     This endpoint:
@@ -98,10 +101,8 @@ async def google_callback(code: str, http_request: Request) -> GoogleCallbackRes
         http_request: FastAPI request object
         
     Returns:
-        GoogleCallbackResponse with tokens and user info.
-        
-    Raises:
-        HTTPException: If authentication fails or user already exists with different method.
+        GoogleCallbackResponse with tokens and user info on success,
+        ErrorResponse on failure.
     """
     try:
         # Log the code received for debugging
@@ -124,17 +125,19 @@ async def google_callback(code: str, http_request: Request) -> GoogleCallbackRes
             
             # Return detailed error message
             error_message = error_detail.get('error_description', 'Failed to get access token from Google')
-            raise HTTPException(
+            return ErrorResponse(
+                status=STATUS_FAILED,
                 status_code=HTTP_400_BAD_REQUEST,
-                detail=f'Google OAuth error: {error_message}'
+                message=f'Google OAuth error: {error_message}'
             )
         
         access_token = token_response.json().get('access_token')
         
         if not access_token:
-            raise HTTPException(
+            return ErrorResponse(
+                status=STATUS_FAILED,
                 status_code=HTTP_400_BAD_REQUEST,
-                detail='No access token received from Google'
+                message='No access token received from Google'
             )
         
         # Get user info from Google
@@ -145,9 +148,10 @@ async def google_callback(code: str, http_request: Request) -> GoogleCallbackRes
         
         if userinfo_response.status_code != 200:
             logger.error(f'Google userinfo error: {userinfo_response.text}')
-            raise HTTPException(
+            return ErrorResponse(
+                status=STATUS_FAILED,
                 status_code=HTTP_400_BAD_REQUEST,
-                detail='Failed to get user info from Google'
+                message='Failed to get user info from Google'
             )
         
         google_user = userinfo_response.json()
@@ -156,9 +160,10 @@ async def google_callback(code: str, http_request: Request) -> GoogleCallbackRes
         google_name = google_user.get('name', '')
         
         if not google_email or not google_user_id:
-            raise HTTPException(
+            return ErrorResponse(
+                status=STATUS_FAILED,
                 status_code=HTTP_400_BAD_REQUEST,
-                detail='Invalid user info from Google'
+                message='Invalid user info from Google'
             )
         
         # Check if OAuth provider record exists
@@ -174,9 +179,10 @@ async def google_callback(code: str, http_request: Request) -> GoogleCallbackRes
             
             if existing_user:
                 # User exists but signed up with OTP, can't use Google
-                raise HTTPException(
+                return ErrorResponse(
+                    status=STATUS_FAILED,
                     status_code=HTTP_400_BAD_REQUEST,
-                    detail='User already exists with this email. Please login using OTP instead.'
+                    message='User already exists with this email. Please login using OTP instead.'
                 )
             
             # Create new user with Google
@@ -240,11 +246,10 @@ async def google_callback(code: str, http_request: Request) -> GoogleCallbackRes
             }
         )
     
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f'Error in Google callback: {e}', exc_info=True)
-        raise HTTPException(
+        return ErrorResponse(
+            status=STATUS_FAILED,
             status_code=HTTP_500_INTERNAL_SERVER_ERROR,
-            detail='Google authentication failed'
+            message='Google authentication failed'
         )
