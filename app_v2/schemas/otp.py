@@ -115,6 +115,9 @@ class UserInfo(BaseModel):
         email: User email address.
         phone: User phone number.
         name: User name.
+        first_name: User first name.
+        last_name: User last name.
+        address: User address.
         role: User role (admin or user).
     """
 
@@ -122,6 +125,9 @@ class UserInfo(BaseModel):
     email: Optional[str] = Field(None, description='User email address')
     phone: Optional[str] = Field(None, description='User phone number')
     name: Optional[str] = Field(None, description='User name')
+    first_name: Optional[str] = Field(None, description='User first name')
+    last_name: Optional[str] = Field(None, description='User last name')
+    address: Optional[str] = Field(None, description='User address')
     role: str = Field(..., description='User role', examples=['admin', 'user'])
 
 

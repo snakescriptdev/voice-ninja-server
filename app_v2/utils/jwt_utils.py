@@ -1,6 +1,7 @@
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
 from fastapi import HTTPException, Header, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 import os
 
 from app_v2.core.config import VoiceSettings
@@ -42,16 +43,26 @@ def revoke_refresh_token(token: str):
     # In production, you'd store revoked tokens in Redis/database
     pass
 
-def get_current_user(authorization: str = Header(None)):
-    """Get current user from token"""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Missing or invalid token")
+# Security scheme
+security = HTTPBearer()
 
-    token = authorization.split(" ")[1]
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get current user from token"""
+    token = credentials.credentials
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "access":
             raise HTTPException(status_code=401, detail="Invalid token type")
-        return payload
+        
+        user_id = payload.get("user_id")
+        if not user_id:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        
+        from app_v2.databases.models import UserModel
+        user = UserModel.get_by_id(user_id)
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        
+        return user
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
