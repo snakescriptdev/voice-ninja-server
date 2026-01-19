@@ -6,13 +6,56 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer
 from fastapi_sqlalchemy import DBSessionMiddleware, db
 from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
-from app_v2.routers import otp_router, health_router, google_auth_router
+from app_v2.routers import otp_router, health_router, google_auth_router, profile_router
 
 app = FastAPI(title="Voice Ninja V2 API", version="2.0.0")
+
+# Security scheme for Bearer token
+security = HTTPBearer()
+
+# Custom OpenAPI function to add security scheme
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    # Get the default OpenAPI schema
+    from fastapi.openapi.utils import get_openapi
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        openapi_version=app.openapi_version,
+        description=app.description,
+        routes=app.routes,
+    )
+    # Add security scheme
+    if "components" not in openapi_schema:
+        openapi_schema["components"] = {}
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    }
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+app.openapi = custom_openapi
+
+# Add security scheme to OpenAPI
+app.openapi_components = {
+    "securitySchemes": {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    }
+}
 
 # Add Middlewares
 app.add_middleware(
@@ -35,6 +78,7 @@ app.add_middleware(SessionMiddleware, secret_key=VoiceSettings.SECRET_KEY)
 app.include_router(otp_router)
 app.include_router(health_router)
 app.include_router(google_auth_router)
+app.include_router(profile_router)
 
 @app.get("/", tags=["System"])
 async def root():
