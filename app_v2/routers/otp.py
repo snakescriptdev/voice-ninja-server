@@ -397,10 +397,16 @@ async def verify_otp(
             data={
                 'access_token': access_token,
                 'refresh_token': refresh_token,
-                'id': user.id,
-                'email': user.email,
-                'phone': user.phone,
-                'role': 'admin' if user.is_admin else 'user'
+                'user': {
+                    'id': user.id,
+                    'email': user.email,
+                    'phone': user.phone,
+                    'name': user.name,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'address': user.address,
+                    'role': 'admin' if user.is_admin else 'user'
+                }
             }
         )
 
