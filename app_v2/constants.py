@@ -49,6 +49,11 @@ MSG_INVALID_EMAIL_FORMAT = 'Invalid email format'
 MSG_NAME_REQUIRED = 'Name is required'
 MSG_REGISTRATION_FAILED = 'Registration failed'
 
+# Profile Messages
+MSG_PROFILE_UPDATED = 'Profile updated successfully'
+MSG_PROFILE_RETRIEVED = 'Profile retrieved successfully'
+MSG_INVALID_DATA = 'Invalid data provided'
+
 # OTP Configuration
 OTP_EXPIRY_MINUTES = 10
 OTP_LENGTH = 6
