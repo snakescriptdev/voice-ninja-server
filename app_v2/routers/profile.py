@@ -6,14 +6,14 @@ This module provides endpoints for user profile management:
 """
 
 from fastapi import APIRouter, Request, HTTPException, status, Depends
-from fastapi.security import HTTPBearer
 from fastapi_sqlalchemy import db
+from pydantic import ValidationError
 
 from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
 
-from app_v2.databases.models import UserModel
-from app_v2.utils.jwt_utils import get_current_user
+from app_v2.databases.models import UnifiedAuthModel
+from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.schemas.profile import (
     ProfileRequest,
     ProfileResponse,
@@ -110,14 +110,14 @@ async def get_profile(current_user = Depends(get_current_user)):
             "status": STATUS_SUCCESS,
             "status_code": HTTP_200_OK,
             "message": MSG_PROFILE_RETRIEVED,
-            "data": {"profile": {
+            "profile": {
                 "id": current_user.id,
                 "email": current_user.email,
                 "phone": current_user.phone,
                 "first_name": current_user.first_name,
                 "last_name": current_user.last_name,
                 "address": current_user.address
-            }}
+            }
         }
     except Exception as e:
         logger.error(f"Error retrieving profile: {str(e)}")
@@ -164,10 +164,55 @@ async def get_profile(current_user = Depends(get_current_user)):
             'description': 'Bad request - invalid data',
             'content': {
                 'application/json': {
-                    'example': {
-                        'status': 'failed',
-                        'status_code': 400,
-                        'message': 'First name is required if other fields are provided'
+                    'examples': {
+                        'first_name_required': {
+                            'summary': 'First name required',
+                            'value': {
+                                'status': 'failed',
+                                'status_code': 400,
+                                'message': 'First name is required if other fields are provided'
+                            }
+                        },
+                        'invalid_phone': {
+                            'summary': 'Invalid phone number',
+                            'value': {
+                                'status': 'failed',
+                                'status_code': 400,
+                                'message': 'phone: Phone number must be exactly 10 digits'
+                            }
+                        },
+                        'phone_not_digits': {
+                            'summary': 'Phone contains non-digits',
+                            'value': {
+                                'status': 'failed',
+                                'status_code': 400,
+                                'message': 'phone: Phone number must contain only digits'
+                            }
+                        },
+                        'invalid_name': {
+                            'summary': 'Name contains numbers',
+                            'value': {
+                                'status': 'failed',
+                                'status_code': 400,
+                                'message': 'first_name: Name must contain only letters, spaces, hyphens, and apostrophes'
+                            }
+                        },
+                        'name_too_short': {
+                            'summary': 'Name too short',
+                            'value': {
+                                'status': 'failed',
+                                'status_code': 400,
+                                'message': 'first_name: Name must be at least 2 characters long'
+                            }
+                        },
+                        'name_too_long': {
+                            'summary': 'Name too long',
+                            'value': {
+                                'status': 'failed',
+                                'status_code': 400,
+                                'message': 'first_name: Name must not exceed 50 characters'
+                            }
+                        }
                     }
                 }
             }
@@ -201,8 +246,8 @@ async def get_profile(current_user = Depends(get_current_user)):
 )
 async def update_profile(
     request: ProfileRequest,
-    current_user: UserModel = Depends(get_current_user)
-) -> ProfileResponse:
+    current_user: UnifiedAuthModel = Depends(get_current_user)
+):
     """Update the current user's profile information.
 
     Args:
@@ -235,7 +280,7 @@ async def update_profile(
         if request.address is not None:
             update_data['address'] = request.address
 
-        updated_user = UserModel.update(current_user.id, **update_data)
+        updated_user = UnifiedAuthModel.update(current_user.id, **update_data)
         if not updated_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -250,18 +295,34 @@ async def update_profile(
             "status": STATUS_SUCCESS,
             "status_code": HTTP_200_OK,
             "message": MSG_PROFILE_UPDATED,
-            "data": {"profile": {
+            "profile": {
                 "id": updated_user.id,
                 "email": updated_user.email,
                 "phone": updated_user.phone,
                 "first_name": updated_user.first_name,
                 "last_name": updated_user.last_name,
                 "address": updated_user.address
-            }}
+            }
         }
 
     except HTTPException:
         raise
+    except ValidationError as e:
+        # Handle Pydantic validation errors
+        error_messages = []
+        for error in e.errors():
+            field = error['loc'][-1]
+            message = error['msg']
+            error_messages.append(f"{field}: {message}")
+        
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "status": STATUS_FAILED,
+                "status_code": HTTP_400_BAD_REQUEST,
+                "message": "; ".join(error_messages)
+            }
+        )
     except Exception as e:
         logger.error(f"Error updating profile: {str(e)}", exc_info=True)
         raise HTTPException(

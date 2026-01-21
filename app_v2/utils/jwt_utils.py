@@ -1,10 +1,29 @@
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
-from fastapi import HTTPException, Header, Depends
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from fastapi import HTTPException, Header, Depends, Request
+from fastapi.security import HTTPBearer as FastAPIHTTPBearer, HTTPAuthorizationCredentials
+from fastapi.security.http import HTTPAuthorizationCredentials
 import os
 
 from app_v2.core.config import VoiceSettings
+
+
+class HTTPBearer(FastAPIHTTPBearer):
+    """Custom HTTPBearer that returns structured error responses."""
+    
+    async def __call__(self, request: Request) -> HTTPAuthorizationCredentials:
+        try:
+            return await super().__call__(request)
+        except HTTPException as e:
+            # Convert the default "Not authenticated" error to structured format
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "message": "Not authenticated",
+                    "status": "failed",
+                    "status_code": 401
+                }
+            )
 
 SECRET_KEY = VoiceSettings.SECRET_KEY
 ALGORITHM = VoiceSettings.ALGORITHM
@@ -52,17 +71,45 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "access":
-            raise HTTPException(status_code=401, detail="Invalid token type")
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "message": "Invalid token type",
+                    "status": "failed",
+                    "status_code": 401
+                }
+            )
         
         user_id = payload.get("user_id")
         if not user_id:
-            raise HTTPException(status_code=401, detail="Invalid token")
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "message": "Invalid token",
+                    "status": "failed",
+                    "status_code": 401
+                }
+            )
         
-        from app_v2.databases.models import UserModel
-        user = UserModel.get_by_id(user_id)
+        from app_v2.databases.models import UnifiedAuthModel
+        user = UnifiedAuthModel.get_by_id(user_id)
         if not user:
-            raise HTTPException(status_code=401, detail="User not found")
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "message": "User not found",
+                    "status": "failed",
+                    "status_code": 401
+                }
+            )
         
         return user
     except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
+        raise HTTPException(
+            status_code=401,
+            detail={
+                "message": "Invalid or expired token",
+                "status": "failed",
+                "status_code": 401
+            }
+        )

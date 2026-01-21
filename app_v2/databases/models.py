@@ -104,6 +104,88 @@ class OAuthProviderModel(Base):
             db.session.refresh(oauth_provider)
             return oauth_provider
 
+class UnifiedAuthModel(Base):
+    """Unified authentication model that tracks all user authentication methods.
+    
+    This model allows users to sign in with either OTP or Google OAuth,
+    regardless of which method they used to initially sign up.
+    """
+    __tablename__ = "unified_auth"
+    
+    id = Column(Integer, primary_key=True)
+    email = Column(String, unique=True, nullable=False, index=True)
+    phone = Column(String, nullable=True, default="")
+    name = Column(String, nullable=True, default="")
+    first_name = Column(String, nullable=True, default="")
+    last_name = Column(String, nullable=True, default="")
+    address = Column(String, nullable=True, default="")
+    is_verified = Column(Boolean, default=False)
+    tokens = Column(Integer, default=0)
+    is_admin = Column(Boolean, default=False)
+    
+    # OTP authentication fields
+    has_otp_auth = Column(Boolean, default=False)
+    otp_code = Column(String, nullable=True, default="")
+    otp_expires_at = Column(DateTime, nullable=True)
+    
+    # Google OAuth fields
+    has_google_auth = Column(Boolean, default=False)
+    google_user_id = Column(String, nullable=True, default="")
+    
+    last_login = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    
+    @classmethod
+    def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.id == user_id).first()
+    
+    @classmethod
+    def get_by_email(cls, email: str) -> Optional["UnifiedAuthModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.email == email).first()
+    
+    @classmethod
+    def get_by_phone(cls, phone: str) -> Optional["UnifiedAuthModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.phone == phone).first()
+    
+    @classmethod
+    def get_by_username(cls, username: str) -> Optional["UnifiedAuthModel"]:
+        """Get user by email or phone."""
+        with db():
+            return db.session.query(cls).filter(
+                (cls.email == username) | (cls.phone == username)
+            ).first()
+    
+    @classmethod
+    def get_by_google_id(cls, google_user_id: str) -> Optional["UnifiedAuthModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.google_user_id == google_user_id).first()
+    
+    @classmethod
+    def create(cls, **kwargs) -> "UnifiedAuthModel":
+        with db():
+            user = cls(**kwargs)
+            db.session.add(user)
+            db.session.commit()
+            db.session.refresh(user)
+            return user
+    
+    @classmethod
+    def update(cls, user_id: int, **kwargs) -> Optional["UnifiedAuthModel"]:
+        with db():
+            user = db.session.query(cls).filter(cls.id == user_id).first()
+            if user:
+                for key, value in kwargs.items():
+                    if hasattr(user, key):
+                        setattr(user, key, value)
+                db.session.commit()
+                db.session.refresh(user)
+                return user
+            return None
+
 class AdminTokenModel(Base):
     __tablename__ = "admin_tokens"
     id = Column(Integer, primary_key=True)

@@ -15,7 +15,6 @@ router = APIRouter(prefix='/api/v2', tags=['Health'])
 
 @router.get(
     '/heartbeat',
-    response_model=HeartbeatResponse,
     status_code=status.HTTP_200_OK,
     summary='Heartbeat',
     description='Check if the API server is running and ready to receive requests',
@@ -35,7 +34,7 @@ router = APIRouter(prefix='/api/v2', tags=['Health'])
         }
     }
 )
-async def heartbeat() -> HeartbeatResponse:
+async def heartbeat():
     """Check if the API server is running.
 
     This endpoint provides a simple health check to verify that the API
@@ -45,10 +44,9 @@ async def heartbeat() -> HeartbeatResponse:
         HeartbeatResponse with server status information.
     """
     logger.info('Heartbeat endpoint called')
-    return HeartbeatResponse(
-        status=STATUS_SUCCESS,
-        status_code=HTTP_200_OK,
-        message='Voice Ninja is running',
-        data={}
-    )
+    return {
+        'status': STATUS_SUCCESS,
+        'status_code': HTTP_200_OK,
+        'message': 'Voice Ninja is running'
+    }
 
