@@ -14,40 +14,46 @@ class ProfileRequest(BaseModel):
         address: User's address.
     """
 
-    first_name: Optional[str] = Field(None, description='User first name', min_length=2, max_length=50)
-    last_name: Optional[str] = Field(None, description='User last name', min_length=2, max_length=50)
-    phone: Optional[str] = Field(None, description='User phone number', min_length=10, max_length=15)
-    address: Optional[str] = Field(None, description='User address', min_length=5, max_length=200)
+    first_name: Optional[str] = Field(None, description='User first name')
+    last_name: Optional[str] = Field(None, description='User last name')
+    phone: Optional[str] = Field(None, description='User phone number')
+    address: Optional[str] = Field(None, description='User address')
 
     @field_validator('first_name', 'last_name')
     @classmethod
     def validate_name(cls, v: Optional[str]) -> Optional[str]:
-        """Validate name fields: strip whitespace and check length."""
-        if v is not None:
+        """Validate name fields: strip whitespace, check length, and ensure only alphabetic characters."""
+        if v is not None and v.strip():  # Only validate if not None and not empty
             v = v.strip()
             if len(v) < 2:
                 raise ValueError('Name must be at least 2 characters long')
-        return v
+            if len(v) > 50:
+                raise ValueError('Name must not exceed 50 characters')
+            if not v.replace(' ', '').replace('-', '').replace("'", '').isalpha():
+                raise ValueError('Name must contain only letters, spaces, hyphens, and apostrophes')
+            return v
+        return None if not v or not v.strip() else v
 
     @field_validator('phone')
     @classmethod
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
-        """Validate phone: strip whitespace and ensure no letters."""
-        if v is not None:
+        """Validate phone: strip whitespace, ensure only digits, and must be exactly 10 digits."""
+        if v is not None and v.strip():  # Only validate if not None and not empty
             v = v.strip()
             if not v.isdigit():
                 raise ValueError('Phone number must contain only digits')
-            if len(v) < 10:
-                raise ValueError('Phone number must be at least 10 digits')
-        return v
+            if len(v) != 10:
+                raise ValueError('Phone number must be exactly 10 digits')
+            return v
+        return None if not v or not v.strip() else v
 
     @field_validator('address')
     @classmethod
     def validate_address(cls, v: Optional[str]) -> Optional[str]:
         """Validate address: strip whitespace."""
-        if v is not None:
-            v = v.strip()
-        return v
+        if v is not None and v.strip():
+            return v.strip()
+        return None if not v or not v.strip() else v
 
 
 class ProfileResponse(BaseModel):
