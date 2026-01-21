@@ -48,7 +48,7 @@ def create_success_response(
     Args:
         status_code: HTTP status code.
         message: Success message.
-        data: Optional additional data.
+        data: Optional additional data to merge into response.
 
     Returns:
         JSONResponse with standardized success format.
@@ -59,6 +59,6 @@ def create_success_response(
         MESSAGE: message,
     }
     if data:
-        content[DATA] = data
+        content.update(data)  # Merge data into main response instead of nesting
     return JSONResponse(status_code=status_code, content=content)
 
