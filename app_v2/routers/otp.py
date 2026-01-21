@@ -13,7 +13,7 @@ from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
-from app_v2.databases.models import UserModel, OAuthProviderModel
+from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel
 from app_v2.utils.otp_utils import (
     generate_otp,
     is_email,
@@ -68,7 +68,6 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
 
 @router.post(
     '/login',
-    response_model=RequestOTPResponse,
     status_code=status.HTTP_200_OK,
     summary='Request OTP',
     description='Send OTP to user email or phone number for authentication',
@@ -112,7 +111,7 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
         }
     }
 )
-async def request_otp(request: RequestOTPRequest) -> RequestOTPResponse:
+async def request_otp(request: RequestOTPRequest):
     """Request OTP to be sent to email or phone.
 
     This endpoint validates the username (email or phone), generates an OTP,
@@ -146,47 +145,70 @@ async def request_otp(request: RequestOTPRequest) -> RequestOTPResponse:
         if is_phone_login:
             username = normalize_phone(username)
 
-        # Get or create user
-        user = UserModel.get_by_username(username)
+        # Check unified auth model first
+        unified_user = UnifiedAuthModel.get_by_username(username)
         user_created = False
-        if not user:
-            # Create new user
+        
+        if not unified_user:
+            # Create new user in unified auth
+            unified_user = UnifiedAuthModel.create(
+                email=username if is_email_login else '',
+                phone=username if is_phone_login else '',
+                has_otp_auth=True,
+                is_verified=False
+            )
             user_created = True
+            
+            # Also create in old UserModel for backward compatibility
             with db():
-                user = UserModel(
+                old_user = UserModel(
                     email=username if is_email_login else '',
                     phone=username if is_phone_login else '',
                     is_verified=False
                 )
-                db.session.add(user)
+                db.session.add(old_user)
                 db.session.commit()
-                db.session.refresh(user)
+                db.session.refresh(old_user)
         else:
-            # Check if user signed up with Google (only for email login)
-            if is_email_login:
-                oauth_record = OAuthProviderModel.get_by_provider_and_email('google', username)
-                if oauth_record:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail={
-                            "status": STATUS_FAILED,
-                            "status_code": HTTP_400_BAD_REQUEST,
-                            "message": MSG_USER_SIGNED_UP_WITH_GOOGLE
-                        }
+            # User exists (may have signed up with Google or OTP previously)
+            # Mark that they're using OTP auth if not already marked
+            if not unified_user.has_otp_auth:
+                UnifiedAuthModel.update(unified_user.id, has_otp_auth=True)
+            
+            # Ensure old user model exists
+            old_user = UserModel.get_by_username(username)
+            if not old_user:
+                with db():
+                    old_user = UserModel(
+                        email=username if is_email_login else '',
+                        phone=username if is_phone_login else '',
+                        is_verified=unified_user.is_verified
                     )
+                    db.session.add(old_user)
+                    db.session.commit()
+                    db.session.refresh(old_user)
 
         # Generate OTP
         otp = generate_otp()
         otp_expires = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
 
-        # Save OTP to user
-        UserModel.update(
-            user.id,
+        # Save OTP to unified user
+        UnifiedAuthModel.update(
+            unified_user.id,
             otp_code=otp,
             otp_expires_at=otp_expires
         )
+        
+        # Save OTP to old user too
+        old_user = UserModel.get_by_username(username)
+        if old_user:
+            UserModel.update(
+                old_user.id,
+                otp_code=otp,
+                otp_expires_at=otp_expires
+            )
 
-        # Send OTP
+        # Send OTP - show correct message based on whether user was actually created
         if is_email_login:
             success = await send_otp_email(username, otp)
             method = METHOD_EMAIL
@@ -208,12 +230,12 @@ async def request_otp(request: RequestOTPRequest) -> RequestOTPResponse:
                 }
             )
 
-        return RequestOTPResponse(
-            status=STATUS_SUCCESS,
-            status_code=HTTP_200_OK,
-            message=success_message,
-            data={'method': method}
-        )
+        return {
+            'status': STATUS_SUCCESS,
+            'status_code': HTTP_200_OK,
+            'message': success_message,
+            'method': method
+        }
 
     except HTTPException:
         raise
@@ -231,7 +253,6 @@ async def request_otp(request: RequestOTPRequest) -> RequestOTPResponse:
 
 @router.post(
     '/verify-otp',
-    response_model=VerifyOTPResponse,
     status_code=status.HTTP_200_OK,
     summary='Verify OTP',
     description='Verify OTP and complete login process',
@@ -296,7 +317,7 @@ async def request_otp(request: RequestOTPRequest) -> RequestOTPResponse:
 async def verify_otp(
     request: VerifyOTPRequest,
     http_request: Request
-) -> VerifyOTPResponse:
+):
     """Verify OTP and complete login.
 
     This endpoint verifies the OTP, creates authentication tokens,
@@ -318,9 +339,9 @@ async def verify_otp(
         if is_phone(username):
             username = normalize_phone(username)
 
-        # Get user
-        user = UserModel.get_by_username(username)
-        if not user:
+        # Get user from unified model
+        unified_user = UnifiedAuthModel.get_by_username(username)
+        if not unified_user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -331,7 +352,7 @@ async def verify_otp(
             )
 
         # Verify OTP
-        if not user.otp_code:
+        if not unified_user.otp_code:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -340,7 +361,7 @@ async def verify_otp(
                     "message": "OTP not found. Please request OTP first."
                 }
             )
-        elif user.otp_code != otp:
+        elif unified_user.otp_code != otp:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -351,7 +372,7 @@ async def verify_otp(
             )
 
         # Check if OTP expired
-        if not user.otp_expires_at or datetime.now() > user.otp_expires_at:
+        if not unified_user.otp_expires_at or datetime.now() > unified_user.otp_expires_at:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -362,53 +383,62 @@ async def verify_otp(
             )
 
         # OTP is valid - clear it and verify user
-        UserModel.update(
-            user.id,
+        UnifiedAuthModel.update(
+            unified_user.id,
             otp_code='',
             otp_expires_at=None,
             is_verified=True,
             last_login=datetime.now()
         )
+        
+        # Also update old model for backward compatibility
+        old_user = UserModel.get_by_username(username)
+        if old_user:
+            UserModel.update(
+                old_user.id,
+                otp_code='',
+                otp_expires_at=None,
+                is_verified=True,
+                last_login=datetime.now()
+            )
 
         # Create tokens
         token_data = {
-            'user_id': user.id,
-            'email': user.email,
-            'phone': user.phone,
-            'role': 'admin' if user.is_admin else 'user'
+            'user_id': unified_user.id,
+            'email': unified_user.email,
+            'phone': unified_user.phone,
+            'role': 'admin' if unified_user.is_admin else 'user'
         }
         access_token = create_access_token(data=token_data)
-        refresh_token = create_refresh_token(user.id)
+        refresh_token = create_refresh_token(unified_user.id)
 
         # Create session
         http_request.session['user'] = {
-            'user_id': user.id,
-            'email': user.email,
-            'phone': user.phone,
-            'name': user.name,
+            'user_id': unified_user.id,
+            'email': unified_user.email,
+            'phone': unified_user.phone,
+            'name': unified_user.name,
             'is_authenticated': True,
             'created_at': datetime.now().timestamp()
         }
 
-        return VerifyOTPResponse(
-            status=STATUS_SUCCESS,
-            status_code=HTTP_200_OK,
-            message=MSG_LOGIN_SUCCESSFUL,
-            data={
-                'access_token': access_token,
-                'refresh_token': refresh_token,
-                'user': {
-                    'id': user.id,
-                    'email': user.email,
-                    'phone': user.phone,
-                    'name': user.name,
-                    'first_name': user.first_name,
-                    'last_name': user.last_name,
-                    'address': user.address,
-                    'role': 'admin' if user.is_admin else 'user'
-                }
+        return {
+            'status': STATUS_SUCCESS,
+            'status_code': HTTP_200_OK,
+            'message': MSG_LOGIN_SUCCESSFUL,
+            'access_token': access_token,
+            'refresh_token': refresh_token,
+            'user': {
+                'id': unified_user.id,
+                'email': unified_user.email,
+                'phone': unified_user.phone,
+                'name': unified_user.name,
+                'first_name': unified_user.first_name,
+                'last_name': unified_user.last_name,
+                'address': unified_user.address,
+                'role': 'admin' if unified_user.is_admin else 'user'
             }
-        )
+        }
 
     except HTTPException:
         raise
@@ -426,7 +456,6 @@ async def verify_otp(
 
 @router.post(
     '/resend-otp',
-    response_model=RequestOTPResponse,
     status_code=status.HTTP_200_OK,
     summary='Resend OTP',
     description='Resend OTP to user email or phone number',
@@ -482,7 +511,7 @@ async def verify_otp(
         }
     }
 )
-async def resend_otp(request: ResendOTPRequest) -> RequestOTPResponse:
+async def resend_otp(request: ResendOTPRequest):
     """Resend OTP to user email or phone.
 
     This endpoint validates the username, checks for an existing user with
@@ -516,9 +545,9 @@ async def resend_otp(request: ResendOTPRequest) -> RequestOTPResponse:
         if is_phone_login:
             username = normalize_phone(username)
 
-        # Get user
-        user = UserModel.get_by_username(username)
-        if not user:
+        # Get user from unified model
+        unified_user = UnifiedAuthModel.get_by_username(username)
+        if not unified_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail={
@@ -529,7 +558,7 @@ async def resend_otp(request: ResendOTPRequest) -> RequestOTPResponse:
             )
 
         # Check if user has an active OTP (not expired)
-        if not user.otp_code or not user.otp_expires_at or datetime.now() > user.otp_expires_at:
+        if not unified_user.otp_code or not unified_user.otp_expires_at or datetime.now() > unified_user.otp_expires_at:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -539,29 +568,25 @@ async def resend_otp(request: ResendOTPRequest) -> RequestOTPResponse:
                 }
             )
 
-        # Check if user signed up with Google (only for email login)
-        if is_email_login:
-            oauth_record = OAuthProviderModel.get_by_provider_and_email('google', username)
-            if oauth_record:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail={
-                        "status": STATUS_FAILED,
-                        "status_code": HTTP_400_BAD_REQUEST,
-                        "message": MSG_USER_SIGNED_UP_WITH_GOOGLE
-                    }
-                )
-
         # Generate new OTP
         otp = generate_otp()
         otp_expires = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
 
-        # Update OTP in database
-        UserModel.update(
-            user.id,
+        # Update OTP in unified database
+        UnifiedAuthModel.update(
+            unified_user.id,
             otp_code=otp,
             otp_expires_at=otp_expires
         )
+        
+        # Also update old model for backward compatibility
+        old_user = UserModel.get_by_username(username)
+        if old_user:
+            UserModel.update(
+                old_user.id,
+                otp_code=otp,
+                otp_expires_at=otp_expires
+            )
 
         # Send OTP
         if is_email_login:
@@ -585,12 +610,12 @@ async def resend_otp(request: ResendOTPRequest) -> RequestOTPResponse:
                 }
             )
 
-        return RequestOTPResponse(
-            status=STATUS_SUCCESS,
-            status_code=HTTP_200_OK,
-            message=success_message,
-            data={'method': method}
-        )
+        return {
+            'status': STATUS_SUCCESS,
+            'status_code': HTTP_200_OK,
+            'message': success_message,
+            'method': method
+        }
 
     except HTTPException:
         raise
