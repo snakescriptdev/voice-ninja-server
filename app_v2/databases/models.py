@@ -222,12 +222,17 @@ class VoiceModel(Base):
     id = Column(Integer, primary_key=True, index=True)
     voice_name = Column(String, nullable=False)
     is_custom_voice = Column(Boolean, default=False)
+    
     created_at = Column(DateTime, default=datetime.utcnow)
     modified_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    user = relationship("UserModel", back_populates="voices")
+    agent_id = Column(Integer,ForeignKey("agents.id"),nullable=True)
     elevenlabs_voice_id = Column(String, nullable=True)
     audio_file = Column(String, nullable=True)
+    
+    user = relationship("UserModel", back_populates="voices")
+    agent = relationship("AgentModel",back_populates="voices")
 
     @classmethod
     def ensure_default_voices(cls):
@@ -241,4 +246,331 @@ class VoiceModel(Base):
                     db.session.add(voice)
             db.session.commit()
 
+    @classmethod
+    def set_for_agent(cls, agent_id: int, voice_id: int):
+        with db():
+            existing = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if existing:
+                existing.voice_id = voice_id
+            else:
+                existing = cls(agent_id=agent_id, voice_id=voice_id)
+                db.session.add(existing)
+
+            db.session.commit()
+            db.session.refresh(existing)
+            return existing
+
 Base.metadata.create_all(engine)
+
+
+
+
+class AgentModel(Base):
+    '''
+    The agent model that lists all the agents existing.
+    Each agent has the following Attributes.
+    Attributes:
+                -id (int,primaryKey)
+                -agent_name (string,required)
+                -user_id (foreignKey): 
+                        description: this attribute track the user who created the agent
+                -created_at (datetime)
+                -updated_at (date_time)
+                -first_message (string):
+                        description: the message agent uses to greet at begining
+                -system_prompt (string,required)
+                        description: the role assigned to the agent and its limitatios (like salesPerson)
+    '''
+    __tablename__ = "agents"
+
+    #attributes for the agebt model
+    
+    id = Column(Integer,primary_key=True,index=True,autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"),nullable=False)
+
+
+    agent_name = Column(String,nullable=False)
+    first_message = Column(String,nullable=True)
+    system_prompt = Column(String,nullable=False,)
+    
+    # meta data attributes
+    created_at = Column(DateTime, default=func.now())
+    updated_at =Column(DateTime,default=func.now(),updated_at=func.now())
+
+    #relationship 
+    user = relationship("UserModel",backref="agents")
+    voice = relationship("VoiceModel",back_populates="agents",uselist=False)
+    ai_model = relationship("AgentAIModel",back_populates="agent",uselist=False)
+    language = relationship("AgentLanguage", uselist=False, back_populates="agent")
+    functions = relationship("AgentFunctions",back_populates="agent")
+    variables = relationship("AgentVariables",back_populates="agent")
+
+    
+
+
+    #methodds
+    @classmethod
+    def create(
+        cls,
+        user_id: int,
+        agent_name: str,
+        system_prompt: str = "",
+        first_message: str = "") -> "AgentModel":
+        """
+        the create method create the instance of agent to store it in db
+        :params
+            -user_id: id of user who creates the agent
+            -agent_name: name of the agent created
+            -system_prompt: the role assigned to the agent
+            -first_message: the greeting message for the agent
+
+        """
+        with db():
+            agent = cls(
+                user_id=user_id,
+                agent_name=agent_name,
+                system_prompt=system_prompt,
+                first_message=first_message
+            )
+            db.session.add(agent)
+            db.session.commit()
+            db.session.refresh(agent)
+            return agent
+        
+    @classmethod
+    def get_by_id(cls, agent_id: int) -> Optional["AgentModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.id == agent_id).first()
+
+    @classmethod
+    def get_by_user(cls, user_id: int) -> List["AgentModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.user_id == user_id).all()
+
+    @classmethod
+    def get_user_agent(
+        cls,
+        agent_id: int,
+        user_id: int
+    ) -> Optional["AgentModel"]:
+        """Fetch agent only if it belongs to the user"""
+        with db():
+            return db.session.query(cls).filter(
+                cls.id == agent_id,
+                cls.user_id == user_id
+            ).first()
+
+    @classmethod
+    def update(
+        cls,
+        agent_id: int,
+        user_id: int,
+        **kwargs
+    ) -> Optional["AgentModel"]:
+        with db():
+            agent = db.session.query(cls).filter(
+                cls.id == agent_id,
+                cls.user_id == user_id
+            ).first()
+
+            if not agent:
+                return None
+
+            for key, value in kwargs.items():
+                if hasattr(agent, key):
+                    setattr(agent, key, value)
+
+            db.session.commit()
+            db.session.refresh(agent)
+            return agent
+
+    @classmethod
+    def delete(cls, agent_id: int, user_id: int) -> bool:
+        with db():
+            agent = db.session.query(cls).filter(
+                cls.id == agent_id,
+                cls.user_id == user_id
+            ).first()
+
+            if not agent:
+                return False
+
+            db.session.delete(agent)
+            db.session.commit()
+            return True
+
+    @classmethod
+    def exists(cls, agent_id: int) -> bool:
+        with db():
+            return db.session.query(
+                db.session.query(cls).filter(cls.id == agent_id).exists()
+            ).scalar()
+
+    @classmethod
+    def count_by_user(cls, user_id: int) -> int:
+        with db():
+            return db.session.query(cls).filter(
+                cls.user_id == user_id
+            ).count()
+        
+
+
+class AgentAIModel(Base):
+    __tablename__ = "agent_ai_models"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+
+    model_name = Column(String, nullable=False)  # e.g. gpt-4o, gpt-4.1, claude, etc
+    provider = Column(String, nullable=False)    # openai, anthropic, etc
+
+    created_at = Column(DateTime, default=func.now())
+
+    agent = relationship("AgentModel", back_populates="ai_model")
+
+    @classmethod
+    def set_for_agent(cls, agent_id: int, model_name: str, provider: str):
+        with db():
+            existing = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if existing:
+                existing.model_name = model_name
+                existing.provider = provider
+            else:
+                existing = cls(
+                    agent_id=agent_id,
+                    model_name=model_name,
+                    provider=provider
+                )
+                db.session.add(existing)
+
+            db.session.commit()
+            db.session.refresh(existing)
+            return existing
+
+    @classmethod
+    def get_by_agent(cls, agent_id: int):
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).first()
+
+
+
+
+class AgentLanguage(Base):
+    __tablename__ = "agent_languages"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+
+    language_code = Column(String, nullable=False)  # en, es, fr, hi
+    language_name = Column(String, nullable=False)
+
+    agent = relationship("AgentModel", back_populates="language")
+
+
+    @classmethod
+    def set_for_agent(cls, agent_id: int, language_code: str, language_name: str):
+        with db():
+            existing = db.session.query(cls).filter(cls.agent_id == agent_id).first()
+            if existing:
+                existing.language_code = language_code
+                existing.language_name = language_name
+            else:
+                existing = cls(
+                    agent_id=agent_id,
+                    language_code=language_code,
+                    language_name=language_name
+                )
+                db.session.add(existing)
+
+            db.session.commit()
+            db.session.refresh(existing)
+            return existing
+
+
+
+
+
+
+
+class AgentFunction(Base):
+    __tablename__ = "agent_functions"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+
+    function_name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    function_schema = Column(Text, nullable=True)  # JSON schema as string
+
+    created_at = Column(DateTime, default=func.now())
+
+    agent = relationship("AgentModel", back_populates="functions")
+
+
+    @classmethod
+    def add(cls, agent_id: int, function_name: str, description: str = "", function_schema: str = ""):
+        with db():
+            fn = cls(
+                agent_id=agent_id,
+                function_name=function_name,
+                description=description,
+                function_schema=function_schema
+            )
+            db.session.add(fn)
+            db.session.commit()
+            db.session.refresh(fn)
+            return fn
+
+    @classmethod
+    def list_by_agent(cls, agent_id: int):
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
+
+    @classmethod
+    def delete(cls, function_id: int, agent_id: int) -> bool:
+        with db():
+            fn = db.session.query(cls).filter(
+                cls.id == function_id,
+                cls.agent_id == agent_id
+            ).first()
+            if not fn:
+                return False
+            db.session.delete(fn)
+            db.session.commit()
+            return True
+
+
+class AgentVariable(Base):
+    __tablename__ = "agent_variables"
+
+    id = Column(Integer, primary_key=True)
+    agent_id = Column(Integer, ForeignKey("agents.id"), nullable=False)
+
+    key = Column(String, nullable=False)
+    value = Column(Text, nullable=True)
+
+    agent = relationship("AgentModel", back_populates="variables")
+
+
+    @classmethod
+    def set(cls, agent_id: int, key: str, value: str):
+        with db():
+            existing = db.session.query(cls).filter(
+                cls.agent_id == agent_id,
+                cls.key == key
+            ).first()
+
+            if existing:
+                existing.value = value
+            else:
+                existing = cls(agent_id=agent_id, key=key, value=value)
+                db.session.add(existing)
+
+            db.session.commit()
+            db.session.refresh(existing)
+            return existing
+
+    @classmethod
+    def get_all(cls, agent_id: int):
+        with db():
+            return db.session.query(cls).filter(cls.agent_id == agent_id).all()
