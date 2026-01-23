@@ -62,3 +62,12 @@ OTP_LENGTH = 6
 METHOD_EMAIL = 'email'
 METHOD_SMS = 'SMS'
 
+# OAuth Messages
+MSG_INVALID_AUTH_CODE = 'Invalid or expired authorization code'
+MSG_AUTH_CODE_REQUIRED = 'Authorization code is required'
+MSG_TOKENS_EXCHANGED = 'Tokens exchanged successfully'
+
+# OAuth Configuration
+OAUTH_CODE_EXPIRY_MINUTES = 5
+OAUTH_CODE_LENGTH = 32
+
