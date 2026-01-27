@@ -140,6 +140,8 @@ async def google_callback(code: str, http_request: Request):
             'grant_type': 'authorization_code',
         }
         
+        logger.info(f'Exchanging code for token with redirect_uri: {GOOGLE_REDIRECT_URI}')
+        
         token_response = requests.post(
                         GOOGLE_TOKEN_URL,
                         data=token_data,
@@ -322,16 +324,53 @@ async def google_callback(code: str, http_request: Request):
         frontend_callback_url = f"{FRONTEND_URL}/auth/callback?code={app_code}"
         logger.info(f'Redirecting to frontend: {frontend_callback_url}')
         
+        # Check if the request is from a browser fetch/XHR (like Swagger UI)
+        # by looking at Accept header or a custom header
+        accept_header = http_request.headers.get("accept", "")
+        if "application/json" in accept_header and "text/html" not in accept_header:
+            logger.info("AJAX request detected, returning JSON instead of redirect")
+            return {
+                'status': STATUS_SUCCESS,
+                'status_code': HTTP_200_OK,
+                'message': 'Authentication successful',
+                'code': app_code,
+                'frontend_url': frontend_callback_url
+            }
+        
         return RedirectResponse(url=frontend_callback_url)
     
     except HTTPException as http_exc:
-        # Redirect to frontend with error
+        # Check for AJAX request in error case too
+        accept_header = http_request.headers.get("accept", "")
         error_message = http_exc.detail.get('message', 'Authentication failed') if isinstance(http_exc.detail, dict) else str(http_exc.detail)
+        
+        if "application/json" in accept_header and "text/html" not in accept_header:
+            return JSONResponse(
+                status_code=http_exc.status_code,
+                content={
+                    "status": STATUS_FAILED,
+                    "status_code": http_exc.status_code,
+                    "message": error_message
+                }
+            )
+
+        # Redirect to frontend with error
         frontend_error_url = f"{FRONTEND_URL}/auth/callback?error={error_message}"
         logger.error(f'OAuth error, redirecting to: {frontend_error_url}')
         return RedirectResponse(url=frontend_error_url)
     except Exception as e:
         logger.error(f'Error in Google callback: {e}', exc_info=True)
+        # Check for AJAX request in unexpected error case
+        accept_header = http_request.headers.get("accept", "")
+        if "application/json" in accept_header and "text/html" not in accept_header:
+             return JSONResponse(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                content={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
+                    "message": "Google authentication failed"
+                }
+            )
         # Redirect to frontend with error
         frontend_error_url = f"{FRONTEND_URL}/auth/callback?error=Google authentication failed"
         return RedirectResponse(url=frontend_error_url)
