@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
+from sqlalchemy.orm import relationship,Mapped,mapped_column
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -240,5 +240,68 @@ class VoiceModel(Base):
                     voice = cls(voice_name=name, is_custom_voice=False)
                     db.session.add(voice)
             db.session.commit()
+
+
+class AgentModel(Base):
+    __tablename__ = "agents"
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True,autoincrement=True)
+    agent_name: Mapped[str] = mapped_column(String,nullable=False,index=True)
+    first_message: Mapped[str] = mapped_column(String)
+    system_prompt : Mapped[str] = mapped_column(String,nullable=False)
+
+    user_id : Mapped[int] = mapped_column(Integer,ForeignKey("users.id"))
+    agent_voice : Mapped[int] = mapped_column(Integer, ForeignKey("custom_voices.id"))
+
+    user = relationship("UserModel",back_populates="agents")
+
+    voice = relationship("VoiceModel",back_populates="agents")
+
+    agent_ai_models = relationship("AgentAIModelBridge",back_populates="agent",cascade="all, delete-orphan")
+
+    agent_languages = relationship("AgentLanguageBridge",back_populates="agent",cascade="all, delete-orphan")
+
+
+class AIModels(Base):
+
+    __tablename__= "ai_models"
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True,autoincrement=True)
+    provider: Mapped[str] = mapped_column(String,nullable=False)
+    model_name: Mapped[str] = mapped_column(String,nullable=False,unique=True)
+
+    agent_ai_models =  relationship("AgentAIModelBridge",back_populates="ai_model",cascade="all, delete-orphan")
+
+class LanguageModel(Base):
+
+    __tablename__ = "languages"
+
+    id: Mapped[int] = mapped_column(Integer,autoincrement=True,index=True,primary_key=True)
+    lang_code: Mapped[str] = mapped_column(String, nullable=False,unique=True)
+    language: Mapped[str] = mapped_column(String,nullable=False,unique=True)
+
+    agent_languages = relationship("AgentLanguageBridge",back_populates="language",cascade="all, delete-orphan")
+
+
+
+class AgentAIModelBridge(Base):
+
+    __tablename__ = "agent_ai_model_bridge"
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True,index=True)
+    agent_id : Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
+    ai_model_id: Mapped[int] = mapped_column(Integer,ForeignKey("ai_models.id"))
+
+    agent = relationship("AgentModel",back_populates="agent_ai_models")
+    ai_model = relationship("AIModels",back_populates="agent_ai_models")
+
+    __table_args__ = (
+        UniqueConstraint("agent_id","ai_model_id",name="uq_agebt_ai_model_bridge_agent_id_ai_model"),
+        Index("ix_agent_ai_model_agent_id","agent_id"),
+        Index("ix_agent_ai_model_ai_model_id","ai_model_id")
+
+    )
+
+
 
 Base.metadata.create_all(engine)
