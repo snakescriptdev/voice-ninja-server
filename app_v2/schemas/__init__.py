@@ -9,6 +9,8 @@ from app_v2.schemas.otp import (
 )
 from app_v2.schemas.health import HeartbeatResponse
 
+
+
 __all__ = [
     'RequestOTPRequest',
     'RequestOTPResponse',
