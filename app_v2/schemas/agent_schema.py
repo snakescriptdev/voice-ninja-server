@@ -1,28 +1,31 @@
-from pydantic import  BaseModel, Field
-from typing import  Optional
+from pydantic import BaseModel, Field
+from typing import List, Optional
+
+class AgentCreate(BaseModel):
+    agent_name: str
+    first_message: str | None = None
+    system_prompt: str
+
+    voice: str                  # voice_name
+    ai_models: List[str]         # model_name list
+    languages: List[str] = Field(description="language code to be passed in model (en-01 for english)")
 
 
 
-class AgentRequestSchema(BaseModel):
-    '''
-    schema class for Agent 
-    Attributes:
-                -user_id : int
-                -agent_name: string
-                -system_prompt: string
-                -first_message
 
-    '''
+class AgentUpdate(BaseModel):
+    agent_name: Optional[str] = None
+    first_message: Optional[str] = None
+    system_prompt: Optional[str] = None
+    voice: Optional[str] = None
+    ai_models: Optional[List[str]] = None
+    languages: Optional[List[str]] = Field(default=None,description="language code to be passed in model (en-01 for english)")
 
+class AgentRead(BaseModel):
+    id: int
+    agent_name: str
+    first_message: str | None
+    system_prompt: str
 
-    user_id :int = Field(...,description="id of user who creats agent")
-    agent_name:str = Field(...,min_length=3,max_length=50,description="name of the agent")
-    system_prompt:str = Field(...,description="defines the role and responsibiltes of user",min_length=50)
-    first_message: str = Field(description="the message agent usesto greet")
-
-
-class AgentResponseModel(BaseModel):
-    agent_id: int
-    agent_name: str 
-
-
+    class Config:
+        from_attributes = True

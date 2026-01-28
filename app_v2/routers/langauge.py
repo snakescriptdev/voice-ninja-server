@@ -4,14 +4,16 @@ from app_v2.databases.models.language import LanguageModel
 from sqlalchemy.orm import Session
 from app_v2.dependecies import get_db
 from sqlalchemy import or_
+from app_v2.dependecies import is_admin
 from app_v2.core.logger import setup_logger
+from app_v2.utils.jwt_utils import get_current_user,HTTPBearer
 
 logger = setup_logger(__name__)
 router = APIRouter(prefix="/api/v2/agent",tags=["agent"])
 
+security = HTTPBearer()
 
-
-@router.post("/language", response_model=LanguageRead, status_code=status.HTTP_201_CREATED)
+@router.post("/language", response_model=LanguageRead, status_code=status.HTTP_201_CREATED,openapi_extra={"security": [{"BearerAuth": []}]},dependencies=[Depends(security),Depends(is_admin)])
 async def create_language(lang_in: LanguageIn, db: Session = Depends(get_db)):
     try:
         lang_code = lang_in.lang_code.lower()
@@ -61,7 +63,7 @@ async def get_languages(db:Session= Depends(get_db)):
              languages = db.query(LanguageModel).all()
              if not languages:
                    logger.info(f"no languages to show from database {languages}")
-                   raise HTTPException(status.HTTP_404_NOT_FOUND,detail="no anguages found")
+                   raise HTTPException(status.HTTP_404_NOT_FOUND,detail="no languages found")
             
              logger.info("languages fetched succesfully from database")
              return languages
@@ -98,7 +100,7 @@ async def get_langauge_by_id(id:int,db:Session = Depends(get_db)):
 
 
 
-@router.put("/language/{id}",response_model=LanguageRead,status_code=status.HTTP_200_OK)
+@router.put("/language/{id}",response_model=LanguageRead,status_code=status.HTTP_200_OK,openapi_extra={"security": [{"BearerAuth": []}]},dependencies=[Depends(security),Depends(is_admin)])
 async def update_langauge(id:int,lang_updt:LanguageUpdate, db:Session = Depends(get_db)):
             try:
                 language = db.query(LanguageModel).filter(LanguageModel.id==id).first()
@@ -130,7 +132,7 @@ async def update_langauge(id:int,lang_updt:LanguageUpdate, db:Session = Depends(
             
 
 
-@router.delete("/language/{id}",status_code =status.HTTP_204_NO_CONTENT)
+@router.delete("/language/{id}",status_code =status.HTTP_204_NO_CONTENT,openapi_extra={"security": [{"BearerAuth": []}]},dependencies=[Depends(security),Depends(is_admin)])
 async def delete_language(id:int, db: Session = Depends(get_db)):
             try:
                   lang_instance = db.query(LanguageModel).filter(LanguageModel.id ==id).first()

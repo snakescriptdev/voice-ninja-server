@@ -15,7 +15,7 @@ from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models.users import AdminTokenModel, TokensToConsume
 from app_v2.databases.models.voices import VoiceModel
-from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router,ai_model_router
+from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router,ai_model_router,agent_router
 from app_v2.utils.jwt_utils import HTTPBearer
 
 
@@ -165,6 +165,7 @@ app.include_router(google_auth_router)
 app.include_router(profile_router)
 app.include_router(lang_router)
 app.include_router(ai_model_router)
+app.include_router(agent_router)
 
 @app.get("/", tags=["System"])
 async def root():

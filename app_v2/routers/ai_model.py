@@ -1,20 +1,20 @@
 from fastapi import Depends, HTTPException, APIRouter,status
-
 from app_v2.databases.models.ai_model import AIModels
 from app_v2.core.logger import setup_logger
-from app_v2.dependecies import get_db
+from app_v2.dependecies import get_db, is_admin
 from sqlalchemy.orm import Session
 from app_v2.databases.models.ai_model import AIModels
 logger = setup_logger(__name__)
 
 from app_v2.schemas.ai_model import AIModelIn, AIModelRead, AIModelUpdate
-
+from app_v2.utils.jwt_utils import HTTPBearer
 
 
 router = APIRouter(prefix="/api/v2/agent",tags=["agent"])
 
+security = HTTPBearer()
 
-@router.post("/ai-model",response_model=AIModelRead,status_code=status.HTTP_201_CREATED)
+@router.post("/ai-model",response_model=AIModelRead,status_code=status.HTTP_201_CREATED,openapi_extra={"security": [{"BearerAuth": []}]},dependencies=[Depends(security),Depends(is_admin)])
 async def create_ai_model(model_in:AIModelIn,db:Session = Depends(get_db)):
             """
                 create_ai_model is a path operation function to create a ai model and save it in db.
@@ -97,7 +97,7 @@ async def get_ai_model_by_id(id:int,db: Session = Depends(get_db)):
                         )
 
 
-@router.put("/ai-model/{id}",response_model=AIModelRead,status_code= status.HTTP_200_OK)
+@router.put("/ai-model/{id}",response_model=AIModelRead,status_code= status.HTTP_200_OK,openapi_extra={"security": [{"BearerAuth": []}]},dependencies=[Depends(security),Depends(is_admin)])
 async def update_ai_model(id:int, model_updt:AIModelUpdate, db: Session = Depends(get_db)):
                           try:
                                   ai_model = db.query(AIModels).filter(AIModels.id==id).first()
@@ -124,7 +124,7 @@ async def update_ai_model(id:int, model_updt:AIModelUpdate, db: Session = Depend
                                           detail="could not update the ai model at the moment"
                                   )
 
-@router.delete("/ai-modle/{id}",status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/ai-modle/{id}",status_code=status.HTTP_204_NO_CONTENT,openapi_extra={"security": [{"BearerAuth": []}]},dependencies=[Depends(security),Depends(is_admin)])
 async def delete_ai_model(id:int, db: Session = Depends(get_db)):
         try:
                 ai_model = db.query(AIModels).filter(AIModels.id==id).first()
