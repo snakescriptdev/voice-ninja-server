@@ -4,7 +4,8 @@ from fastapi import HTTPException, Header, Depends, Request
 from fastapi.security import HTTPBearer as FastAPIHTTPBearer, HTTPAuthorizationCredentials
 from fastapi.security.http import HTTPAuthorizationCredentials
 import os
-
+from app_v2.dependecies import get_db
+from sqlalchemy.orm import Session
 from app_v2.core.config import VoiceSettings
 
 
@@ -92,7 +93,8 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             )
         
         from app_v2.databases.models import UnifiedAuthModel
-        user = UnifiedAuthModel.get_by_id(user_id)
+        db: Session = next(get_db())
+        user = UnifiedAuthModel.get_by_id(db,user_id)
         if not user:
             raise HTTPException(
                 status_code=401,
