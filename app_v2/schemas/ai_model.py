@@ -20,5 +20,3 @@ class AIModelRead(AIModelBaseSchema):
 
     class Config:
         orm_mode = True
-
-

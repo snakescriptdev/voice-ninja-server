@@ -7,8 +7,8 @@ class AgentCreate(BaseModel):
     system_prompt: str
 
     voice: str                  # voice_name
-    ai_models: List[str]         # model_name list
-    languages: List[str] = Field(description="language code to be passed in model (en-01 for english)")
+    ai_models: str       # model_name list
+    languages: str = Field(description="language code to be passed in model (en-01 for english)")
 
 
 
@@ -18,14 +18,15 @@ class AgentUpdate(BaseModel):
     first_message: Optional[str] = None
     system_prompt: Optional[str] = None
     voice: Optional[str] = None
-    ai_models: Optional[List[str]] = None
-    languages: Optional[List[str]] = Field(default=None,description="language code to be passed in model (en-01 for english)")
+    ai_models: Optional[str] = None
+    languages: Optional[str] = Field(default=None,description="language code to be passed in model (en-01 for english)")
 
 class AgentRead(BaseModel):
     id: int
     agent_name: str
     first_message: str | None
     system_prompt: str
+    voice:str
 
     class Config:
         from_attributes = True
