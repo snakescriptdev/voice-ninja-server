@@ -35,7 +35,7 @@ class UserModel(Base):
     is_admin = Column(Boolean, default=False)
     
     voices = relationship("VoiceModel", back_populates="user")
-
+    
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UserModel"]:
         with db():
@@ -135,6 +135,9 @@ class UnifiedAuthModel(Base):
     last_login = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    agents = relationship("AgentModel", back_populates="user")
+
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -229,6 +232,8 @@ class VoiceModel(Base):
     elevenlabs_voice_id = Column(String, nullable=True)
     audio_file = Column(String, nullable=True)
 
+    agents = relationship("AgentModel",back_populates="voice")
+
     @classmethod
     def ensure_default_voices(cls):
         from app_v2.core.config import VoiceSettings
@@ -250,10 +255,12 @@ class AgentModel(Base):
     first_message: Mapped[str] = mapped_column(String)
     system_prompt : Mapped[str] = mapped_column(String,nullable=False)
 
-    user_id : Mapped[int] = mapped_column(Integer,ForeignKey("users.id"))
+    user_id : Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"))
     agent_voice : Mapped[int] = mapped_column(Integer, ForeignKey("custom_voices.id"))
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    user = relationship("UserModel",back_populates="agents")
+    user = relationship("UnifiedAuthModel",back_populates="agents")
 
     voice = relationship("VoiceModel",back_populates="agents")
 
@@ -269,6 +276,8 @@ class AIModels(Base):
     id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True,autoincrement=True)
     provider: Mapped[str] = mapped_column(String,nullable=False)
     model_name: Mapped[str] = mapped_column(String,nullable=False,unique=True)
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     agent_ai_models =  relationship("AgentAIModelBridge",back_populates="ai_model",cascade="all, delete-orphan")
 
@@ -279,6 +288,8 @@ class LanguageModel(Base):
     id: Mapped[int] = mapped_column(Integer,autoincrement=True,index=True,primary_key=True)
     lang_code: Mapped[str] = mapped_column(String, nullable=False,unique=True)
     language: Mapped[str] = mapped_column(String,nullable=False,unique=True)
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     agent_languages = relationship("AgentLanguageBridge",back_populates="language",cascade="all, delete-orphan")
 
@@ -291,6 +302,8 @@ class AgentAIModelBridge(Base):
     id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True,index=True)
     agent_id : Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
     ai_model_id: Mapped[int] = mapped_column(Integer,ForeignKey("ai_models.id"))
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     agent = relationship("AgentModel",back_populates="agent_ai_models")
     ai_model = relationship("AIModels",back_populates="agent_ai_models")
@@ -311,6 +324,8 @@ class AgentLanguageBridge(Base):
 
     agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
     lang_id: Mapped[int]  = mapped_column(Integer,ForeignKey("languages.id"))
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
                     UniqueConstraint("agent_id","lang_id",name="uq_lang_bridge_agent_id_lang_id"),
