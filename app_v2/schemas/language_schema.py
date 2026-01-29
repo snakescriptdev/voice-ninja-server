@@ -19,4 +19,3 @@ class LanguageRead(LanguageBase):
 
     class Config:
         orm_mode = True
-        

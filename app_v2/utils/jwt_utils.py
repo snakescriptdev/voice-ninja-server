@@ -1,12 +1,12 @@
 from jose import jwt, JWTError
 from datetime import datetime, timedelta
-from fastapi import HTTPException, Header, Depends, Request
+from fastapi import HTTPException, Header, Depends, Request, status
 from fastapi.security import HTTPBearer as FastAPIHTTPBearer, HTTPAuthorizationCredentials
 from fastapi.security.http import HTTPAuthorizationCredentials
 import os
-from app_v2.dependecies import get_db
-from sqlalchemy.orm import Session
+
 from app_v2.core.config import VoiceSettings
+from app_v2.databases.models import UnifiedAuthModel
 
 
 class HTTPBearer(FastAPIHTTPBearer):
@@ -93,8 +93,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
             )
         
         from app_v2.databases.models import UnifiedAuthModel
-        db: Session = next(get_db())
-        user = UnifiedAuthModel.get_by_id(db,user_id)
+        user = UnifiedAuthModel.get_by_id(user_id)
         if not user:
             raise HTTPException(
                 status_code=401,
@@ -115,3 +114,21 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
                 "status_code": 401
             }
         )
+
+def is_admin(
+    current_user: UnifiedAuthModel = Depends(get_current_user),
+) -> UnifiedAuthModel:
+    """
+    Ensure the current user is an admin.
+    """
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "message": "Admin access required",
+                "status": "failed",
+                "status_code": 403,
+            },
+        )
+
+    return current_user
