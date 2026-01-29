@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 import requests
 from fastapi import APIRouter, HTTPException, Request, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse,JSONResponse
 from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
