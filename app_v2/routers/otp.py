@@ -436,7 +436,8 @@ async def verify_otp(
                 'first_name': unified_user.first_name,
                 'last_name': unified_user.last_name,
                 'address': unified_user.address,
-                'role': 'admin' if unified_user.is_admin else 'user'
+                'role': 'admin' if unified_user.is_admin else 'user',
+                'is_new_user': False if old_user else True      #added new field
             }
         }
 
