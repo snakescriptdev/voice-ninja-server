@@ -1,6 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_
 from fastapi_sqlalchemy import db
+from app_v2.schemas.agent_config import AgentConfigGenerator, AgentConfigOut
+from app_v2.utils.llm_utils import generate_system_prompt_async
 
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import (
@@ -57,7 +59,7 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
     summary="Create agent",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-def create_agent(
+async def create_agent(
     agent_in: AgentCreate,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
@@ -138,7 +140,7 @@ def create_agent(
     summary="Get all agents",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-def get_all_agents(
+async def get_all_agents(
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     agents = (
@@ -158,7 +160,7 @@ def get_all_agents(
     summary="Get agent by ID",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-def get_agent_by_id(
+async def get_agent_by_id(
     agent_id: int,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
@@ -185,7 +187,7 @@ def get_agent_by_id(
     summary="Update agent",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-def update_agent(
+async def update_agent(
     agent_id: int,
     agent_in: AgentUpdate,
     current_user: UnifiedAuthModel = Depends(get_current_user),
@@ -279,7 +281,7 @@ def update_agent(
     summary="Delete agent",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-def delete_agent(
+async def delete_agent(
     agent_id: int,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
@@ -297,3 +299,36 @@ def delete_agent(
 
     db.session.delete(agent)
     db.session.commit()
+
+
+@router.post("/config",response_model=AgentConfigOut,status_code=status.HTTP_200_OK)
+async def generate_system_prompt_for_agent(agent_config:AgentConfigGenerator):
+        try:
+            system_prompt =  await generate_system_prompt_async(agent_config)
+            
+            if not system_prompt:
+                logger.error("failed to generate system prompt")
+                raise HTTPException(
+                    status_code= status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="could not generate system prompt at the moment"
+                )
+            
+            response_config = AgentConfigOut(
+                agent_name=agent_config.agent_name,
+                ai_model=agent_config.ai_model,
+                voice=agent_config.voice,
+                language=agent_config.language,
+                system_prompt=system_prompt,
+            )
+            logger.info("system prompt generated successfully")
+
+            return response_config
+        
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"error while genreating system prompt {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="failed to generate system prompt at the moment"
+            )
