@@ -1,28 +1,7 @@
 from pydantic import BaseModel, Field 
-from typing import List, Optional
-from enum import Enum
+from typing import List
+from app_v2.schemas.enum_types import UseCases, Capebilites,ResponseStyleEnum
 
-
-class UseCases(str,Enum):
-    email_assistant = "email_assistant"
-    task_execution = "task_execution"
-    system_assistant = "system_assistant"
-    knowledge_lookup = "knowledge_lookup"
-    customer_support = "customer_support"
-    custom = "custom"
-
-
-class Capabilites(str,Enum):
-    email_integration = "email_integration"
-    calendar_management = "calendar_management"
-    knowledge_base = "knowledge_base"
-    api_integration = "api_integration"
-
-
-class ResponseStyleEnum(str, Enum):
-    professional = "professional"
-    friendly = "friendly"
-    casual = "casual"
 
 
 
@@ -41,7 +20,7 @@ class AgentConfigGenerator(BaseModel):
     response_style: ResponseStyleEnum
 
     #capabilites
-    capabilites: List[Capabilites] = Field(...,min_length=1,max_length=4,description="list of capabilites of agent") # max lenght can change in fututre
+    capebilites: List[Capebilites] = Field(...,min_length=1,max_length=4,description="list of capabilites of agent") # max lenght can change in fututre
 
 
 

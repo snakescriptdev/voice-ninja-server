@@ -1,9 +1,12 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
+from app_v2.schemas.enum_types import RequestMethodEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
 from fastapi_sqlalchemy import db
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.mutable import MutableDict
 import bcrypt
 import os
 from datetime import datetime
@@ -337,6 +340,57 @@ class AgentLanguageBridge(Base):
 
     agent = relationship("AgentModel",back_populates="agent_languages")
     language = relationship("LanguageModel",back_populates="agent_languages")
+
+
+
+class FunctionModel(Base):
+    __tablename__ = "functions"
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True,autoincrement=True)
+    name: Mapped[str] = mapped_column(String,unique=True,nullable=False)
+    description: Mapped[str] = mapped_column(String,nullable=False)
+
+    #audit fields
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+    api_endpoint_url = relationship("FunctionApiConfig",back_populates = "function",cascade= "all, delete-orphan")
+
+
+
+class FunctionApiConfig(Base):
+    __tablename__ = "function_api_config"
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
+    function_id: Mapped[int] = mapped_column(Integer,ForeignKey("functions.id"))
+    endpoint_url: Mapped[str] = mapped_column(String,nullable=False)
+    http_method: Mapped[RequestMethodEnum] = mapped_column()
+    timeout_ms: Mapped[int] = mapped_column(Integer)
+    headers: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+    query_params: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+    llm_response_schema: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+    response_variables: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+
+    #audit fields
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    function = relationship("FunctionModel",back_populates="api_endpoint_url")
+
+
+class AgentFunctionBridgeModel(Base):
+    __tablename__ = "agent_function_bridge"
+    id : Mapped[int] = mapped_column(Integer,primary_key =True, autoincrement=True,index=True)
+    agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
+    function_id: Mapped[int] = mapped_column(Integer,ForeignKey("functions.id"))
+    speak_while_execution: Mapped[bool] = mapped_column(Boolean,default=False)
+    speak_after_execution: Mapped[bool] = mapped_column(Boolean,default=True)
+
+    #audit fields
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    #relationships
+
 
 
 
