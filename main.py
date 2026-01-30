@@ -1,6 +1,8 @@
 import os
 from dotenv import load_dotenv
-
+import certifi
+os.environ["SSL_CERT_FILE"] = certifi.where()
+os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 # Load environment variables
 load_dotenv()
 
@@ -12,7 +14,7 @@ from fastapi_sqlalchemy import DBSessionMiddleware, db
 from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
-from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router
+from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router,voice_router
 from app_v2.utils.jwt_utils import HTTPBearer
 
 app = FastAPI(title="Voice Ninja V2 API", version="2.0.0")
@@ -153,6 +155,7 @@ app.include_router(profile_router)
 app.include_router(lang_router)
 app.include_router(ai_model_router)
 app.include_router(agent_router)
+app.include_router(voice_router)
 
 @app.get("/", tags=["System"])
 async def root():
