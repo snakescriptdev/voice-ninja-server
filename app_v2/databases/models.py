@@ -34,7 +34,7 @@ class UserModel(Base):
     tokens = Column(Integer, nullable=True, default=0)
     is_admin = Column(Boolean, default=False)
     
-    voices = relationship("VoiceModel", back_populates="user")
+    
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UserModel"]:
@@ -137,6 +137,7 @@ class UnifiedAuthModel(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     agents = relationship("AgentModel", back_populates="user")
+    voices = relationship("VoiceModel", back_populates="user")
 
     
     @classmethod
@@ -227,11 +228,11 @@ class VoiceModel(Base):
     is_custom_voice = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     modified_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    user = relationship("UserModel", back_populates="voices")
+    user_id = Column(Integer, ForeignKey("unified_auth.id"), nullable=True)
     elevenlabs_voice_id = Column(String, nullable=True)
     audio_file = Column(String, nullable=True)
 
+    user = relationship("UnifiedAuthModel", back_populates="voices")
     agents = relationship("AgentModel",back_populates="voice")
 
     @classmethod
