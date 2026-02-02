@@ -1,9 +1,12 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
+from app_v2.schemas.enum_types import RequestMethodEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
 from fastapi_sqlalchemy import db
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.ext.mutable import MutableDict
 import bcrypt
 import os
 from datetime import datetime
@@ -34,7 +37,7 @@ class UserModel(Base):
     tokens = Column(Integer, nullable=True, default=0)
     is_admin = Column(Boolean, default=False)
     
-    voices = relationship("VoiceModel", back_populates="user")
+    
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UserModel"]:
@@ -137,6 +140,7 @@ class UnifiedAuthModel(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     agents = relationship("AgentModel", back_populates="user")
+    voices = relationship("VoiceModel", back_populates="user")
 
     
     @classmethod
@@ -227,11 +231,11 @@ class VoiceModel(Base):
     is_custom_voice = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     modified_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    user = relationship("UserModel", back_populates="voices")
+    user_id = Column(Integer, ForeignKey("unified_auth.id"), nullable=True)
     elevenlabs_voice_id = Column(String, nullable=True)
     audio_file = Column(String, nullable=True)
 
+    user = relationship("UnifiedAuthModel", back_populates="voices")
     agents = relationship("AgentModel",back_populates="voice")
 
     @classmethod
@@ -259,6 +263,7 @@ class AgentModel(Base):
     agent_voice : Mapped[int] = mapped_column(Integer, ForeignKey("custom_voices.id"))
     created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    phone : Mapped[str] = mapped_column(String,default="not assigned",nullable=True)
 
     user = relationship("UnifiedAuthModel",back_populates="agents")
 
@@ -267,6 +272,9 @@ class AgentModel(Base):
     agent_ai_models = relationship("AgentAIModelBridge",back_populates="agent",cascade="all, delete-orphan")
 
     agent_languages = relationship("AgentLanguageBridge",back_populates="agent",cascade="all, delete-orphan")
+    agent_functions = relationship("AgentFunctionBridgeModel",back_populates="agent",cascade="all, delete-orphan")
+    variables = relationship("VariablesModel",back_populates="agent",cascade="all, delete-orphan")
+
 
 
 class AIModels(Base):
@@ -292,7 +300,6 @@ class LanguageModel(Base):
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     agent_languages = relationship("AgentLanguageBridge",back_populates="language",cascade="all, delete-orphan")
-
 
 
 class AgentAIModelBridge(Base):
@@ -336,6 +343,77 @@ class AgentLanguageBridge(Base):
 
     agent = relationship("AgentModel",back_populates="agent_languages")
     language = relationship("LanguageModel",back_populates="agent_languages")
+
+
+
+class FunctionModel(Base):
+    __tablename__ = "functions"
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True,autoincrement=True)
+    name: Mapped[str] = mapped_column(String,unique=True,nullable=False)
+    description: Mapped[str] = mapped_column(String,nullable=False)
+
+    #audit fields
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+    api_endpoint_url = relationship("FunctionApiConfig",back_populates = "function",cascade= "all, delete-orphan")
+    agent_functions = relationship("AgentFunctionBridgeModel",back_populates="function",cascade="all,delete-orphan")
+
+
+
+class FunctionApiConfig(Base):
+    __tablename__ = "function_api_config"
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
+    function_id: Mapped[int] = mapped_column(Integer,ForeignKey("functions.id"))
+    endpoint_url: Mapped[str] = mapped_column(String,nullable=False)
+    http_method: Mapped[RequestMethodEnum] = mapped_column()
+    timeout_ms: Mapped[int] = mapped_column(Integer)
+    headers: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+    query_params: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+    llm_response_schema: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+    response_variables: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+
+    #audit fields
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    function = relationship("FunctionModel",back_populates="api_endpoint_url")
+
+
+class AgentFunctionBridgeModel(Base):
+    __tablename__ = "agent_function_bridge"
+    id : Mapped[int] = mapped_column(Integer,primary_key =True, autoincrement=True,index=True)
+    agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
+    function_id: Mapped[int] = mapped_column(Integer,ForeignKey("functions.id"))
+    speak_while_execution: Mapped[bool] = mapped_column(Boolean,default=False)
+    speak_after_execution: Mapped[bool] = mapped_column(Boolean,default=True)
+
+    #audit fields
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    #relationships
+    agent = relationship("AgentModel",back_populates="agent_functions")
+    function = relationship("FunctionModel",back_populates="agent_functions")
+
+
+
+
+
+class VariablesModel(Base):
+
+    __tablename__ = "variables"
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
+    variable_name: Mapped[str]= mapped_column(String,nullable=False)
+    variable_value: Mapped[str] = mapped_column(String,nullable=False)
+    agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    agent = relationship("AgentModel",back_populates="variables")
+
+
 
 
 

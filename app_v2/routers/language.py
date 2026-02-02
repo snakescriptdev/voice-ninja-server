@@ -8,7 +8,7 @@ from app_v2.core.logger import setup_logger
 from app_v2.utils.jwt_utils import HTTPBearer
 
 logger = setup_logger(__name__)
-router = APIRouter(prefix="/api/v2/agent", tags=["agent"])
+router = APIRouter(prefix="/api/v2", tags=["agent"])
 
 security = HTTPBearer()
 
