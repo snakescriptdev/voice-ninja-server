@@ -14,14 +14,14 @@ logger = setup_logger(__name__)
 
 security = HTTPBearer()
 
-router = APIRouter(prefix="/api/v2/agent/voice",tags=["agent"],dependencies=[Depends(security)])
+router = APIRouter(prefix="/api/v2",tags=["agent"],dependencies=[Depends(security)])
 
 
 
 
 
 
-@router.get("/",response_model=List[VoiceRead],status_code=status.HTTP_200_OK,openapi_extra={"security":[{"BearerAuth":[]}]},summary="lists available voices",description="return the list of available voices for user (both custom and predefined)")
+@router.get("/voice",response_model=List[VoiceRead],status_code=status.HTTP_200_OK,openapi_extra={"security":[{"BearerAuth":[]}]},summary="lists available voices",description="return the list of available voices for user (both custom and predefined)")
 async def get_all_voices(current_user:UnifiedAuthModel = Depends(get_current_user)):
     try:
         voices = db.session.query(VoiceModel).filter(or_(
@@ -42,7 +42,7 @@ async def get_all_voices(current_user:UnifiedAuthModel = Depends(get_current_use
         )
 
 
-@router.get("/{id}",response_model=VoiceRead,status_code=status.HTTP_200_OK,openapi_extra={"security":[{"BearerAuth":[]}]})
+@router.get("/voice/by-id/{id}",response_model=VoiceRead,status_code=status.HTTP_200_OK,openapi_extra={"security":[{"BearerAuth":[]}]})
 async def get_voice_by_id(id:int, current_user:UnifiedAuthModel = Depends(get_current_user)):
     try:
         voice = db.session.query(VoiceModel).filter(

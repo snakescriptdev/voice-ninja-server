@@ -47,6 +47,7 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         voice=agent.voice.voice_name,
         ai_models=ai_model,
         languages=language,
+        updated_at=agent.modified_at
     )
 
 
@@ -155,7 +156,7 @@ async def get_all_agents(
 # -------------------- GET BY ID --------------------
 
 @router.get(
-    "/{agent_id}",
+    "by-id/{agent_id}",
     response_model=AgentRead,
     summary="Get agent by ID",
     openapi_extra={"security": [{"BearerAuth": []}]},
