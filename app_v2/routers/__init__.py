@@ -9,7 +9,8 @@ from .ai_model import router as ai_model_router
 from .language import router as lang_router
 from .voice import router as voice_router
 from .functions import router as function_router
+from .agent_variables import router as agent_variables_router
 
 
-__all__ = ['otp_router', 'health_router', 'google_auth_router', 'profile_router',"agent_router","ai_model_router","lang_router","voice_router","function_router"]
+__all__ = ['otp_router', 'health_router', 'google_auth_router', 'profile_router',"agent_router","ai_model_router","lang_router","voice_router","function_router", "agent_variables_router"]
 
