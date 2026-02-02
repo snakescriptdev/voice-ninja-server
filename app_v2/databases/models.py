@@ -271,6 +271,7 @@ class AgentModel(Base):
     agent_ai_models = relationship("AgentAIModelBridge",back_populates="agent",cascade="all, delete-orphan")
 
     agent_languages = relationship("AgentLanguageBridge",back_populates="agent",cascade="all, delete-orphan")
+    agent_functions = relationship("AgentFunctionBridgeModel",back_populates="agent",cascade="all, delete-orphan")
 
 
 class AIModels(Base):
@@ -355,6 +356,7 @@ class FunctionModel(Base):
 
 
     api_endpoint_url = relationship("FunctionApiConfig",back_populates = "function",cascade= "all, delete-orphan")
+    agent_functions = relationship("AgentFunctionBridgeModel",back_populates="function",cascade="all,delete-orphan")
 
 
 
@@ -390,6 +392,8 @@ class AgentFunctionBridgeModel(Base):
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     #relationships
+    agent = relationship("AgentModel",back_populates="agent_functions")
+    function = relationship("FunctionModel",back_populates="agent_functions")
 
 
 

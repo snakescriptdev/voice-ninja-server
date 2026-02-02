@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional
+from datetime import datetime
 
 class AgentCreate(BaseModel):
     agent_name: str
@@ -27,6 +28,7 @@ class AgentRead(BaseModel):
     first_message: str | None
     system_prompt: str
     voice:str
+    updated_at: datetime
 
     class Config:
         from_attributes = True
