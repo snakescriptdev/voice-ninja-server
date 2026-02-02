@@ -47,7 +47,8 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         voice=agent.voice.voice_name,
         ai_models=ai_model,
         languages=language,
-        updated_at=agent.modified_at
+        updated_at=agent.modified_at,
+        phone = agent.phone
     )
 
 
@@ -88,6 +89,7 @@ async def create_agent(
         system_prompt=agent_in.system_prompt,
         agent_voice=voice_id,
         user_id=user_id,
+        phone=agent_in.phone
     )
 
     db.session.add(agent)
