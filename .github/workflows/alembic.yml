@@ -1,0 +1,27 @@
+name: Alembic Safety Check
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  alembic:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: pip install -r requirements.txt
+
+      - name: Check Alembic heads
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          alembic heads
+          test "$(alembic heads | wc -l)" -eq 1
