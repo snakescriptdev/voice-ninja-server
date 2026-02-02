@@ -92,7 +92,7 @@ class FunctionUpdateSchema(BaseModel):
     Partial update for function and its configs
     """
     name: Optional[str] = None
-    description: Optional[str] = None
+    description: Optional[str] = Field(None,min_length=10)
     api_configs: Optional[List[FunctionApiConfigSchema]] = None
     agent_config: Optional[AgentFunctionConfigSchema] = None
 

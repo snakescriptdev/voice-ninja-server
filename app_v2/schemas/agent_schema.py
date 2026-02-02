@@ -30,6 +30,15 @@ class AgentUpdate(BaseModel):
     voice: Optional[str] = None
     ai_models: Optional[str] = None
     languages: Optional[str] = Field(default=None,description="language code to be passed in model (en-01 for english)")
+    phone: Optional[str] = None
+
+    @field_validator("phone")
+    @classmethod
+    def phone_validator(cls,v):
+        if not is_phone(v):
+            raise ValueError("Invalid phone number")
+        return v
+
 
 class AgentRead(BaseModel):
     id: int
@@ -38,7 +47,7 @@ class AgentRead(BaseModel):
     system_prompt: str
     voice:str
     updated_at: datetime
-    phone: str
+    phone: Optional[str] = None
 
     class Config:
         from_attributes = True

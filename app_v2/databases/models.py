@@ -273,6 +273,8 @@ class AgentModel(Base):
 
     agent_languages = relationship("AgentLanguageBridge",back_populates="agent",cascade="all, delete-orphan")
     agent_functions = relationship("AgentFunctionBridgeModel",back_populates="agent",cascade="all, delete-orphan")
+    variables = relationship("VariablesModel",back_populates="agent",cascade="all, delete-orphan")
+
 
 
 class AIModels(Base):
@@ -298,7 +300,6 @@ class LanguageModel(Base):
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     agent_languages = relationship("AgentLanguageBridge",back_populates="language",cascade="all, delete-orphan")
-
 
 
 class AgentAIModelBridge(Base):
@@ -395,6 +396,23 @@ class AgentFunctionBridgeModel(Base):
     #relationships
     agent = relationship("AgentModel",back_populates="agent_functions")
     function = relationship("FunctionModel",back_populates="agent_functions")
+
+
+
+
+
+class VariablesModel(Base):
+
+    __tablename__ = "variables"
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
+    variable_name: Mapped[str]= mapped_column(String,nullable=False)
+    variable_value: Mapped[str] = mapped_column(String,nullable=False)
+    agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
+    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    agent = relationship("AgentModel",back_populates="variables")
+
 
 
 
