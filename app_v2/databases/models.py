@@ -263,6 +263,7 @@ class AgentModel(Base):
     agent_voice : Mapped[int] = mapped_column(Integer, ForeignKey("custom_voices.id"))
     created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    phone : Mapped[str] = mapped_column(String,default="not assigned",nullable=True)
 
     user = relationship("UnifiedAuthModel",back_populates="agents")
 
