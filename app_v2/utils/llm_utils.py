@@ -19,8 +19,8 @@ Main Goal: {main_goal}
 Use Cases:
 {use_cases}
 
-Capabilities:
-{capabilites}
+Capebilities:
+{capebilites}
 
 Voice: {voice}
 AI Model: {ai_model}
@@ -71,7 +71,7 @@ async def generate_system_prompt_async(
             "language": config.language,
             "main_goal": config.main_goal,
             "use_cases": "\n".join(f"- {u}" for u in config.use_cases),
-            "capabilites": "\n".join(f"- {c}" for c in config.capabilites),
+            "capebilites": "\n".join(f"- {c}" for c in config.capebilites),
             "voice": config.voice,
             "ai_model": config.ai_model,
             "response_style": config.response_style,
