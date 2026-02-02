@@ -13,3 +13,5 @@ env/
 vectorstore/
 voice_ninja_env/
 .venv/
+pyproject.toml
+.python-version

@@ -381,6 +381,7 @@ async def verify_otp(
                     "message": MSG_OTP_EXPIRED
                 }
             )
+        is_new_user = not unified_user.is_verified
 
         # OTP is valid - clear it and verify user
         UnifiedAuthModel.update(
@@ -401,6 +402,7 @@ async def verify_otp(
                 is_verified=True,
                 last_login=datetime.now()
             )
+            
 
         # Create tokens
         token_data = {
@@ -436,7 +438,9 @@ async def verify_otp(
                 'first_name': unified_user.first_name,
                 'last_name': unified_user.last_name,
                 'address': unified_user.address,
-                'role': 'admin' if unified_user.is_admin else 'user'
+                'role': 'admin' if unified_user.is_admin else 'user',
+                "is_new_user":is_new_user
+                
             }
         }
 
