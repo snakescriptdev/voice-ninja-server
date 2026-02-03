@@ -1,12 +1,15 @@
 from sqlalchemy.orm import Session
-from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
+from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel, Base, engine
 from fastapi_sqlalchemy import db
 
 def populate_default_data(session: Session = None):
     """
     Populates the database with default data if it doesn't exist.
-    This replaces the individual ensure_default_exists methods in models.
+    Also ensures all tables are created.
     """
+    # Ensure tables exist
+    Base.metadata.create_all(engine)
+
     # If session is provided use it, otherwise use db.session context
     # Note: caller might be responsible for the session context
     
