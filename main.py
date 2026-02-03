@@ -172,9 +172,10 @@ async def startup_event():
     async def init_background_tasks():
         # Ensure default models exists
         try:
-            AdminTokenModel.ensure_default_exists()
-            TokensToConsume.ensure_default_exists()
-            VoiceModel.ensure_default_voices()
+            from app_v2.scripts.populate_db import populate_default_data
+            from fastapi_sqlalchemy import db
+            with db():
+                 populate_default_data(db.session)
             print("🚀 Background initialization complete!")
         except Exception as e:
             print(f"❌ Initialization failed: {e}")

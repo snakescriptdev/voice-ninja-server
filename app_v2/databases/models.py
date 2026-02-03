@@ -199,30 +199,14 @@ class AdminTokenModel(Base):
     token_values = Column(Integer, nullable=True, default=0)
     free_tokens = Column(Integer, nullable=True, default=0)
 
-    @classmethod
-    def ensure_default_exists(cls) -> "AdminTokenModel":
-        with db():
-            default_token = db.session.query(cls).filter(cls.id == 1).first()
-            if not default_token:
-                default_token = cls(id=1, token_values=0, free_tokens=0)
-                db.session.add(default_token)
-                db.session.commit()
-            return default_token
+
 
 class TokensToConsume(Base):
     __tablename__ = "tokens_to_consume"
     id = Column(Integer, primary_key=True)
     token_values = Column(Integer, nullable=True, default=0)
 
-    @classmethod
-    def ensure_default_exists(cls) -> "TokensToConsume":
-        with db():
-            default_token = db.session.query(cls).filter(cls.id == 1).first()
-            if not default_token:
-                default_token = cls(id=1, token_values=0)
-                db.session.add(default_token)
-                db.session.commit()
-            return default_token
+
 
 class VoiceModel(Base):
     __tablename__ = "custom_voices"
@@ -238,17 +222,7 @@ class VoiceModel(Base):
     user = relationship("UnifiedAuthModel", back_populates="voices")
     agents = relationship("AgentModel",back_populates="voice")
 
-    @classmethod
-    def ensure_default_voices(cls):
-        from app_v2.core.config import VoiceSettings
-        allowed_voices = ["Aoede", "Charon", "Fenrir", "Kore", "Puck"] # Default fallback
-        with db():
-            for name in allowed_voices:
-                existing = db.session.query(cls).filter(cls.voice_name == name, cls.is_custom_voice == False).first()
-                if not existing:
-                    voice = cls(voice_name=name, is_custom_voice=False)
-                    db.session.add(voice)
-            db.session.commit()
+
 
 
 class AgentModel(Base):
@@ -435,4 +409,4 @@ class KnowledgeBaseModel(Base):
 
 
 
-Base.metadata.create_all(engine)
+
