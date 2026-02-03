@@ -333,5 +333,5 @@ async def generate_system_prompt_for_agent(agent_config:AgentConfigGenerator):
             logger.error(f"error while genreating system prompt {e}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="failed to generate system prompt at the moment"
+                detail=f"failed to generate system prompt at the moment: {str(e)}"
             )
