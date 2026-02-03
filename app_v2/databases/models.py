@@ -274,6 +274,7 @@ class AgentModel(Base):
     agent_languages = relationship("AgentLanguageBridge",back_populates="agent",cascade="all, delete-orphan")
     agent_functions = relationship("AgentFunctionBridgeModel",back_populates="agent",cascade="all, delete-orphan")
     variables = relationship("VariablesModel",back_populates="agent",cascade="all, delete-orphan")
+    knowledge_base = relationship("KnowledgeBaseModel", back_populates="agent", cascade="all, delete-orphan")
 
 
 
@@ -412,6 +413,22 @@ class VariablesModel(Base):
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     agent = relationship("AgentModel",back_populates="variables")
+
+
+class KnowledgeBaseModel(Base):
+    __tablename__ = "knowledge_base"
+    
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
+    agent_id: Mapped[int] = mapped_column(Integer, ForeignKey("agents.id"), nullable=False)
+    kb_type: Mapped[str] = mapped_column(String, nullable=False)  # 'file', 'url', 'text'
+    title: Mapped[str] = mapped_column(String, nullable=True) # file name or title
+    content_path: Mapped[str] = mapped_column(String, nullable=True) # file path or url
+    content_text: Mapped[str] = mapped_column(Text, nullable=True) # for text type
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    agent = relationship("AgentModel", back_populates="knowledge_base")
 
 
 
