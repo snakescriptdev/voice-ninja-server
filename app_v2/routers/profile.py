@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
 
-from app_v2.databases.models import UnifiedAuthModel
+from app_v2.databases.models import UnifiedAuthModel, UserNotificationSettings
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.schemas.profile import (
     ProfileRequest,
@@ -106,19 +106,53 @@ async def get_profile(current_user = Depends(get_current_user)):
         ProfileResponse with profile data on success.
     """
     try:
-        return {
-            "status": STATUS_SUCCESS,
-            "status_code": HTTP_200_OK,
-            "message": MSG_PROFILE_RETRIEVED,
-            "profile": {
-                "id": current_user.id,
-                "email": current_user.email,
-                "phone": current_user.phone,
-                "first_name": current_user.first_name,
-                "last_name": current_user.last_name,
-                "address": current_user.address
+        with db():
+            # Re-fetch user to ensure it's attached to the session
+            # This fixes the DetachedInstanceError when accessing lazy-loaded notification_settings
+            user = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.id == current_user.id).first()
+            
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={
+                        "status": STATUS_FAILED,
+                        "status_code": HTTP_404_NOT_FOUND,
+                        "message": MSG_USER_NOT_FOUND
+                    }
+                )
+
+            # Check if notification settings exist (legacy users), create if not
+            if not user.notification_settings:
+                notification_settings = UserNotificationSettings(user_id=user.id)
+                db.session.add(notification_settings)
+                db.session.commit()
+                db.session.refresh(user)
+
+            response = {
+                "status": STATUS_SUCCESS,
+                "status_code": HTTP_200_OK,
+                "message": MSG_PROFILE_RETRIEVED,
+                "profile": {
+                    "id": user.id,
+                    "email": user.email,
+                    "phone": user.phone,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "address": user.address
+                }
             }
-        }
+
+            if user.notification_settings:
+                response["profile"]["notification_settings"] = {
+                    "id": user.notification_settings.id,
+                    "email_notifications": user.notification_settings.email_notifications,
+                    "useage_alerts": user.notification_settings.useage_alerts,
+                    "expiry_alert": user.notification_settings.expiry_alert
+                }
+            
+            return response
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error retrieving profile: {str(e)}")
         raise HTTPException(
@@ -291,19 +325,54 @@ async def update_profile(
                 }
             )
 
-        return {
-            "status": STATUS_SUCCESS,
-            "status_code": HTTP_200_OK,
-            "message": MSG_PROFILE_UPDATED,
-            "profile": {
-                "id": updated_user.id,
-                "email": updated_user.email,
-                "phone": updated_user.phone,
-                "first_name": updated_user.first_name,
-                "last_name": updated_user.last_name,
-                "address": updated_user.address
+        with db():
+            # Re-fetch user in this session to handle notification settings
+            user = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.id == current_user.id).first()
+            
+            # Update notification settings if provided
+            if request.notification_settings:
+                if not user.notification_settings:
+                    # Create if defaults missing
+                    settings = UserNotificationSettings(user_id=user.id)
+                    db.session.add(settings)
+                else:
+                    settings = user.notification_settings
+                
+                if request.notification_settings.email_notifications is not None:
+                    settings.email_notifications = request.notification_settings.email_notifications
+                if request.notification_settings.useage_alerts is not None:
+                    settings.useage_alerts = request.notification_settings.useage_alerts
+                if request.notification_settings.expiry_alert is not None:
+                    settings.expiry_alert = request.notification_settings.expiry_alert
+                
+                db.session.add(settings) # Ensure it's in session
+                db.session.commit()
+                db.session.refresh(user)
+
+            response = {
+                "status": STATUS_SUCCESS,
+                "status_code": HTTP_200_OK,
+                "message": MSG_PROFILE_UPDATED,
+                "profile": {
+                    "id": user.id,
+                    "email": user.email,
+                    "phone": user.phone,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "address": user.address
+                }
             }
-        }
+            
+            # Add notification settings to response
+            if user.notification_settings:
+                response["profile"]["notification_settings"] = {
+                    "id": user.notification_settings.id,
+                    "email_notifications": user.notification_settings.email_notifications,
+                    "useage_alerts": user.notification_settings.useage_alerts,
+                    "expiry_alert": user.notification_settings.expiry_alert
+                }
+                
+            return response
 
     except HTTPException:
         raise

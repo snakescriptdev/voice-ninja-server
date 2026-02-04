@@ -4,6 +4,27 @@ from typing import Optional
 from pydantic import BaseModel, Field, field_validator
 
 
+
+class UserNotificationSchema(BaseModel):
+    email_notifications: bool = Field(default=True)
+    useage_alerts: bool = Field(default=True)
+    expiry_alert: bool = Field(default=True) 
+
+
+class UserNotificationUpdate(BaseModel):
+    email_notifications: Optional[bool] =None
+    useage_alerts: Optional[bool] =None
+    expiry_alert: Optional[bool] =None
+
+
+
+class UserNotificationRead(UserNotificationSchema):
+    id : int
+
+    class Config:
+        from_attributes = True
+
+
 class ProfileRequest(BaseModel):
     """Request schema for updating user profile.
 
@@ -12,12 +33,14 @@ class ProfileRequest(BaseModel):
         last_name: User's last name.
         phone: User's phone number.
         address: User's address.
+        notification_settings: User's notification settings
     """
 
     first_name: Optional[str] = Field(None, description='User first name')
     last_name: Optional[str] = Field(None, description='User last name')
     phone: Optional[str] = Field(None, description='User phone number')
     address: Optional[str] = Field(None, description='User address')
+    notification_settings: Optional[UserNotificationUpdate] = Field(None, description="User notification settings")
 
     @field_validator('first_name', 'last_name')
     @classmethod
@@ -85,6 +108,7 @@ class ProfileInfo(BaseModel):
         first_name: User first name.
         last_name: User last name.
         address: User address.
+        notification_settings: User notification settings
     """
 
     id: int = Field(..., description='User ID')
@@ -93,3 +117,4 @@ class ProfileInfo(BaseModel):
     first_name: Optional[str] = Field(None, description='User first name')
     last_name: Optional[str] = Field(None, description='User last name')
     address: Optional[str] = Field(None, description='User address')
+    notification_settings: Optional[UserNotificationRead] = Field(None, description="User notification settings")

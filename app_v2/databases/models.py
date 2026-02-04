@@ -141,7 +141,7 @@ class UnifiedAuthModel(Base):
 
     agents = relationship("AgentModel", back_populates="user")
     voices = relationship("VoiceModel", back_populates="user")
-
+    notification_settings = relationship("UserNotificationSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -409,4 +409,15 @@ class KnowledgeBaseModel(Base):
 
 
 
+class UserNotificationSettings(Base):
+    __tablename__ = "notification_settings"
 
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"),unique=True) #enusre 1:1 
+
+    email_notifications: Mapped[bool] = mapped_column(Boolean,default=True,nullable=False)
+    useage_alerts: Mapped[bool] = mapped_column(Boolean,default=True,nullable=False)
+    expiry_alert: Mapped[bool] = mapped_column(Boolean,default=True,nullable=False)
+
+    user = relationship("UnifiedAuthModel", back_populates="notification_settings")
