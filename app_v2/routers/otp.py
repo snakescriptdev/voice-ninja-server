@@ -13,7 +13,7 @@ from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
-from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel
+from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
 from app_v2.utils.otp_utils import (
     generate_otp,
     is_email,
@@ -157,6 +157,13 @@ async def request_otp(request: RequestOTPRequest):
                 has_otp_auth=True,
                 is_verified=False
             )
+            
+            # Create default notification settings
+            with db():
+                notification_settings = UserNotificationSettings(user_id=unified_user.id)
+                db.session.add(notification_settings)
+                db.session.commit()
+
             user_created = True
             
             # Also create in old UserModel for backward compatibility
