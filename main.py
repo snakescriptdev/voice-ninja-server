@@ -165,23 +165,23 @@ app.include_router(knowledge_base_router)
 async def root():
     return {"message": "Voice Ninja V2 API is running", "app_v2_status": "active"}
 
-@app.on_event("startup")
-async def startup_event():
-    import asyncio
+# @app.on_event("startup")
+# async def startup_event():
+#     import asyncio
     
-    async def init_background_tasks():
-        # Ensure default models exists
-        try:
-            from app_v2.scripts.populate_db import populate_default_data
-            from fastapi_sqlalchemy import db
-            with db():
-                 populate_default_data(db.session)
-            print("🚀 Background initialization complete!")
-        except Exception as e:
-            print(f"❌ Initialization failed: {e}")
+#     async def init_background_tasks():
+#         # Ensure default models exists
+#         try:
+#             from app_v2.scripts.populate_db import populate_default_data
+#             from fastapi_sqlalchemy import db
+#             with db():
+#                  populate_default_data(db.session)
+#             print("🚀 Background initialization complete!")
+#         except Exception as e:
+#             print(f"❌ Initialization failed: {e}")
     
-    asyncio.create_task(init_background_tasks())
-    print("Voice Ninja V2 started successfully!")
+#     asyncio.create_task(init_background_tasks())
+#     print("Voice Ninja V2 started successfully!")
 
 if __name__ == "__main__":
     import uvicorn

@@ -142,6 +142,8 @@ async def create_function(
 )
 async def get_all_functions(
     agent_id: int | None = None,
+    skip: int = 0,
+    limit: int = 20,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     try:
@@ -167,6 +169,8 @@ async def get_all_functions(
                     )
                 )
                 .filter(AgentFunctionBridgeModel.agent_id == agent_id)
+                .offset(skip)
+                .limit(limit)
                 .all()
             )
 
@@ -185,6 +189,8 @@ async def get_all_functions(
             functions = (
                 db.session.query(FunctionModel)
                 .options(selectinload(FunctionModel.api_endpoint_url))
+                .offset(skip)
+                .limit(limit)
                 .all()
             )
             if not functions:

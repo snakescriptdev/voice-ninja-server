@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
-from app_v2.schemas.enum_types import RequestMethodEnum
+from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -11,6 +11,7 @@ import bcrypt
 import os
 from datetime import datetime
 from app_v2.core.config import VoiceSettings
+
 
 # Database configuration
 DB_URL = VoiceSettings.DB_URL
@@ -221,6 +222,7 @@ class VoiceModel(Base):
 
     user = relationship("UnifiedAuthModel", back_populates="voices")
     agents = relationship("AgentModel",back_populates="voice")
+    traits = relationship("VoiceTraitsModel", back_populates="voice", uselist=False, cascade="all, delete-orphan")
 
 
 
@@ -421,3 +423,15 @@ class UserNotificationSettings(Base):
     expiry_alert: Mapped[bool] = mapped_column(Boolean,default=True,nullable=False)
 
     user = relationship("UnifiedAuthModel", back_populates="notification_settings")
+
+
+class VoiceTraitsModel(Base):
+    __tablename__ = "voice_traits"
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement= True)
+
+    voice_id: Mapped[int] = mapped_column(Integer, ForeignKey("custom_voices.id"))
+    gender: Mapped[GenderEnum] = mapped_column(Enum(GenderEnum),default=GenderEnum.male)
+    nationality: Mapped[str] = mapped_column(String,nullable=False,default="British")
+
+    voice = relationship("VoiceModel", back_populates="traits")

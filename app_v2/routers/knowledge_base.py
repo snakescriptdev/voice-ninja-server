@@ -6,6 +6,8 @@ import os
 import shutil
 import logging
 from datetime import datetime
+from app_v2.schemas.pagination import PaginatedResponse
+import math
 
 from app_v2.databases.models import KnowledgeBaseModel, AgentModel, UnifiedAuthModel
 from app_v2.schemas.knowledge_base_schema import KnowledgeBaseResponse, KnowledgeBaseURLCreate, KnowledgeBaseTextCreate, KnowledgeBaseUpdate
@@ -143,20 +145,85 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
         logger.error(f"Unexpected error during text addition: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@router.get("/", response_model=List[KnowledgeBaseResponse], openapi_extra={"security": [{"BearerAuth": []}]})
-async def get_knowledge_base(
-    agent_name: str = Query(..., description="Name of the agent to retrieve KB for"),
+@router.get("/", response_model=PaginatedResponse[KnowledgeBaseResponse], openapi_extra={"security": [{"BearerAuth": []}]})
+async def get_all_knowledge_base(
+    page: int = 1,
+    size: int = 20,
+    current_user: UnifiedAuthModel = Depends(get_current_user)
+):
+    try:
+        if page < 1:
+            page = 1
+        
+        skip = (page - 1) * size
+
+        with db():
+            # Query all KB items for agents belonging to the current user
+            query = (
+                db.session.query(KnowledgeBaseModel)
+                .join(AgentModel)
+                .filter(AgentModel.user_id == current_user.id)
+            )
+            
+            total = query.count()
+            pages = math.ceil(total / size)
+
+            kb_entries = (
+                query
+                .offset(skip)
+                .limit(size)
+                .all()
+            )
+            
+            return PaginatedResponse(
+                total=total,
+                page=page,
+                size=size,
+                pages=pages,
+                items=kb_entries
+            )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving user knowledge base: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get("/agent/{agent_id}", response_model=List[KnowledgeBaseResponse], openapi_extra={"security": [{"BearerAuth": []}]})
+async def get_agent_knowledge_base(
+    agent_id: int,
+    skip: int = 0,
+    limit: int = 20,
     current_user: UnifiedAuthModel = Depends(get_current_user)
 ):
     try:
         with db():
-            agent = get_agent_by_name(agent_name, current_user.id, db.session)
-            kb_entries = db.session.query(KnowledgeBaseModel).filter(KnowledgeBaseModel.agent_id == agent.id).all()
+            # Verify agent ownership
+            agent = (
+                db.session.query(AgentModel)
+                .filter(
+                    AgentModel.id == agent_id,
+                    AgentModel.user_id == current_user.id
+                )
+                .first()
+            )
+            if not agent:
+                raise HTTPException(status_code=404, detail="Agent not found")
+
+            # Fetch KB items for this specific agent
+            kb_entries = (
+                db.session.query(KnowledgeBaseModel)
+                .filter(KnowledgeBaseModel.agent_id == agent_id)
+                .offset(skip)
+                .limit(limit)
+                .all()
+            )
             return kb_entries
+            
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error(f"Error retrieving knowledge base: {str(e)}")
+        logger.error(f"Error retrieving agent knowledge base: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT, openapi_extra={"security": [{"BearerAuth": []}]})
