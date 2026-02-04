@@ -100,6 +100,8 @@ async def create_variable(
 )
 async def get_variables_by_agent(
     agent_id: int,
+    skip: int = 0,
+    limit: int = 20,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     try:
@@ -119,6 +121,8 @@ async def get_variables_by_agent(
         variables = (
             db.session.query(VariablesModel)
             .filter(VariablesModel.agent_id == agent_id)
+            .offset(skip)
+            .limit(limit)
             .all()
         )
 

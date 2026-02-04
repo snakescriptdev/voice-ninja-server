@@ -48,6 +48,7 @@ class AgentRead(BaseModel):
     voice:str
     updated_at: datetime
     phone: Optional[str] = None
-
+    ai_model: str
+    language: str
     class Config:
         from_attributes = True

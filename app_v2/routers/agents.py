@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import or_
 from fastapi_sqlalchemy import db
 from app_v2.schemas.agent_config import AgentConfigGenerator, AgentConfigOut
+from app_v2.schemas.pagination import PaginatedResponse
+import math
 from app_v2.utils.llm_utils import generate_system_prompt_async
 
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
@@ -27,6 +29,10 @@ router = APIRouter(
 security = HTTPBearer()
 
 
+from sqlalchemy.orm import selectinload
+
+# ... (other imports)
+
 # -------------------- RESPONSE MAPPER --------------------
 
 def agent_to_read(agent: AgentModel) -> AgentRead:
@@ -45,8 +51,8 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         first_message=agent.first_message,
         system_prompt=agent.system_prompt,
         voice=agent.voice.voice_name,
-        ai_models=ai_model,
-        languages=language,
+        ai_model=ai_model,
+        language=language,
         updated_at=agent.modified_at,
         phone = agent.phone
     )
@@ -134,25 +140,53 @@ async def create_agent(
 
     return agent_to_read(agent)
 
-
 # -------------------- GET ALL --------------------
 
 @router.get(
     "/",
-    response_model=list[AgentRead],
+    response_model=PaginatedResponse[AgentRead],
     summary="Get all agents",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
 async def get_all_agents(
+    page: int = 1,
+    size: int = 20,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
-    agents = (
+    if page < 1:
+        page = 1
+    
+    skip = (page - 1) * size
+    
+    query = (
         db.session.query(AgentModel)
+        .options(
+            selectinload(AgentModel.agent_ai_models).selectinload(AgentAIModelBridge.ai_model),
+            selectinload(AgentModel.agent_languages).selectinload(AgentLanguageBridge.language),
+            selectinload(AgentModel.voice)
+        )
         .filter(AgentModel.user_id == current_user.id)
+    )
+    
+    total = query.count()
+    pages = math.ceil(total / size)
+    
+    agents = (
+        query
+        .offset(skip)
+        .limit(size)
         .all()
     )
 
-    return [agent_to_read(agent) for agent in agents]
+    items = [agent_to_read(agent) for agent in agents]
+    
+    return PaginatedResponse(
+        total=total,
+        page=page,
+        size=size,
+        pages=pages,
+        items=items
+    )
 
 
 # -------------------- GET BY ID --------------------
@@ -169,6 +203,11 @@ async def get_agent_by_id(
 ):
     agent = (
         db.session.query(AgentModel)
+        .options(
+            selectinload(AgentModel.agent_ai_models).selectinload(AgentAIModelBridge.ai_model),
+            selectinload(AgentModel.agent_languages).selectinload(AgentLanguageBridge.language),
+            selectinload(AgentModel.voice)
+        )
         .filter(
             AgentModel.id == agent_id,
             AgentModel.user_id == current_user.id,
@@ -180,6 +219,7 @@ async def get_agent_by_id(
         raise HTTPException(status_code=404, detail="Agent not found")
 
     return agent_to_read(agent)
+
 
 
 # -------------------- UPDATE --------------------

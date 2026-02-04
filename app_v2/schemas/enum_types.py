@@ -27,3 +27,9 @@ class ResponseStyleEnum(str, Enum):
     professional = "professional"
     friendly = "friendly"
     casual = "casual"
+
+
+class GenderEnum(str,Enum):
+    male = "male"
+    female = "female"
+

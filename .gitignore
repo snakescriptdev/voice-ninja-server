@@ -16,3 +16,5 @@ voice_ninja_env/
 pyproject.toml
 .python-version
 migrations/versions
+uv.lock
+uploads/*
