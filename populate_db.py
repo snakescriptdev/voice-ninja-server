@@ -35,20 +35,38 @@ def populate_default_data():
     # Default Voices
     allowed_voices = ["Aoede", "Charon", "Fenrir", "Kore", "Puck"]
     for name in allowed_voices:
-        existing = session.query(VoiceModel).filter(VoiceModel.voice_name == name, VoiceModel.is_custom_voice == False).first()
-        if existing:
-            existing_traits = session.query(VoiceTraitsModel).filter(VoiceTraitsModel.voice_id == existing.id).first()
-        if not existing_traits:
-            print(f"creating default traits for {name}")
-            traits = VoiceTraitsModel(voice_id = existing.id)
-            session.add(traits)
+        existing = (
+            session.query(VoiceModel)
+            .filter(
+                VoiceModel.voice_name == name,
+                VoiceModel.is_custom_voice == False
+            )
+            .first()
+        )
+
+        # Case 1: Voice does not exist → create voice + traits
         if not existing:
             print(f"Creating default voice: {name}")
             voice = VoiceModel(voice_name=name, is_custom_voice=False)
             session.add(voice)
-            traits = VoiceTraitsModel(voice_id = voice.id)
-            session.add(traits)
+            session.flush()  # 🔑 ensures voice.id is available
 
+            print(f"Creating default traits for {name}")
+            traits = VoiceTraitsModel(voice_id=voice.id)
+            session.add(traits)
+            continue
+
+        # Case 2: Voice exists → check traits
+        existing_traits = (
+            session.query(VoiceTraitsModel)
+            .filter(VoiceTraitsModel.voice_id == existing.id)
+            .first()
+        )
+
+        if not existing_traits:
+            print(f"Creating default traits for {name}")
+            traits = VoiceTraitsModel(voice_id=existing.id)
+            session.add(traits)
 
             
     try:
