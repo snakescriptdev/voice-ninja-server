@@ -86,7 +86,7 @@ async def create_variable(
         logger.error(f"Error while creating variable: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create variable"
+            detail=f"Failed to create variable:{str(e)}"
         )
 
 
@@ -100,6 +100,8 @@ async def create_variable(
 )
 async def get_variables_by_agent(
     agent_id: int,
+    skip: int = 0,
+    limit: int = 20,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     try:
@@ -119,6 +121,8 @@ async def get_variables_by_agent(
         variables = (
             db.session.query(VariablesModel)
             .filter(VariablesModel.agent_id == agent_id)
+            .offset(skip)
+            .limit(limit)
             .all()
         )
 
@@ -130,7 +134,7 @@ async def get_variables_by_agent(
         logger.error(f"Error fetching variables for agent {agent_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch variables"
+            detail=f"Failed to fetch variables:{str(e)}"
         )
 
 
@@ -170,7 +174,7 @@ async def get_variable_by_id(
         logger.error(f"Error fetching variable {variable_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to fetch variable"
+            detail=f"Failed to fetch variable:{e}"
         )
 
 
@@ -218,7 +222,7 @@ async def update_variable(
         logger.error(f"Error updating variable {variable_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update variable"
+            detail=f"Failed to update variable:{e}"
         )
 
 
@@ -259,5 +263,5 @@ async def delete_variable(
         logger.error(f"Error deleting variable {variable_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete variable"
+            detail=f"Failed to delete variable:{e}"
         )
