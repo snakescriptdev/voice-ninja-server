@@ -1,34 +1,20 @@
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session,sessionmaker
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel, Base, engine, VoiceTraitsModel
-from fastapi_sqlalchemy import db
+from app_v2.core.config import VoiceSettings
+sessionLocal = sessionmaker(bind=engine,autoflush=False,autocommit= False)
 
-def populate_default_data(session: Session = None):
+
+
+def populate_default_data():
     """
     Populates the database with default data if it doesn't exist.
     Also ensures all tables are created.
     """
     # Ensure tables exist
     Base.metadata.create_all(engine)
+    session = sessionLocal()
 
-    # If session is provided use it, otherwise use db.session context
-    # Note: caller might be responsible for the session context
     
-    local_session = False
-    if session is None:
-        # In case we are running this outside of a request context where db.session is available
-        # we might need to handle session creation. 
-        # However, looking at how it was used in main.py, it likely relies on the middleware or global db context.
-        # For now, let's assume we are called within a context where `db.session` works OR a session is passed.
-        # But `db.session` from `fastapi_sqlalchemy` usually requires a context manager if not in a request.
-        
-        # Checking how it was implemented in models.py:
-        # with db(): ...
-        try:
-           session = db.session
-        except:
-            # Fallback if no session is active (e.g. CLI script)
-            # We assume the caller handles the `with db():` block or passes a session
-            pass
 
     print("Checking default data...")
 
@@ -72,3 +58,6 @@ def populate_default_data(session: Session = None):
         session.rollback()
         print(f"Error populating data: {e}")
         raise e
+
+
+populate_default_data()
