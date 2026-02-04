@@ -18,7 +18,7 @@ from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
-from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel
+from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
 from app_v2.utils.jwt_utils import create_access_token, create_refresh_token
 
 from app_v2.constants import (
@@ -252,6 +252,13 @@ async def google_callback(code: str, http_request: Request):
                     tokens=20,
                     last_login=datetime.now()
                 )
+
+                # Create default notification settings
+                with db():
+                    notification_settings = UserNotificationSettings(user_id=unified_user.id)
+                    db.session.add(notification_settings)
+                    db.session.commit()
+
                 user_created = True
                 user_id = unified_user.id
                 user_email = unified_user.email
