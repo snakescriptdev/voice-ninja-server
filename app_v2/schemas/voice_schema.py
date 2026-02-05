@@ -16,7 +16,7 @@ class VoiceRead(BaseModel):
     is_custom_voice: bool
     elevenlabs_voice_id: Optional[str] | None
     gender: Optional[GenderEnum] = GenderEnum.male
-    nationality: Optional[str] = "British"
+    nationality: Optional[str] = None
 
     class Config:
         from_attributes = True

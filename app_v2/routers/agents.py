@@ -18,6 +18,7 @@ from app_v2.databases.models import (
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
 from app_v2.core.logger import setup_logger
+from app_v2.utils.elevenlabs import ElevenLabsAgent
 
 logger = setup_logger(__name__)
 
@@ -54,7 +55,8 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         ai_model=ai_model,
         language=language,
         updated_at=agent.modified_at,
-        phone = agent.phone
+        phone = agent.phone,
+        elevenlabs_agent_id=agent.elevenlabs_agent_id
     )
 
 
@@ -74,8 +76,8 @@ async def create_agent(
     user_id = current_user.id
 
     # ---- Voice ----
-    voice_id = (
-        db.session.query(VoiceModel.id)
+    voice = (
+        db.session.query(VoiceModel)
         .filter(
             VoiceModel.voice_name == agent_in.voice,
             or_(
@@ -83,23 +85,11 @@ async def create_agent(
                 VoiceModel.user_id == user_id,
             ),
         )
-        .scalar()
+        .first()
     )
 
-    if not voice_id:
+    if not voice:
         raise HTTPException(status_code=400, detail="Voice not found")
-
-    agent = AgentModel(
-        agent_name=agent_in.agent_name,
-        first_message=agent_in.first_message,
-        system_prompt=agent_in.system_prompt,
-        agent_voice=voice_id,
-        user_id=user_id,
-        phone=agent_in.phone
-    )
-
-    db.session.add(agent)
-    db.session.flush()
 
     # ---- AI Model (single) ----
     ai_model = (
@@ -111,13 +101,6 @@ async def create_agent(
     if not ai_model:
         raise HTTPException(status_code=400, detail="Invalid AI model")
 
-    db.session.add(
-        AgentAIModelBridge(
-            agent_id=agent.id,
-            ai_model_id=ai_model.id,
-        )
-    )
-
     # ---- Language (single) ----
     language = (
         db.session.query(LanguageModel)
@@ -127,6 +110,70 @@ async def create_agent(
 
     if not language:
         raise HTTPException(status_code=400, detail="Invalid language code")
+
+    # ---- Synchronize with ElevenLabs ----
+    elevenlabs_agent_id = None
+    try:
+        logger.info(f"Creating agent '{agent_in.agent_name}' in ElevenLabs for user {user_id}")
+        el_client = ElevenLabsAgent()
+        
+        # Check if the voice has an elevenlabs_voice_id
+        el_voice_id = voice.elevenlabs_voice_id
+        if not el_voice_id:
+            logger.error(f"Voice '{voice.voice_name}' (ID: {voice.id}) is missing ElevenLabs voice ID")
+            raise HTTPException(
+                status_code=424,
+                detail=f"Selected voice '{voice.voice_name}' is not properly synchronized with ElevenLabs"
+            )
+
+        el_response = el_client.create_agent(
+            name=agent_in.agent_name,
+            voice_id=el_voice_id,
+            prompt=agent_in.system_prompt,
+            first_message=agent_in.first_message or "Hello! How can I help you?",
+            language=language.lang_code,
+            llm_model=ai_model.model_name
+        )
+
+        if el_response.status:
+            elevenlabs_agent_id = el_response.data.get("agent_id")
+            logger.info(f"✅ Agent created in ElevenLabs with ID: {elevenlabs_agent_id}")
+        else:
+            error_msg = el_response.error_message or "Failed to create agent in ElevenLabs"
+            logger.error(f"❌ ElevenLabs agent creation failed: {error_msg}")
+            raise HTTPException(
+                status_code=424,
+                detail=f"Failed to create agent in ElevenLabs: {error_msg}"
+            )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error during ElevenLabs agent creation: {e}")
+        raise HTTPException(
+            status_code=424,
+            detail=f"Failed to create agent in ElevenLabs due to an unexpected error: {str(e)}"
+        )
+
+    # ---- Database Creation ----
+    agent = AgentModel(
+        agent_name=agent_in.agent_name,
+        first_message=agent_in.first_message,
+        system_prompt=agent_in.system_prompt,
+        agent_voice=voice.id,
+        user_id=user_id,
+        phone=agent_in.phone,
+        elevenlabs_agent_id=elevenlabs_agent_id
+    )
+
+    db.session.add(agent)
+    db.session.flush()
+
+    db.session.add(
+        AgentAIModelBridge(
+            agent_id=agent.id,
+            ai_model_id=ai_model.id,
+        )
+    )
 
     db.session.add(
         AgentLanguageBridge(
@@ -247,24 +294,35 @@ async def update_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    # ---- ElevenLabs Synchronization Preparation ----
+    el_update_params = {}
+    
     # ---- Base Fields ----
     if agent_in.agent_name is not None:
         agent.agent_name = agent_in.agent_name
+        el_update_params["name"] = agent_in.agent_name
     if agent_in.first_message is not None:
         agent.first_message = agent_in.first_message
+        el_update_params["first_message"] = agent_in.first_message
     if agent_in.system_prompt is not None:
         agent.system_prompt = agent_in.system_prompt
+        el_update_params["prompt"] = agent_in.system_prompt
 
     # ---- Voice ----
     if agent_in.voice is not None:
-        voice_id = (
-            db.session.query(VoiceModel.id)
+        voice = (
+            db.session.query(VoiceModel)
             .filter(VoiceModel.voice_name == agent_in.voice)
-            .scalar()
+            .first()
         )
-        if not voice_id:
+        if not voice:
             raise HTTPException(status_code=400, detail="Voice not found")
-        agent.agent_voice = voice_id
+        agent.agent_voice = voice.id
+        
+        if voice.elevenlabs_voice_id:
+            el_update_params["voice_id"] = voice.elevenlabs_voice_id
+        else:
+            logger.warning(f"Voice '{voice.voice_name}' (ID: {voice.id}) is missing ElevenLabs voice ID")
 
     # ---- AI Model ----
     if agent_in.ai_models is not None:
@@ -287,6 +345,7 @@ async def update_agent(
                 ai_model_id=ai_model.id,
             )
         )
+        el_update_params["llm_model"] = ai_model.model_name
 
     # ---- Language ----
     if agent_in.languages is not None:
@@ -309,6 +368,37 @@ async def update_agent(
                 lang_id=language.id,
             )
         )
+        el_update_params["language"] = language.lang_code
+
+    # ---- Sync with ElevenLabs ----
+    if el_update_params and agent.elevenlabs_agent_id:
+        try:
+            logger.info(f"Updating agent '{agent.elevenlabs_agent_id}' in ElevenLabs")
+            el_client = ElevenLabsAgent()
+            el_response = el_client.update_agent(
+                agent_id=agent.elevenlabs_agent_id,
+                **el_update_params
+            )
+            
+            if not el_response.status:
+                logger.error(f"❌ ElevenLabs agent update failed: {el_response.error_message}")
+                # We decide whether to fail the database update or just log the error.
+                # Since the local DB is the source of truth for our UI, we might want to keep it in sync,
+                # but ElevenLabs being out of sync is a problem.
+                # Given the voice router pattern, let's raise an error.
+                raise HTTPException(
+                    status_code=424,
+                    detail=f"Failed to update agent in ElevenLabs: {el_response.error_message}"
+                )
+            logger.info(f"✅ ElevenLabs agent '{agent.elevenlabs_agent_id}' updated successfully")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error during ElevenLabs agent update: {e}")
+            raise HTTPException(
+                status_code=424,
+                detail=f"Failed to update agent in ElevenLabs due to an unexpected error: {str(e)}"
+            )
 
     db.session.commit()
     db.session.refresh(agent)
@@ -339,6 +429,22 @@ async def delete_agent(
 
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    # ---- Delete from ElevenLabs ----
+    if agent.elevenlabs_agent_id:
+        try:
+            logger.info(f"Deleting agent from ElevenLabs: {agent.elevenlabs_agent_id}")
+            el_client = ElevenLabsAgent()
+            el_response = el_client.delete_agent(agent.elevenlabs_agent_id)
+            
+            if el_response.status:
+                logger.info(f"✅ Agent deleted from ElevenLabs: {agent.elevenlabs_agent_id}")
+            else:
+                logger.warning(f"Failed to delete agent from ElevenLabs: {el_response.error_message}")
+                # We continue with database deletion even if ElevenLabs deletion fails
+        except Exception as e:
+            logger.error(f"Error deleting agent from ElevenLabs: {e}")
+            # We continue with database deletion even if ElevenLabs deletion fails
 
     db.session.delete(agent)
     db.session.commit()
