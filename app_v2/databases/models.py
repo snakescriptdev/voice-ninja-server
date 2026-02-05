@@ -237,6 +237,7 @@ class AgentModel(Base):
 
     user_id : Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"))
     agent_voice : Mapped[int] = mapped_column(Integer, ForeignKey("custom_voices.id"))
+    elevenlabs_agent_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     phone : Mapped[str] = mapped_column(String,default="not assigned",nullable=True)
@@ -328,13 +329,14 @@ class FunctionModel(Base):
     id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True,autoincrement=True)
     name: Mapped[str] = mapped_column(String,unique=True,nullable=False)
     description: Mapped[str] = mapped_column(String,nullable=False)
+    elevenlabs_tool_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
 
     #audit fields
     created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
-    api_endpoint_url = relationship("FunctionApiConfig",back_populates = "function",cascade= "all, delete-orphan")
+    api_endpoint_url = relationship("FunctionApiConfig",back_populates = "function",cascade= "all, delete-orphan", uselist=False)
     agent_functions = relationship("AgentFunctionBridgeModel",back_populates="function",cascade="all,delete-orphan")
 
 
@@ -400,6 +402,7 @@ class KnowledgeBaseModel(Base):
     title: Mapped[str] = mapped_column(String, nullable=True) # file name or title
     content_path: Mapped[str] = mapped_column(String, nullable=True) # file path or url
     content_text: Mapped[str] = mapped_column(Text, nullable=True) # for text type
+    elevenlabs_document_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -431,7 +434,7 @@ class VoiceTraitsModel(Base):
     id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement= True)
 
     voice_id: Mapped[int] = mapped_column(Integer, ForeignKey("custom_voices.id"))
-    gender: Mapped[GenderEnum] = mapped_column(Enum(GenderEnum),default=GenderEnum.male)
-    nationality: Mapped[str] = mapped_column(String,nullable=False,default="British")
+    gender: Mapped[GenderEnum] = mapped_column(Enum(GenderEnum),nullable=True)
+    nationality: Mapped[str] = mapped_column(String,nullable=True)
 
     voice = relationship("VoiceModel", back_populates="traits")

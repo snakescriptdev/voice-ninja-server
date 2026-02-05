@@ -50,5 +50,6 @@ class AgentRead(BaseModel):
     phone: Optional[str] = None
     ai_model: str
     language: str
+    elevenlabs_agent_id: Optional[str] = None
     class Config:
         from_attributes = True
