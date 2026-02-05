@@ -2,11 +2,11 @@ from enum import Enum
 
 
 class RequestMethodEnum(str,Enum):
-    get = "get"
-    post = "post"
-    put = "put"
-    delete = "delete"
-    patch = "patch"
+    get = "GET"
+    post = "POST"
+    put = "PUT"
+    delete = "DELETE"
+    patch = "PATCH"
 
 class UseCases(str,Enum):
     email_assistant = "email_assistant"
@@ -32,4 +32,5 @@ class ResponseStyleEnum(str, Enum):
 class GenderEnum(str,Enum):
     male = "male"
     female = "female"
+    null= None
 

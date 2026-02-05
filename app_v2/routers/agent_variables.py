@@ -14,6 +14,7 @@ from app_v2.databases.models import (
     AgentModel,
     UnifiedAuthModel
 )
+from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.core.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -76,6 +77,21 @@ async def create_variable(
         db.session.add(new_var)
         db.session.commit()
         db.session.refresh(new_var)
+
+        # ---- ElevenLabs Sync ----
+        if agent.elevenlabs_agent_id:
+            try:
+                all_vars = db.session.query(VariablesModel).filter(VariablesModel.agent_id == agent.id).all()
+                vars_dict = {v.variable_name: v.variable_value for v in all_vars}
+                
+                client = ElevenLabsAgent()
+                client.update_agent(
+                    agent_id=agent.elevenlabs_agent_id,
+                    dynamic_variables=vars_dict
+                )
+                logger.info(f"Synced variables to ElevenLabs agent {agent.elevenlabs_agent_id}")
+            except Exception as e:
+                logger.error(f"Failed to sync variables to ElevenLabs: {e}")
 
         logger.info(f"Variable created successfully | id={new_var.id}")
         return variable_to_read(new_var)
@@ -213,6 +229,24 @@ async def update_variable(
         db.session.commit()
         db.session.refresh(var)
 
+        # ---- ElevenLabs Sync ----
+        # Access agent via relationship (lazy loaded)
+        elevenlabs_agent_id = var.agent.elevenlabs_agent_id if var.agent else None
+        
+        if elevenlabs_agent_id:
+            try:
+                all_vars = db.session.query(VariablesModel).filter(VariablesModel.agent_id == var.agent_id).all()
+                vars_dict = {v.variable_name: v.variable_value for v in all_vars}
+                
+                client = ElevenLabsAgent()
+                client.update_agent(
+                    agent_id=elevenlabs_agent_id,
+                    dynamic_variables=vars_dict
+                )
+                logger.info(f"Synced variables to ElevenLabs agent {elevenlabs_agent_id}")
+            except Exception as e:
+                logger.error(f"Failed to sync variables to ElevenLabs: {e}")
+
         logger.info(f"Variable updated successfully | id={var.id}")
         return variable_to_read(var)
 
@@ -252,10 +286,31 @@ async def delete_variable(
         if not var:
             raise HTTPException(status_code=404, detail="Variable not found")
 
+        # Store agent info for sync before deletion
+        agent_id = var.agent_id
+        elevenlabs_agent_id = var.agent.elevenlabs_agent_id if var.agent else None
+
         db.session.delete(var)
         db.session.commit()
 
+        # ---- ElevenLabs Sync ----
+        if elevenlabs_agent_id:
+            try:
+                all_vars = db.session.query(VariablesModel).filter(VariablesModel.agent_id == agent_id).all()
+                vars_dict = {v.variable_name: v.variable_value for v in all_vars}
+                
+                client = ElevenLabsAgent()
+                client.update_agent(
+                    agent_id=elevenlabs_agent_id,
+                    dynamic_variables=vars_dict
+                )
+                logger.info(f"Synced variables to ElevenLabs agent {elevenlabs_agent_id}")
+            except Exception as e:
+                logger.error(f"Failed to sync variables to ElevenLabs: {e}")
+                # Don't raise error to user as DB operation succeeded
+
         logger.info(f"Variable deleted successfully | id={variable_id}")
+
 
     except HTTPException:
         raise

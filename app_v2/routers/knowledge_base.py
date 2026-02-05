@@ -13,6 +13,7 @@ from app_v2.databases.models import KnowledgeBaseModel, AgentModel, UnifiedAuthM
 from app_v2.schemas.knowledge_base_schema import KnowledgeBaseResponse, KnowledgeBaseURLCreate, KnowledgeBaseTextCreate, KnowledgeBaseUpdate
 from app_v2.utils.jwt_utils import HTTPBearer,get_current_user
 from app_v2.core.logger import setup_logger
+from app_v2.utils.elevenlabs import ElevenLabsKB, ElevenLabsAgent
 
 logger = setup_logger(__name__)
 
@@ -47,36 +48,84 @@ async def upload_files(
             agent = get_agent_by_name(agent_name, current_user.id, db.session)
             
             for file in files:
-                # Validate file extension
+                # ... (validation logic)
                 _, ext = os.path.splitext(file.filename)
                 if ext.lower() not in ALLOWED_EXTENSIONS:
-                    # Depending on reqs, might skip or fail. Let's fail for now or could just skip.
-                    # User probably expects all valid or fail.
                     raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
 
-                # Validate file size
                 file.file.seek(0, 2)
                 file_size = file.file.tell()
                 file.file.seek(0)
                 
                 if file_size > MAX_FILE_SIZE:
                      raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds 10MB limit")
+                
+                if file_size == 0:
+                    raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
 
                 file_path = os.path.join(UPLOAD_DIR, f"{agent.id}_{datetime.now().timestamp()}_{file.filename}")
                 
                 with open(file_path, "wb") as buffer:
                     shutil.copyfileobj(file.file, buffer)
                 
+                # ---- ElevenLabs KB Upload ----
+                elevenlabs_document_id = None
+                try:
+                    logger.info(f"Syncing file '{file.filename}' to ElevenLabs KB for agent '{agent_name}'")
+                    kb_client = ElevenLabsKB()
+                    kb_response = kb_client.upload_document(file_path, name=file.filename)
+                    
+                    if kb_response.status:
+                        elevenlabs_document_id = kb_response.data.get("document_id")
+                    else:
+                        logger.warning(f"Failed to upload to ElevenLabs KB: {kb_response.error_message}")
+                        # Clean up local file on failure if we want strict sync
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                        raise HTTPException(status_code=424, detail=f"ElevenLabs KB upload failed: {kb_response.error_message}")
+                except HTTPException:
+                    raise
+                except Exception as e:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                    logger.error(f"Error syncing with ElevenLabs: {e}")
+                    raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
+
                 kb_entry = KnowledgeBaseModel(
                     agent_id=agent.id,
                     kb_type="file",
                     title=file.filename,
-                    content_path=file_path
+                    content_path=file_path,
+                    elevenlabs_document_id=elevenlabs_document_id
                 )
                 db.session.add(kb_entry)
                 uploaded_entries.append(kb_entry)
             
             db.session.commit()
+            
+            # ---- Attach to Agent in ElevenLabs ----
+            if agent.elevenlabs_agent_id:
+                try:
+                    agent_client = ElevenLabsAgent()
+                    # Get all existing KB items for this agent to update the config
+                    all_kb = db.session.query(KnowledgeBaseModel).filter(
+                        KnowledgeBaseModel.agent_id == agent.id,
+                        KnowledgeBaseModel.elevenlabs_document_id.isnot(None)
+                    ).all()
+                    
+                    kb_docs = [
+                        {"id": item.elevenlabs_document_id, "type": "file", "name": item.title}
+                        for item in all_kb
+                    ]
+                    
+                    agent_client.update_agent(
+                        agent_id=agent.elevenlabs_agent_id,
+                        knowledge_base=kb_docs
+                    )
+                    logger.info(f"Updated ElevenLabs agent {agent.elevenlabs_agent_id} with {len(kb_docs)} documents")
+                except Exception as e:
+                    logger.error(f"Failed to attach KB to ElevenLabs agent: {e}")
+
             for entry in uploaded_entries:
                 db.session.refresh(entry)
             
@@ -100,13 +149,53 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
         with db():
             agent = get_agent_by_name(request.agent_name, current_user.id, db.session)
             
+            # ---- ElevenLabs KB Sync ----
+            elevenlabs_document_id = None
+            try:
+                logger.info(f"Syncing URL '{url_str}' to ElevenLabs KB")
+                kb_client = ElevenLabsKB()
+                kb_response = kb_client.add_url_document(url_str)
+                
+                if kb_response.status:
+                    elevenlabs_document_id = kb_response.data.get("document_id")
+                else:
+                    raise HTTPException(status_code=424, detail=f"ElevenLabs KB URL addition failed: {kb_response.error_message}")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error syncing URL with ElevenLabs: {e}")
+                raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
+
             kb_entry = KnowledgeBaseModel(
                 agent_id=agent.id,
                 kb_type="url",
-                content_path=url_str
+                content_path=url_str,
+                elevenlabs_document_id=elevenlabs_document_id
             )
             db.session.add(kb_entry)
             db.session.commit()
+            
+            # ---- Attach to Agent in ElevenLabs ----
+            if agent.elevenlabs_agent_id:
+                try:
+                    agent_client = ElevenLabsAgent()
+                    all_kb = db.session.query(KnowledgeBaseModel).filter(
+                        KnowledgeBaseModel.agent_id == agent.id,
+                        KnowledgeBaseModel.elevenlabs_document_id.isnot(None)
+                    ).all()
+                    
+                    kb_docs = []
+                    for item in all_kb:
+                        doc_type = "url" if item.kb_type == "url" else "file" if item.kb_type == "file" else "text"
+                        kb_docs.append({"id": item.elevenlabs_document_id, "type": doc_type, "name": item.title or item.content_path})
+
+                    agent_client.update_agent(
+                        agent_id=agent.elevenlabs_agent_id,
+                        knowledge_base=kb_docs
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to attach KB URL to ElevenLabs agent: {e}")
+
             db.session.refresh(kb_entry)
             
             logger.info(f"URL added successfully for agent: {request.agent_name}")
@@ -125,14 +214,54 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
         with db():
             agent = get_agent_by_name(request.agent_name, current_user.id, db.session)
             
+            # ---- ElevenLabs KB Sync ----
+            elevenlabs_document_id = None
+            try:
+                logger.info(f"Syncing text '{request.title}' to ElevenLabs KB")
+                kb_client = ElevenLabsKB()
+                kb_response = kb_client.add_text_document(request.context, request.title)
+                
+                if kb_response.status:
+                    elevenlabs_document_id = kb_response.data.get("document_id")
+                else:
+                    raise HTTPException(status_code=424, detail=f"ElevenLabs KB text addition failed: {kb_response.error_message}")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error syncing text with ElevenLabs: {e}")
+                raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
+
             kb_entry = KnowledgeBaseModel(
                 agent_id=agent.id,
                 kb_type="text",
                 title=request.title,
-                content_text=request.context
+                content_text=request.context,
+                elevenlabs_document_id=elevenlabs_document_id
             )
             db.session.add(kb_entry)
             db.session.commit()
+            
+            # ---- Attach to Agent in ElevenLabs ----
+            if agent.elevenlabs_agent_id:
+                try:
+                    agent_client = ElevenLabsAgent()
+                    all_kb = db.session.query(KnowledgeBaseModel).filter(
+                        KnowledgeBaseModel.agent_id == agent.id,
+                        KnowledgeBaseModel.elevenlabs_document_id.isnot(None)
+                    ).all()
+                    
+                    kb_docs = []
+                    for item in all_kb:
+                        doc_type = "text" if item.kb_type == "text" else "file" if item.kb_type == "file" else "url"
+                        kb_docs.append({"id": item.elevenlabs_document_id, "type": doc_type, "name": item.title or "Untitled"})
+
+                    agent_client.update_agent(
+                        agent_id=agent.elevenlabs_agent_id,
+                        knowledge_base=kb_docs
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to attach KB text to ElevenLabs agent: {e}")
+
             db.session.refresh(kb_entry)
             
             logger.info(f"Text added successfully for agent: {request.agent_name}")
@@ -242,6 +371,44 @@ async def delete_knowledge_base_item(
             if not kb_entry:
                 raise HTTPException(status_code=404, detail="Knowledge base item not found")
             
+            agent = kb_entry.agent
+            
+            # ---- Update Agent in ElevenLabs (detach doc FIRST) ----
+            if agent and agent.elevenlabs_agent_id:
+                try:
+                    agent_client = ElevenLabsAgent()
+                    # Query all valid KB items for this agent, excluding the one we are about to delete
+                    all_kb = db.session.query(KnowledgeBaseModel).filter(
+                        KnowledgeBaseModel.agent_id == agent.id,
+                        KnowledgeBaseModel.elevenlabs_document_id.isnot(None),
+                        KnowledgeBaseModel.id != kb_id  # Exclude current item
+                    ).all()
+                    
+                    kb_docs = []
+                    for item in all_kb:
+                        doc_type = "file" if item.kb_type == "file" else "url" if item.kb_type == "url" else "text"
+                        kb_docs.append({"id": item.elevenlabs_document_id, "type": doc_type, "name": item.title or "Untitled"})
+
+                    agent_client.update_agent(
+                        agent_id=agent.elevenlabs_agent_id,
+                        knowledge_base=kb_docs
+                    )
+                    logger.info(f"Detached KB item {kb_id} from agent {agent.elevenlabs_agent_id}")
+                except Exception as e:
+                    logger.error(f"Failed to update ElevenLabs agent before KB deletion: {e}")
+                    # Decide if we should proceed or partial fail. 
+                    # If we fail to detach, the delete below will likely fail too. 
+                    # But we should probably try anyway or warn.
+            
+            # ---- ElevenLabs KB Sync (Delete from Library SECOND) ----
+            if kb_entry.elevenlabs_document_id:
+                try:
+                    logger.info(f"Deleting document {kb_entry.elevenlabs_document_id} from ElevenLabs KB")
+                    kb_client = ElevenLabsKB()
+                    kb_client.delete_document(kb_entry.elevenlabs_document_id)
+                except Exception as e:
+                    logger.error(f"Failed to delete document from ElevenLabs KB: {e}")
+
             # Delete file if exists
             if kb_entry.kb_type == "file" and kb_entry.content_path and os.path.exists(kb_entry.content_path):
                 try:
