@@ -51,12 +51,15 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
     )
 
 @router.get("/voice", response_model=List[VoiceRead], status_code=status.HTTP_200_OK, openapi_extra={"security":[{"BearerAuth":[]}]}, summary="lists available voices", description="return the list of available voices for user (both custom and predefined)")
-async def get_all_voices(current_user: UnifiedAuthModel = Depends(get_current_user)):
+async def get_all_voices(
+    skip: int = 0,
+    limit: int = 10,
+    current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
         voices = db.session.query(VoiceModel).options(selectinload(VoiceModel.traits)).filter(or_(
             VoiceModel.user_id == current_user.id,
             VoiceModel.user_id.is_(None)
-        )).all()
+        )).offset(skip).limit(limit).all()
 
         if not voices:
             logger.info("no voices are present in database.")
