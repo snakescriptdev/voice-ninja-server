@@ -16,22 +16,31 @@ class Settings(BaseSettings):
     DB_URL: str
     
     # Mail Configuration
-    MAIL_USERNAME: str = ""
-    MAIL_PASSWORD: str = ""
-    MAIL_FROM: str = ""
+    MAIL_USERNAME: str = os.getenv("MAIL_USERNAME")
+    MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD")
+    MAIL_FROM: str = os.getenv("MAIL_FROM")
     
     # Twilio Configuration
-    TWILIO_ACCOUNT_SID: str = ""
-    TWILIO_AUTH_TOKEN: str = ""
-    TWILIO_PHONE_NUMBER: str = ""
+    TWILIO_ACCOUNT_SID: str = os.getenv("TWILIO_ACCOUNT_SID")
+    TWILIO_AUTH_TOKEN: str = os.getenv("TWILIO_AUTH_TOKEN")
+    TWILIO_PHONE_NUMBER: str = os.getenv("TWILIO_PHONE_NUMBER")
     
     # Google OAuth Configuration
-    GOOGLE_CLIENT_ID: str = ""
-    GOOGLE_CLIENT_SECRET: str = ""
-    GOOGLE_REDIRECT_URI: str = ""
+    GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET")
+    GOOGLE_REDIRECT_URI: str = os.getenv("GOOGLE_REDIRECT_URI")
+
+    #GEMINI API Configuration
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY")
     
     # ElevenLabs Configuration
-    ELEVENLABS_API_KEY: str = ""
+    ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY")
+
+    # Frontend Configuration
+    FRONTEND_URL: str = os.getenv("FRONTEND_URL")
+
+    #Ngrok base url
+    NGROK_BASE_URL: str = os.getenv("NGROK_BASE_URL")
 
     class Config:
         env_file = ".env"

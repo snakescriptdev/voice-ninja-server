@@ -18,7 +18,7 @@ from app_v2.utils.elevenlabs import ElevenLabsKB, ElevenLabsAgent
 logger = setup_logger(__name__)
 
 router = APIRouter(
-    prefix="/knowledge-base",
+    prefix="/api/v2/knowledge-base",
     tags=["Knowledge Base"],
     dependencies=[Depends(HTTPBearer())]
 )
