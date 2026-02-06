@@ -34,3 +34,6 @@ class GenderEnum(str,Enum):
     female = "female"
     null= None
 
+class PhoneNumberAssignStatus(str,Enum):
+    assigned = "assigned"
+    unassigned = "unassigned"

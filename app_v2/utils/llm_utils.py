@@ -4,6 +4,7 @@ from app_v2.schemas.agent_config import AgentConfigGenerator
 from app_v2.core.logger import setup_logger
 from typing import Optional
 from pydantic import ValidationError
+from app_v2.core.config import VoiceSettings
 
 logger = setup_logger(__name__)
 
@@ -41,7 +42,7 @@ async def generate_system_prompt_async(
     """
     Generates a system prompt using Google Gemini (async) via official SDK.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = VoiceSettings.GEMINI_API_KEY
     if not api_key:
         logger.error("GEMINI_API_KEY not set")
         raise RuntimeError("GEMINI_API_KEY environment variable not set")
