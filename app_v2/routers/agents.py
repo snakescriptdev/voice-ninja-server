@@ -3,6 +3,7 @@ from sqlalchemy import or_
 from fastapi_sqlalchemy import db
 from app_v2.schemas.agent_config import AgentConfigGenerator, AgentConfigOut
 from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 import math
 from app_v2.utils.llm_utils import generate_system_prompt_async
 
@@ -15,9 +16,11 @@ from app_v2.databases.models import (
     AgentAIModelBridge,
     AgentLanguageBridge,
     UnifiedAuthModel,
+    PhoneNumberService
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
 from app_v2.core.logger import setup_logger
+from app_v2.utils.elevenlabs import ElevenLabsAgent
 
 logger = setup_logger(__name__)
 
@@ -45,6 +48,11 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         if agent.agent_languages else None
     )
 
+    phone_number = (
+        agent.phone_number[0].phone_number
+        if agent.phone_number else None
+    )
+
     return AgentRead(
         id=agent.id,
         agent_name=agent.agent_name,
@@ -54,7 +62,8 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         ai_model=ai_model,
         language=language,
         updated_at=agent.modified_at,
-        phone = agent.phone
+        elevenlabs_agent_id=agent.elevenlabs_agent_id,
+        phone = phone_number
     )
 
 
@@ -73,9 +82,25 @@ async def create_agent(
 ):
     user_id = current_user.id
 
-    # ---- Voice ----
-    voice_id = (
-        db.session.query(VoiceModel.id)
+    #check for agent existence 
+    agent_exists = (
+        db.session.query(AgentModel).filter(
+            AgentModel.agent_name ==agent_in.agent_name,
+            AgentModel.user_id == user_id
+        ).first()
+    )
+
+    if agent_exists:
+        raise HTTPException(
+            status_code= status.HTTP_400_BAD_REQUEST,
+            detail= "Agent with this name already exists"
+        )
+
+    # -------------------------------------------------
+    # Voice validation
+    # -------------------------------------------------
+    voice = (
+        db.session.query(VoiceModel)
         .filter(
             VoiceModel.voice_name == agent_in.voice,
             or_(
@@ -83,33 +108,120 @@ async def create_agent(
                 VoiceModel.user_id == user_id,
             ),
         )
-        .scalar()
+        .first()
     )
 
-    if not voice_id:
+    if not voice:
         raise HTTPException(status_code=400, detail="Voice not found")
 
-    agent = AgentModel(
-        agent_name=agent_in.agent_name,
-        first_message=agent_in.first_message,
-        system_prompt=agent_in.system_prompt,
-        agent_voice=voice_id,
-        user_id=user_id,
-        phone=agent_in.phone
-    )
+    if not voice.elevenlabs_voice_id:
+        raise HTTPException(
+            status_code=424,
+            detail=f"Selected voice '{voice.voice_name}' is not synchronized with ElevenLabs"
+        )
 
-    db.session.add(agent)
-    db.session.flush()
-
-    # ---- AI Model (single) ----
+    # -------------------------------------------------
+    # AI Model validation (single)
+    # -------------------------------------------------
     ai_model = (
         db.session.query(AIModels)
-        .filter(AIModels.model_name == agent_in.ai_models)
+        .filter(AIModels.model_name == agent_in.ai_model)
         .first()
     )
 
     if not ai_model:
         raise HTTPException(status_code=400, detail="Invalid AI model")
+
+    # -------------------------------------------------
+    # Language validation (single)
+    # -------------------------------------------------
+    language = (
+        db.session.query(LanguageModel)
+        .filter(LanguageModel.lang_code == agent_in.language)
+        .first()
+    )
+
+    if not language:
+        raise HTTPException(status_code=400, detail="Invalid language code")
+
+    # -------------------------------------------------
+    # Phone number lookup & validation 
+    # -------------------------------------------------
+    phone_record = None
+    if agent_in.phone:
+        phone_record = (
+            db.session.query(PhoneNumberService)
+            .filter(
+                PhoneNumberService.phone_number == agent_in.phone,
+                PhoneNumberService.user_id == user_id,
+            )
+            .first()
+        )
+
+        if not phone_record:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Phone number {agent_in.phone} not found or not owned by you"
+            )
+
+        if phone_record.assigned_to is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Phone number {agent_in.phone} is already assigned to another agent"
+            )
+
+    # -------------------------------------------------
+    # Create agent in ElevenLabs (only after validation)
+    # -------------------------------------------------
+    elevenlabs_agent_id = None
+    el_client = ElevenLabsAgent()
+
+    try:
+        logger.info(
+            f"Creating agent '{agent_in.agent_name}' in ElevenLabs for user {user_id}"
+        )
+
+        el_response = el_client.create_agent(
+            name=agent_in.agent_name,
+            voice_id=voice.elevenlabs_voice_id,
+            prompt=agent_in.system_prompt,
+            first_message=agent_in.first_message or "Hello! How can I help you?",
+            language=language.lang_code,
+            llm_model=ai_model.model_name,
+        )
+
+        if not el_response.status:
+            raise HTTPException(
+                status_code=424,
+                detail=el_response.error_message or "Failed to create agent in ElevenLabs",
+            )
+
+        elevenlabs_agent_id = el_response.data.get("agent_id")
+        logger.info(f"✅ ElevenLabs agent created: {elevenlabs_agent_id}")
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Unexpected ElevenLabs error")
+        raise HTTPException(
+            status_code=424,
+            detail=f"Unexpected error while creating agent in ElevenLabs {str(e)}",
+        )
+
+    # -------------------------------------------------
+    # Database creation (atomic)
+    # -------------------------------------------------
+    agent = AgentModel(
+        agent_name=agent_in.agent_name,
+        first_message=agent_in.first_message,
+        system_prompt=agent_in.system_prompt,
+        agent_voice=voice.id,
+        user_id=user_id,
+        elevenlabs_agent_id=elevenlabs_agent_id,
+    )
+
+    db.session.add(agent)
+    db.session.flush()
 
     db.session.add(
         AgentAIModelBridge(
@@ -118,22 +230,19 @@ async def create_agent(
         )
     )
 
-    # ---- Language (single) ----
-    language = (
-        db.session.query(LanguageModel)
-        .filter(LanguageModel.lang_code == agent_in.languages)
-        .first()
-    )
-
-    if not language:
-        raise HTTPException(status_code=400, detail="Invalid language code")
-
     db.session.add(
         AgentLanguageBridge(
             agent_id=agent.id,
             lang_id=language.id,
         )
     )
+
+    if phone_record:
+        phone_record.assigned_to = agent.id
+        phone_record.status = PhoneNumberAssignStatus.assigned
+        logger.info(
+            f"Assigned phone {phone_record.phone_number} to agent {agent.agent_name}"
+        )
 
     db.session.commit()
     db.session.refresh(agent)
@@ -191,15 +300,14 @@ async def get_all_agents(
 
 # -------------------- GET BY ID --------------------
 
+#made for admin to get any agent
 @router.get(
     "by-id/{agent_id}",
     response_model=AgentRead,
     summary="Get agent by ID",
-    openapi_extra={"security": [{"BearerAuth": []}]},
 )
 async def get_agent_by_id(
     agent_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     agent = (
         db.session.query(AgentModel)
@@ -210,7 +318,6 @@ async def get_agent_by_id(
         )
         .filter(
             AgentModel.id == agent_id,
-            AgentModel.user_id == current_user.id,
         )
         .first()
     )
@@ -247,24 +354,74 @@ async def update_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    # ---- ElevenLabs Synchronization Preparation ----
+    el_update_params = {}
+    
+    # ---- Phone Number Update ----
+    if agent_in.phone is not None:
+        # First, unassign any currently assigned phone
+        old_phone = db.session.query(PhoneNumberService).filter(
+            PhoneNumberService.assigned_to == agent_id
+        ).first()
+        
+        if old_phone:
+            old_phone.assigned_to = None
+            old_phone.status = PhoneNumberAssignStatus.unassigned
+            logger.info(f"Unassigned phone {old_phone.phone_number} from agent {agent.agent_name}")
+        
+        # Now assign new phone if provided (empty string means unassign only)
+        if agent_in.phone and agent_in.phone.strip():
+            # Lookup phone by phone number string
+            new_phone = db.session.query(PhoneNumberService).filter(
+                PhoneNumberService.phone_number == agent_in.phone,
+                PhoneNumberService.user_id == current_user.id
+            ).first()
+            
+            if not new_phone:
+                raise HTTPException(status_code=404, detail=f"Phone number {agent_in.phone} not found or not owned by you")
+            
+            if new_phone.assigned_to is not None and new_phone.assigned_to != agent_id:
+                raise HTTPException(status_code=400, detail=f"Phone number {agent_in.phone} is already assigned to another agent")
+            
+            new_phone.assigned_to = agent_id
+            new_phone.status = PhoneNumberAssignStatus.assigned
+            logger.info(f"Assigned phone {new_phone.phone_number} to agent {agent.agent_name}")
+        # else: empty string means unassign only (already done above)
+    
     # ---- Base Fields ----
     if agent_in.agent_name is not None:
         agent.agent_name = agent_in.agent_name
+        el_update_params["name"] = agent_in.agent_name
     if agent_in.first_message is not None:
         agent.first_message = agent_in.first_message
+        el_update_params["first_message"] = agent_in.first_message
     if agent_in.system_prompt is not None:
         agent.system_prompt = agent_in.system_prompt
+        el_update_params["prompt"] = agent_in.system_prompt
 
     # ---- Voice ----
     if agent_in.voice is not None:
-        voice_id = (
-            db.session.query(VoiceModel.id)
-            .filter(VoiceModel.voice_name == agent_in.voice)
-            .scalar()
+        voice = (
+            db.session.query(VoiceModel)
+            .filter(VoiceModel.voice_name == agent_in.voice,
+            or_(
+                VoiceModel.user_id == current_user.id,
+                VoiceModel.user_id.is_(None)
+            ))
+            .first()
         )
-        if not voice_id:
+        if not voice:
             raise HTTPException(status_code=400, detail="Voice not found")
-        agent.agent_voice = voice_id
+        agent.agent_voice = voice.id
+        
+        if voice.elevenlabs_voice_id:
+            el_update_params["voice_id"] = voice.elevenlabs_voice_id
+        else:
+            logger.warning(f"Voice '{voice.voice_name}' (ID: {voice.id}) is missing ElevenLabs voice ID")
+            raise HTTPException(
+                status_code=503,
+                detail="the voice is not yet configured for the elevenlabs. try using other voice"
+            )
 
     # ---- AI Model ----
     if agent_in.ai_models is not None:
@@ -287,6 +444,7 @@ async def update_agent(
                 ai_model_id=ai_model.id,
             )
         )
+        el_update_params["llm_model"] = ai_model.model_name
 
     # ---- Language ----
     if agent_in.languages is not None:
@@ -305,10 +463,38 @@ async def update_agent(
 
         db.session.add(
             AgentLanguageBridge(
-                agent_id=agent_id,
+                agent_id=agent.id,
                 lang_id=language.id,
             )
         )
+        el_update_params["language"] = language.lang_code
+
+    # ---- Sync with ElevenLabs ----
+    if el_update_params and agent.elevenlabs_agent_id:
+        try:
+            logger.info(f"Updating agent '{agent.elevenlabs_agent_id}' in ElevenLabs")
+            el_client = ElevenLabsAgent()
+            el_response = el_client.update_agent(
+                agent_id=agent.elevenlabs_agent_id,
+                **el_update_params
+            )
+            
+            if not el_response.status:
+                logger.error(f"❌ ElevenLabs agent update failed: {el_response.error_message}")
+                db.session.rollback()
+                raise HTTPException(
+                    status_code=424,
+                    detail=f"Failed to update agent in ElevenLabs: {el_response.error_message}"
+                )
+            logger.info(f"✅ ElevenLabs agent '{agent.elevenlabs_agent_id}' updated successfully")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error during ElevenLabs agent update: {e}")
+            raise HTTPException(
+                status_code=424,
+                detail=f"Failed to update agent in ElevenLabs due to an unexpected error: {str(e)}"
+            )
 
     db.session.commit()
     db.session.refresh(agent)
@@ -339,6 +525,42 @@ async def delete_agent(
 
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    # ---- Unassign phone number first ----
+    assigned_phone = db.session.query(PhoneNumberService).filter(
+        PhoneNumberService.assigned_to == agent_id
+    ).first()
+    
+    if assigned_phone:
+        assigned_phone.assigned_to = None
+        assigned_phone.status = PhoneNumberAssignStatus.unassigned
+        logger.info(f"Unassigned phone {assigned_phone.phone_number} from agent {agent.agent_name}")
+        db.session.commit()  # Commit phone unassignment before attempting ElevenLabs deletion
+
+    # ---- Delete from ElevenLabs ----
+    if agent.elevenlabs_agent_id:
+        try:
+            logger.info(f"Deleting agent from ElevenLabs: {agent.elevenlabs_agent_id}")
+            el_client = ElevenLabsAgent()
+            el_response = el_client.delete_agent(agent.elevenlabs_agent_id)
+            
+            if el_response.status:
+                logger.info(f"✅ Agent deleted from ElevenLabs: {agent.elevenlabs_agent_id}")
+            else:
+                logger.warning(f"Failed to delete agent from ElevenLabs: {el_response.error_message}")
+                # if not deleted from elevenlabs then rollback the database
+                db.session.rollback()
+                raise HTTPException(
+                    status_code=424,
+                    detail=f"Failed to delete agent from ElevenLabs: {el_response.error_message}"
+                )
+        except Exception as e:
+            logger.error(f"Error deleting agent from ElevenLabs: {e}")
+            db.session.rollback()
+            raise HTTPException(
+                status_code=424,
+                detail=f"Failed to delete agent from ElevenLabs: {str(e)}"
+            )
 
     db.session.delete(agent)
     db.session.commit()

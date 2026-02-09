@@ -17,6 +17,7 @@ from fastapi.responses import RedirectResponse,JSONResponse
 from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
+from app_v2.core.config import VoiceSettings
 logger = setup_logger(__name__)
 from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
 from app_v2.utils.jwt_utils import create_access_token, create_refresh_token
@@ -37,10 +38,10 @@ from app_v2.schemas.otp import ErrorResponse
 router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
 
 # Google OAuth configuration
-GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID')
-GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET')
-GOOGLE_REDIRECT_URI = os.getenv('GOOGLE_REDIRECT_URI')
-FRONTEND_URL = os.getenv('FRONTEND_URL')
+GOOGLE_CLIENT_ID = VoiceSettings.GOOGLE_CLIENT_ID
+GOOGLE_CLIENT_SECRET = VoiceSettings.GOOGLE_CLIENT_SECRET
+GOOGLE_REDIRECT_URI =VoiceSettings.GOOGLE_REDIRECT_URI
+FRONTEND_URL = VoiceSettings.FRONTEND_URL
 
 GOOGLE_AUTH_URL = 'https://accounts.google.com/o/oauth2/auth'
 GOOGLE_TOKEN_URL = 'https://accounts.google.com/o/oauth2/token'

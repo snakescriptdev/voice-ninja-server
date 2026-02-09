@@ -67,9 +67,14 @@ async def create_language(lang_in: LanguageIn):
     response_model=list[LanguageRead],
     status_code=status.HTTP_200_OK,
 )
-async def get_languages():
+async def get_languages(
+    skip: int =0,
+    limit: int = 10
+):
     try:
-        languages = db.session.query(LanguageModel).all()
+        languages = (db.session.query(LanguageModel)
+        .offset(skip).
+        limit(limit).all())
         if not languages:
             logger.info(f"no languages to show from database {languages}")
             raise HTTPException(
