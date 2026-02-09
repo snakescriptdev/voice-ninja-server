@@ -66,9 +66,12 @@ async def create_ai_model(model_in: AIModelIn):
     response_model=list[AIModelRead],
     status_code=status.HTTP_200_OK,
 )
-async def get_ai_models():
+async def get_ai_models(
+    skip: int = 0,
+    limit: int = 10,
+):
     try:
-        ai_models = db.session.query(AIModels).all()
+        ai_models = db.session.query(AIModels).offset(skip).limit(limit).all()
 
         if not ai_models:
             logger.info("no ai models preset in db yet")

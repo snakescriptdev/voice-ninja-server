@@ -23,6 +23,7 @@ class KnowledgeBaseResponse(BaseModel):
     title: Optional[str] = None
     content_path: Optional[str] = None
     content_text: Optional[str] = None
+    elevenlabs_document_id: Optional[str] = None
     created_at: datetime
     modified_at: datetime
 
