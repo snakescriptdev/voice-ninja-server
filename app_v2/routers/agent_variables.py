@@ -8,6 +8,7 @@ from app_v2.schemas.variables import (
     VariableReadSchema,
     VariableUpdateSchema
 )
+from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import (
     VariablesModel,
@@ -110,7 +111,7 @@ async def create_variable(
 
 @router.get(
     "/agent/{agent_id}",
-    response_model=List[VariableReadSchema],
+    response_model=PaginatedResponse[VariableReadSchema],
     summary="Get all variables for an agent",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
@@ -134,15 +135,31 @@ async def get_variables_by_agent(
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
 
-        variables = (
+        query = (
             db.session.query(VariablesModel)
             .filter(VariablesModel.agent_id == agent_id)
+        )
+        
+        total = query.count()
+        
+        variables = (
+            query
             .offset(skip)
             .limit(limit)
             .all()
         )
+        
+        import math
+        pages = math.ceil(total / limit) if limit > 0 else 1
+        current_page = (skip // limit) + 1 if limit > 0 else 1
 
-        return [variable_to_read(v) for v in variables]
+        return PaginatedResponse(
+            total=total,
+            page=current_page,
+            size=limit,
+            pages=pages,
+            items=[variable_to_read(v) for v in variables]
+        )
 
     except HTTPException:
         raise

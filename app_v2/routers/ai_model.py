@@ -3,6 +3,7 @@ from fastapi_sqlalchemy import db
 from app_v2.databases.models import AIModels
 from app_v2.core.logger import setup_logger
 from app_v2.schemas.ai_model import AIModelIn, AIModelRead, AIModelUpdate
+from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.jwt_utils import HTTPBearer
 from app_v2.utils.jwt_utils import is_admin
 
@@ -63,7 +64,7 @@ async def create_ai_model(model_in: AIModelIn):
 
 @router.get(
     "/ai-model",
-    response_model=list[AIModelRead],
+    response_model=PaginatedResponse[AIModelRead],
     status_code=status.HTTP_200_OK,
 )
 async def get_ai_models(
@@ -71,17 +72,24 @@ async def get_ai_models(
     limit: int = 10,
 ):
     try:
-        ai_models = db.session.query(AIModels).offset(skip).limit(limit).all()
+        query = db.session.query(AIModels)
+        total = query.count()
+        
+        ai_models = query.offset(skip).limit(limit).all()
 
-        if not ai_models:
-            logger.info("no ai models preset in db yet")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="no ai models to show",
-            )
+        import math
+        pages = math.ceil(total / limit) if limit > 0 else 1
+        current_page = (skip // limit) + 1 if limit > 0 else 1
 
         logger.info("ai models fetched successfully")
-        return ai_models
+        
+        return PaginatedResponse(
+            total=total,
+            page=current_page,
+            size=limit,
+            pages=pages,
+            items=ai_models
+        )
 
     except HTTPException:
         raise

@@ -7,6 +7,7 @@ from app_v2.schemas.function_schema import (
     FunctionRead,
     FunctionUpdateSchema
 )
+from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import (
     FunctionModel,
@@ -203,7 +204,7 @@ async def create_function(
 
 @router.get(
     "/",
-    response_model=list[FunctionRead],
+    response_model=PaginatedResponse[FunctionRead],
     summary="Get all functions",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
@@ -214,6 +215,7 @@ async def get_all_functions(
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     try:
+        import math
         if agent_id:
             # Check if agent exists and belongs to user
             agent = (
@@ -228,14 +230,20 @@ async def get_all_functions(
                 raise HTTPException(status_code=404, detail="Agent not found")
 
             # Fetch bridged functions
-            bridges = (
+            query = (
                 db.session.query(AgentFunctionBridgeModel)
+                .filter(AgentFunctionBridgeModel.agent_id == agent_id)
+            )
+            
+            total = query.count()
+            
+            bridges = (
+                query
                 .options(
                     selectinload(AgentFunctionBridgeModel.function).selectinload(
                         FunctionModel.api_endpoint_url
                     )
                 )
-                .filter(AgentFunctionBridgeModel.agent_id == agent_id)
                 .offset(skip)
                 .limit(limit)
                 .all()
@@ -250,20 +258,39 @@ async def get_all_functions(
                 }
                 result.append(fn_read)
             
-            return result
+            pages = math.ceil(total / limit) if limit > 0 else 1
+            current_page = (skip // limit) + 1 if limit > 0 else 1
+            
+            return PaginatedResponse(
+                total=total,
+                page=current_page,
+                size=limit,
+                pages=pages,
+                items=result
+            )
 
         else:
+            query = db.session.query(FunctionModel)
+            total = query.count()
+            
             functions = (
-                db.session.query(FunctionModel)
+                query
                 .options(selectinload(FunctionModel.api_endpoint_url))
                 .offset(skip)
                 .limit(limit)
                 .all()
             )
-            if not functions:
-                return []
             
-            return [function_to_read(fn) for fn in functions]
+            pages = math.ceil(total / limit) if limit > 0 else 1
+            current_page = (skip // limit) + 1 if limit > 0 else 1
+            
+            return PaginatedResponse(
+                total=total,
+                page=current_page,
+                size=limit,
+                pages=pages,
+                items=[function_to_read(fn) for fn in functions]
+            )
 
     except HTTPException:
         raise
