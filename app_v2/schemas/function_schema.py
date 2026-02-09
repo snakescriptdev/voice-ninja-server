@@ -78,10 +78,9 @@ class FunctionCreateSchema(BaseFunctionSchema):
     """
     Create function + its API configs + optional agent behavior
     """
-    api_configs: List[FunctionApiConfigSchema] = Field(
+    api_config: FunctionApiConfigSchema = Field(
         ...,
-        min_items=1,
-        description="At least one execution config is required"
+        description="Execution config is required"
     )
     agent_config: Optional[AgentFunctionConfigSchema] = None
     agent_id: Optional[int] = None
@@ -93,7 +92,7 @@ class FunctionUpdateSchema(BaseModel):
     """
     name: Optional[str] = None
     description: Optional[str] = Field(None,min_length=10)
-    api_configs: Optional[List[FunctionApiConfigSchema]] = None
+    api_config: Optional[FunctionApiConfigSchema] = None
     agent_config: Optional[AgentFunctionConfigSchema] = None
 
 
@@ -111,10 +110,11 @@ class FunctionApiConfigRead(FunctionApiConfigSchema):
 
 class FunctionRead(BaseFunctionSchema):
     id: int
-    api_configs: List[FunctionApiConfigRead]
+    api_config: FunctionApiConfigRead
     created_at: datetime
     modified_at: datetime
     agent_config: Optional[AgentFunctionConfigSchema] = None
+    elevenlabs_tool_id: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

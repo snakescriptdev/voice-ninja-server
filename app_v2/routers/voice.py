@@ -16,6 +16,7 @@ from sqlalchemy.orm import selectinload
 
 from app_v2.databases.models import VoiceModel, UnifiedAuthModel, VoiceTraitsModel
 from app_v2.core.logger import setup_logger
+from app_v2.utils.elevenlabs import ElevenLabsVoice
 
 logger = setup_logger(__name__)
 
@@ -33,8 +34,8 @@ ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a"}
 # -------------------- RESPONSE MAPPER --------------------
 
 def voice_to_read(voice: VoiceModel) -> VoiceRead:
-    gender = "Male"
-    nationality = "British"
+    gender = GenderEnum.male
+    nationality = "british"
     
     if voice.traits:
         gender = voice.traits.gender.value if hasattr(voice.traits.gender, 'value') else str(voice.traits.gender)
@@ -50,12 +51,15 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
     )
 
 @router.get("/voice", response_model=List[VoiceRead], status_code=status.HTTP_200_OK, openapi_extra={"security":[{"BearerAuth":[]}]}, summary="lists available voices", description="return the list of available voices for user (both custom and predefined)")
-async def get_all_voices(current_user: UnifiedAuthModel = Depends(get_current_user)):
+async def get_all_voices(
+    skip: int = 0,
+    limit: int = 10,
+    current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
         voices = db.session.query(VoiceModel).options(selectinload(VoiceModel.traits)).filter(or_(
             VoiceModel.user_id == current_user.id,
             VoiceModel.user_id.is_(None)
-        )).all()
+        )).offset(skip).limit(limit).all()
 
         if not voices:
             logger.info("no voices are present in database.")
@@ -104,8 +108,8 @@ async def get_voice_by_id(id: int, current_user: UnifiedAuthModel = Depends(get_
 @router.post("/voice", response_model=VoiceRead, status_code=status.HTTP_201_CREATED, openapi_extra={"security": [{"BearerAuth": []}]})
 async def create_voice(
     voice_name: str = Form(..., description="name of the voice", min_length=3),
-    gender: Optional[str] = Form(GenderEnum.male, description="gender of the voice (Male/Female)"),
-    nationality: Optional[str] = Form("British", description="nationality of the voice"),
+    gender: Optional[GenderEnum] = Form(GenderEnum.male, description="gender of the voice (Male/Female)"),
+    nationality: Optional[str] = Form("british", description="nationality of the voice"),
     file: UploadFile = File(...),
     current_user: UnifiedAuthModel = Depends(get_current_user)
 ):
@@ -135,23 +139,53 @@ async def create_voice(
                 VoiceModel.user_id == current_user.id
             ).first()
             if existing_voice:
+                 # Clean up uploaded file
+                 if os.path.exists(file_path):
+                     os.remove(file_path)
                  raise HTTPException(status_code=400, detail="Voice with this name already exists")
+            
             gender = gender.lower()
             if gender not in [GenderEnum.male, GenderEnum.female]:
+                # Clean up uploaded file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
                 raise HTTPException(status_code=400, detail="Invalid gender. Must be 'male' or 'female'")
+            
+            # Clone voice in ElevenLabs - THIS IS REQUIRED
+            logger.info(f"Cloning voice '{voice_name}' in ElevenLabs for user {current_user.id}")
+            elevenlabs_client = ElevenLabsVoice()
+            clone_response = elevenlabs_client.create_cloned_voice(
+                file_path=file_path,
+                name=voice_name,
+                description=f"Custom voice for {current_user.email or current_user.phone}"
+            )
+            
+            if not clone_response.status or not clone_response.data.get("voice_id"):
+                # Clean up uploaded file
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                error_msg = clone_response.error_message or "Failed to clone voice in ElevenLabs"
+                logger.error(f"❌ Voice cloning failed: {error_msg}")
+                raise HTTPException(
+                    status_code=424, 
+                    detail=f"Failed to clone voice in ElevenLabs: {error_msg}"
+                )
+            
+            elevenlabs_voice_id = clone_response.data.get("voice_id")
+            logger.info(f"✅ Voice cloned in ElevenLabs with ID: {elevenlabs_voice_id}")
+            
+            # Create voice record in database
             voice = VoiceModel(
                 voice_name=voice_name,
                 is_custom_voice=True,
                 user_id=current_user.id,
-                audio_file=file_path
+                audio_file=file_path,
+                elevenlabs_voice_id=elevenlabs_voice_id
             )
             db.session.add(voice)
             db.session.flush()
             
             # Create traits with provided or default values
-            # Using simple string for now, could be validated against Enum if needed, but model handles Enum for gender
-            # Ideally should map string to Enum, but let's see if plain string works or if we need validation
-            
             traits = VoiceTraitsModel(
                 voice_id=voice.id,
                 gender=gender,
@@ -162,12 +196,18 @@ async def create_voice(
             db.session.commit()
             db.session.refresh(voice)
             
-            logger.info(f"Custom voice created: {voice_name}")
+            logger.info(f"Custom voice created: {voice_name} (DB ID: {voice.id}, EL ID: {elevenlabs_voice_id})")
             return voice_to_read(voice)
 
     except HTTPException as e:
         raise e
     except Exception as e:
+        # Clean up file if exists
+        if 'file_path' in locals() and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except:
+                pass
         logger.error(f"Error creating voice: {e}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
@@ -186,17 +226,35 @@ async def delete_voice(
             if not voice:
                 raise HTTPException(status_code=404, detail="Voice not found")
             
+            # Delete from ElevenLabs if it exists there
+            if voice.elevenlabs_voice_id:
+                try:
+                    logger.info(f"Deleting voice from ElevenLabs: {voice.elevenlabs_voice_id}")
+                    elevenlabs_client = ElevenLabsVoice()
+                    delete_response = elevenlabs_client.delete_voice(voice.elevenlabs_voice_id)
+                    
+                    if delete_response.status:
+                        logger.info(f"✅ Voice deleted from ElevenLabs: {voice.elevenlabs_voice_id}")
+                    else:
+                        logger.warning(f"Failed to delete voice from ElevenLabs: {delete_response.error_message}")
+                        # Continue with database deletion even if ElevenLabs deletion fails
+                        
+                except Exception as e:
+                    logger.error(f"Error deleting voice from ElevenLabs: {e}")
+                    # Continue with database deletion even if ElevenLabs deletion fails
+            
             # Delete file if exists
             if voice.audio_file and os.path.exists(voice.audio_file):
                 try:
                     os.remove(voice.audio_file)
+                    logger.info(f"Deleted audio file: {voice.audio_file}")
                 except OSError as e:
                     logger.warning(f"Failed to delete voice file {voice.audio_file}: {e}")
 
             db.session.delete(voice)
             db.session.commit()
             
-            logger.info(f"Deleted voice {voice_id}")
+            logger.info(f"Deleted voice {voice_id} from database")
             return
     except HTTPException as e:
         raise e
@@ -229,8 +287,8 @@ async def update_voice(
                     # Create traits if not exists (defensive)
                     voice.traits = VoiceTraitsModel(
                         voice_id=voice.id,
-                        gender=voice_update.gender or "Male", # fallback default
-                        nationality=voice_update.nationality or "British"
+                        gender=voice_update.gender or GenderEnum.male, # fallback default
+                        nationality=voice_update.nationality or "british"
                     )
                     db.session.add(voice.traits)
                 else:
