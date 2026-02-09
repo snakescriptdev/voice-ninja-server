@@ -143,6 +143,8 @@ class UnifiedAuthModel(Base):
     agents = relationship("AgentModel", back_populates="user")
     voices = relationship("VoiceModel", back_populates="user")
     notification_settings = relationship("UserNotificationSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    knowledge_bases = relationship("KnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -250,8 +252,8 @@ class AgentModel(Base):
     agent_languages = relationship("AgentLanguageBridge",back_populates="agent",cascade="all, delete-orphan")
     agent_functions = relationship("AgentFunctionBridgeModel",back_populates="agent",cascade="all, delete-orphan")
     variables = relationship("VariablesModel",back_populates="agent",cascade="all, delete-orphan")
-    knowledge_base = relationship("KnowledgeBaseModel", back_populates="agent", cascade="all, delete-orphan")
     phone_number = relationship("PhoneNumberService",back_populates="agent")
+    agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent")
 
 
 
@@ -397,7 +399,7 @@ class KnowledgeBaseModel(Base):
     __tablename__ = "knowledge_base"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
-    agent_id: Mapped[int] = mapped_column(Integer, ForeignKey("agents.id"), nullable=False)
+    user_id : Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"))
     kb_type: Mapped[str] = mapped_column(String, nullable=False)  # 'file', 'url', 'text'
     title: Mapped[str] = mapped_column(String, nullable=True) # file name or title
     content_path: Mapped[str] = mapped_column(String, nullable=True) # file path or url
@@ -407,7 +409,27 @@ class KnowledgeBaseModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    agent = relationship("AgentModel", back_populates="knowledge_base")
+    user = relationship("UnifiedAuthModel", back_populates="knowledge_bases")
+    agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="knowledge_base")
+
+
+class AgentKnowledgeBaseBridge(Base):
+    __tablename__ = "agent_knowledgebase_bridge"
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True,autoincrement=True)
+
+    agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"),nullable=False)
+    kb_id: Mapped[int]= mapped_column(Integer,ForeignKey("knowledge_base.id"),nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    agent = relationship("AgentModel",back_populates="agent_knowledge_bases")
+    knowledge_base = relationship("KnowledgeBaseModel",back_populates="agent_knowledge_bases")
+
+    __table_args__ = (
+        UniqueConstraint("agent_id","kb_id",name="agent_kb_bridge"),
+    )
 
 
 
@@ -462,3 +484,79 @@ class PhoneNumberService(Base):
     #relationships
     user = relationship("UnifiedAuthModel", backref="phone_numbers")
     agent = relationship("AgentModel", back_populates="phone_number")
+
+class TwilioUserCreds(Base):
+    __tablename__ = "twilio_user_creds"
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"),unique=True) #enusre 1:1 
+
+    account_sid: Mapped[str] = mapped_column(String,nullable=False)
+    auth_token: Mapped[str] = mapped_column(String,nullable=False)
+
+    user = relationship("UnifiedAuthModel", back_populates="twilio_user_creds")
+
+
+
+
+# class WebAgentConfig(Base):
+#     __tablename__ = "web_agent_configs"
+
+#     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    
+#     name: Mapped[str] = mapped_column(String, nullable=False)
+    
+#     agent_id: Mapped[int] = mapped_column(
+#         Integer, ForeignKey("agents.id"), nullable=False
+#     )
+
+#     user_id: Mapped[int] = mapped_column(
+#         Integer, ForeignKey("unified_auth.id"), nullable=False
+#     )
+
+#     shareable_link: Mapped[str] = mapped_column(String, unique=True, index=True)
+
+#     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+#     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+
+
+# class WebAgentPreChatConfig(Base):
+#     __tablename__ = "web_agent_prechat_config"
+
+#     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+#     web_agent_id: Mapped[int] = mapped_column(
+#         Integer, ForeignKey("web_agent_configs.id"), unique=True
+#     )
+
+#     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+#     fields: Mapped[dict] = mapped_column(
+#         MutableDict.as_mutable(JSONB),
+#         default={}
+#     )
+
+
+
+
+# class WebAgentAppearanceConfig(Base):
+#     __tablename__ = "web_agent_appearance_config"
+
+#     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+#     web_agent_id: Mapped[int] = mapped_column(
+#         Integer, ForeignKey("web_agent_configs.id"), unique=True
+#     )
+
+#     widget_title: Mapped[str] = mapped_column(String)
+#     widget_subtitle: Mapped[str] = mapped_column(String)
+
+#     primary_color: Mapped[str] = mapped_column(String)  # hex
+
+#     position: Mapped[str] = mapped_column(
+#         Enum("bottom_left", "bottom_right", "top_left", "top_right",
+#              name="widget_position")
+#     )
+
+#     show_branding: Mapped[bool] = mapped_column(Boolean, default=True)

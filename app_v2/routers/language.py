@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from app_v2.schemas.language_schema import LanguageIn, LanguageRead, LanguageUpdate
+from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.databases.models import LanguageModel
 from sqlalchemy import or_
 from fastapi_sqlalchemy import db
@@ -64,7 +65,7 @@ async def create_language(lang_in: LanguageIn):
 
 @router.get(
     "/language",
-    response_model=list[LanguageRead],
+    response_model=PaginatedResponse[LanguageRead],
     status_code=status.HTTP_200_OK,
 )
 async def get_languages(
@@ -72,18 +73,25 @@ async def get_languages(
     limit: int = 10
 ):
     try:
-        languages = (db.session.query(LanguageModel)
+        query = db.session.query(LanguageModel)
+        total = query.count()
+        
+        languages = (query
         .offset(skip).
         limit(limit).all())
-        if not languages:
-            logger.info(f"no languages to show from database {languages}")
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="no languages found",
-            )
+        
+        import math
+        pages = math.ceil(total / limit) if limit > 0 else 1
+        current_page = (skip // limit) + 1 if limit > 0 else 1
 
         logger.info("languages fetched successfully from database")
-        return languages
+        return PaginatedResponse(
+            total=total,
+            page=current_page,
+            size=limit,
+            pages=pages,
+            items=languages
+        )
 
     except HTTPException:
         raise

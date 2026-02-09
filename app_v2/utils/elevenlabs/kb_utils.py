@@ -147,6 +147,19 @@ class ElevenLabsKB(BaseElevenLabs):
             
         return response
 
+    def update_document_name(self, document_id: str, name: str) -> ElevenLabsResponse:
+        """
+        Update the name of a document in ElevenLabs Knowledge Base.
+        """
+        logger.info(f"Updating document name in ElevenLabs KB: {document_id} -> {name}")
+        data = {"name": name}
+        response = self._patch(f"/convai/knowledge-base/{document_id}", data=data)
+        if response.status:
+            logger.info(f"✅ Document name updated in ElevenLabs KB: {document_id}")
+        else:
+            logger.error(f"Failed to update document name in ElevenLabs KB: {response.error_message}")
+        return response
+
     def get_document_status(self, document_id: str) -> ElevenLabsResponse:
         """
         Check the processing status of a document.
