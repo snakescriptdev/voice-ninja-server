@@ -20,7 +20,9 @@ from app_v2.databases.models import (
     LanguageModel, 
     AIModels, 
     VoiceModel, 
-    VoiceTraitsModel
+    VoiceTraitsModel,
+    AdminTokenModel,
+    TokensToConsume,
 )
 from app_v2.core.elevenlabs_config import (
     get_all_supported_languages,
