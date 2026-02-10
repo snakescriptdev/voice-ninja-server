@@ -86,9 +86,9 @@ class ElevenLabsAgent(BaseElevenLabs):
                 "keywords": []
             },
             "turn": {
-                "mode": "silence",
                 "turn_timeout": 7.0,
-                "silence_end_call_timeout": -1.0
+                "silence_end_call_timeout": -1.0,
+                "turn_eagerness": "normal"
             }
         }
         
