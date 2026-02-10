@@ -12,6 +12,7 @@ Usage:
 
 import sys
 import logging
+from sqlalchemy import func
 from sqlalchemy.orm import Session, sessionmaker
 from app_v2.databases.models import (
     Base, 
@@ -138,6 +139,37 @@ def populate_ai_models(session: Session):
         raise
 
 
+def _fetch_shared_voices(headers: dict) -> list:
+    """Fetch all shared (library) voices from GET /v1/shared-voices with pagination."""
+    import requests
+    url = "https://api.elevenlabs.io/v1/shared-voices"
+    all_voices = []
+    page = 0
+    page_size = 100
+    while True:
+        resp = requests.get(url, headers=headers, params={"page_size": page_size, "page": page})
+        if resp.status_code != 200:
+            logger.warning("Failed to fetch shared voices (page=%s): %s", page, resp.text[:200])
+            break
+        data = resp.json()
+        chunk = data.get("voices") or []
+        # Normalize to same shape as /v1/voices: voice_id, name, labels { gender, accent }
+        for v in chunk:
+            all_voices.append({
+                "voice_id": v.get("voice_id"),
+                "name": v.get("name"),
+                "labels": {
+                    "gender": v.get("gender"),
+                    "accent": v.get("accent"),
+                },
+            })
+        if not data.get("has_more", False):
+            break
+        page += 1
+    logger.info("Fetched %s shared (library) voices from ElevenLabs.", len(all_voices))
+    return all_voices
+
+
 def populate_elevenlabs_voices(session: Session):
     logger.info("Populating ElevenLabs voices...")
 
@@ -153,17 +185,26 @@ def populate_elevenlabs_voices(session: Session):
         "Content-Type": "application/json",
     }
 
+    # 1) User's own voices (GET /v1/voices)
     response = requests.get(f"{BASE_URL}/voices", headers=headers)
-
     if response.status_code != 200:
-        logger.error(f"Failed to fetch voices: {response.text}")
+        logger.error(f"Failed to fetch user voices: {response.text}")
         return
 
     voices = response.json().get("voices", [])
 
+    # 2) Shared / library voices (GET /v1/shared-voices) so premade names like Puck, Kore sync
+    shared = _fetch_shared_voices(headers)
+    voices = voices + shared
+
+    api_names = {v.get("name", "").strip().lower() for v in voices if v.get("name")}
+    updated_by_id = 0
+    updated_by_name = 0
+    created = 0
+
     for voice in voices:
         voice_id = voice.get("voice_id")
-        voice_name = voice.get("name")
+        voice_name = (voice.get("name") or "").strip()
 
         if not voice_id or not voice_name:
             continue
@@ -181,7 +222,19 @@ def populate_elevenlabs_voices(session: Session):
         ).first()
 
         if existing_voice:
+            updated_by_id += 1
+        else:
+            existing_voice = session.query(VoiceModel).filter(
+                func.lower(VoiceModel.voice_name) == voice_name.lower(),
+                VoiceModel.is_custom_voice.is_(False),
+                VoiceModel.user_id.is_(None),
+            ).first()
+            if existing_voice:
+                updated_by_name += 1
+
+        if existing_voice:
             existing_voice.voice_name = voice_name
+            existing_voice.elevenlabs_voice_id = voice_id
 
             traits = session.query(VoiceTraitsModel).filter(
                 VoiceTraitsModel.voice_id == existing_voice.id
@@ -192,6 +245,7 @@ def populate_elevenlabs_voices(session: Session):
                 traits.nationality = nationality
             continue
 
+        created += 1
         new_voice = VoiceModel(
             voice_name=voice_name,
             elevenlabs_voice_id=voice_id,
@@ -209,7 +263,23 @@ def populate_elevenlabs_voices(session: Session):
         session.add(traits)
 
     session.commit()
-    logger.info("ElevenLabs voice sync completed.")
+    logger.info(
+        "ElevenLabs voice sync completed. updated_by_id=%s, updated_by_name=%s, created=%s",
+        updated_by_id, updated_by_name, created,
+    )
+    # Warn if DB has prebuilt voices that weren't in the API (e.g. name mismatch or not in plan)
+    prebuilt_without_el = session.query(VoiceModel).filter(
+        VoiceModel.is_custom_voice.is_(False),
+        VoiceModel.user_id.is_(None),
+        VoiceModel.elevenlabs_voice_id.is_(None),
+    ).all()
+    if prebuilt_without_el:
+        names = [v.voice_name for v in prebuilt_without_el]
+        logger.warning(
+            "These prebuilt voices have no ElevenLabs ID (not in API response or name mismatch): %s. "
+            "API names (lowercase): %s",
+            names, sorted(api_names),
+        )
 
 
 
