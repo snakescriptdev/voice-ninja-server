@@ -97,12 +97,13 @@ async def create_agent(
         )
 
     # -------------------------------------------------
-    # Voice validation
+    # Voice validation: only allow voices that are synced with ElevenLabs
     # -------------------------------------------------
     voice = (
         db.session.query(VoiceModel)
         .filter(
             VoiceModel.voice_name == agent_in.voice,
+            VoiceModel.elevenlabs_voice_id.isnot(None),
             or_(
                 VoiceModel.is_custom_voice.is_(False),
                 VoiceModel.user_id == user_id,
@@ -112,12 +113,12 @@ async def create_agent(
     )
 
     if not voice:
-        raise HTTPException(status_code=400, detail="Voice not found")
-
-    if not voice.elevenlabs_voice_id:
         raise HTTPException(
-            status_code=424,
-            detail=f"Selected voice '{voice.voice_name}' is not synchronized with ElevenLabs"
+            status_code=400,
+            detail={
+                "message": f"Voice '{agent_in.voice}' not found or not synced with ElevenLabs",
+                "hint": "Run: python populate_elevenlabs_data.py to sync voices, then use a voice from the list.",
+            },
         )
 
     # -------------------------------------------------
@@ -211,41 +212,54 @@ async def create_agent(
     # -------------------------------------------------
     # Database creation (atomic)
     # -------------------------------------------------
-    agent = AgentModel(
-        agent_name=agent_in.agent_name,
-        first_message=agent_in.first_message,
-        system_prompt=agent_in.system_prompt,
-        agent_voice=voice.id,
-        user_id=user_id,
-        elevenlabs_agent_id=elevenlabs_agent_id,
-    )
-
-    db.session.add(agent)
-    db.session.flush()
-
-    db.session.add(
-        AgentAIModelBridge(
-            agent_id=agent.id,
-            ai_model_id=ai_model.id,
-        )
-    )
-
-    db.session.add(
-        AgentLanguageBridge(
-            agent_id=agent.id,
-            lang_id=language.id,
-        )
-    )
-
-    if phone_record:
-        phone_record.assigned_to = agent.id
-        phone_record.status = PhoneNumberAssignStatus.assigned
-        logger.info(
-            f"Assigned phone {phone_record.phone_number} to agent {agent.agent_name}"
+    try:
+        agent = AgentModel(
+            agent_name=agent_in.agent_name,
+            first_message=agent_in.first_message,
+            system_prompt=agent_in.system_prompt,
+            agent_voice=voice.id,
+            user_id=user_id,
+            elevenlabs_agent_id=elevenlabs_agent_id,
         )
 
-    db.session.commit()
-    db.session.refresh(agent)
+        db.session.add(agent)
+        db.session.flush()
+
+        db.session.add(
+            AgentAIModelBridge(
+                agent_id=agent.id,
+                ai_model_id=ai_model.id,
+            )
+        )
+
+        db.session.add(
+            AgentLanguageBridge(
+                agent_id=agent.id,
+                lang_id=language.id,
+            )
+        )
+
+        if phone_record:
+            phone_record.assigned_to = agent.id
+            phone_record.status = PhoneNumberAssignStatus.assigned
+            logger.info(
+                f"Assigned phone {phone_record.phone_number} to agent {agent.agent_name}"
+            )
+
+        db.session.commit()
+        db.session.refresh(agent)
+    except Exception as db_error:
+        db.session.rollback()
+        if elevenlabs_agent_id:
+            try:
+                el_client.delete_agent(elevenlabs_agent_id)
+                logger.info(f"Cleaned up ElevenLabs agent {elevenlabs_agent_id} after DB failure")
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to delete orphan ElevenLabs agent {elevenlabs_agent_id}: {cleanup_err}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to save agent: {str(db_error)}",
+        )
 
     return agent_to_read(agent)
 
@@ -272,7 +286,8 @@ async def get_all_agents(
         .options(
             selectinload(AgentModel.agent_ai_models).selectinload(AgentAIModelBridge.ai_model),
             selectinload(AgentModel.agent_languages).selectinload(AgentLanguageBridge.language),
-            selectinload(AgentModel.voice)
+            selectinload(AgentModel.voice),
+            selectinload(AgentModel.phone_number)
         )
         .filter(AgentModel.user_id == current_user.id)
     )
@@ -314,7 +329,8 @@ async def get_agent_by_id(
         .options(
             selectinload(AgentModel.agent_ai_models).selectinload(AgentAIModelBridge.ai_model),
             selectinload(AgentModel.agent_languages).selectinload(AgentLanguageBridge.language),
-            selectinload(AgentModel.voice)
+            selectinload(AgentModel.voice),
+            selectinload(AgentModel.phone_number)
         )
         .filter(
             AgentModel.id == agent_id,
@@ -344,6 +360,12 @@ async def update_agent(
 ):
     agent = (
         db.session.query(AgentModel)
+        .options(
+            selectinload(AgentModel.agent_ai_models).selectinload(AgentAIModelBridge.ai_model),
+            selectinload(AgentModel.agent_languages).selectinload(AgentLanguageBridge.language),
+            selectinload(AgentModel.voice),
+            selectinload(AgentModel.phone_number)
+        )
         .filter(
             AgentModel.id == agent_id,
             AgentModel.user_id == current_user.id,
@@ -403,25 +425,23 @@ async def update_agent(
     if agent_in.voice is not None:
         voice = (
             db.session.query(VoiceModel)
-            .filter(VoiceModel.voice_name == agent_in.voice,
-            or_(
-                VoiceModel.user_id == current_user.id,
-                VoiceModel.user_id.is_(None)
-            ))
+            .filter(
+                VoiceModel.voice_name == agent_in.voice,
+                VoiceModel.elevenlabs_voice_id.isnot(None),
+                or_(
+                    VoiceModel.user_id == current_user.id,
+                    VoiceModel.user_id.is_(None),
+                ),
+            )
             .first()
         )
         if not voice:
-            raise HTTPException(status_code=400, detail="Voice not found")
-        agent.agent_voice = voice.id
-        
-        if voice.elevenlabs_voice_id:
-            el_update_params["voice_id"] = voice.elevenlabs_voice_id
-        else:
-            logger.warning(f"Voice '{voice.voice_name}' (ID: {voice.id}) is missing ElevenLabs voice ID")
             raise HTTPException(
-                status_code=503,
-                detail="the voice is not yet configured for the elevenlabs. try using other voice"
+                status_code=400,
+                detail=f"Voice '{agent_in.voice}' not found or not synced with ElevenLabs. Run: python populate_elevenlabs_data.py",
             )
+        agent.agent_voice = voice.id
+        el_update_params["voice_id"] = voice.elevenlabs_voice_id
 
     # ---- AI Model ----
     if agent_in.ai_models is not None:

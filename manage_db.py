@@ -1,6 +1,8 @@
 import sys
 import subprocess
 import argparse
+from sqlalchemy import create_engine, text
+from app_v2.core.config import VoiceSettings
 
 def run_command(command):
     """Run a shell command and print its output."""
@@ -37,6 +39,19 @@ def history():
     """Show migration history."""
     return run_command(["alembic", "history"])
 
+def reset_alembic_version():
+    """Clear alembic_version table so you can fix 'Can't locate revision' errors."""
+    try:
+        engine = create_engine(VoiceSettings.DB_URL)
+        with engine.connect() as conn:
+            conn.execute(text("DELETE FROM alembic_version"))
+            conn.commit()
+        print("Cleared alembic_version. Run makemigrations then migrate (or stamp head if DB is already in sync).")
+        return True
+    except Exception as e:
+        print(f"Error: {e}")
+        return False
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Database management script for Voice Ninja V2")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -58,6 +73,9 @@ if __name__ == "__main__":
     # History command
     subparsers.add_parser("history", help="Show migration history")
 
+    # Reset alembic version (fix missing revision)
+    subparsers.add_parser("reset_alembic_version", help="Clear alembic_version table (fix 'Can't locate revision')")
+
     args = parser.parse_args()
 
     if args.command == "makemigrations":
@@ -70,5 +88,7 @@ if __name__ == "__main__":
         show()
     elif args.command == "history":
         history()
+    elif args.command == "reset_alembic_version":
+        reset_alembic_version()
     else:
         parser.print_help()
