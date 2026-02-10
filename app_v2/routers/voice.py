@@ -56,7 +56,7 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
 async def get_all_voices(
     skip: int = 0,
     limit: int = 10,
-    synced_only: bool = False,
+    synced_only: bool = True,
     current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
         filters = [
@@ -75,7 +75,7 @@ async def get_all_voices(
             .limit(limit)
             .all()
         )
-
+        total = db.session.query(VoiceModel).filter(*filters).count()
         import math
         pages = math.ceil(total / limit) if limit > 0 else 1
         current_page = (skip // limit) + 1 if limit > 0 else 1

@@ -281,6 +281,42 @@ def populate_elevenlabs_voices(session: Session):
             names, sorted(api_names),
         )
 
+def remove_default_voices_unsynced(session: Session):
+    logger.info("Removing hardcoded default voices...")
+
+    voices = (
+        session.query(VoiceModel)
+        .filter(
+            VoiceModel.voice_name.in_(DEFAULT_VOICES),
+            VoiceModel.is_custom_voice == False,
+        )
+        .all()
+    )
+
+    for voice in voices:
+        logger.info(f"Deleting traits for voice: {voice.voice_name}")
+        session.query(VoiceTraitsModel).filter(
+            VoiceTraitsModel.voice_id == voice.id
+        ).delete(synchronize_session=False)
+
+        logger.info(f"Deleting voice: {voice.voice_name}")
+        session.delete(voice)
+
+    session.commit()
+    logger.info("✅ Default voices removed")
+
+def ensure_admin_defaults(session: Session):
+    logger.info("Ensuring admin defaults...")
+
+    if not session.query(AdminTokenModel).filter_by(id=1).first():
+        session.add(AdminTokenModel(id=1, token_values=0, free_tokens=0))
+
+    if not session.query(TokensToConsume).filter_by(id=1).first():
+        session.add(TokensToConsume(id=1, token_values=0))
+
+    session.commit()
+    logger.info("✅ Admin defaults ready")
+
 
 
 def main():
@@ -303,6 +339,8 @@ def main():
         populate_languages(session)
         populate_ai_models(session)
         populate_elevenlabs_voices(session)
+        remove_default_voices_unsynced(session)
+        ensure_admin_defaults(session)
         
         logger.info("\n" + "✨" * 30)
         logger.info("DATA POPULATION COMPLETE!")

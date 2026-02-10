@@ -131,7 +131,8 @@ async def upload_files(
                     kb_type="file",
                     title=file.filename,
                     content_path=file_path,
-                    elevenlabs_document_id=elevenlabs_document_id
+                    elevenlabs_document_id=elevenlabs_document_id,
+                    file_size=file_size
                 )
                 db.session.add(kb_entry)
                 uploaded_entries.append(kb_entry)

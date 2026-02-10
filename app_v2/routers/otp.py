@@ -152,8 +152,9 @@ async def request_otp(request: RequestOTPRequest):
         if not unified_user:
             # Create new user in unified auth
             unified_user = UnifiedAuthModel.create(
-                email=username if is_email_login else '',
-                phone=username if is_phone_login else '',
+                username=username,
+                email=username if is_email_login else None,
+                phone=username if is_phone_login else "",
                 has_otp_auth=True,
                 is_verified=False
             )
@@ -169,8 +170,9 @@ async def request_otp(request: RequestOTPRequest):
             # Also create in old UserModel for backward compatibility
             with db():
                 old_user = UserModel(
-                    email=username if is_email_login else '',
-                    phone=username if is_phone_login else '',
+                    username=username,
+                    email=username if is_email_login else None,
+                    phone=username if is_phone_login else "",
                     is_verified=False
                 )
                 db.session.add(old_user)
@@ -187,8 +189,9 @@ async def request_otp(request: RequestOTPRequest):
             if not old_user:
                 with db():
                     old_user = UserModel(
-                        email=username if is_email_login else '',
-                        phone=username if is_phone_login else '',
+                        username=unified_user.username or username,
+                        email=unified_user.email,
+                        phone=unified_user.phone,
                         is_verified=unified_user.is_verified
                     )
                     db.session.add(old_user)
