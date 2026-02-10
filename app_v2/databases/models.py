@@ -22,6 +22,7 @@ class UserModel(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True, index=True, nullable=True)
     email = Column(String, nullable=True, default="")
     phone = Column(String, nullable=True, default="")
     password = Column(String, nullable=True, default="")
@@ -54,7 +55,7 @@ class UserModel(Base):
     def get_by_username(cls, username: str) -> Optional["UserModel"]:
         with db():
             return db.session.query(cls).filter(
-                (cls.email == username) | (cls.phone == username)
+                (cls.username == username) | (cls.email == username) | (cls.phone == username)
             ).first()
 
     @classmethod
@@ -117,7 +118,8 @@ class UnifiedAuthModel(Base):
     __tablename__ = "unified_auth"
     
     id = Column(Integer, primary_key=True)
-    email = Column(String, unique=True, nullable=False, index=True)
+    username = Column(String, unique=True, index=True, nullable=True)
+    email = Column(String, nullable=True, index=True)
     phone = Column(String, nullable=True, default="")
     name = Column(String, nullable=True, default="")
     first_name = Column(String, nullable=True, default="")
@@ -163,10 +165,10 @@ class UnifiedAuthModel(Base):
     
     @classmethod
     def get_by_username(cls, username: str) -> Optional["UnifiedAuthModel"]:
-        """Get user by email or phone."""
+        """Get user by username, email or phone."""
         with db():
             return db.session.query(cls).filter(
-                (cls.email == username) | (cls.phone == username)
+                (cls.username == username) | (cls.email == username) | (cls.phone == username)
             ).first()
     
     @classmethod
@@ -404,6 +406,7 @@ class KnowledgeBaseModel(Base):
     title: Mapped[str] = mapped_column(String, nullable=True) # file name or title
     content_path: Mapped[str] = mapped_column(String, nullable=True) # file path or url
     content_text: Mapped[str] = mapped_column(Text, nullable=True) # for text type
+    file_size: Mapped[float] = mapped_column(Float, nullable=True)
     elevenlabs_document_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -495,68 +498,3 @@ class TwilioUserCreds(Base):
     auth_token: Mapped[str] = mapped_column(String,nullable=False)
 
     user = relationship("UnifiedAuthModel", back_populates="twilio_user_creds")
-
-
-
-
-# class WebAgentConfig(Base):
-#     __tablename__ = "web_agent_configs"
-
-#     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    
-#     name: Mapped[str] = mapped_column(String, nullable=False)
-    
-#     agent_id: Mapped[int] = mapped_column(
-#         Integer, ForeignKey("agents.id"), nullable=False
-#     )
-
-#     user_id: Mapped[int] = mapped_column(
-#         Integer, ForeignKey("unified_auth.id"), nullable=False
-#     )
-
-#     shareable_link: Mapped[str] = mapped_column(String, unique=True, index=True)
-
-#     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
-#     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-
-
-
-# class WebAgentPreChatConfig(Base):
-#     __tablename__ = "web_agent_prechat_config"
-
-#     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-#     web_agent_id: Mapped[int] = mapped_column(
-#         Integer, ForeignKey("web_agent_configs.id"), unique=True
-#     )
-
-#     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-
-#     fields: Mapped[dict] = mapped_column(
-#         MutableDict.as_mutable(JSONB),
-#         default={}
-#     )
-
-
-
-
-# class WebAgentAppearanceConfig(Base):
-#     __tablename__ = "web_agent_appearance_config"
-
-#     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-#     web_agent_id: Mapped[int] = mapped_column(
-#         Integer, ForeignKey("web_agent_configs.id"), unique=True
-#     )
-
-#     widget_title: Mapped[str] = mapped_column(String)
-#     widget_subtitle: Mapped[str] = mapped_column(String)
-
-#     primary_color: Mapped[str] = mapped_column(String)  # hex
-
-#     position: Mapped[str] = mapped_column(
-#         Enum("bottom_left", "bottom_right", "top_left", "top_right",
-#              name="widget_position")
-#     )
-
-#     show_branding: Mapped[bool] = mapped_column(Boolean, default=True)
