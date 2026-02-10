@@ -52,19 +52,29 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
         nationality=nationality
     )
 
-@router.get("/voice", response_model=PaginatedResponse[VoiceRead], status_code=status.HTTP_200_OK, openapi_extra={"security":[{"BearerAuth":[]}]}, summary="lists available voices", description="return the list of available voices for user (both custom and predefined)")
+@router.get("/voice", response_model=PaginatedResponse[VoiceRead], status_code=status.HTTP_200_OK, openapi_extra={"security":[{"BearerAuth":[]}]}, summary="lists available voices", description="return the list of available voices for user (both custom and predefined). Use synced_only=true to list only voices usable for agent creation (have ElevenLabs ID).")
 async def get_all_voices(
     skip: int = 0,
     limit: int = 10,
+    synced_only: bool = False,
     current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
-        query = db.session.query(VoiceModel).filter(or_(
-            VoiceModel.user_id == current_user.id,
-            VoiceModel.user_id.is_(None)
-        ))
-        
-        total = query.count()
-        voices = query.options(selectinload(VoiceModel.traits)).offset(skip).limit(limit).all()
+        filters = [
+            or_(
+                VoiceModel.user_id == current_user.id,
+                VoiceModel.user_id.is_(None),
+            ),
+        ]
+        if synced_only:
+            filters.append(VoiceModel.elevenlabs_voice_id.isnot(None))
+        voices = (
+            db.session.query(VoiceModel)
+            .options(selectinload(VoiceModel.traits))
+            .filter(*filters)
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
 
         import math
         pages = math.ceil(total / limit) if limit > 0 else 1
