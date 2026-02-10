@@ -59,7 +59,7 @@ async def create_language(lang_in: LanguageIn):
         logger.error(f"error while creating language: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="failed to create language at the moment.",
+            detail=f"failed to create language at the moment:{str(e)}",
         )
 
 
@@ -99,7 +99,7 @@ async def get_languages(
         logger.error(f"error while fetching the languages at the moment: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="could not fetch the languages at the moment.",
+            detail=f"could not fetch the languages at the moment:{str(e)}",
         )
 
 
@@ -132,7 +132,7 @@ async def get_language_by_id(id: int):
         logger.info(f"error while fetching the language: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="could not fetch the language at the moment",
+            detail=f"could not fetch the language at the moment:{str(e)}",
         )
 
 
@@ -174,7 +174,7 @@ async def update_language(id: int, lang_updt: LanguageUpdate):
         logger.error(f"error while updating the language: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="could not update the language at the moment",
+            detail=f"could not update the language at the moment:{str(e)}",
         )
 
 
@@ -210,5 +210,5 @@ async def delete_language(id: int):
         logger.error(f"error while deleting language {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="could not delete the language at the moment",
+            detail=f"could not delete the language at the moment:{str(e)}",
         )

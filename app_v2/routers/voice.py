@@ -83,7 +83,7 @@ async def get_all_voices(
         logger.error(f"error while fetching the voices: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="failed to load voices at the moment"
+            detail=f"failed to load voices at the moment:{str(e)}"
         )
 
 
@@ -114,7 +114,7 @@ async def get_voice_by_id(id: int, current_user: UnifiedAuthModel = Depends(get_
         logger.error(f"error while fetching the voice: {e}")
         raise HTTPException(
             status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="failed to fetch the voice at the moment"
+            detail=f"failed to fetch the voice at the moment:{str(e)}"
         )
 
 @router.post("/voice", response_model=VoiceRead, status_code=status.HTTP_201_CREATED, openapi_extra={"security": [{"BearerAuth": []}]})
@@ -221,7 +221,7 @@ async def create_voice(
             except:
                 pass
         logger.error(f"Error creating voice: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error:{str(e)}")
 
 @router.delete("/voice/{voice_id}", status_code=status.HTTP_204_NO_CONTENT, openapi_extra={"security": [{"BearerAuth": []}]})
 async def delete_voice(
@@ -272,7 +272,7 @@ async def delete_voice(
         raise e
     except Exception as e:
         logger.error(f"Error deleting voice: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error:{str(e)}")
 
 @router.put("/voice/{voice_id}", response_model=VoiceRead, openapi_extra={"security": [{"BearerAuth": []}]})
 async def update_voice(
@@ -321,7 +321,7 @@ async def update_voice(
         raise e
     except Exception as e:
         logger.error(f"Error updating voice: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error:{str(e)}")
 
 
 @router.get(
@@ -356,7 +356,7 @@ async def preview_voice(
         # 2️⃣ Validate ElevenLabs voice mapping
         if not voice.elevenlabs_voice_id:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="This voice is not linked to ElevenLabs"
             )
 
