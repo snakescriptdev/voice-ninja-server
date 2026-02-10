@@ -338,7 +338,6 @@ async def update_voice(
     "/preview/{voice_id}",
     openapi_extra={"security": [{"BearerAuth": []}]},
     status_code=status.HTTP_200_OK,
-    response_class=Response
 )
 async def preview_voice(
     voice_id: int,
