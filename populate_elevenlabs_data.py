@@ -283,7 +283,7 @@ def populate_elevenlabs_voices(session: Session):
 
 def remove_default_voices_unsynced(session: Session):
     logger.info("Removing hardcoded default voices...")
-
+    DEFAULT_VOICES = ["Aoede", "Charon", "Fenrir", "Kore", "Puck"]
     voices = (
         session.query(VoiceModel)
         .filter(
