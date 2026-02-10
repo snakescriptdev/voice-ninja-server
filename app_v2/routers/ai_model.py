@@ -58,7 +58,7 @@ async def create_ai_model(model_in: AIModelIn):
         logger.error(f"error while creating ai model {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="could not create the ai model at the moment",
+            detail=f"could not create the ai model at the moment:{str(e)}",
         )
 
 
@@ -97,7 +97,7 @@ async def get_ai_models(
         logger.error(f"error while loading ai models {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="could not fetch ai_models at the moment",
+            detail=f"could not fetch ai_models at the moment:{str(e)}",
         )
 
 
@@ -130,7 +130,7 @@ async def get_ai_model_by_id(id: int):
         logger.error(f"error while fetching the ai model {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="could not fetch ai Model at the moment",
+            detail=f"could not fetch ai Model at the moment:{str(e)}",
         )
 
 
@@ -169,7 +169,7 @@ async def update_ai_model(id: int, model_updt: AIModelUpdate):
         logger.error(f"error while updating aimodel {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="could not update the ai model at the moment",
+            detail=f"could not update the ai model at the moment:{str(e)}",
         )
 
 
@@ -203,5 +203,5 @@ async def delete_ai_model(id: int):
         logger.error(f"error while deleting the ai model: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="could not delete ai model at the moment",
+            detail=f"could not delete ai model at the moment:{str(e)}",
         )
