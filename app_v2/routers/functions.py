@@ -298,7 +298,7 @@ async def get_all_functions(
         logger.error(f"error while fetching the functions: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="error while fetching the functions."
+            detail=f"error while fetching the functions:{str(e)}"
         )
     
 
@@ -332,7 +332,7 @@ async def get_function_by_id(
         logger.error(f"error while fetching the function: {e}")
         raise HTTPException(
             status_code= status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail= "failed to fetch the function at the moment."
+            detail= f"failed to fetch the function at the moment:{str(e)}"
         )
 
 
@@ -395,7 +395,7 @@ async def update_function(
         logger.error(f"error while updating fucntion: {e}")
         raise HTTPException(
             status_code= status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="failed to update function at the moment"
+            detail=f"failed to update function at the moment:{str(e)}"
         )
     
 
@@ -477,5 +477,5 @@ async def delete_function(
         logger.error(f"error whlie deleting the function: {e}")
         raise HTTPException(
             status_code= status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="failed to delete function at the moment"
+            detail=f"failed to delete function at the moment:{str(e)}"
         )

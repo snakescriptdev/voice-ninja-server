@@ -12,7 +12,8 @@ from .functions import router as function_router
 from .agent_variables import router as agent_variables_router
 from .knowledge_base import router as knowledge_base_router
 from .phone_router import router as phone_router
+from .websocket_router import router as websocket_router
 
 
-__all__ = ['otp_router', 'health_router', 'google_auth_router', 'profile_router',"agent_router","ai_model_router","lang_router","voice_router","function_router", "agent_variables_router", "knowledge_base_router", "phone_router"]
+__all__ = ['otp_router', 'health_router', 'google_auth_router', 'profile_router',"agent_router","ai_model_router","lang_router","voice_router","function_router", "agent_variables_router", "knowledge_base_router", "phone_router", "websocket_router"]
 
