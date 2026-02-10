@@ -22,6 +22,7 @@ from app_v2.schemas.knowledge_base_schema import (
 from app_v2.utils.jwt_utils import HTTPBearer,get_current_user
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs import ElevenLabsKB, ElevenLabsAgent
+from app_v2.utils.scraping_utils import scrape_webpage_title
 
 logger = setup_logger(__name__)
 
@@ -173,12 +174,17 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
             except Exception as e:
                 logger.error(f"Error syncing URL with ElevenLabs: {e}")
                 raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
+            
+            # ---- Scrape Webpage Title ----
+            title = scrape_webpage_title(url_str)
+
 
             kb_entry = KnowledgeBaseModel(
                 user_id=current_user.id,
                 kb_type="url",
                 content_path=url_str,
-                elevenlabs_document_id=elevenlabs_document_id
+                elevenlabs_document_id=elevenlabs_document_id,
+                title=title
             )
             db.session.add(kb_entry)
             db.session.commit()
@@ -203,7 +209,7 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
             try:
                 logger.info(f"Syncing text '{request.title}' to ElevenLabs KB")
                 kb_client = ElevenLabsKB()
-                kb_response = kb_client.add_text_document(request.context, request.title)
+                kb_response = kb_client.add_text_document(request.content, request.title)
                 
                 if kb_response.status:
                     elevenlabs_document_id = kb_response.data.get("document_id")
@@ -219,7 +225,7 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
                 user_id=current_user.id,
                 kb_type="text",
                 title=request.title,
-                content_text=request.context,
+                content_text=request.content,
                 elevenlabs_document_id=elevenlabs_document_id
             )
             db.session.add(kb_entry)

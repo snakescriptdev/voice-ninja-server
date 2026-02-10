@@ -7,7 +7,7 @@ class KnowledgeBaseURLCreate(BaseModel):
 
 class KnowledgeBaseTextCreate(BaseModel):
     title: str
-    context: str
+    content: str
 
 class KnowledgeBaseFileUpdate(BaseModel):
     title: Optional[str] = None

@@ -255,7 +255,7 @@ class AgentModel(Base):
     agent_functions = relationship("AgentFunctionBridgeModel",back_populates="agent",cascade="all, delete-orphan")
     variables = relationship("VariablesModel",back_populates="agent",cascade="all, delete-orphan")
     phone_number = relationship("PhoneNumberService",back_populates="agent")
-    agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent")
+    agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent",cascade="all, delete-orphan")
 
 
 
@@ -413,7 +413,8 @@ class KnowledgeBaseModel(Base):
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("UnifiedAuthModel", back_populates="knowledge_bases")
-    agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="knowledge_base")
+    agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="knowledge_base",cascade="all, delete-orphan")
+
 
 
 class AgentKnowledgeBaseBridge(Base):
