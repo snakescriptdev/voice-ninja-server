@@ -33,21 +33,47 @@ async def get_test_page():
 async def websocket_test_agent(
     websocket: WebSocket,
     agent_id: int,
-    token: str = Query(...),
 ):
     """
     WebSocket endpoint for testing an ElevenLabs agent.
     Relays PCM 16k audio between browser and ElevenLabs.
     """
-    # 1. Authenticate user from query token
+
+    # 0. Accept connection first (required for first-message auth)
+    await websocket.accept()
+
+    # 1. ---- FIRST MESSAGE AUTH ----
+    try:
+        auth_msg = await asyncio.wait_for(
+            websocket.receive_json(),
+            timeout=5
+        )
+    except asyncio.TimeoutError:
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Auth timeout"
+        )
+        return
+
+    if auth_msg.get("type") != "auth" or "token" not in auth_msg:
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Auth required"
+        )
+        return
+
+    token = auth_msg["token"]
+
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("user_id")
         if not user_id:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Invalid token")
-            return
-    except JWTError as e:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason=f"Invalid token:{str(e)}")
+            raise JWTError("user_id missing")
+    except JWTError:
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Invalid token"
+        )
         return
 
     # 2. Verify agent ownership
@@ -164,3 +190,74 @@ async def websocket_test_agent(
                 task.cancel()
             
             logger.info("WebSocket connection flow completed")
+
+
+
+@router.get("/{agent_id}/test-connection/info", tags=["WebSocket"])
+def websocket_test_agent_info(agent_id: int):
+    """
+    Information for WebSocket test-connection endpoint.
+    """
+    return {
+        "endpoint": f"/{agent_id}/test-connection",
+        "method": "WEBSOCKET",
+        "url_format": "ws://<host>/api/v2/agent/{agent_id}/test-connection",
+        "authentication": {
+            "type": "JWT",
+            "mode": "first_message",
+            "message_format": {
+                "type": "auth",
+                "token": "<JWT>"
+            },
+            "note": "JWT must contain `user_id`. Client must send auth message immediately after connection opens."
+        },
+        "description": (
+            "This WebSocket establishes a bi-directional audio bridge between the browser "
+            "and ElevenLabs Conversational AI. After connection, the client must first send "
+            "an authentication message containing a JWT. The server validates the token, "
+            "verifies agent ownership, and then relays PCM 16k audio in real time."
+        ),
+        "client_flow": [
+            "1. Open WebSocket connection",
+            "2. Send auth message as first JSON payload",
+            "3. Start sending audio / events"
+        ],
+        "browser_to_server": {
+            "auth": {
+                "example": {
+                    "type": "auth",
+                    "token": "<JWT>"
+                }
+            },
+            "audio": {
+                "format": "raw bytes",
+                "encoding": "PCM 16k",
+                "direction": "Browser → ElevenLabs"
+            },
+            "json_events": {
+                "example": {
+                    "type": "start_conversation"
+                }
+            }
+        },
+        "server_to_browser": {
+            "audio": {
+                "format": "raw bytes",
+                "encoding": "PCM 16k",
+                "direction": "ElevenLabs → Browser"
+            },
+            "metadata": [
+                "transcript",
+                "agent_response",
+                "conversation_events"
+            ]
+        },
+        "timeouts": {
+            "auth_timeout_seconds": 5,
+            "note": "If auth message is not received within timeout, connection is closed"
+        },
+        "close_codes": {
+            "1008": "Policy violation (auth failed / agent not found / auth timeout)",
+            "1011": "Internal server error"
+        }
+    }
