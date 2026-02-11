@@ -406,12 +406,6 @@ async def update_function(
     summary="Delete function",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-@router.delete(
-    "/{function_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete function",
-    openapi_extra={"security": [{"BearerAuth": []}]},
-)
 async def delete_function(
     function_id: int,
     current_user: UnifiedAuthModel = Depends(get_current_user),

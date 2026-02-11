@@ -172,3 +172,30 @@ class ElevenLabsKB(BaseElevenLabs):
         """
         response = self._get(f"/convai/knowledge-base/{document_id}")
         return response
+    
+    def compute_rag_index(self, document_id: str) -> Optional[str]:
+        """
+        Compute the RAG index for a document.
+        
+        Args:
+            document_id: ElevenLabs document ID
+            
+        Returns:
+            RAG index ID if successful, None otherwise
+        """
+        logger.info(f"Computing RAG index for document: {document_id}")
+        # Send model parameter as required by ElevenLabs API
+        payload = {
+            "model": "e5_mistral_7b_instruct"
+        }
+        response = self._post(f"/convai/knowledge-base/{document_id}/rag-index", data=payload)
+        
+        if response.status and response.data:
+            logger.info(f"✅ RAG index computed for document: {document_id}")
+            return response.data.get("id")
+        else:
+            logger.error(f"Failed to compute RAG index for document: {response.error_message}")
+            return None
+        
+
+    

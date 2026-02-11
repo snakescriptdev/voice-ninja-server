@@ -330,7 +330,7 @@
             if (!agentId || !token) { alert("Missing ID or Token"); return; }
 
             await initAudio();
-            ws = new WebSocket(`${baseUrl}/api/v2/agent/${agentId}/test-connection?token=${token}`);
+            ws = new WebSocket(`${baseUrl}/api/v2/agent/${agentId}/test-connection`);
             ws.binaryType = "arraybuffer";
             log("Connecting...");
 
@@ -340,6 +340,15 @@
                 statusDiv.className = "status-connected";
                 connectBtn.disabled = true; disconnectBtn.disabled = false;
 
+                // 1. Send Auth Message (First Message Rule)
+                ws.send(JSON.stringify({
+                    type: "auth",
+                    token: token
+                }));
+                log("Sent Auth Token", "info");
+
+                // 2. Send Metadata (Wait slightly to ensure auth processes if needed, though usually sequential is fine)
+                // In a real app, maybe wait for an "auth_success" message, but for this test we fire sequentially.
                 ws.send(JSON.stringify({
                     type: "conversation_initiation_metadata",
                     conversation_initiation_metadata_event: {

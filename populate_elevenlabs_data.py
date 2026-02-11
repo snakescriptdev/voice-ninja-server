@@ -338,11 +338,11 @@ def main():
     
     try:
         # Populate data in order
+        ensure_admin_defaults(session)
         populate_languages(session)
         populate_ai_models(session)
-        populate_elevenlabs_voices(session)
         remove_default_voices_unsynced(session)
-        ensure_admin_defaults(session)
+        populate_elevenlabs_voices(session)
         
         logger.info("\n" + "✨" * 30)
         logger.info("DATA POPULATION COMPLETE!")
