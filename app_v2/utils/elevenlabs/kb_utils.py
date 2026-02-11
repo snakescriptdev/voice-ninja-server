@@ -147,6 +147,19 @@ class ElevenLabsKB(BaseElevenLabs):
             
         return response
 
+    def update_document_name(self, document_id: str, name: str) -> ElevenLabsResponse:
+        """
+        Update the name of a document in ElevenLabs Knowledge Base.
+        """
+        logger.info(f"Updating document name in ElevenLabs KB: {document_id} -> {name}")
+        data = {"name": name}
+        response = self._patch(f"/convai/knowledge-base/{document_id}", data=data)
+        if response.status:
+            logger.info(f"✅ Document name updated in ElevenLabs KB: {document_id}")
+        else:
+            logger.error(f"Failed to update document name in ElevenLabs KB: {response.error_message}")
+        return response
+
     def get_document_status(self, document_id: str) -> ElevenLabsResponse:
         """
         Check the processing status of a document.
@@ -159,3 +172,30 @@ class ElevenLabsKB(BaseElevenLabs):
         """
         response = self._get(f"/convai/knowledge-base/{document_id}")
         return response
+    
+    def compute_rag_index(self, document_id: str) -> Optional[str]:
+        """
+        Compute the RAG index for a document.
+        
+        Args:
+            document_id: ElevenLabs document ID
+            
+        Returns:
+            RAG index ID if successful, None otherwise
+        """
+        logger.info(f"Computing RAG index for document: {document_id}")
+        # Send model parameter as required by ElevenLabs API
+        payload = {
+            "model": "e5_mistral_7b_instruct"
+        }
+        response = self._post(f"/convai/knowledge-base/{document_id}/rag-index", data=payload)
+        
+        if response.status and response.data:
+            logger.info(f"✅ RAG index computed for document: {document_id}")
+            return response.data.get("id")
+        else:
+            logger.error(f"Failed to compute RAG index for document: {response.error_message}")
+            return None
+        
+
+    

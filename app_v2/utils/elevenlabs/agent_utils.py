@@ -65,7 +65,10 @@ class ElevenLabsAgent(BaseElevenLabs):
                     "temperature": 0.0,
                     "max_tokens": -1,
                     "tool_ids": [],
-                    "knowledge_base": []
+                    "knowledge_base": [],
+                    "rag":{
+                        "enabled": True
+                    }
                 },
                 "first_message": first_message,
                 "language": language
@@ -248,9 +251,9 @@ class ElevenLabsAgent(BaseElevenLabs):
         if dynamic_variables:
             if "agent" not in current_config:
                 current_config["agent"] = {}
-            current_config["agent"]["dynamic_variables"] = {
-                "dynamic_variable_placeholders": dynamic_variables
-            }
+            current_config["agent"]["dynamic_variables"]["dynamic_variable_placeholders"]= {
+                 key:value for key, value in dynamic_variables.items()
+            } if dynamic_variables else None
             config_updated = True
         
         if config_updated:

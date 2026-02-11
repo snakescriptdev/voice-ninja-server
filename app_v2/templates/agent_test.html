@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Ninja Agent Test (v1.0.9)</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            background: #f0f2f5;
+        }
+
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 500px;
+        }
+
+        h1 {
+            color: #1a73e8;
+            margin-bottom: 5px;
+        }
+
+        .version {
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+            width: 100%;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: background 0.3s;
+            margin: 5px;
+        }
+
+        .btn-connect {
+            background: #1a73e8;
+            color: white;
+        }
+
+        .btn-connect:hover {
+            background: #1557b0;
+        }
+
+        .btn-disconnect {
+            background: #d93025;
+            color: white;
+        }
+
+        .btn-disconnect:hover {
+            background: #b3261e;
+        }
+
+        .btn-test {
+            background: #5f6368;
+            color: white;
+        }
+
+        #status {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .status-connected {
+            background: #e6f4ea;
+            color: #137333;
+        }
+
+        .status-disconnected {
+            background: #fce8e6;
+            color: #c5221f;
+        }
+
+        #log {
+            margin-top: 20px;
+            width: 100%;
+            height: 300px;
+            overflow-y: auto;
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 11px;
+            padding: 10px;
+        }
+
+        .meter-container {
+            width: 100%;
+            height: 15px;
+            background: #eee;
+            border-radius: 8px;
+            margin-top: 5px;
+            overflow: hidden;
+            border: 1px solid #ccc;
+        }
+
+        #micLevel,
+        #agentLevel {
+            height: 100%;
+            width: 0%;
+            background: #4caf50;
+            transition: width 0.1s;
+        }
+
+        #agentLevel {
+            background: #2196f3;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h1>Agent WebSocket Test</h1>
+        <div class="version">v1.0.9 (Key Mismatch Fixed)</div>
+
+        <div class="form-group">
+            <label for="baseUrl">Server URL</label>
+            <input type="text" id="baseUrl" value="">
+        </div>
+        <div class="form-group">
+            <label for="agentId">Agent ID</label>
+            <input type="text" id="agentId" placeholder="e.g. 9">
+        </div>
+        <div class="form-group">
+            <label for="token">JWT Token</label>
+            <input type="password" id="token" placeholder="Your access token">
+        </div>
+
+        <div style="display: flex; flex-wrap: wrap; justify-content: center;">
+            <button id="connectBtn" class="btn-connect">Connect & Start Chat</button>
+            <button id="disconnectBtn" class="btn-disconnect" disabled>Disconnect</button>
+            <button id="testSoundBtn" class="btn-test">Diagnostic Beep</button>
+        </div>
+
+        <div id="status" class="status-disconnected">Disconnected</div>
+
+        <div style="margin-top: 15px;">
+            <label>Microphone Level:</label>
+            <div class="meter-container">
+                <div id="micLevel"></div>
+            </div>
+        </div>
+
+        <div style="margin-top: 10px;">
+            <label>Agent Audio Level (BLUE):</label>
+            <div class="meter-container">
+                <div id="agentLevel"></div>
+            </div>
+        </div>
+
+        <div style="margin-top: 10px;">
+            <label for="gainSlider">Output Gain (Boost): <span id="gainVal">1.0</span></label>
+            <input type="range" id="gainSlider" min="0" max="10" step="0.1" value="1.0" style="width: 100%;">
+        </div>
+
+        <div id="log"></div>
+    </div>
+
+    <script>
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        document.getElementById('baseUrl').value = `${protocol}//${window.location.host}`;
+
+        let ws = null;
+        let audioContext = null;
+        let scriptNode = null;
+        let microphone = null;
+        let analyserMic = null;
+        let analyserAgent = null;
+        let audioQueue = [];
+        let isPlaying = false;
+        let gainNode = null;
+
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const testSoundBtn = document.getElementById('testSoundBtn');
+        const statusDiv = document.getElementById('status');
+        const logDiv = document.getElementById('log');
+        const micLevelDiv = document.getElementById('micLevel');
+        const agentLevelDiv = document.getElementById('agentLevel');
+        const gainSlider = document.getElementById('gainSlider');
+        const gainVal = document.getElementById('gainVal');
+
+        gainSlider.oninput = () => {
+            gainVal.textContent = gainSlider.value;
+            if (gainNode) gainNode.gain.setValueAtTime(parseFloat(gainSlider.value), audioContext.currentTime);
+        };
+
+        function log(msg, type = "info") {
+            const entry = document.createElement('div');
+            entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            if (type === "error") entry.style.color = "red";
+            if (type === "agent") entry.style.color = "#1a73e8";
+            if (type === "user") entry.style.color = "#137333";
+            logDiv.appendChild(entry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        async function initAudio() {
+            if (!audioContext) {
+                try {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                    log("Audio Context: 16000Hz");
+                } catch (e) {
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    log("Audio Context: Native " + audioContext.sampleRate + "Hz");
+                }
+
+                gainNode = audioContext.createGain();
+                gainNode.gain.value = parseFloat(gainSlider.value);
+
+                analyserAgent = audioContext.createAnalyser();
+                analyserAgent.fftSize = 256;
+
+                gainNode.connect(analyserAgent);
+                analyserAgent.connect(audioContext.destination);
+
+                const agentData = new Uint8Array(analyserAgent.frequencyBinCount);
+                function updateAgentMeter() {
+                    if (analyserAgent) {
+                        analyserAgent.getByteFrequencyData(agentData);
+                        let sum = 0; for (let i = 0; i < agentData.length; i++) sum += agentData[i];
+                        let avg = sum / agentData.length;
+                        agentLevelDiv.style.width = Math.min(100, (avg / 128) * 100) + "%";
+                        requestAnimationFrame(updateAgentMeter);
+                    }
+                }
+                updateAgentMeter();
+            }
+            if (audioContext.state === 'suspended') await audioContext.resume();
+            return audioContext;
+        }
+
+        testSoundBtn.onclick = async () => {
+            await initAudio();
+            log("Playing Diagnostic Beep...");
+            const osc = audioContext.createOscillator();
+            osc.connect(gainNode);
+            osc.start();
+            osc.stop(audioContext.currentTime + 0.3);
+        };
+
+        async function startStreaming() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                await initAudio();
+                log("Mic granted");
+
+                microphone = audioContext.createMediaStreamSource(stream);
+                analyserMic = audioContext.createAnalyser();
+                analyserMic.fftSize = 256;
+                microphone.connect(analyserMic);
+
+                const micData = new Uint8Array(analyserMic.frequencyBinCount);
+                function updateMicMeter() {
+                    if (analyserMic) {
+                        analyserMic.getByteFrequencyData(micData);
+                        let sum = 0; for (let i = 0; i < micData.length; i++) sum += micData[i];
+                        let avg = sum / micData.length;
+                        micLevelDiv.style.width = Math.min(100, (avg / 128) * 100) + "%";
+                        requestAnimationFrame(updateMicMeter);
+                    }
+                }
+                updateMicMeter();
+
+                scriptNode = audioContext.createScriptProcessor(4096, 1, 1);
+                scriptNode.onaudioprocess = (e) => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        const input = e.inputBuffer.getChannelData(0);
+                        const pcm = new Int16Array(input.length);
+                        for (let i = 0; i < input.length; i++) pcm[i] = Math.max(-1, Math.min(1, input[i])) * 0x7FFF;
+                        ws.send(pcm.buffer);
+                    }
+                };
+                microphone.connect(scriptNode);
+                scriptNode.connect(audioContext.destination);
+                log("Streaming microphone...");
+            } catch (err) { log("Mic Error: " + err, "error"); }
+        }
+
+        function stopAudio() {
+            if (scriptNode) scriptNode.disconnect();
+            if (microphone) {
+                microphone.mediaStream.getTracks().forEach(t => t.stop());
+                microphone.disconnect();
+            }
+            analyserMic = null;
+            micLevelDiv.style.width = "0%";
+            audioQueue = [];
+            isPlaying = false;
+        }
+
+        connectBtn.onclick = async () => {
+            const agentId = document.getElementById('agentId').value;
+            const token = document.getElementById('token').value;
+            const baseUrl = document.getElementById('baseUrl').value;
+            if (!agentId || !token) { alert("Missing ID or Token"); return; }
+
+            await initAudio();
+            ws = new WebSocket(`${baseUrl}/api/v2/agent/${agentId}/test-connection`);
+            ws.binaryType = "arraybuffer";
+            log("Connecting...");
+
+            ws.onopen = () => {
+                log("Connected to server");
+                statusDiv.textContent = "Connected";
+                statusDiv.className = "status-connected";
+                connectBtn.disabled = true; disconnectBtn.disabled = false;
+
+                // 1. Send Auth Message (First Message Rule)
+                ws.send(JSON.stringify({
+                    type: "auth",
+                    token: token
+                }));
+                log("Sent Auth Token", "info");
+
+                // 2. Send Metadata (Wait slightly to ensure auth processes if needed, though usually sequential is fine)
+                // In a real app, maybe wait for an "auth_success" message, but for this test we fire sequentially.
+                ws.send(JSON.stringify({
+                    type: "conversation_initiation_metadata",
+                    conversation_initiation_metadata_event: {
+                        customer_description: "A developer testing"
+                    }
+                }));
+
+                startStreaming();
+            };
+
+            ws.onmessage = (event) => {
+                if (typeof event.data === "string") {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === "agent_response" && data.agent_response_event) {
+                            const t = data.agent_response_event.agent_response;
+                            if (t && t !== "string") log(`Agent: ${t}`, "agent");
+                        } else if (data.type === "user_transcript") {
+                            const t = data.user_transcription_details ? data.user_transcription_details.transcript : data.transcript;
+                            if (t) log(`User: ${t}`, "user");
+                        } else if (data.type === "audio") {
+                            if (data.audio_event && data.audio_event.transcript && data.audio_event.transcript !== "string") {
+                                log(`Agent: ${data.audio_event.transcript}`, "agent");
+                            }
+                        }
+                    } catch (e) { }
+                } else {
+                    playOutput(event.data);
+                }
+            };
+
+            ws.onclose = (e) => {
+                log(`Disconnected (Code: ${e.code})`);
+                statusDiv.className = "status-disconnected";
+                connectBtn.disabled = false; disconnectBtn.disabled = true;
+                stopAudio();
+            };
+            ws.onerror = () => log("WebSocket Error", "error");
+        };
+
+        disconnectBtn.onclick = () => { if (ws) ws.close(); };
+
+        async function playOutput(buffer) {
+            audioQueue.push(buffer);
+            if (!isPlaying) processQueue();
+        }
+
+        async function processQueue() {
+            if (audioQueue.length === 0) { isPlaying = false; return; }
+            isPlaying = true;
+            const buffer = audioQueue.shift();
+            try {
+                if (audioContext.state === 'suspended') await audioContext.resume();
+                let final = buffer;
+                if (buffer.byteLength % 2 !== 0) final = buffer.slice(0, buffer.byteLength - 1);
+
+                const i16 = new Int16Array(final);
+                const f32 = new Float32Array(i16.length);
+                let max = 0;
+                for (let i = 0; i < i16.length; i++) {
+                    f32[i] = i16[i] / 32768.0;
+                    if (Math.abs(f32[i]) > max) max = Math.abs(f32[i]);
+                }
+
+                // If there's any amplitude, play it
+                if (max > 0.00001) {
+                    const audioBuf = audioContext.createBuffer(1, f32.length, 16000);
+                    audioBuf.getChannelData(0).set(f32);
+                    const source = audioContext.createBufferSource();
+                    source.buffer = audioBuf;
+                    source.connect(gainNode);
+                    source.onended = processQueue;
+                    source.start();
+                } else {
+                    processQueue();
+                }
+            } catch (err) { console.error(err); processQueue(); }
+        }
+    </script>
+</body>
+
+</html>

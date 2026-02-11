@@ -57,40 +57,70 @@ class BaseElevenLabs:
         if not self.api_key:
             logger.warning("ElevenLabs API key not configured")
     
-    def _get(self, endpoint: str, params: Optional[Dict] = None, retries: int = 3) -> ElevenLabsResponse:
+    def _get(
+        self,
+        endpoint: str,
+        params: Optional[Dict] = None,
+        retries: int = 3,
+        raw: bool = False
+    ) -> ElevenLabsResponse:
         """
         Make a GET request to ElevenLabs API.
-        
+
         Args:
             endpoint: API endpoint (e.g., '/voices')
             params: Query parameters
             retries: Number of retry attempts
-            
+            raw: Return raw response bytes (for audio, etc.)
+
         Returns:
             ElevenLabsResponse object
         """
         url = f"{self.base_url}{endpoint}"
         last_error = None
-        
+
         for attempt in range(1, retries + 1):
             try:
                 logger.debug(f"GET request to {url} (attempt {attempt}/{retries})")
-                response = requests.get(url, headers=self.headers, params=params, timeout=30)
-                
+                response = requests.get(
+                    url,
+                    headers=self.headers,
+                    params=params,
+                    timeout=30
+                )
+
                 if response.status_code == 200:
-                    return ElevenLabsResponse(status=True, data=response.json())
-                else:
-                    last_error = f"Status {response.status_code}: {response.text}"
-                    logger.warning(f"Attempt {attempt}/{retries} failed - {last_error}")
-                    
+                    # ✅ RAW (audio / binary)
+                    if raw:
+                        return ElevenLabsResponse(
+                            status=True,
+                            data={
+                                "content": response.content,
+                                "content_type": response.headers.get(
+                                    "content-type", "application/octet-stream"
+                                )
+                            }
+                        )
+
+                    # ✅ JSON (default)
+                    return ElevenLabsResponse(
+                        status=True,
+                        data=response.json()
+                    )
+
+                last_error = f"Status {response.status_code}: {response.text}"
+                logger.warning(f"Attempt {attempt}/{retries} failed - {last_error}")
+
             except requests.RequestException as e:
                 last_error = str(e)
                 logger.warning(f"Attempt {attempt}/{retries} failed - {last_error}")
+
             except Exception as e:
                 last_error = str(e)
                 logger.error(f"Unexpected error on attempt {attempt}/{retries}: {last_error}")
-        
+
         return ElevenLabsResponse(status=False, error_message=last_error)
+
     
     def _post(self, endpoint: str, data: Optional[Dict] = None, files: Optional[Dict] = None, 
               retries: int = 3) -> ElevenLabsResponse:

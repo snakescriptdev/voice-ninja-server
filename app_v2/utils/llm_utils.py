@@ -12,7 +12,7 @@ logger = setup_logger(__name__)
 SYSTEM_PROMPT_TEMPLATE = """
 You are an AI system prompt generator.
 
-Generate a clear, production-ready system prompt for a voice AI agent using the following configuration.
+Generate a clear, production-ready system prompt for a voice AI agent using the following configuration. and dont forget to stay in the character of the agent. 
 
 Agent Name: {agent_name}
 Language: {language}
