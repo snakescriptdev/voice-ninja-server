@@ -23,6 +23,7 @@ from app_v2.databases.models import (
     VoiceTraitsModel,
     AdminTokenModel,
     TokensToConsume,
+    AgentModel
 )
 from app_v2.core.elevenlabs_config import (
     get_all_supported_languages,
@@ -284,28 +285,49 @@ def populate_elevenlabs_voices(session: Session):
         )
 
 def remove_default_voices_unsynced(session: Session):
-    logger.info("Removing hardcoded default voices...")
+    logger.info("Removing hardcoded default voices and related agents...")
+
     DEFAULT_VOICES = ["Aoede", "Charon", "Fenrir", "Kore", "Puck"]
+
     voices = (
         session.query(VoiceModel)
         .filter(
             VoiceModel.voice_name.in_(DEFAULT_VOICES),
-            VoiceModel.is_custom_voice == False,
+            VoiceModel.is_custom_voice.is_(False),
         )
         .all()
     )
 
-    for voice in voices:
-        logger.info(f"Deleting traits for voice: {voice.voice_name}")
-        session.query(VoiceTraitsModel).filter(
-            VoiceTraitsModel.voice_id == voice.id
-        ).delete(synchronize_session=False)
+    
 
+    for voice in voices:
+        logger.info(f"Processing voice: {voice.voice_name}")
+
+        # 1️⃣ Delete agents using this voice
+        agents = (
+            session.query(AgentModel)
+            .filter(AgentModel.voice_id == voice.id)
+            .all()
+        )
+        if agents:
+            for agent in agents:
+                logger.info(f"Deleting agent '{agent.id}' linked to voice '{voice.voice_name}'")
+                session.delete(agent)
+                
+
+        session.query(VoiceTraitsModel).filter(
+                VoiceTraitsModel.voice_id == voice.id
+            ).delete(synchronize_session=False)
+
+        # 3️⃣ Delete voice
         logger.info(f"Deleting voice: {voice.voice_name}")
         session.delete(voice)
 
+
     session.commit()
-    logger.info("✅ Default voices removed")
+
+    logger.info("✅ Default voices cleanup complete.")
+
 
 def ensure_admin_defaults(session: Session):
     logger.info("Ensuring admin defaults...")
