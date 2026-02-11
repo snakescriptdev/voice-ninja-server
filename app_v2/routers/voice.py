@@ -17,6 +17,8 @@ from sqlalchemy.orm import selectinload
 from app_v2.databases.models import VoiceModel, UnifiedAuthModel, VoiceTraitsModel
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs import ElevenLabsVoice
+from fastapi.responses import Response
+from app_v2.schemas.pagination import PaginatedResponse
 
 logger = setup_logger(__name__)
 
@@ -50,11 +52,11 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
         nationality=nationality
     )
 
-@router.get("/voice", response_model=List[VoiceRead], status_code=status.HTTP_200_OK, openapi_extra={"security":[{"BearerAuth":[]}]}, summary="lists available voices", description="return the list of available voices for user (both custom and predefined). Use synced_only=true to list only voices usable for agent creation (have ElevenLabs ID).")
+@router.get("/voice", response_model=PaginatedResponse[VoiceRead], status_code=status.HTTP_200_OK, openapi_extra={"security":[{"BearerAuth":[]}]}, summary="lists available voices", description="return the list of available voices for user (both custom and predefined). Use synced_only=true to list only voices usable for agent creation (have ElevenLabs ID).")
 async def get_all_voices(
     skip: int = 0,
     limit: int = 10,
-    synced_only: bool = False,
+    synced_only: bool = True,
     current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
         filters = [
@@ -73,18 +75,25 @@ async def get_all_voices(
             .limit(limit)
             .all()
         )
-
-        if not voices:
-            logger.info("no voices are present in database.")
-            return []
+        total = db.session.query(VoiceModel).filter(*filters).count()
+        import math
+        pages = math.ceil(total / limit) if limit > 0 else 1
+        current_page = (skip // limit) + 1 if limit > 0 else 1
         
         logger.info("voices fetched successfully from db")
-        return [voice_to_read(voice) for voice in voices]
+        
+        return PaginatedResponse(
+            total=total,
+            page=current_page,
+            size=limit,
+            pages=pages,
+            items=[voice_to_read(voice) for voice in voices]
+        )
     except Exception as e:
         logger.error(f"error while fetching the voices: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="failed to load voices at the moment"
+            detail=f"failed to load voices at the moment:{str(e)}"
         )
 
 
@@ -115,7 +124,7 @@ async def get_voice_by_id(id: int, current_user: UnifiedAuthModel = Depends(get_
         logger.error(f"error while fetching the voice: {e}")
         raise HTTPException(
             status_code = status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="failed to fetch the voice at the moment"
+            detail=f"failed to fetch the voice at the moment:{str(e)}"
         )
 
 @router.post("/voice", response_model=VoiceRead, status_code=status.HTTP_201_CREATED, openapi_extra={"security": [{"BearerAuth": []}]})
@@ -222,7 +231,7 @@ async def create_voice(
             except:
                 pass
         logger.error(f"Error creating voice: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error:{str(e)}")
 
 @router.delete("/voice/{voice_id}", status_code=status.HTTP_204_NO_CONTENT, openapi_extra={"security": [{"BearerAuth": []}]})
 async def delete_voice(
@@ -273,7 +282,7 @@ async def delete_voice(
         raise e
     except Exception as e:
         logger.error(f"Error deleting voice: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error:{str(e)}")
 
 @router.put("/voice/{voice_id}", response_model=VoiceRead, openapi_extra={"security": [{"BearerAuth": []}]})
 async def update_voice(
@@ -322,4 +331,72 @@ async def update_voice(
         raise e
     except Exception as e:
         logger.error(f"Error updating voice: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(status_code=500, detail=f"Internal server error:{str(e)}")
+
+
+@router.get(
+    "/preview/{voice_id}",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+    status_code=status.HTTP_200_OK,
+)
+async def preview_voice(
+    voice_id: int,
+    current_user: UnifiedAuthModel = Depends(get_current_user)
+):
+    """
+    Preview a voice by fetching its ElevenLabs sample.
+    """
+    with db():
+        # 1️⃣ Fetch voice owned by current user
+        voice = db.session.query(VoiceModel).filter(
+            VoiceModel.id == voice_id,
+            or_(
+                VoiceModel.user_id == current_user.id,
+                VoiceModel.user_id.is_(None)
+            )
+        ).first()
+
+        if not voice:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Voice not found"
+            )
+
+        # 2️⃣ Validate ElevenLabs voice mapping
+        if not voice.elevenlabs_voice_id:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="This voice is not linked to ElevenLabs"
+            )
+
+        # 3️⃣ Fetch sample from ElevenLabs
+        elevenlabs_client = ElevenLabsVoice()
+        sample_response = elevenlabs_client.get_voice_samples(
+            voice.elevenlabs_voice_id
+        )
+
+        if not sample_response.status:
+            logger.warning(
+                f"⚠️ ElevenLabs sample fetch failed or no samples | "
+                f"voice_id={voice_id}, "
+                f"elevenlabs_voice_id={voice.elevenlabs_voice_id}, "
+                f"error={sample_response.error_message}"
+            )
+            # Gracefully handle validation failure or no samples
+            return {
+                "voice_id": voice.id,
+                "elevenlabs_voice_id": voice.elevenlabs_voice_id,
+                "sample": None,
+                "message": "No preview available"
+            }
+
+        logger.info(
+            f"✅ Voice preview ready | "
+            f"voice_id={voice_id}, "
+            f"elevenlabs_voice_id={voice.elevenlabs_voice_id}"
+        )
+        # 4️⃣ Return raw sample data (audio / metadata)
+        return Response(
+            content=sample_response.data["content"],
+            media_type=sample_response.data.get("content_type", "audio/mpeg")
+        )

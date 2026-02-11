@@ -63,3 +63,9 @@ class ElevenLabsSignedURLResponse(BaseModel):
     signed_url: str
     agent_id: str
 
+class PhoneNumberImportRequest(BaseModel):
+    """Request schema for importing an existing Twilio phone number"""
+    phone_number: str = Field(..., description="The phone number in E.164 format")
+    account_sid: str = Field(..., description="Twilio Account SID")
+    auth_token: str = Field(..., description="Twilio Auth Token")
+
