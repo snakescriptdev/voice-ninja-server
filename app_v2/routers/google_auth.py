@@ -215,16 +215,19 @@ async def google_callback(code: str, http_request: Request):
         
         if unified_user:
             # User exists - add Google auth if not already added
+            update_data = {"last_login": datetime.now()}
             if not unified_user.has_google_auth:
-                UnifiedAuthModel.update(
-                    unified_user.id,
-                    has_google_auth=True,
-                    google_user_id=google_user_id,
-                    is_verified=True
-                )
+                update_data.update({
+                    "has_google_auth": True,
+                    "google_user_id": google_user_id,
+                    "is_verified": True
+                })
             
-            # Update last login
-            UnifiedAuthModel.update(unified_user.id, last_login=datetime.now())
+            # Ensure username is set
+            if not unified_user.username:
+                update_data["username"] = google_email
+            
+            UnifiedAuthModel.update(unified_user.id, **update_data)
             user_created = False
             user_id = unified_user.id
             user_email = unified_user.email
@@ -245,6 +248,7 @@ async def google_callback(code: str, http_request: Request):
             else:
                 # Create new user in unified auth
                 unified_user = UnifiedAuthModel.create(
+                    username=google_email,
                     email=google_email,
                     name=google_name,
                     has_google_auth=True,
@@ -277,6 +281,7 @@ async def google_callback(code: str, http_request: Request):
                 # Create in old model too
                 with db():
                     old_user = UserModel(
+                        username=google_email,
                         email=google_email,
                         name=google_name,
                         is_verified=True,
@@ -297,8 +302,12 @@ async def google_callback(code: str, http_request: Request):
             # Update old user last login
             UserModel.update(old_user.id, last_login=datetime.now())
         else:
-            # Update existing user last login
-            UserModel.update(oauth_record.user_id, last_login=datetime.now())
+            # Update existing user last login and username if missing
+            update_kwargs = {"last_login": datetime.now()}
+            old_user_record = UserModel.get_by_id(oauth_record.user_id)
+            if old_user_record and not old_user_record.username:
+                update_kwargs["username"] = google_email
+            UserModel.update(oauth_record.user_id, **update_kwargs)
         
         # Create JWT tokens
         token_data = {

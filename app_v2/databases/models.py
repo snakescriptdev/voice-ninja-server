@@ -22,6 +22,7 @@ class UserModel(Base):
     __tablename__ = "users"
     
     id = Column(Integer, primary_key=True)
+    username = Column(String, unique=True, index=True, nullable=True)
     email = Column(String, nullable=True, default="")
     phone = Column(String, nullable=True, default="")
     password = Column(String, nullable=True, default="")
@@ -54,7 +55,7 @@ class UserModel(Base):
     def get_by_username(cls, username: str) -> Optional["UserModel"]:
         with db():
             return db.session.query(cls).filter(
-                (cls.email == username) | (cls.phone == username)
+                (cls.username == username) | (cls.email == username) | (cls.phone == username)
             ).first()
 
     @classmethod
@@ -117,7 +118,8 @@ class UnifiedAuthModel(Base):
     __tablename__ = "unified_auth"
     
     id = Column(Integer, primary_key=True)
-    email = Column(String, unique=True, nullable=False, index=True)
+    username = Column(String, unique=True, index=True, nullable=True)
+    email = Column(String, nullable=True, index=True)
     phone = Column(String, nullable=True, default="")
     name = Column(String, nullable=True, default="")
     first_name = Column(String, nullable=True, default="")
@@ -143,6 +145,8 @@ class UnifiedAuthModel(Base):
     agents = relationship("AgentModel", back_populates="user")
     voices = relationship("VoiceModel", back_populates="user")
     notification_settings = relationship("UserNotificationSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    knowledge_bases = relationship("KnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -161,10 +165,10 @@ class UnifiedAuthModel(Base):
     
     @classmethod
     def get_by_username(cls, username: str) -> Optional["UnifiedAuthModel"]:
-        """Get user by email or phone."""
+        """Get user by username, email or phone."""
         with db():
             return db.session.query(cls).filter(
-                (cls.email == username) | (cls.phone == username)
+                (cls.username == username) | (cls.email == username) | (cls.phone == username)
             ).first()
     
     @classmethod
@@ -218,6 +222,7 @@ class VoiceModel(Base):
     modified_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     user_id = Column(Integer, ForeignKey("unified_auth.id"), nullable=True)
     elevenlabs_voice_id = Column(String, nullable=True)
+    has_sample_audio = Column(Boolean,nullable=True)
     audio_file = Column(String, nullable=True)
 
     user = relationship("UnifiedAuthModel", back_populates="voices")
@@ -250,8 +255,8 @@ class AgentModel(Base):
     agent_languages = relationship("AgentLanguageBridge",back_populates="agent",cascade="all, delete-orphan")
     agent_functions = relationship("AgentFunctionBridgeModel",back_populates="agent",cascade="all, delete-orphan")
     variables = relationship("VariablesModel",back_populates="agent",cascade="all, delete-orphan")
-    knowledge_base = relationship("KnowledgeBaseModel", back_populates="agent", cascade="all, delete-orphan")
     phone_number = relationship("PhoneNumberService",back_populates="agent")
+    agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent",cascade="all, delete-orphan")
 
 
 
@@ -397,17 +402,40 @@ class KnowledgeBaseModel(Base):
     __tablename__ = "knowledge_base"
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
-    agent_id: Mapped[int] = mapped_column(Integer, ForeignKey("agents.id"), nullable=False)
+    user_id : Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"))
     kb_type: Mapped[str] = mapped_column(String, nullable=False)  # 'file', 'url', 'text'
     title: Mapped[str] = mapped_column(String, nullable=True) # file name or title
     content_path: Mapped[str] = mapped_column(String, nullable=True) # file path or url
     content_text: Mapped[str] = mapped_column(Text, nullable=True) # for text type
+    file_size: Mapped[float] = mapped_column(Float, nullable=True)
     elevenlabs_document_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
+    rag_index_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    agent = relationship("AgentModel", back_populates="knowledge_base")
+    user = relationship("UnifiedAuthModel", back_populates="knowledge_bases")
+    agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="knowledge_base",cascade="all, delete-orphan")
+
+
+
+class AgentKnowledgeBaseBridge(Base):
+    __tablename__ = "agent_knowledgebase_bridge"
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True,autoincrement=True)
+
+    agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"),nullable=False)
+    kb_id: Mapped[int]= mapped_column(Integer,ForeignKey("knowledge_base.id"),nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    agent = relationship("AgentModel",back_populates="agent_knowledge_bases")
+    knowledge_base = relationship("KnowledgeBaseModel",back_populates="agent_knowledge_bases")
+
+    __table_args__ = (
+        UniqueConstraint("agent_id","kb_id",name="agent_kb_bridge"),
+    )
 
 
 
@@ -462,3 +490,14 @@ class PhoneNumberService(Base):
     #relationships
     user = relationship("UnifiedAuthModel", backref="phone_numbers")
     agent = relationship("AgentModel", back_populates="phone_number")
+
+class TwilioUserCreds(Base):
+    __tablename__ = "twilio_user_creds"
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"),unique=True) #enusre 1:1 
+
+    account_sid: Mapped[str] = mapped_column(String,nullable=False)
+    auth_token: Mapped[str] = mapped_column(String,nullable=False)
+
+    user = relationship("UnifiedAuthModel", back_populates="twilio_user_creds")
