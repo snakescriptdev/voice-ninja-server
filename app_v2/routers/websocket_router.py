@@ -92,7 +92,7 @@ async def websocket_test_agent(
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Agent not found")
         return
 
-    await websocket.accept()
+    # await websocket.accept()
     logger.info(f"Accepted WebSocket connection for agent {agent_id} (EL: {elevenlabs_agent_id})")
 
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={elevenlabs_agent_id}"
