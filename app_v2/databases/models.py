@@ -222,6 +222,7 @@ class VoiceModel(Base):
     modified_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     user_id = Column(Integer, ForeignKey("unified_auth.id"), nullable=True)
     elevenlabs_voice_id = Column(String, nullable=True)
+    has_sample_audio = Column(Boolean,nullable=True)
     audio_file = Column(String, nullable=True)
 
     user = relationship("UnifiedAuthModel", back_populates="voices")
@@ -408,6 +409,7 @@ class KnowledgeBaseModel(Base):
     content_text: Mapped[str] = mapped_column(Text, nullable=True) # for text type
     file_size: Mapped[float] = mapped_column(Float, nullable=True)
     elevenlabs_document_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
+    rag_index_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

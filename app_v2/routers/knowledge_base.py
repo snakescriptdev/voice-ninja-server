@@ -107,6 +107,7 @@ async def upload_files(
                 
                 # ---- ElevenLabs KB Upload ----
                 elevenlabs_document_id = None
+                rag_index_id = None
                 try:
                     logger.info(f"Syncing file '{file.filename}' to ElevenLabs KB for user '{current_user.email}'")
                     kb_client = ElevenLabsKB()
@@ -114,6 +115,8 @@ async def upload_files(
                     
                     if kb_response.status:
                         elevenlabs_document_id = kb_response.data.get("document_id")
+                        # ---- Compute RAG Index ----
+                        rag_index_id = kb_client.compute_rag_index(elevenlabs_document_id)
                     else:
                         logger.warning(f"Failed to upload to ElevenLabs KB: {kb_response.error_message}")
                         if os.path.exists(file_path):
@@ -133,6 +136,7 @@ async def upload_files(
                     title=file.filename,
                     content_path=file_path,
                     elevenlabs_document_id=elevenlabs_document_id,
+                    rag_index_id=rag_index_id,
                     file_size=file_size
                 )
                 db.session.add(kb_entry)
@@ -160,6 +164,7 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
         with db():
             # ---- ElevenLabs KB Sync ----
             elevenlabs_document_id = None
+            rag_index_id = None
             try:
                 logger.info(f"Syncing URL '{url_str}' to ElevenLabs KB")
                 kb_client = ElevenLabsKB()
@@ -167,6 +172,8 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
                 
                 if kb_response.status:
                     elevenlabs_document_id = kb_response.data.get("document_id")
+                    # ---- Compute RAG Index ----
+                    rag_index_id = kb_client.compute_rag_index(elevenlabs_document_id)
                 else:
                     raise HTTPException(status_code=424, detail=f"ElevenLabs KB URL addition failed: {kb_response.error_message}")
             except HTTPException:
@@ -184,6 +191,7 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
                 kb_type="url",
                 content_path=url_str,
                 elevenlabs_document_id=elevenlabs_document_id,
+                rag_index_id=rag_index_id,
                 title=title
             )
             db.session.add(kb_entry)
@@ -206,6 +214,7 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
         with db():
             # ---- ElevenLabs KB Sync ----
             elevenlabs_document_id = None
+            rag_index_id = None
             try:
                 logger.info(f"Syncing text '{request.title}' to ElevenLabs KB")
                 kb_client = ElevenLabsKB()
@@ -213,6 +222,8 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
                 
                 if kb_response.status:
                     elevenlabs_document_id = kb_response.data.get("document_id")
+                    # ---- Compute RAG Index ----
+                    rag_index_id = kb_client.compute_rag_index(elevenlabs_document_id)
                 else:
                     raise HTTPException(status_code=424, detail=f"ElevenLabs KB text addition failed: {kb_response.error_message}")
             except HTTPException:
@@ -226,7 +237,8 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
                 kb_type="text",
                 title=request.title,
                 content_text=request.content,
-                elevenlabs_document_id=elevenlabs_document_id
+                elevenlabs_document_id=elevenlabs_document_id,
+                rag_index_id=rag_index_id
             )
             db.session.add(kb_entry)
             db.session.commit()
@@ -361,8 +373,8 @@ async def delete_knowledge_base_item(
             # ---- ElevenLabs KB Sync (Delete from Library FIRST) ----
             if kb_entry.elevenlabs_document_id:
                 try:
-                    logger.info(f"Deleting document {kb_entry.elevenlabs_document_id} from ElevenLabs KB")
                     kb_client = ElevenLabsKB()
+                    logger.info(f"Deleting document {kb_entry.elevenlabs_document_id} from ElevenLabs KB")
                     kb_client.delete_document(kb_entry.elevenlabs_document_id)
                 except Exception as e:
                     logger.error(f"Failed to delete document from ElevenLabs KB: {e}")
@@ -466,6 +478,8 @@ async def update_url_knowledge_base(
                 kb_response = kb_client.add_url_document(kb_entry.content_path, name=kb_entry.title)
                 if kb_response.status:
                     kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
+                    # Compute new RAG index
+                    kb_entry.rag_index_id = kb_client.compute_rag_index(kb_entry.elevenlabs_document_id)
                 else:
                     logger.error(f"Failed to re-sync URL KB: {kb_response.error_message}")
 
@@ -519,6 +533,8 @@ async def update_text_knowledge_base(
                 kb_response = kb_client.add_text_document(kb_entry.content_text, name=kb_entry.title)
                 if kb_response.status:
                     kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
+                    # Compute new RAG index
+                    kb_entry.rag_index_id = kb_client.compute_rag_index(kb_entry.elevenlabs_document_id)
                 else:
                     logger.error(f"Failed to re-sync text KB: {kb_response.error_message}")
 
