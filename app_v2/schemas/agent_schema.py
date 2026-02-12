@@ -19,8 +19,8 @@ class AgentUpdate(BaseModel):
     first_message: Optional[str] = None
     system_prompt: Optional[str] = None
     voice: Optional[str] = None
-    ai_models: Optional[str] = None
-    languages: Optional[str] = Field(default=None,description="language code to be passed in model (en-01 for english)")
+    ai_model: Optional[str] = None
+    language: Optional[str] = Field(default=None,description="language code to be passed in model (en-01 for english)")
     phone: Optional[str] = Field(None, description="Phone number to assign to this agent (e.g., +14155551234)")
 
 
