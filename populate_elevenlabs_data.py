@@ -306,7 +306,7 @@ def remove_default_voices_unsynced(session: Session):
         # 1️⃣ Delete agents using this voice
         agents = (
             session.query(AgentModel)
-            .filter(AgentModel.voice_id == voice.id)
+            .filter(AgentModel.agent_voice == voice.id)
             .all()
         )
         if agents:
