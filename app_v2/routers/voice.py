@@ -49,7 +49,9 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
         is_custom_voice=voice.is_custom_voice,
         elevenlabs_voice_id=voice.elevenlabs_voice_id,
         gender=gender,
-        nationality=nationality
+        nationality=nationality,
+        has_sample_audio=voice.has_sample_audio,
+        sample_audio_url=voice.audio_file
     )
 
 @router.get("/voice", response_model=PaginatedResponse[VoiceRead], status_code=status.HTTP_200_OK, openapi_extra={"security":[{"BearerAuth":[]}]}, summary="lists available voices", description="return the list of available voices for user (both custom and predefined). Use synced_only=true to list only voices usable for agent creation (have ElevenLabs ID).")
@@ -344,59 +346,38 @@ async def preview_voice(
     current_user: UnifiedAuthModel = Depends(get_current_user)
 ):
     """
-    Preview a voice by fetching its ElevenLabs sample.
+    Preview a voice by fetching its ElevenLabs Sample
     """
     with db():
-        # 1️⃣ Fetch voice owned by current user
-        voice = db.session.query(VoiceModel).filter(
+
+        #fetch the voice by voice_id and user_id
+        filters = (
             VoiceModel.id == voice_id,
             or_(
                 VoiceModel.user_id == current_user.id,
                 VoiceModel.user_id.is_(None)
             )
-        ).first()
+        )
+
+        voice = db.session.query(VoiceModel).filter(*filters).first()
 
         if not voice:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Voice not found"
             )
-
-        # 2️⃣ Validate ElevenLabs voice mapping
         if not voice.elevenlabs_voice_id:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="This voice is not linked to ElevenLabs"
             )
-
-        # 3️⃣ Fetch sample from ElevenLabs
-        elevenlabs_client = ElevenLabsVoice()
-        sample_response = elevenlabs_client.get_voice_samples(
-            voice.elevenlabs_voice_id
-        )
-
-        if not sample_response.status:
-            logger.warning(
-                f"⚠️ ElevenLabs sample fetch failed or no samples | "
-                f"voice_id={voice_id}, "
-                f"elevenlabs_voice_id={voice.elevenlabs_voice_id}, "
-                f"error={sample_response.error_message}"
-            )
-            # Gracefully handle validation failure or no samples
+        
+        if voice.has_sample_audio == True:
             return {
                 "voice_id": voice.id,
+                "name":voice.voice_name,
                 "elevenlabs_voice_id": voice.elevenlabs_voice_id,
-                "sample": None,
-                "message": "No preview available"
+                "sample_url": voice.audio_file,
+                
             }
-
-        logger.info(
-            f"✅ Voice preview ready | "
-            f"voice_id={voice_id}, "
-            f"elevenlabs_voice_id={voice.elevenlabs_voice_id}"
-        )
-        # 4️⃣ Return raw sample data (audio / metadata)
-        return Response(
-            content=sample_response.data["content"],
-            media_type=sample_response.data.get("content_type", "audio/mpeg")
-        )
+            
