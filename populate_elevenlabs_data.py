@@ -161,6 +161,7 @@ def _fetch_shared_voices(headers: dict) -> list:
             all_voices.append({
                 "voice_id": v.get("voice_id"),
                 "name": v.get("name"),
+                "preview_url": v.get("preview_url"),
                 "labels": {
                     "gender": v.get("gender"),
                     "accent": v.get("accent"),
@@ -213,31 +214,35 @@ def populate_elevenlabs_voices(session: Session):
             continue
 
         labels = voice.get("labels") or {}
+        preview_url = voice.get("preview_url")
 
         raw_gender = labels.get("gender")
         raw_accent = labels.get("accent")
 
         gender = raw_gender if raw_gender in ("male", "female") else None
-        nationality = raw_accent  # can be None
+        nationality = raw_accent
 
+        has_sample_audio = bool(preview_url)
+
+        # 1️⃣ Try match by ElevenLabs ID
         existing_voice = session.query(VoiceModel).filter(
             VoiceModel.elevenlabs_voice_id == voice_id
         ).first()
 
-        if existing_voice:
-            updated_by_id += 1
-        else:
+        # 2️⃣ If not found, try match by name
+        if not existing_voice:
             existing_voice = session.query(VoiceModel).filter(
                 func.lower(VoiceModel.voice_name) == voice_name.lower(),
                 VoiceModel.is_custom_voice.is_(False),
                 VoiceModel.user_id.is_(None),
             ).first()
-            if existing_voice:
-                updated_by_name += 1
 
+        # ✅ UPDATE EXISTING
         if existing_voice:
             existing_voice.voice_name = voice_name
             existing_voice.elevenlabs_voice_id = voice_id
+            existing_voice.has_sample_audio = has_sample_audio
+            existing_voice.audio_file = preview_url if has_sample_audio else None
 
             traits = session.query(VoiceTraitsModel).filter(
                 VoiceTraitsModel.voice_id == existing_voice.id
@@ -246,14 +251,17 @@ def populate_elevenlabs_voices(session: Session):
             if traits:
                 traits.gender = gender
                 traits.nationality = nationality
+
             continue
 
-        created += 1
+        # ✅ CREATE NEW VOICE
         new_voice = VoiceModel(
             voice_name=voice_name,
             elevenlabs_voice_id=voice_id,
             is_custom_voice=False,
             user_id=None,
+            has_sample_audio=has_sample_audio,
+            audio_file=preview_url if has_sample_audio else None,
         )
         session.add(new_voice)
         session.flush()
@@ -264,6 +272,7 @@ def populate_elevenlabs_voices(session: Session):
             nationality=nationality,
         )
         session.add(traits)
+
 
     session.commit()
     logger.info(

@@ -517,7 +517,7 @@ wheels = [
 
 [[package]]
 name = "elevenlabs"
-version = "2.34.0"
+version = "2.35.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx" },
@@ -527,9 +527,9 @@ dependencies = [
     { name = "typing-extensions" },
     { name = "websockets" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/04/d1/fedeeeadf95ce0692fb857926a9f821a4523c6063bb1edf737bb3d695fbf/elevenlabs-2.34.0.tar.gz", hash = "sha256:ddd35b25cb7b419ec13c40fab88e0de697db4f763779ae53ecd7794446d5f7ac", size = 458518, upload-time = "2026-02-02T11:21:01.856Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a0/d6/9093a2de3635b6e602fe9f16c9a8ed17ffcbb33867329458a66ff53b6441/elevenlabs-2.35.0.tar.gz", hash = "sha256:7276ef1f928c51fa623c9de90ea0675fc69460046b52eab4ae510a437e18fea6", size = 480467, upload-time = "2026-02-09T11:33:40.626Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/54/01/5eeb515280726a8b9be42b8905e6a7b53773e630da9c3f05e8dedb098ebb/elevenlabs-2.34.0-py3-none-any.whl", hash = "sha256:3a46b40e69ac2841b2183a00d651a68bd11733d95d32a5ed8163d3aa6a0b13be", size = 1220339, upload-time = "2026-02-02T11:21:00.179Z" },
+    { url = "https://files.pythonhosted.org/packages/0f/e8/d4169d78dc1d5dcd4d6e3670af94087cd4e37966af40c6b9379f567d251b/elevenlabs-2.35.0-py3-none-any.whl", hash = "sha256:e27be0ccafccc46f619a6e29b04054a3e668ac32e68fe69616d7768e79c7f9e4", size = 1285085, upload-time = "2026-02-09T11:33:38.667Z" },
 ]
 
 [[package]]
@@ -1853,7 +1853,7 @@ requires-dist = [
     { name = "bcrypt", specifier = "==4.2.1" },
     { name = "beautifulsoup4", specifier = ">=4.14.3" },
     { name = "docx2txt", specifier = "==0.8" },
-    { name = "elevenlabs", specifier = ">=2.34.0" },
+    { name = "elevenlabs", specifier = ">=2.35.0" },
     { name = "fastapi", specifier = "==0.115.8" },
     { name = "fastapi-mail", specifier = "==1.4.2" },
     { name = "fastapi-sqlalchemy", specifier = "==0.2.1" },
