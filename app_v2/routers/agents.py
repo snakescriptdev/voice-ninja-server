@@ -444,14 +444,14 @@ async def update_agent(
         el_update_params["voice_id"] = voice.elevenlabs_voice_id
 
     # ---- AI Model ----
-    if agent_in.ai_models is not None:
+    if agent_in.ai_model is not None:
         db.session.query(AgentAIModelBridge).filter(
             AgentAIModelBridge.agent_id == agent_id
         ).delete()
 
         ai_model = (
             db.session.query(AIModels)
-            .filter(AIModels.model_name == agent_in.ai_models)
+            .filter(AIModels.model_name == agent_in.ai_model)
             .first()
         )
 
@@ -467,14 +467,14 @@ async def update_agent(
         el_update_params["llm_model"] = ai_model.model_name
 
     # ---- Language ----
-    if agent_in.languages is not None:
+    if agent_in.language is not None:
         db.session.query(AgentLanguageBridge).filter(
             AgentLanguageBridge.agent_id == agent_id
         ).delete()
 
         language = (
             db.session.query(LanguageModel)
-            .filter(LanguageModel.lang_code == agent_in.languages)
+            .filter(LanguageModel.lang_code == agent_in.language)
             .first()
         )
 
