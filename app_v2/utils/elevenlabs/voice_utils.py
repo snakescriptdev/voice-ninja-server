@@ -271,53 +271,53 @@ class ElevenLabsVoice(BaseElevenLabs):
         
         return response
 
-    def get_voice_samples(self, voice_id: str) -> ElevenLabsResponse:
-        """
-        Fetch the first available audio sample for a given ElevenLabs voice.
+    # def get_voice_samples(self, voice_id: str) -> ElevenLabsResponse:
+    #     """
+    #     Fetch the first available audio sample for a given ElevenLabs voice.
 
-        Args:
-            voice_id (str): ElevenLabs voice ID
+    #     Args:
+    #         voice_id (str): ElevenLabs voice ID
 
-        Returns:
-            ElevenLabsResponse: Response containing voice sample data or error info
-        """
-        logger.info(f"🎙️ Fetching samples for voice: {voice_id}")
+    #     Returns:
+    #         ElevenLabsResponse: Response containing voice sample data or error info
+    #     """
+    #     logger.info(f"🎙️ Fetching samples for voice: {voice_id}")
 
-        # Step 1: Fetch voice metadata
-        voice_response = self._get(f"/voices/{voice_id}")
-        if not voice_response.status:
-            logger.error(
-                f"❌ Failed to fetch voice details for {voice_id}: "
-                f"{voice_response.error_message}"
-            )
-            return voice_response
+    #     # Step 1: Fetch voice metadata
+    #     voice_response = self._get(f"/voices/{voice_id}")
+    #     if not voice_response.status:
+    #         logger.error(
+    #             f"❌ Failed to fetch voice details for {voice_id}: "
+    #             f"{voice_response.error_message}"
+    #         )
+    #         return voice_response
 
-        samples = voice_response.data.get("samples", [])
-        if not samples:
-            logger.warning(f"⚠️ No samples found for voice: {voice_id}")
-            return ElevenLabsResponse(
-                status=False,
-                data=None,
-                error_message="No samples available for this voice"
-            )
+    #     samples = voice_response.data.get("samples", [])
+    #     if not samples:
+    #         logger.warning(f"⚠️ No samples found for voice: {voice_id}")
+    #         return ElevenLabsResponse(
+    #             status=False,
+    #             data=None,
+    #             error_message="No samples available for this voice"
+    #         )
 
-        # Step 2: Fetch the first valid sample
-        sample_id = samples[0].get("sample_id")
-        if not sample_id:
-            logger.error(f"❌ Sample ID missing for voice: {voice_id}")
-            return ElevenLabsResponse(
-                status=False,
-                data=None,
-                error_message="Invalid sample metadata"
-            )
+    #     # Step 2: Fetch the first valid sample
+    #     sample_id = samples[0].get("sample_id")
+    #     if not sample_id:
+    #         logger.error(f"❌ Sample ID missing for voice: {voice_id}")
+    #         return ElevenLabsResponse(
+    #             status=False,
+    #             data=None,
+    #             error_message="Invalid sample metadata"
+    #         )
 
-        sample_response = self._get(f"/voices/{voice_id}/samples/{sample_id}/audio", raw=True)
-        if sample_response.status:
-            logger.info(f"✅ Voice sample fetched for {voice_id} (sample_id={sample_id})")
-        else:
-            logger.error(
-                f"❌ Failed to fetch sample {sample_id} for {voice_id}: "
-                f"{sample_response.error_message}"
-            )
+    #     sample_response = self._get(f"/voices/{voice_id}/samples/{sample_id}/audio", raw=True)
+    #     if sample_response.status:
+    #         logger.info(f"✅ Voice sample fetched for {voice_id} (sample_id={sample_id})")
+    #     else:
+    #         logger.error(
+    #             f"❌ Failed to fetch sample {sample_id} for {voice_id}: "
+    #             f"{sample_response.error_message}"
+    #         )
 
-        return sample_response
+    #     return sample_response

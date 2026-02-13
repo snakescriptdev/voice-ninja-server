@@ -17,6 +17,9 @@ class VoiceRead(BaseModel):
     elevenlabs_voice_id: Optional[str] | None
     gender: Optional[GenderEnum] = GenderEnum.male
     nationality: Optional[str] = None
+    has_sample_audio: Optional[bool] = False
+    sample_audio_url: Optional[str] = None
+    
 
     class Config:
         from_attributes = True
