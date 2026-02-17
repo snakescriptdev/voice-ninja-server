@@ -14,7 +14,7 @@ from fastapi_sqlalchemy import DBSessionMiddleware, db
 from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
-from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, agent_variables_router, knowledge_base_router,  web_agent_router,websocket_router
+from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router,  web_agent_router,websocket_router
 from app_v2.utils.jwt_utils import HTTPBearer
 
 app = FastAPI(title="Voice Ninja V2 API", version="2.0.0")
@@ -157,7 +157,6 @@ app.include_router(ai_model_router)
 app.include_router(agent_router)
 app.include_router(voice_router)
 app.include_router(function_router)
-app.include_router(agent_variables_router)
 app.include_router(knowledge_base_router)
 app.include_router(web_agent_router)
 app.include_router(websocket_router)

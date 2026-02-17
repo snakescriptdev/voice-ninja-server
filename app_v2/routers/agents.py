@@ -16,7 +16,12 @@ from app_v2.databases.models import (
     AgentAIModelBridge,
     AgentLanguageBridge,
     UnifiedAuthModel,
-    PhoneNumberService
+    PhoneNumberService,
+    KnowledgeBaseModel,
+    AgentKnowledgeBaseBridge,
+    AgentFunctionBridgeModel,
+    FunctionModel,
+    VariablesModel
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
 from app_v2.core.logger import setup_logger
@@ -63,7 +68,23 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         language=language,
         updated_at=agent.modified_at,
         elevenlabs_agent_id=agent.elevenlabs_agent_id,
-        phone = phone_number
+        phone=phone_number,
+        knowledgebase = [
+            {
+                "id": bridge.knowledge_base.id,
+                "title": bridge.knowledge_base.title,
+                "type": bridge.knowledge_base.kb_type
+            }
+            for bridge in agent.agent_knowledge_bases
+        ],
+        variables={var.variable_name: var.variable_value for var in agent.variables},
+        tools=[
+            {
+                "id": bridge.function.id,
+                "name": bridge.function.name
+            } 
+            for bridge in agent.agent_functions
+        ]
     )
 
 
@@ -71,7 +92,6 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
 
 @router.post(
     "/",
-    response_model=AgentRead,
     status_code=status.HTTP_201_CREATED,
     summary="Create agent",
     openapi_extra={"security": [{"BearerAuth": []}]},
@@ -81,20 +101,22 @@ async def create_agent(
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     user_id = current_user.id
+    
+    #removed the name uniqueness constraint may switch in future
 
-    #check for agent existence 
-    agent_exists = (
-        db.session.query(AgentModel).filter(
-            AgentModel.agent_name ==agent_in.agent_name,
-            AgentModel.user_id == user_id
-        ).first()
-    )
+    # #check for agent existence 
+    # agent_exists = (
+    #     db.session.query(AgentModel).filter(
+    #         AgentModel.agent_name ==agent_in.agent_name,
+    #         AgentModel.user_id == user_id
+    #     ).first()
+    # )
 
-    if agent_exists:
-        raise HTTPException(
-            status_code= status.HTTP_400_BAD_REQUEST,
-            detail= "Agent with this name already exists"
-        )
+    # if agent_exists:
+    #     raise HTTPException(
+    #         status_code= status.HTTP_400_BAD_REQUEST,
+    #         detail= "Agent with this name already exists"
+    #     )
 
     # -------------------------------------------------
     # Voice validation: only allow voices that are synced with ElevenLabs
@@ -172,6 +194,82 @@ async def create_agent(
             )
 
     # -------------------------------------------------
+    # KB & Tools validation and lookup
+    # -------------------------------------------------
+    el_kb_list = []
+    kb_ids_ordered = []
+    
+    if agent_in.knowledgebase:
+        # 1. Extract IDs and deduplicate while preserving order
+        raw_ids = [k.get("id") if isinstance(k, dict) else k for k in agent_in.knowledgebase]
+        kb_ids_ordered = list(dict.fromkeys(raw_ids)) # Deduplicate preserving order
+        
+        # 2. Fetch from DB
+        kb_records = db.session.query(KnowledgeBaseModel).filter(
+            KnowledgeBaseModel.id.in_(kb_ids_ordered),
+            KnowledgeBaseModel.user_id == user_id,
+            KnowledgeBaseModel.elevenlabs_document_id.isnot(None)
+        ).all()
+        
+        # 3. Create a map for O(1) lookup
+        kb_map = {kb.id: kb for kb in kb_records}
+        
+        # 4. Validate all IDs exist (checking against the unique set of requested IDs)
+        found_ids = set(kb_map.keys())
+        missing_ids = set(kb_ids_ordered) - found_ids
+        
+        if missing_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Some Knowledge Base IDs not found or not synced: {list(missing_ids)}"
+            )
+        
+        # 5. Construct ElevenLabs list in the original order using the map
+        for kb_id in kb_ids_ordered:
+            kb = kb_map[kb_id]
+            el_kb_list.append({
+                "id": kb.elevenlabs_document_id,
+                "type": "file", # ElevenLabs conversational AI usually treats them as files
+                "name": kb.title or f"KB_{kb.id}"
+            })
+
+    el_tool_ids = []
+    tool_ids_ordered = []
+
+    if agent_in.tools:
+        # 1. Extract IDs and deduplicate while preserving order
+        raw_ids = [t.get("id") if isinstance(t, dict) else t for t in agent_in.tools]
+        tool_ids_ordered = list(dict.fromkeys(raw_ids)) # Deduplicate preserving order
+
+        # 2. Fetch from DB
+        tool_records = db.session.query(FunctionModel).filter(
+            FunctionModel.id.in_(tool_ids_ordered),
+            FunctionModel.elevenlabs_tool_id.isnot(None),
+            or_(
+                FunctionModel.user_id == user_id,
+                FunctionModel.user_id.is_(None)
+            )
+        ).all()
+        
+        # 3. Create a map for O(1) lookup
+        tool_map = {tool.id: tool for tool in tool_records}
+
+        # 4. Validate all IDs exist
+        found_ids = set(tool_map.keys())
+        missing_ids = set(tool_ids_ordered) - found_ids
+        
+        if missing_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Some Tool IDs not found or not synced or not accessible to you: {list(missing_ids)}"
+            )
+        
+        # 5. Construct ElevenLabs list in the original order using the map
+        for tool_id in tool_ids_ordered:
+            tool = tool_map[tool_id]
+            el_tool_ids.append(tool.elevenlabs_tool_id)
+
+    # -------------------------------------------------
     # Create agent in ElevenLabs (only after validation)
     # -------------------------------------------------
     elevenlabs_agent_id = None
@@ -189,6 +287,9 @@ async def create_agent(
             first_message=agent_in.first_message or "Hello! How can I help you?",
             language=language.lang_code,
             llm_model=ai_model.model_name,
+            tool_ids=el_tool_ids,
+            knowledge_base=el_kb_list,
+            dynamic_variables=agent_in.variables
         )
 
         if not el_response.status:
@@ -225,6 +326,7 @@ async def create_agent(
         db.session.add(agent)
         db.session.flush()
 
+        # Bridge: AI Model
         db.session.add(
             AgentAIModelBridge(
                 agent_id=agent.id,
@@ -232,12 +334,25 @@ async def create_agent(
             )
         )
 
+        # Bridge: Language
         db.session.add(
             AgentLanguageBridge(
                 agent_id=agent.id,
                 lang_id=language.id,
             )
         )
+
+        # Bridge: Knowledge Base
+        for kb_id in kb_ids_ordered:
+            db.session.add(AgentKnowledgeBaseBridge(agent_id=agent.id, kb_id=kb_id))
+
+        # Bridge: Tools
+        for tool_id in tool_ids_ordered:
+            db.session.add(AgentFunctionBridgeModel(agent_id=agent.id, function_id=tool_id))
+
+        # Variables
+        for key, value in (agent_in.variables or {}).items():
+            db.session.add(VariablesModel(agent_id=agent.id, variable_name=key, variable_value=value))
 
         if phone_record:
             phone_record.assigned_to = agent.id
@@ -287,9 +402,13 @@ async def get_all_agents(
             selectinload(AgentModel.agent_ai_models).selectinload(AgentAIModelBridge.ai_model),
             selectinload(AgentModel.agent_languages).selectinload(AgentLanguageBridge.language),
             selectinload(AgentModel.voice),
-            selectinload(AgentModel.phone_number)
+            selectinload(AgentModel.phone_number),
+            selectinload(AgentModel.variables),
+            selectinload(AgentModel.agent_knowledge_bases),
+            selectinload(AgentModel.agent_functions)
         )
         .filter(AgentModel.user_id == current_user.id)
+        .order_by(AgentModel.modified_at.desc())
     )
     
     total = query.count()
@@ -330,7 +449,10 @@ async def get_agent_by_id(
             selectinload(AgentModel.agent_ai_models).selectinload(AgentAIModelBridge.ai_model),
             selectinload(AgentModel.agent_languages).selectinload(AgentLanguageBridge.language),
             selectinload(AgentModel.voice),
-            selectinload(AgentModel.phone_number)
+            selectinload(AgentModel.phone_number),
+            selectinload(AgentModel.variables),
+            selectinload(AgentModel.agent_knowledge_bases),
+            selectinload(AgentModel.agent_functions)
         )
         .filter(
             AgentModel.id == agent_id,
@@ -489,6 +611,106 @@ async def update_agent(
         )
         el_update_params["language"] = language.lang_code
 
+    # ---- Knowledge Base Update ----
+    if agent_in.knowledgebase is not None:
+        # 1. Extract IDs and deduplicate while preserving order
+        raw_ids = [k.get("id") if isinstance(k, dict) else k for k in agent_in.knowledgebase]
+        kb_ids_ordered = list(dict.fromkeys(raw_ids)) # Deduplicate preserving order
+        
+        # 2. Fetch from DB
+        kb_records = db.session.query(KnowledgeBaseModel).filter(
+            KnowledgeBaseModel.id.in_(kb_ids_ordered),
+            KnowledgeBaseModel.user_id == current_user.id,
+            KnowledgeBaseModel.elevenlabs_document_id.isnot(None)
+        ).all()
+        
+        # 3. Create a map for O(1) lookup
+        kb_map = {kb.id: kb for kb in kb_records}
+
+        # 4. Validate all IDs exist checking against the unique set of requested IDs
+        found_ids = set(kb_map.keys())
+        missing_ids = set(kb_ids_ordered) - found_ids
+        
+        if missing_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Some Knowledge Base IDs not found or not synced: {list(missing_ids)}"
+            )
+        
+        # 5. Construct ElevenLabs list in the original order using the map
+        el_kb_list = []
+        for kb_id in kb_ids_ordered:
+            kb = kb_map[kb_id]
+            el_kb_list.append({
+                "id": kb.elevenlabs_document_id,
+                "type": "file",
+                "name": kb.title or f"KB_{kb.id}"
+            })
+        
+        el_update_params["knowledge_base"] = el_kb_list
+
+        # Update DB bridge (delete old, add new)
+        db.session.query(AgentKnowledgeBaseBridge).filter(
+            AgentKnowledgeBaseBridge.agent_id == agent_id
+        ).delete()
+        for kb_id in kb_ids_ordered:
+            db.session.add(AgentKnowledgeBaseBridge(agent_id=agent_id, kb_id=kb_id))
+
+    # ---- Tools Update ----
+    if agent_in.tools is not None:
+        # 1. Extract IDs and deduplicate while preserving order
+        raw_ids = [t.get("id") if isinstance(t, dict) else t for t in agent_in.tools]
+        tool_ids_ordered = list(dict.fromkeys(raw_ids)) # Deduplicate preserving order
+
+        # 2. Fetch from DB
+        tool_records = db.session.query(FunctionModel).filter(
+            FunctionModel.id.in_(tool_ids_ordered),
+            FunctionModel.elevenlabs_tool_id.isnot(None),
+            or_(
+                FunctionModel.user_id == current_user.id,
+                FunctionModel.user_id.is_(None)
+            )
+        ).all()
+        
+        # 3. Create a map for O(1) lookup
+        tool_map = {tool.id: tool for tool in tool_records}
+
+        # 4. Validate all IDs exist
+        found_ids = set(tool_map.keys())
+        missing_ids = set(tool_ids_ordered) - found_ids
+        
+        if missing_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Some Tool IDs not found or not synced or not accessible to you: {list(missing_ids)}"
+            )
+        
+        # 5. Construct ElevenLabs list in the original order using the map
+        el_tool_ids = []
+        for tool_id in tool_ids_ordered:
+            tool = tool_map[tool_id]
+            el_tool_ids.append(tool.elevenlabs_tool_id)
+
+        el_update_params["tool_ids"] = el_tool_ids
+
+        # Update DB bridge
+        db.session.query(AgentFunctionBridgeModel).filter(
+            AgentFunctionBridgeModel.agent_id == agent_id
+        ).delete()
+        for tool_id in tool_ids_ordered:
+            db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=tool_id))
+
+    # ---- Variables Update ----
+    if agent_in.variables is not None:
+        el_update_params["dynamic_variables"] = agent_in.variables
+        
+        # Update DB variables
+        db.session.query(VariablesModel).filter(
+            VariablesModel.agent_id == agent_id
+        ).delete()
+        for key, value in agent_in.variables.items():
+            db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
+
     # ---- Sync with ElevenLabs ----
     if el_update_params and agent.elevenlabs_agent_id:
         try:
@@ -511,6 +733,7 @@ async def update_agent(
             raise
         except Exception as e:
             logger.error(f"Error during ElevenLabs agent update: {e}")
+            db.session.rollback()
             raise HTTPException(
                 status_code=424,
                 detail=f"Failed to update agent in ElevenLabs due to an unexpected error: {str(e)}"
@@ -555,7 +778,7 @@ async def delete_agent(
         assigned_phone.assigned_to = None
         assigned_phone.status = PhoneNumberAssignStatus.unassigned
         logger.info(f"Unassigned phone {assigned_phone.phone_number} from agent {agent.agent_name}")
-        db.session.commit()  # Commit phone unassignment before attempting ElevenLabs deletion
+        db.session.flush()  # Use flush instead of commit to allow rollback if ElevenLabs fails
 
     # ---- Delete from ElevenLabs ----
     if agent.elevenlabs_agent_id:
