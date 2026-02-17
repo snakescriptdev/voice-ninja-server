@@ -192,7 +192,7 @@ async def get_function(
 
 # -------------------- UPDATE --------------------
 
-@router.patch(
+@router.put(
     "/{function_id}",
     response_model=FunctionRead,
     summary="Update function",
