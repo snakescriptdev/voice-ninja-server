@@ -1,206 +1,135 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
-from sqlalchemy.orm import selectinload
-from sqlalchemy.exc import IntegrityError
-from app_v2.schemas.function_schema import (
-    FunctionCreateSchema,
-    FunctionRead,
-    FunctionUpdateSchema
-)
-from app_v2.schemas.pagination import PaginatedResponse
+from typing import List
+import math
+
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import (
     FunctionModel,
     FunctionApiConfig,
-    UnifiedAuthModel,
-    AgentModel,
-    AgentFunctionBridgeModel,
+    UnifiedAuthModel
 )
+from app_v2.schemas.function_schema import (
+    FunctionCreateSchema,
+    FunctionUpdateSchema,
+    FunctionRead
+)
+from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
-
+from app_v2.utils.elevenlabs import ElevenLabsAgent
 
 logger = setup_logger(__name__)
-security = HTTPBearer()
 
 router = APIRouter(
     prefix="/api/v2/functions",
-    tags=["functions"],dependencies=[
-        Depends(security)
-    ]
+    tags=["functions"],
 )
 
+security = HTTPBearer()
 
-def function_to_read(function: FunctionModel) -> FunctionRead:
-    return FunctionRead(
-        id=function.id,
-        name=function.name,
-        description=function.description,
-        api_config=function.api_endpoint_url,
-        created_at=function.created_at,
-        modified_at=function.modified_at,
-        elevenlabs_tool_id=function.elevenlabs_tool_id,
-       
-    )
-
-from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
+# -------------------- CREATE --------------------
 
 @router.post(
     "/",
     response_model=FunctionRead,
     status_code=status.HTTP_201_CREATED,
-    summary="Create function",
+    summary="Create function (tool)",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
 async def create_function(
-    fn_in: FunctionCreateSchema,
+    function_in: FunctionCreateSchema,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
-    try:
-        # 1. Enforce Agent Dependency
-        if not fn_in.agent_id:
-            raise HTTPException(status_code=400, detail="Function creation requires an agent_id (Function Binding)")
-
-        agent = (
-            db.session.query(AgentModel)
-            .filter(
-                AgentModel.id == fn_in.agent_id,
-                AgentModel.user_id == current_user.id,
-            )
-            .first()
-        )
-
-        if not agent:
-            raise HTTPException(status_code=404, detail="Agent not found")
-
-        # 2. Local DB Creation (Early Stage)
-        fn = FunctionModel(
-            name=fn_in.name,
-            description=fn_in.description,
-        )
-        db.session.add(fn)
-        db.session.flush()
-
-        # 3. Handle API Config & Prepare ElevenLabs Tool Payload
-        cfg = fn_in.api_config
-        
-        # Save API config to DB
-        db.session.add(
-            FunctionApiConfig(
-                function_id=fn.id,
-                endpoint_url=str(cfg.endpoint_url),
-                http_method=cfg.http_method,
-                timeout_ms=cfg.timeout_ms,
-                headers=cfg.headers,
-                query_params=cfg.query_params,
-                llm_response_schema=cfg.llm_response_schema,
-                response_variables=cfg.response_variables,
-            )
-        )
-
-        # Construct the API Schema for ElevenLabs
-        api_schema = {
-            "url": str(cfg.endpoint_url),
-            "method": cfg.http_method.upper(),
-        }
-        
-        if cfg.headers:
-            api_schema["headers"] = cfg.headers
-            
-        webhook_config = {
-            "tool_config": {
-                "name": fn_in.name,
-                "description": fn_in.description,
-                "type": "webhook",
-                "api_schema": api_schema
-            }
-        }
-
-        # 4. Create Tool in ElevenLabs
-        elevenlabs_tool_id = None
-        if webhook_config and agent.elevenlabs_agent_id:
-            try:
-                client = ElevenLabsAgent()
-                tool_resp = client.create_tool(webhook_config)
-                
-                if tool_resp.status:
-                    elevenlabs_tool_id = tool_resp.data.get("id")
-                    fn.elevenlabs_tool_id = elevenlabs_tool_id
-                    
-                    # 5. Bind Tool to Agent in ElevenLabs
-                    # Fetch current tools first
-                    tools_resp = client.get_agent_tools(agent.elevenlabs_agent_id)
-                    all_tool_ids = []
-                    if tools_resp.status:
-                        all_tool_ids = tools_resp.data.get("tool_ids", [])
-                    
-                    if elevenlabs_tool_id not in all_tool_ids:
-                        all_tool_ids.append(elevenlabs_tool_id)
-                        
-                        client.update_agent(
-                            agent_id=agent.elevenlabs_agent_id,
-                            tool_ids=all_tool_ids
-                        )
-                        logger.info(f"Bound tool {elevenlabs_tool_id} to agent {agent.elevenlabs_agent_id}")
-                else:
-                    logger.error(f"Failed to create ElevenLabs tool: {tool_resp.error_message}")
-                    raise HTTPException(
-                        status_code=status.HTTP_424_FAILED_DEPENDENCY,
-                        detail=f"ElevenLabs Tool Creation Failed: {tool_resp.error_message}"
-                    )
-
-            except HTTPException:
-                raise
-            except Exception as e:
-                logger.error(f"Error syncing tool with ElevenLabs: {e}")
-                raise HTTPException(status_code=status.HTTP_424_FAILED_DEPENDENCY, detail=f"Failed to create/bind tool in ElevenLabs: {str(e)}")
-
-        # 6. Create Bridge in DB
-        speak_while = False
-        speak_after = True
-
-        if fn_in.agent_config:
-            speak_while = fn_in.agent_config.speak_while_execution
-            speak_after = fn_in.agent_config.speak_after_execution
-
-        db.session.add(
-            AgentFunctionBridgeModel(
-                agent_id=agent.id,
-                function_id=fn.id,
-                speak_while_execution=speak_while,
-                speak_after_execution=speak_after,
-            )
-        )
-
-        db.session.commit()
-        db.session.refresh(fn)
-
-        logger.info(f"Function created and bound successfully | function_id={fn.id}")
-        fn_read = function_to_read(fn)
-        fn_read.agent_config = fn_in.agent_config
-        return fn_read
-
-    # ✅ HANDLE UNIQUE CONSTRAINT
-    except IntegrityError as e:
-        db.session.rollback()
-        logger.warning(
-            f"Duplicate function name attempted | name={fn_in.name}"
-        )
+    user_id = current_user.id
+    
+    # Check for name uniqueness for the user
+    existing = db.session.query(FunctionModel).filter(
+        FunctionModel.name == function_in.name,
+        FunctionModel.user_id == user_id
+    ).first()
+    
+    if existing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Function with this name already exists"
+            detail=f"Function with name '{function_in.name}' already exists"
         )
 
+    # 1. Create tool in ElevenLabs
+    el_client = ElevenLabsAgent()
+    try:
+        logger.info(f"Creating ElevenLabs tool for function: {function_in.name}")
+        el_response = el_client.create_tool(
+            name=function_in.name,
+            description=function_in.description,
+            api_schema=function_in.api_config
+        )
+        
+        if not el_response.status:
+            raise HTTPException(
+                status_code=status.HTTP_424_FAILED_DEPENDENCY,
+                detail=f"Failed to create tool in ElevenLabs: {el_response.error_message}"
+            )
+        
+        elevenlabs_tool_id = el_response.data.get("id")
+        logger.info(f"✅ ElevenLabs tool created: {elevenlabs_tool_id}")
+        
     except HTTPException:
-        db.session.rollback()
         raise
-
     except Exception as e:
+        logger.exception("Unexpected error creating ElevenLabs tool")
+        raise HTTPException(
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
+            detail=f"Unexpected error while creating ElevenLabs tool: {str(e)}"
+        )
+
+    # 2. Save to Database
+    try:
+        new_function = FunctionModel(
+            name=function_in.name,
+            description=function_in.description,
+            user_id=user_id,
+            elevenlabs_tool_id=elevenlabs_tool_id
+        )
+        db.session.add(new_function)
+        db.session.flush()
+
+        api_config = FunctionApiConfig(
+            function_id=new_function.id,
+            endpoint_url=function_in.api_config.url,
+            http_method=function_in.api_config.method,
+            headers=function_in.api_config.request_headers,
+            path_params={k: v.model_dump(exclude_none=True) for k, v in function_in.api_config.path_params_schema.items()} if function_in.api_config.path_params_schema else None,
+            query_params=function_in.api_config.query_params_schema.model_dump(exclude_none=True) if function_in.api_config.query_params_schema else None,
+            body_schema=function_in.api_config.request_body_schema.model_dump() if function_in.api_config.request_body_schema else None,
+            response_variables=function_in.api_config.response_variables,
+            timeout_ms=30000, # Default timeout
+            speak_while_execution=False,
+            speak_after_execution=True
+        )
+        db.session.add(api_config)
+        
+        db.session.commit()
+        db.session.refresh(new_function)
+        
+        return FunctionRead.model_validate(new_function)
+        
+    except Exception as db_error:
         db.session.rollback()
-        logger.error(f"Error while creating function: {e}")
+        # Cleanup ElevenLabs tool if DB fails
+        if elevenlabs_tool_id:
+            try:
+                el_client.delete_tool(elevenlabs_tool_id)
+                logger.info(f"Cleaned up orphan ElevenLabs tool: {elevenlabs_tool_id}")
+            except Exception as cleanup_err:
+                logger.warning(f"Failed to cleanup orphan ElevenLabs tool {elevenlabs_tool_id}: {cleanup_err}")
+                
+        logger.exception("Database error while creating function")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create function: {str(e)}"
+            detail=f"Failed to save function to database: {str(db_error)}"
         )
+
+# -------------------- GET ALL --------------------
 
 @router.get(
     "/",
@@ -209,99 +138,34 @@ async def create_function(
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
 async def get_all_functions(
-    agent_id: int | None = None,
-    skip: int = 0,
-    limit: int = 20,
+    page: int = 1,
+    size: int = 20,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
-    try:
-        import math
-        if agent_id:
-            # Check if agent exists and belongs to user
-            agent = (
-                db.session.query(AgentModel)
-                .filter(
-                    AgentModel.id == agent_id,
-                    AgentModel.user_id == current_user.id,
-                )
-                .first()
-            )
-            if not agent:
-                raise HTTPException(status_code=404, detail="Agent not found")
-
-            # Fetch bridged functions
-            query = (
-                db.session.query(AgentFunctionBridgeModel)
-                .filter(AgentFunctionBridgeModel.agent_id == agent_id)
-            )
-            
-            total = query.count()
-            
-            bridges = (
-                query
-                .options(
-                    selectinload(AgentFunctionBridgeModel.function).selectinload(
-                        FunctionModel.api_endpoint_url
-                    )
-                )
-                .offset(skip)
-                .limit(limit)
-                .all()
-            )
-
-            result = []
-            for bridge in bridges:
-                fn_read = function_to_read(bridge.function)
-                fn_read.agent_config = {
-                    "speak_while_execution": bridge.speak_while_execution,
-                    "speak_after_execution": bridge.speak_after_execution,
-                }
-                result.append(fn_read)
-            
-            pages = math.ceil(total / limit) if limit > 0 else 1
-            current_page = (skip // limit) + 1 if limit > 0 else 1
-            
-            return PaginatedResponse(
-                total=total,
-                page=current_page,
-                size=limit,
-                pages=pages,
-                items=result
-            )
-
-        else:
-            query = db.session.query(FunctionModel)
-            total = query.count()
-            
-            functions = (
-                query
-                .options(selectinload(FunctionModel.api_endpoint_url))
-                .offset(skip)
-                .limit(limit)
-                .all()
-            )
-            
-            pages = math.ceil(total / limit) if limit > 0 else 1
-            current_page = (skip // limit) + 1 if limit > 0 else 1
-            
-            return PaginatedResponse(
-                total=total,
-                page=current_page,
-                size=limit,
-                pages=pages,
-                items=[function_to_read(fn) for fn in functions]
-            )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"error while fetching the functions: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"error while fetching the functions:{str(e)}"
-        )
+    if page < 1:
+        page = 1
+    skip = (page - 1) * size
     
+    query = db.session.query(FunctionModel).filter(
+        FunctionModel.user_id == current_user.id
+    ).order_by(FunctionModel.modified_at.desc())
+    
+    total = query.count()
+    pages = math.ceil(total / size)
+    
+    functions = query.offset(skip).limit(size).all()
+    
+    items = [FunctionRead.model_validate(f) for f in functions]
+    
+    return PaginatedResponse(
+        total=total,
+        page=page,
+        size=size,
+        pages=pages,
+        items=items
+    )
 
+# -------------------- GET BY ID --------------------
 
 @router.get(
     "/{function_id}",
@@ -309,34 +173,26 @@ async def get_all_functions(
     summary="Get function by ID",
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-async def get_function_by_id(
+async def get_function(
     function_id: int,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
-    try:
-        fn = (
-            db.session.query(FunctionModel)
-            .options(selectinload(FunctionModel.api_endpoint_url))
-            .filter(FunctionModel.id == function_id)
-            .first()
-        )
-
-        if not fn:
-            logger.info("no function found")
-            raise HTTPException(status_code=404, detail="Function not found")
-        logger.info("function fetched successfully")
-        return function_to_read(fn)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"error while fetching the function: {e}")
+    function = db.session.query(FunctionModel).filter(
+        FunctionModel.id == function_id,
+        FunctionModel.user_id == current_user.id
+    ).first()
+    
+    if not function:
         raise HTTPException(
-            status_code= status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail= f"failed to fetch the function at the moment:{str(e)}"
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Function not found"
         )
+        
+    return FunctionRead.model_validate(function)
 
+# -------------------- UPDATE --------------------
 
-@router.put(
+@router.patch(
     "/{function_id}",
     response_model=FunctionRead,
     summary="Update function",
@@ -344,61 +200,96 @@ async def get_function_by_id(
 )
 async def update_function(
     function_id: int,
-    fn_in: FunctionUpdateSchema,
+    function_in: FunctionUpdateSchema,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
-    try:
-        fn = (
-            db.session.query(FunctionModel)
-            .filter(FunctionModel.id == function_id)
-            .first()
+    function = db.session.query(FunctionModel).filter(
+        FunctionModel.id == function_id,
+        FunctionModel.user_id == current_user.id
+    ).first()
+    
+    if not function:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Function not found"
         )
 
-        if not fn:
-            logger.info("function not found")
-            raise HTTPException(status_code=404, detail="Function not found")
+    # 1. Prepare ElevenLabs Update if needed
+    el_update = False
+    el_params = {}
+    
+    if function_in.name is not None:
+        function.name = function_in.name
+        el_params["name"] = function_in.name
+        el_update = True
+        
+    if function_in.description is not None:
+        function.description = function_in.description
+        el_params["description"] = function_in.description
+        el_update = True
+        
+    if function_in.api_config is not None:
+        api_config = function.api_endpoint_url
+        if not api_config:
+            # Should not happen if data is consistent
+            api_config = FunctionApiConfig(function_id=function_id)
+            db.session.add(api_config)
+            
+        api_config.endpoint_url = function_in.api_config.url
+        api_config.http_method = function_in.api_config.method
+        api_config.headers = function_in.api_config.request_headers
+        api_config.path_params = {k: v.model_dump(exclude_none=True) for k, v in function_in.api_config.path_params_schema.items()} if function_in.api_config.path_params_schema else None
+        api_config.query_params = function_in.api_config.query_params_schema.model_dump(exclude_none=True) if function_in.api_config.query_params_schema else None
+        api_config.body_schema = function_in.api_config.request_body_schema.model_dump() if function_in.api_config.request_body_schema else None
+        api_config.response_variables = function_in.api_config.response_variables
 
-        # ---- Base Fields ----
-        if fn_in.name is not None:
-            fn.name = fn_in.name
-        if fn_in.description is not None:
-            fn.description = fn_in.description
+        el_params["api_schema"] = function_in.api_config
+        el_update = True
 
-        # ---- API Config (replace-all strategy for 1:1) ----
-        if fn_in.api_config is not None:
-            db.session.query(FunctionApiConfig).filter(
-                FunctionApiConfig.function_id == function_id
-            ).delete()
-
-            cfg = fn_in.api_config
-            db.session.add(
-                FunctionApiConfig(
-                    function_id=function_id,
-                    endpoint_url=str(cfg.endpoint_url),
-                    http_method=cfg.http_method,
-                    timeout_ms=cfg.timeout_ms,
-                    headers=cfg.headers,
-                    query_params=cfg.query_params,
-                    llm_response_schema=cfg.llm_response_schema,
-                    response_variables=cfg.response_variables,
+    # 2. Sync with ElevenLabs
+    if el_update and function.elevenlabs_tool_id:
+        el_client = ElevenLabsAgent()
+        try:
+            logger.info(f"Updating ElevenLabs tool concurrently: {function.elevenlabs_tool_id}")
+            el_response = el_client.update_tool(
+                tool_id=function.elevenlabs_tool_id,
+                **el_params
+            )
+            
+            if not el_response.status:
+                logger.error(f"❌ ElevenLabs tool update failed: {el_response.error_message}")
+                # Optional: Decide if we should rollback DB or just warn
+                # For consistency, let's rollback if name or description failed in EL
+                db.session.rollback()
+                raise HTTPException(
+                    status_code=status.HTTP_424_FAILED_DEPENDENCY,
+                    detail=f"Failed to update tool in ElevenLabs: {el_response.error_message}"
                 )
+            logger.info(f"✅ ElevenLabs tool '{function.elevenlabs_tool_id}' updated successfully")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Error during ElevenLabs tool update: {e}")
+            db.session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_424_FAILED_DEPENDENCY,
+                detail=f"Failed to update tool in ElevenLabs due to an unexpected error: {str(e)}"
             )
 
+    try:
         db.session.commit()
-        db.session.refresh(fn)
-        logger.info("function updated successfully")
-        return function_to_read(fn)
-    
-    except HTTPException:
-        raise
+        db.session.refresh(function)
+        return FunctionRead.model_validate(function)
+        
     except Exception as e:
-        logger.error(f"error while updating fucntion: {e}")
+        db.session.rollback()
+        logger.exception("Error updating function")
         raise HTTPException(
-            status_code= status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"failed to update function at the moment:{str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update function: {str(e)}"
         )
-    
 
+# -------------------- DELETE --------------------
 
 @router.delete(
     "/{function_id}",
@@ -410,66 +301,39 @@ async def delete_function(
     function_id: int,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
-    try:
-        fn = (
-            db.session.query(FunctionModel)
-            .options(
-                selectinload(FunctionModel.agent_functions).selectinload(
-                    AgentFunctionBridgeModel.agent
-                )
-            )
-            .filter(FunctionModel.id == function_id)
-            .first()
+    function = db.session.query(FunctionModel).filter(
+        FunctionModel.id == function_id,
+        FunctionModel.user_id == current_user.id
+    ).first()
+    
+    if not function:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Function not found"
         )
 
-        if not fn:
-            logger.info("no function found")
-            raise HTTPException(status_code=404, detail="Function not found")
+    # 1. Delete from ElevenLabs
+    if function.elevenlabs_tool_id:
+        el_client = ElevenLabsAgent()
+        try:
+            logger.info(f"Deleting ElevenLabs tool: {function.elevenlabs_tool_id}")
+            el_response = el_client.delete_tool(function.elevenlabs_tool_id)
+            if not el_response.status:
+                logger.warning(f"Failed to delete ElevenLabs tool: {el_response.error_message}")
+                # We often proceed even if EL delete fails to keep DB clean, 
+                # but let's be safe and let user know if it's a hard error.
+        except Exception as e:
+            logger.error(f"Error deleting ElevenLabs tool: {e}")
 
-        # ---- ElevenLabs Cleanup ----
-        if fn.elevenlabs_tool_id:
-            try:
-                client = ElevenLabsAgent()
-                
-                # 1. Detach from all linked agents
-                for bridge in fn.agent_functions:
-                    agent = bridge.agent
-                    if agent and agent.elevenlabs_agent_id:
-                        # Fetch current tools
-                        tools_resp = client.get_agent_tools(agent.elevenlabs_agent_id)
-                        if tools_resp.status:
-                            current_tool_ids = tools_resp.data.get("tool_ids", [])
-                            
-                            if fn.elevenlabs_tool_id in current_tool_ids:
-                                current_tool_ids.remove(fn.elevenlabs_tool_id)
-                                
-                                # Update agent to remove tool
-                                update_resp = client.update_agent(
-                                    agent_id=agent.elevenlabs_agent_id,
-                                    tool_ids=current_tool_ids
-                                )
-                                if not update_resp.status:
-                                    logger.error(f"Failed to detach tool from agent {agent.id}: {update_resp.error_message}")
-                
-                # 2. Delete the tool itself
-                del_resp = client.delete_tool(fn.elevenlabs_tool_id)
-                if not del_resp.status:
-                     logger.warning(f"Failed to delete tool from ElevenLabs: {del_resp.error_message}")
-                     # We proceed with DB deletion even if remote delete fails (it might be already gone)
-
-            except Exception as e:
-                logger.error(f"Error cleaning up ElevenLabs tool: {e}")
-                # We typically want to proceed with DB delete to allow "force delete", 
-                # but let's log it clearly. 
-
-        db.session.delete(fn)
+    # 2. Delete from Database
+    try:
+        db.session.delete(function)
         db.session.commit()
-        logger.info("function deleted successfully")
-    except HTTPException:
-        raise
+        logger.info(f"✅ Function deleted: {function_id}")
     except Exception as e:
-        logger.error(f"error whlie deleting the function: {e}")
+        db.session.rollback()
+        logger.exception("Error deleting function from database")
         raise HTTPException(
-            status_code= status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"failed to delete function at the moment:{str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete function: {str(e)}"
         )
