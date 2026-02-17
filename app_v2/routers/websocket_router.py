@@ -53,6 +53,7 @@ async def websocket_test_agent(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Auth timeout"
         )
+        logger.error(f"Auth timeout for agent {agent_id}")
         return
 
     if auth_msg.get("type") != "auth" or "token" not in auth_msg:
@@ -60,6 +61,7 @@ async def websocket_test_agent(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Auth required"
         )
+        logger.error(f"Auth required for agent {agent_id}")
         return
 
     token = auth_msg["token"]
@@ -74,6 +76,7 @@ async def websocket_test_agent(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Invalid token"
         )
+        logger.error(f"Invalid token for user {user_id}")
         return
 
     # 2. Verify agent ownership
@@ -90,6 +93,7 @@ async def websocket_test_agent(
 
     if not elevenlabs_agent_id:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Agent not found")
+        logger.error(f"Agent not found for user {user_id}")
         return
 
     # await websocket.accept()

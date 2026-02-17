@@ -14,6 +14,7 @@ from app_v2.core.elevenlabs_config import (
     DEFAULT_LANGUAGE,
     get_compatible_model_for_language
 )
+from app_v2.schemas.function_schema import ApiSchema
 
 logger = setup_logger(__name__)
 
@@ -32,7 +33,10 @@ class ElevenLabsAgent(BaseElevenLabs):
         first_message: str = "Hello! How can I help you?",
         language: str = DEFAULT_LANGUAGE,
         llm_model: str = DEFAULT_LLM_ELEVENLAB,
-        tts_model: Optional[str] = None
+        tts_model: Optional[str] = None,
+        tool_ids: Optional[List[str]] = None,
+        knowledge_base: Optional[List[Dict[str, str]]] = None,
+        dynamic_variables: Optional[Dict[str, Any]] = None
     ) -> ElevenLabsResponse:
         """
         Create a new conversational AI agent in ElevenLabs.
@@ -45,16 +49,14 @@ class ElevenLabsAgent(BaseElevenLabs):
             language: Language code (e.g., 'en', 'es')
             llm_model: LLM model to use
             tts_model: TTS model (auto-selected if None)
+            tool_ids: Optional list of tool IDs to attach
+            knowledge_base: Optional list of KB documents
+            dynamic_variables: Optional dict of dynamic variable placeholders
             
         Returns:
             ElevenLabsResponse with agent_id on success
         """
         logger.info(f"Creating agent: {name} with voice {voice_id}")
-        
-        # Auto-select compatible TTS model if not provided
-        if not tts_model:
-            tts_model = get_compatible_model_for_language(language)
-            logger.debug(f"Auto-selected TTS model: {tts_model} for language: {language}")
         
         # Build conversation config
         conversation_config = {
@@ -64,8 +66,8 @@ class ElevenLabsAgent(BaseElevenLabs):
                     "llm": llm_model,
                     "temperature": 0.0,
                     "max_tokens": -1,
-                    "tool_ids": [],
-                    "knowledge_base": [],
+                    "tool_ids": tool_ids or [],
+                    "knowledge_base": knowledge_base or [],
                     "rag":{
                         "enabled": True
                     }
@@ -74,7 +76,7 @@ class ElevenLabsAgent(BaseElevenLabs):
                 "language": language
             },
             "tts": {
-                "model_id": tts_model,
+                "model_id": tts_model or get_compatible_model_for_language(language),
                 "voice_id": voice_id,
                 "agent_output_audio_format": "pcm_16000",
                 "optimize_streaming_latency": 3,
@@ -94,6 +96,13 @@ class ElevenLabsAgent(BaseElevenLabs):
                 "turn_eagerness": "normal"
             }
         }
+
+        if dynamic_variables:
+            conversation_config["agent"]["dynamic_variables"] = {
+                "dynamic_variable_placeholders": {
+                    key: value for key, value in dynamic_variables.items()
+                }
+            }
         
         payload = {
             "name": name,
@@ -248,12 +257,15 @@ class ElevenLabsAgent(BaseElevenLabs):
             current_config["agent"]["prompt"]["knowledge_base"] = knowledge_base
             config_updated = True
         
-        if dynamic_variables:
+        if dynamic_variables is not None:
             if "agent" not in current_config:
                 current_config["agent"] = {}
-            current_config["agent"]["dynamic_variables"]["dynamic_variable_placeholders"]= {
-                 key:value for key, value in dynamic_variables.items()
-            } if dynamic_variables else None
+            if "dynamic_variables" not in current_config["agent"]:
+                 current_config["agent"]["dynamic_variables"] = {}
+            
+            current_config["agent"]["dynamic_variables"]["dynamic_variable_placeholders"] = {
+                 key: value for key, value in dynamic_variables.items()
+            } if dynamic_variables else {}
             config_updated = True
         
         if config_updated:
@@ -314,47 +326,111 @@ class ElevenLabsAgent(BaseElevenLabs):
         logger.info(f"✅ Agent {agent_id} has {len(tool_ids)} tools")
         return ElevenLabsResponse(status=True, data={"tool_ids": tool_ids})
 
-    def create_tool(self, tool_config: Dict[str, Any]) -> ElevenLabsResponse:
+    def create_tool(
+    self,
+    name: str,
+    description: str,
+    api_schema: ApiSchema,
+) -> ElevenLabsResponse:
         """
-        Create a new tool in ElevenLabs.
-        
+        Create a webhook tool in ElevenLabs ConvAI.
+
         Args:
-            tool_config: Dictionary containing tool configuration.
-                         Must include 'name', 'type', and type-specific config.
-                         
+            name: Tool name
+            description: Tool description
+            api_schema: 
+
         Returns:
-            ElevenLabsResponse with tool_id
+            ElevenLabsResponse containing created tool data
         """
-        name = tool_config.get("name", "Unnamed Tool")
-        logger.info(f"Creating tool: {name}")
-        
-        response = self._post("/convai/tools", data=tool_config)
-        
+
+        logger.info(f"Creating ElevenLabs tool: {name}")
+
+        payload = {
+            "tool_config": {
+                "type": "webhook",
+                "name": name,
+                "description": description,
+                "api_schema": api_schema.model_dump(
+                    exclude_none=True
+                ),
+            }
+        }
+
+        response = self._post("/convai/tools", data=payload)
+
         if response.status:
             tool_id = response.data.get("id")
-            logger.info(f"✅ Tool created: {name} (ID: {tool_id})")
+            logger.info(f"✅ Tool created successfully: {tool_id}")
         else:
-            logger.error(f"Failed to create tool: {response.error_message}")
-            
+            logger.error(f"❌ Tool creation failed: {response.error_message}")
+
         return response
+
 
     def delete_tool(self, tool_id: str) -> ElevenLabsResponse:
         """
-        Delete a tool from ElevenLabs.
-        
+        Delete a tool from ElevenLabs ConvAI.
+
         Args:
             tool_id: ElevenLabs tool ID
-            
+
         Returns:
             ElevenLabsResponse
         """
-        logger.info(f"Deleting tool: {tool_id}")
-        
+
+        logger.info(f"Deleting ElevenLabs tool: {tool_id}")
+
         response = self._delete(f"/convai/tools/{tool_id}")
-        
+
         if response.status:
-            logger.info(f"✅ Tool deleted: {tool_id}")
+            logger.info(f"✅ Tool deleted successfully: {tool_id}")
         else:
-            logger.error(f"Failed to delete tool: {response.error_message}")
-            
+            logger.error(f"❌ Failed to delete tool: {response.error_message}")
+
+        return response
+
+    def update_tool(
+        self,
+        tool_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        api_schema: Optional[ApiSchema] = None,
+    ) -> ElevenLabsResponse:
+        """
+        Update a tool in ElevenLabs ConvAI.
+
+        Args:
+            tool_id: ElevenLabs tool ID
+            name: New tool name
+            description: New tool description
+            api_schema: New API schema
+
+        Returns:
+            ElevenLabsResponse
+        """
+        logger.info(f"Updating ElevenLabs tool: {tool_id}")
+
+        tool_config = {}
+        if name:
+            tool_config["name"] = name
+        if description:
+            tool_config["description"] = description
+        if api_schema:
+            tool_config["api_schema"] = api_schema.model_dump(exclude_none=True)
+
+        if not tool_config:
+            return ElevenLabsResponse(status=False, error_message="No update data provided")
+
+        payload = {"tool_config": tool_config}
+        
+        # Note: ElevenLabs might use PATCH or PUT for tool update. 
+        # Checking local knowledge/docs, it's often PATCH for partial updates.
+        response = self._patch(f"/convai/tools/{tool_id}", data=payload)
+
+        if response.status:
+            logger.info(f"✅ Tool updated successfully: {tool_id}")
+        else:
+            logger.error(f"❌ Failed to update tool: {response.error_message}")
+
         return response

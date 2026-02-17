@@ -73,6 +73,7 @@ async def get_all_voices(
             db.session.query(VoiceModel)
             .options(selectinload(VoiceModel.traits))
             .filter(*filters)
+            .order_by(VoiceModel.modified_at.desc())
             .offset(skip)
             .limit(limit)
             .all()
