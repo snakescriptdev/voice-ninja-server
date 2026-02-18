@@ -72,7 +72,7 @@ async def get_ai_models(
     limit: int = 10,
 ):
     try:
-        query = db.session.query(AIModels)
+        query = db.session.query(AIModels).order_by(AIModels.modified_at.desc())
         total = query.count()
         
         ai_models = query.offset(skip).limit(limit).all()

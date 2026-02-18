@@ -118,3 +118,4 @@ class ProfileInfo(BaseModel):
     last_name: Optional[str] = Field(None, description='User last name')
     address: Optional[str] = Field(None, description='User address')
     notification_settings: Optional[UserNotificationRead] = Field(None, description="User notification settings")
+    is_new_user: bool = Field(False, description="Flag indicating if the user is new (first login session)")

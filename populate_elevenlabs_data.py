@@ -25,10 +25,12 @@ from app_v2.databases.models import (
     TokensToConsume,
     AgentModel
 )
+import requests
 from app_v2.core.elevenlabs_config import (
     get_all_supported_languages,
     VALID_LLMS,
-    ELEVENLABS_API_KEY
+    ELEVENLABS_API_KEY,
+    BASE_URL
 )
 
 
@@ -141,48 +143,12 @@ def populate_ai_models(session: Session):
         logger.error(f"❌ Error populating AI models: {e}")
         raise
 
-
-def _fetch_shared_voices(headers: dict) -> list:
-    """Fetch all shared (library) voices from GET /v1/shared-voices with pagination."""
-    import requests
-    url = "https://api.elevenlabs.io/v1/shared-voices"
-    all_voices = []
-    page = 0
-    page_size = 100
-    while True:
-        resp = requests.get(url, headers=headers, params={"page_size": page_size, "page": page})
-        if resp.status_code != 200:
-            logger.warning("Failed to fetch shared voices (page=%s): %s", page, resp.text[:200])
-            break
-        data = resp.json()
-        chunk = data.get("voices") or []
-        # Normalize to same shape as /v1/voices: voice_id, name, labels { gender, accent }
-        for v in chunk:
-            all_voices.append({
-                "voice_id": v.get("voice_id"),
-                "name": v.get("name"),
-                "preview_url": v.get("preview_url"),
-                "labels": {
-                    "gender": v.get("gender"),
-                    "accent": v.get("accent"),
-                },
-            })
-        if not data.get("has_more", False):
-            break
-        page += 1
-    logger.info("Fetched %s shared (library) voices from ElevenLabs.", len(all_voices))
-    return all_voices
-
-
 def populate_elevenlabs_voices(session: Session):
     logger.info("Populating ElevenLabs voices...")
 
     if not ELEVENLABS_API_KEY:
         logger.warning("ELEVENLABS_API_KEY not set. Skipping.")
         return
-
-    import requests
-    from app_v2.core.elevenlabs_config import BASE_URL
 
     headers = {
         "xi-api-key": ELEVENLABS_API_KEY,
@@ -196,10 +162,40 @@ def populate_elevenlabs_voices(session: Session):
         return
 
     voices = response.json().get("voices", [])
+    
+    # 2) Identify voices to remove
+    # We want to remove any prebuilt/shared voice that is NOT in the user's personal voice list
+    personal_voice_ids = {v.get("voice_id") for v in voices if v.get("voice_id")}
+    
+    # Get all prebuilt voices from DB (is_custom_voice=False, user_id=None)
+    # OR any voice that has an elevenlabs_voice_id but is NOT in our personal list
+    db_voices = session.query(VoiceModel).all()
+    
+    removed_count = 0
+    for db_voice in db_voices:
+        # Rules for removal:
+        # 1. If it has an ElevenLabs ID but that ID is NOT in the personal list, we consider it "orphan" or "shared" and remove it
+        # 2. We only do this for voices that are NOT custom voices owned by users (those should be preserved)
+        if db_voice.elevenlabs_voice_id and db_voice.elevenlabs_voice_id not in personal_voice_ids:
+            if not db_voice.is_custom_voice or db_voice.user_id is None:
+                logger.info(f"🗑️ Removing orphan/shared voice: {db_voice.voice_name} ({db_voice.elevenlabs_voice_id})")
+                
+                # Cleanup agents using this voice
+                agents = session.query(AgentModel).filter(AgentModel.agent_voice == db_voice.id).all()
+                for agent in agents:
+                    logger.info(f"  - Deleting agent '{agent.agent_name}' (ID: {agent.id}) linked to removed voice")
+                    session.delete(agent)
+                
+                # Cleanup traits
+                session.query(VoiceTraitsModel).filter(VoiceTraitsModel.voice_id == db_voice.id).delete()
+                
+                # Delete the voice
+                session.delete(db_voice)
+                removed_count += 1
 
-    # 2) Shared / library voices (GET /v1/shared-voices) so premade names like Puck, Kore sync
-    shared = _fetch_shared_voices(headers)
-    voices = voices + shared
+    if removed_count > 0:
+        session.commit()
+        logger.info(f"✅ Cleanup complete: Removed {removed_count} orphan/shared voices and their agents.")
 
     api_names = {v.get("name", "").strip().lower() for v in voices if v.get("name")}
     updated_by_id = 0

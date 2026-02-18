@@ -271,6 +271,7 @@ async def get_all_knowledge_base(
             query = (
                 db.session.query(KnowledgeBaseModel)
                 .filter(KnowledgeBaseModel.user_id == current_user.id)
+                .order_by(KnowledgeBaseModel.modified_at.desc())
             )
             
             total = query.count()
@@ -323,6 +324,7 @@ async def get_agent_knowledge_base(
                 db.session.query(KnowledgeBaseModel)
                 .join(AgentKnowledgeBaseBridge)
                 .filter(AgentKnowledgeBaseBridge.agent_id == agent_id)
+                .order_by(KnowledgeBaseModel.modified_at.desc())
             )
 
             total = query.count()

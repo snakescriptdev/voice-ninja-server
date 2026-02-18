@@ -73,7 +73,7 @@ async def get_languages(
     limit: int = 10
 ):
     try:
-        query = db.session.query(LanguageModel)
+        query = db.session.query(LanguageModel).order_by(LanguageModel.modified_at.desc())
         total = query.count()
         
         languages = (query
