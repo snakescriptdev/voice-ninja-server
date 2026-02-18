@@ -8,6 +8,31 @@ class RequestMethodEnum(str,Enum):
     delete = "DELETE"
     patch = "PATCH"
 
+
+
+class HeaderValueType(str, Enum):
+    STRING = "string"              # Hardcoded value
+
+
+class JsonSchemaType(str, Enum):
+    STRING = "string"
+    INTEGER = "integer"
+    NUMBER = "number"
+    BOOLEAN = "boolean"
+    OBJECT = "object"
+    ARRAY = "array"
+
+
+class ContentTypeEnum(str, Enum):
+    """Common MIME types for webhook request/response content"""
+    JSON = "application/json"
+    XML = "application/xml"
+    FORM_URLENCODED = "application/x-www-form-urlencoded"
+    FORM_DATA = "multipart/form-data"
+    TEXT_PLAIN = "text/plain"
+    TEXT_HTML = "text/html"
+
+
 class UseCases(str,Enum):
     email_assistant = "email_assistant"
     task_execution = "task_execution"
