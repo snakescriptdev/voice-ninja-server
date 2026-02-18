@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from fastapi_sqlalchemy import db
 from app_v2.schemas.agent_config import AgentConfigGenerator, AgentConfigOut
@@ -9,6 +10,9 @@ from app_v2.utils.llm_utils import generate_system_prompt_async
 
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import (
+    AdminTokenModel,
+    VoiceTraitsModel,
+    TokensToConsume,
     AgentModel,
     VoiceModel,
     AIModels,
@@ -84,8 +88,121 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
                 "name": bridge.function.name
             } 
             for bridge in agent.agent_functions
-        ]
+        ],
+        built_in_tools=agent.built_in_tools
     )
+
+
+# -------------------- HELPERS --------------------
+
+def transform_built_in_tools(built_in_tools_params, session: Session, user_id: int) -> dict:
+    """Transform schema params to ElevenLabs payload structure."""
+    if not built_in_tools_params:
+        return None
+        
+    el_tools = {}
+    
+    # End Call
+    if built_in_tools_params.end_call:
+        config = built_in_tools_params.end_call
+        if isinstance(config, bool):
+            el_tools["end_call"] = {
+                "name": "end_call",
+                "params": {"system_tool_type": "end_call"}
+            }
+        else: # ToolConfig object
+            el_tools["end_call"] = {
+                "name": config.name or "end_call",
+                "params": {"system_tool_type": "end_call"}
+            }
+
+    # Transfer to Agent
+    if built_in_tools_params.transfer_to_agent:
+        config = built_in_tools_params.transfer_to_agent
+        if config.enabled:
+            el_transfers = []
+            for t in config.transfers:
+                transfer_data = t.model_dump()
+                requested_id = str(transfer_data.get("agent_id"))
+                
+                # Enforce numeric ID for internal lookups
+                if not requested_id.isdigit():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Agent ID '{requested_id}' must be an internal numeric ID for transfer to agent tool"
+                    )
+
+                # Dynamic lookup: find agent by internal ID
+                target_agent = session.query(AgentModel).filter(
+                    AgentModel.id == int(requested_id),
+                    AgentModel.user_id == user_id
+                ).first()
+                
+                if target_agent and target_agent.elevenlabs_agent_id:
+                    transfer_data["agent_id"] = target_agent.elevenlabs_agent_id
+                    logger.info(f"Resolved agent transfer ID: {requested_id} -> {target_agent.elevenlabs_agent_id}")
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Agent with internal ID {requested_id} not found or missing ElevenLabs ID"
+                    )
+                
+                el_transfers.append(transfer_data)
+
+            el_tools["transfer_to_agent"] = {
+                "name": config.name or "agent-transfer",
+                "params": {
+                    "system_tool_type": "transfer_to_agent",
+                    "transfers": el_transfers
+                }
+            }
+            
+    # Transfer to Number
+    if built_in_tools_params.transfer_to_number:
+        config = built_in_tools_params.transfer_to_number
+        if config.enabled:
+            el_transfers = []
+            for t in config.transfers:
+                transfer_data = t.model_dump()
+                phone_number = transfer_data.get("transfer_destination", {}).get("phone_number")
+                
+                # Ownership verification: ensure number belongs to user and PhoneNumberService
+                db_phone = session.query(PhoneNumberService).filter(
+                    PhoneNumberService.phone_number == phone_number,
+                    PhoneNumberService.user_id == user_id
+                ).first()
+                
+                if not db_phone:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Phone number '{phone_number}' does not belong to your account for transfer to number tool"
+                    )
+                
+                el_transfers.append(transfer_data)
+
+            el_tools["transfer_to_number"] = {
+                "name": config.name or "transfer_to_number",
+                "params": {
+                    "system_tool_type": "transfer_to_number",
+                    "transfers": el_transfers
+                }
+            }
+
+    # DTMF / Keypad
+    if built_in_tools_params.play_keypad_touch_tone:
+        config = built_in_tools_params.play_keypad_touch_tone
+        if isinstance(config, bool):
+             el_tools["play_keypad_touch_tone"] = {
+                "name": "play_keypad_touch_tone",
+                "params": {"system_tool_type": "play_keypad_touch_tone"}
+            }
+        else:
+             el_tools["play_keypad_touch_tone"] = {
+                "name": config.name or "play_keypad_touch_tone",
+                "params": {"system_tool_type": "play_keypad_touch_tone"}
+            }
+
+    return el_tools if el_tools else None
 
 
 # -------------------- CREATE --------------------
@@ -289,7 +406,8 @@ async def create_agent(
             llm_model=ai_model.model_name,
             tool_ids=el_tool_ids,
             knowledge_base=el_kb_list,
-            dynamic_variables=agent_in.variables
+            dynamic_variables=agent_in.variables,
+            built_in_tools=transform_built_in_tools(agent_in.built_in_tools, db.session, user_id)
         )
 
         if not el_response.status:
@@ -314,22 +432,23 @@ async def create_agent(
     # Database creation (atomic)
     # -------------------------------------------------
     try:
-        agent = AgentModel(
+        new_agent = AgentModel(
             agent_name=agent_in.agent_name,
             first_message=agent_in.first_message,
             system_prompt=agent_in.system_prompt,
-            agent_voice=voice.id,
             user_id=user_id,
+            agent_voice=voice.id,
             elevenlabs_agent_id=elevenlabs_agent_id,
+            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {}
         )
 
-        db.session.add(agent)
+        db.session.add(new_agent)
         db.session.flush()
 
         # Bridge: AI Model
         db.session.add(
             AgentAIModelBridge(
-                agent_id=agent.id,
+                agent_id=new_agent.id,
                 ai_model_id=ai_model.id,
             )
         )
@@ -337,32 +456,32 @@ async def create_agent(
         # Bridge: Language
         db.session.add(
             AgentLanguageBridge(
-                agent_id=agent.id,
+                agent_id=new_agent.id,
                 lang_id=language.id,
             )
         )
 
         # Bridge: Knowledge Base
         for kb_id in kb_ids_ordered:
-            db.session.add(AgentKnowledgeBaseBridge(agent_id=agent.id, kb_id=kb_id))
+            db.session.add(AgentKnowledgeBaseBridge(agent_id=new_agent.id, kb_id=kb_id))
 
         # Bridge: Tools
         for tool_id in tool_ids_ordered:
-            db.session.add(AgentFunctionBridgeModel(agent_id=agent.id, function_id=tool_id))
+            db.session.add(AgentFunctionBridgeModel(agent_id=new_agent.id, function_id=tool_id))
 
         # Variables
         for key, value in (agent_in.variables or {}).items():
-            db.session.add(VariablesModel(agent_id=agent.id, variable_name=key, variable_value=value))
+            db.session.add(VariablesModel(agent_id=new_agent.id, variable_name=key, variable_value=value))
 
         if phone_record:
-            phone_record.assigned_to = agent.id
+            phone_record.assigned_to = new_agent.id
             phone_record.status = PhoneNumberAssignStatus.assigned
             logger.info(
-                f"Assigned phone {phone_record.phone_number} to agent {agent.agent_name}"
+                f"Assigned phone {phone_record.phone_number} to agent {new_agent.agent_name}"
             )
 
         db.session.commit()
-        db.session.refresh(agent)
+        db.session.refresh(new_agent)
     except Exception as db_error:
         db.session.rollback()
         if elevenlabs_agent_id:
@@ -376,7 +495,7 @@ async def create_agent(
             detail=f"Failed to save agent: {str(db_error)}",
         )
 
-    return agent_to_read(agent)
+    return agent_to_read(new_agent)
 
 # -------------------- GET ALL --------------------
 
@@ -710,6 +829,11 @@ async def update_agent(
         ).delete()
         for key, value in agent_in.variables.items():
             db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
+
+    # ---- Builtin Tools Update ----
+    if agent_in.built_in_tools is not None:
+        agent.built_in_tools = agent_in.built_in_tools.model_dump()
+        el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id)
 
     # ---- Sync with ElevenLabs ----
     if el_update_params and agent.elevenlabs_agent_id:
