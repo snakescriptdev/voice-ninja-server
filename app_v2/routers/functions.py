@@ -17,6 +17,7 @@ from app_v2.schemas.function_schema import (
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs import ElevenLabsAgent
+from app_v2.utils.crypto_utils import encrypt_data
 
 logger = setup_logger(__name__)
 
@@ -93,11 +94,21 @@ async def create_function(
         db.session.add(new_function)
         db.session.flush()
 
+        # Encrypt auth-related headers
+        headers = function_in.api_config.request_headers or {}
+        sensitive_keys = {"authorization", "x-api-key", "api-key", "token"}
+        encrypted_headers = {}
+        for k, v in headers.items():
+            if k.lower() in sensitive_keys:
+                encrypted_headers[k] = encrypt_data(v)
+            else:
+                encrypted_headers[k] = v
+
         api_config = FunctionApiConfig(
             function_id=new_function.id,
             endpoint_url=function_in.api_config.url,
             http_method=function_in.api_config.method,
-            headers=function_in.api_config.request_headers,
+            headers=encrypted_headers,
             path_params={k: v.model_dump(exclude_none=True) for k, v in function_in.api_config.path_params_schema.items()} if function_in.api_config.path_params_schema else None,
             query_params=function_in.api_config.query_params_schema.model_dump(exclude_none=True) if function_in.api_config.query_params_schema else None,
             body_schema=function_in.api_config.request_body_schema.model_dump() if function_in.api_config.request_body_schema else None,
@@ -235,9 +246,19 @@ async def update_function(
             api_config = FunctionApiConfig(function_id=function_id)
             db.session.add(api_config)
             
+        # Encrypt auth-related headers
+        headers = function_in.api_config.request_headers or {}
+        sensitive_keys = {"authorization", "x-api-key", "api-key", "token"}
+        encrypted_headers = {}
+        for k, v in headers.items():
+            if k.lower() in sensitive_keys:
+                encrypted_headers[k] = encrypt_data(v)
+            else:
+                encrypted_headers[k] = v
+
         api_config.endpoint_url = function_in.api_config.url
         api_config.http_method = function_in.api_config.method
-        api_config.headers = function_in.api_config.request_headers
+        api_config.headers = encrypted_headers
         api_config.path_params = {k: v.model_dump(exclude_none=True) for k, v in function_in.api_config.path_params_schema.items()} if function_in.api_config.path_params_schema else None
         api_config.query_params = function_in.api_config.query_params_schema.model_dump(exclude_none=True) if function_in.api_config.query_params_schema else None
         api_config.body_schema = function_in.api_config.request_body_schema.model_dump() if function_in.api_config.request_body_schema else None

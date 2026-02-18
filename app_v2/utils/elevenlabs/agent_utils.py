@@ -36,7 +36,8 @@ class ElevenLabsAgent(BaseElevenLabs):
         tts_model: Optional[str] = None,
         tool_ids: Optional[List[str]] = None,
         knowledge_base: Optional[List[Dict[str, str]]] = None,
-        dynamic_variables: Optional[Dict[str, Any]] = None
+        dynamic_variables: Optional[Dict[str, Any]] = None,
+        built_in_tools: Optional[Dict[str, Any]] = None
     ) -> ElevenLabsResponse:
         """
         Create a new conversational AI agent in ElevenLabs.
@@ -52,6 +53,7 @@ class ElevenLabsAgent(BaseElevenLabs):
             tool_ids: Optional list of tool IDs to attach
             knowledge_base: Optional list of KB documents
             dynamic_variables: Optional dict of dynamic variable placeholders
+            built_in_tools: Optional dict of built-in tools configuration
             
         Returns:
             ElevenLabsResponse with agent_id on success
@@ -103,6 +105,9 @@ class ElevenLabsAgent(BaseElevenLabs):
                     key: value for key, value in dynamic_variables.items()
                 }
             }
+            
+        if built_in_tools:
+            conversation_config["agent"]["prompt"]["built_in_tools"] = built_in_tools
         
         payload = {
             "name": name,
@@ -151,7 +156,8 @@ class ElevenLabsAgent(BaseElevenLabs):
         tts_model: Optional[str] = None,
         tool_ids: Optional[List[str]] = None,
         knowledge_base: Optional[List[Dict[str, str]]] = None,
-        dynamic_variables: Optional[Dict[str, Any]] = None
+        dynamic_variables: Optional[Dict[str, Any]] = None,
+        built_in_tools: Optional[Dict[str, Any]] = None
     ) -> ElevenLabsResponse:
         """
         Update an existing agent.
@@ -169,6 +175,7 @@ class ElevenLabsAgent(BaseElevenLabs):
             tool_ids: List of tool IDs to attach
             knowledge_base: List of KB documents [{\"id\": \"...\", \"type\": \"file\", \"name\": \"...\"}]
             dynamic_variables: Dynamic variables for the agent
+            built_in_tools: Built-in tools configuration
             
         Returns:
             ElevenLabsResponse with updated agent data
@@ -266,6 +273,14 @@ class ElevenLabsAgent(BaseElevenLabs):
             current_config["agent"]["dynamic_variables"]["dynamic_variable_placeholders"] = {
                  key: value for key, value in dynamic_variables.items()
             } if dynamic_variables else {}
+            config_updated = True
+
+        if built_in_tools is not None:
+            if "agent" not in current_config:
+                current_config["agent"] = {}
+            if "prompt" not in current_config["agent"]:
+                current_config["agent"]["prompt"] = {}
+            current_config["agent"]["prompt"]["built_in_tools"] = built_in_tools
             config_updated = True
         
         if config_updated:
