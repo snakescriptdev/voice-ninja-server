@@ -12,7 +12,9 @@ from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 from app_v2.utils.jwt_utils import SECRET_KEY, ALGORITHM
 from jose import jwt, JWTError
 from app_v2.core.logger import setup_logger
-
+from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
+from app_v2.databases.models import ConversationsModel
+from app_v2.schemas.enum_types import ChannelEnum, CallStatusEnum
 logger = setup_logger(__name__)
 
 router = APIRouter(
@@ -140,7 +142,9 @@ async def websocket_test_agent(
                    if not el_ws.closed:
                        await el_ws.close()
 
+            conversation_id = None
             async def elevenlabs_to_browser():
+                nonlocal conversation_id
                 logger.info("Starting elevenlabs_to_browser loop")
                 try:
                     async for msg in el_ws:
@@ -149,6 +153,12 @@ async def websocket_test_agent(
                             # Relay ElevenLabs events to browser
                             etype = data.get("type")
                             
+                            
+                            if etype == "conversation_initiation_metadata":
+                                conversation_metadata = data.get("conversation_initiation_metadata_event")
+                                conversation_id = conversation_metadata.get("conversation_id")
+                                logger.info(f"conversation intilaised with convID: {conversation_id}")
+
                             if etype == "audio":
                                 # Handle audio payload key 'audio_base_64'
                                 audio_b64 = data.get("audio_event", {}).get("audio_base_64")
@@ -194,6 +204,59 @@ async def websocket_test_agent(
                 task.cancel()
             
             logger.info("WebSocket connection flow completed")
+
+# ---------------- FETCH & STORE CONVERSATION ---------------- #
+
+            if not conversation_id:
+                logger.warning("No conversation_id captured. Skipping metadata fetch.")
+                return
+
+            try:
+                el_conv = ElevenLabsConversation()
+
+                # Run blocking HTTP call in separate thread
+                metadata = await asyncio.to_thread(
+                    el_conv.extract_conversation_metadata,
+                    conversation_id
+                )
+
+                if not metadata:
+                    logger.error(f"Metadata extraction failed for {conversation_id}")
+                    return
+
+                # Convert boolean to Enum
+                call_status_enum = (
+                    CallStatusEnum.success
+                    if metadata.get("call_successful")
+                    else CallStatusEnum.failed
+                )
+
+                with db():
+                    conversation_data = ConversationsModel(
+                        agent_id=agent_id,
+                        user_id=user_id,
+                        message_count=metadata.get("message_count"),
+                        duration=metadata.get("duration"),
+                        call_status=call_status_enum,
+                        channel=ChannelEnum.chat,
+                        transcript_summary=metadata.get("transcript_summary"),
+                        elevenlabs_conv_id=conversation_id,   # make sure column exists
+                    )
+
+                    db.session.add(conversation_data)
+                    db.session.commit()
+                    db.session.refresh(conversation_data)
+
+                logger.info(
+                    f"✅ Conversation {conversation_id} stored successfully "
+                    f"(duration={metadata.get('duration')}s, "
+                    f"messages={metadata.get('message_count')})"
+                )
+
+            except Exception:
+                logger.error(f"Error while saving conversation:\n{traceback.format_exc()}")
+
+           
 
 
 
