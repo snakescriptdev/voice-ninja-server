@@ -2,6 +2,8 @@ from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
 from datetime import datetime
 
+from .built_in_tools import BuiltInToolsParams
+
 class AgentCreate(BaseModel):
     agent_name: str
     first_message: str | None = None
@@ -13,8 +15,7 @@ class AgentCreate(BaseModel):
     knowledgebase: Optional[List[int | Dict]] = Field(default=[], description="List of knowledge base IDs or objects")
     variables: Optional[Dict[str, str]] = Field(default={}, description="Dynamic variables for the agent")
     tools: Optional[List[int | Dict]] = Field(default=[], description="List of function/tool IDs or objects")
-
-
+    built_in_tools: Optional[BuiltInToolsParams] = Field(default=None, description="Configuration for built-in tools")
 
 
 class AgentUpdate(BaseModel):
@@ -28,6 +29,7 @@ class AgentUpdate(BaseModel):
     knowledgebase: Optional[List[int | Dict]] = None
     variables: Optional[Dict[str, str]] = None
     tools: Optional[List[int | Dict]] = None
+    built_in_tools: Optional[BuiltInToolsParams] = None
 
 
 class AgentRead(BaseModel):
@@ -44,5 +46,6 @@ class AgentRead(BaseModel):
     knowledgebase: List[dict[str,int|str]] = []
     variables: Dict[str, str] = {}
     tools: List[dict[str,int|str]] = []
+    built_in_tools: Optional[Dict] = None
     class Config:
         from_attributes = True
