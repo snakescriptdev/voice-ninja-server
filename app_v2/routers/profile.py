@@ -138,7 +138,11 @@ async def get_profile(current_user = Depends(get_current_user)):
                     "phone": user.phone,
                     "first_name": user.first_name,
                     "last_name": user.last_name,
-                    "address": user.address
+                    "address": user.address,
+                    "is_new_user": (
+                        (user.last_login - user.created_at).total_seconds() < 300 
+                        if user.last_login and user.created_at else False
+                    )
                 }
             }
 

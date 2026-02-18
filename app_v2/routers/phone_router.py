@@ -134,7 +134,7 @@ async def list_phone_numbers(
     with db():
         numbers = db.session.query(PhoneNumberService).filter(
             PhoneNumberService.user_id == current_user.id
-        ).all()
+        ).order_by(PhoneNumberService.modified_at.desc()).all()
         logger.info(f"Retrieved {len(numbers)} phone numbers for user {current_user.id}")
         return numbers
 
