@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
-from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus
+from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -148,6 +148,7 @@ class UnifiedAuthModel(Base):
     twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", uselist=False, cascade="all, delete-orphan")
     knowledge_bases = relationship("KnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
     functions = relationship("FunctionModel",back_populates="user",cascade="all, delete-orphan")
+    conversations = relationship("ConversationsModel",back_populates="user",cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -259,6 +260,7 @@ class AgentModel(Base):
     variables = relationship("VariablesModel",back_populates="agent",cascade="all, delete-orphan")
     phone_number = relationship("PhoneNumberService",back_populates="agent")
     agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent",cascade="all, delete-orphan", order_by="AgentKnowledgeBaseBridge.id")
+    conversations = relationship("ConversationsModel",back_populates="agent",cascade="all, delete-orphan")
 
 
 
@@ -505,3 +507,23 @@ class TwilioUserCreds(Base):
     auth_token: Mapped[str] = mapped_column(String,nullable=False)
 
     user = relationship("UnifiedAuthModel", back_populates="twilio_user_creds")
+
+
+class ConversationsModel(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True)
+    agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"),nullable=False,index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("unified_auth.id"),nullable=False,index=True)
+    message_count: Mapped[int] = mapped_column(Integer,nullable=True)
+    duration: Mapped[int] = mapped_column(Integer,nullable=True)
+    call_status: Mapped[CallStatusEnum] = mapped_column(Enum(CallStatusEnum),nullable=True)
+    phone_number_id: Mapped[int] = mapped_column(Integer,ForeignKey("phone_number_service.id"),nullable=True)
+    channel: Mapped[ChannelEnum] = mapped_column(Enum(ChannelEnum),nullable=True)
+    transcript_summary: Mapped[str] = mapped_column(String,nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime,default= datetime.utcnow)
+    elevenlabs_conv_id: Mapped[str] = mapped_column(String,nullable=True)
+
+    #relationships
+    agent = relationship("AgentModel",back_populates="conversations")
+    user = relationship("UnifiedAuthModel",back_populates="conversations")
