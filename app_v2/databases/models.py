@@ -6,7 +6,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
 from fastapi_sqlalchemy import db
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.ext.mutable import MutableDict
+from sqlalchemy.ext.mutable import MutableDict, MutableList
 import bcrypt
 import os
 from datetime import datetime
@@ -147,6 +147,7 @@ class UnifiedAuthModel(Base):
     notification_settings = relationship("UserNotificationSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
     twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", uselist=False, cascade="all, delete-orphan")
     knowledge_bases = relationship("KnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
+    functions = relationship("FunctionModel",back_populates="user",cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -245,6 +246,7 @@ class AgentModel(Base):
     elevenlabs_agent_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    built_in_tools: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True, default={})
     
     user = relationship("UnifiedAuthModel",back_populates="agents")
 
@@ -253,10 +255,10 @@ class AgentModel(Base):
     agent_ai_models = relationship("AgentAIModelBridge",back_populates="agent",cascade="all, delete-orphan")
 
     agent_languages = relationship("AgentLanguageBridge",back_populates="agent",cascade="all, delete-orphan")
-    agent_functions = relationship("AgentFunctionBridgeModel",back_populates="agent",cascade="all, delete-orphan")
+    agent_functions = relationship("AgentFunctionBridgeModel",back_populates="agent",cascade="all, delete-orphan", order_by="AgentFunctionBridgeModel.id")
     variables = relationship("VariablesModel",back_populates="agent",cascade="all, delete-orphan")
     phone_number = relationship("PhoneNumberService",back_populates="agent")
-    agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent",cascade="all, delete-orphan")
+    agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent",cascade="all, delete-orphan", order_by="AgentKnowledgeBaseBridge.id")
 
 
 
@@ -335,6 +337,7 @@ class FunctionModel(Base):
     name: Mapped[str] = mapped_column(String,unique=True,nullable=False)
     description: Mapped[str] = mapped_column(String,nullable=False)
     elevenlabs_tool_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"),nullable=True)
 
     #audit fields
     created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
@@ -343,7 +346,7 @@ class FunctionModel(Base):
 
     api_endpoint_url = relationship("FunctionApiConfig",back_populates = "function",cascade= "all, delete-orphan", uselist=False)
     agent_functions = relationship("AgentFunctionBridgeModel",back_populates="function",cascade="all,delete-orphan")
-
+    user = relationship("UnifiedAuthModel",back_populates="functions")
 
 
 class FunctionApiConfig(Base):
@@ -355,8 +358,11 @@ class FunctionApiConfig(Base):
     timeout_ms: Mapped[int] = mapped_column(Integer)
     headers: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
     query_params: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
-    llm_response_schema: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+    path_params: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+    body_schema: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
     response_variables: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB))
+    speak_while_execution: Mapped[bool] = mapped_column(Boolean,default=False)
+    speak_after_execution: Mapped[bool] = mapped_column(Boolean,default=True)
 
     #audit fields
     created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
@@ -369,9 +375,7 @@ class AgentFunctionBridgeModel(Base):
     __tablename__ = "agent_function_bridge"
     id : Mapped[int] = mapped_column(Integer,primary_key =True, autoincrement=True,index=True)
     agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
-    function_id: Mapped[int] = mapped_column(Integer,ForeignKey("functions.id"))
-    speak_while_execution: Mapped[bool] = mapped_column(Boolean,default=False)
-    speak_after_execution: Mapped[bool] = mapped_column(Boolean,default=True)
+    function_id: Mapped[int] = mapped_column(Integer,ForeignKey("functions.id"))  
 
     #audit fields
     created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
