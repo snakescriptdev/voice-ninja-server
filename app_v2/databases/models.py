@@ -246,6 +246,7 @@ class AgentModel(Base):
     elevenlabs_agent_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    built_in_tools: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True, default={})
     
     user = relationship("UnifiedAuthModel",back_populates="agents")
 

@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, model_validator, field_validator
 from enum import Enum
 from urllib.parse import urlparse
+from app_v2.utils.crypto_utils import decrypt_data
 
 
 # -------------------------------------------------
@@ -193,11 +194,24 @@ class FunctionRead(BaseModel):
         # If data is a SQLAlchemy model (FunctionModel)
         if hasattr(data, "api_endpoint_url") and data.api_endpoint_url:
             db_config = data.api_endpoint_url
+            # Decrypt auth-related headers
+            headers = db_config.headers or {}
+            sensitive_keys = {"authorization", "x-api-key", "api-key", "token"}
+            decrypted_headers = {}
+            for k, v in headers.items():
+                if k.lower() in sensitive_keys:
+                    try:
+                        decrypted_headers[k] = decrypt_data(v)
+                    except Exception:
+                        decrypted_headers[k] = v # Fallback if not encrypted or key issue
+                else:
+                    decrypted_headers[k] = v
+
             # Pre-populate api_config for the model_validate call
             api_config_data = {
                 "url": db_config.endpoint_url,
                 "method": db_config.http_method,
-                "request_headers": db_config.headers or {},
+                "request_headers": decrypted_headers,
                 "path_params_schema": {k: PrimitiveField(**v) for k, v in db_config.path_params.items()} if db_config.path_params else None,
                 "query_params_schema": db_config.query_params if db_config.query_params else None,
                 "request_body_schema": db_config.body_schema if db_config.body_schema else None,
