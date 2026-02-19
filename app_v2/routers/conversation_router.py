@@ -14,7 +14,7 @@ security = HTTPBearer()
 router = APIRouter(prefix="/api/v2/conversation", tags=["conversation"],dependencies=[Depends(security)])
 
 # 1. List all conversations (paginated, user-specific, latest first)
-@router.get("/user/{user_id}",openapi_extra={"security":[{"BearerAuth": []}]})
+@router.get("/user",openapi_extra={"security":[{"BearerAuth": []}]})
 def list_user_conversations(
 	page: int = Query(1, ge=1),
 	page_size: int = Query(10, ge=1, le=100),
