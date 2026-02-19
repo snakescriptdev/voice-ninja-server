@@ -6,8 +6,10 @@ Uses ElevenLabs Conversational AI behind our API; agents are identified by agent
 import asyncio
 import base64
 import os
+import traceback
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Any
+from fastapi import Body
 
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.responses import Response, HTMLResponse
@@ -15,11 +17,19 @@ from fastapi.responses import Response, HTMLResponse
 from fastapi_sqlalchemy import db
 from sqlalchemy.orm import selectinload
 
-from app_v2.databases.models import AgentModel, AgentLanguageBridge
+from app_v2.databases.models import AgentModel, AgentLanguageBridge, WebAgentModel, UnifiedAuthModel, WebAgentLeadModel, ConversationsModel
+from app_v2.schemas.web_agent_schema import WebAgentConfig, WebAgentConfigResponse, WebAgentPublicConfig, WebAgentLeadCreate
+from app_v2.schemas.enum_types import ChannelEnum, CallStatusEnum
+from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
+from sqlalchemy.exc import NoResultFound
+import uuid
+from fastapi import Depends
+from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.core.logger import setup_logger
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 
 logger = setup_logger(__name__)
+security = HTTPBearer()
 
 router = APIRouter(
     prefix="/api/v2/web-agent",
@@ -37,7 +47,6 @@ VOICE_NINJA_LOGO_SVG = """<svg width="62" height="21" viewBox="0 0 62 21" fill="
 <linearGradient id="paint1_linear_113_516" x1="49.8682" y1="3.71461" x2="61.5461" y2="3.71461" gradientUnits="userSpaceOnUse"><stop stop-color="#E06943"/><stop offset="0.425" stop-color="#AC1E7A"/><stop offset="0.775" stop-color="#562C7C"/><stop offset="1" stop-color="#34399B"/></linearGradient>
 </defs>
 </svg>"""
-
 
 # ---------- BrowserAudioInterface: bridge browser WS <-> ElevenLabs ----------
 
@@ -109,34 +118,30 @@ class BrowserAudioInterface:
 
 
 @router.get(
-    "/preview/{agent_id}",
+    "/preview/{public_id}",
     response_class=HTMLResponse,
     summary="Preview page for web agent (open in browser)",
 )
-async def preview_page(request: Request, agent_id: int):
+async def preview_page(request: Request, public_id: str):
     """
     Returns an HTML page that loads the voice chat widget. Paste this URL in your browser to try the agent.
-    Example: http://localhost:8000/api/v2/web-agent/preview/1
+    Example: http://localhost:8000/api/v2/web-agent/preview/some-uuid
     """
-    agent = (
-        db.session.query(AgentModel)
-        .filter(AgentModel.id == agent_id)
-        .first()
-    )
-    if not agent:
-        raise HTTPException(status_code=404, detail="Agent not found")
-    if not agent.elevenlabs_agent_id:
-        raise HTTPException(status_code=400, detail="Agent has no ElevenLabs configuration")
-
+    web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
+    if not web_agent:
+        raise HTTPException(status_code=404, detail="Web Agent not found")
+    
+    if not web_agent.is_enabled:
+        return HTMLResponse("<html><body><h1>Web Agent is disabled</h1></body></html>", status_code=403)
+    
     base = str(request.base_url).rstrip("/")
-    script_url = f"{base}/api/v2/web-agent/embed.js/{agent_id}"
-
+    script_url = f"{base}/api/v2/web-agent/embed.js/{public_id}"
     html = f"""<!DOCTYPE html>
-<html lang="en">
+<html lang=\"en\">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Voice Ninja – Agent {agent_id}</title>
+  <meta charset=\"UTF-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">
+  <title>Voice Ninja – {web_agent.web_agent_name}</title>
   <style>
     body {{ font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; background: #f5f5f5; }}
     .header {{ padding: 16px 24px; background: #1a1a1a; color: #fff; }}
@@ -145,7 +150,7 @@ async def preview_page(request: Request, agent_id: int):
   </style>
 </head>
 <body>
-  <script src="{script_url}"></script>
+  <script src=\"{script_url}\"></script>
 </body>
 </html>"""
     return HTMLResponse(html)
@@ -171,36 +176,39 @@ async def logo_svg():
 
 
 @router.get(
-    "/embed.js/{agent_id}",
+    "/embed.js/{public_id}",
     response_class=Response,
     summary="Embed script for web agent widget",
 )
-async def embed_script(agent_id: int):
+async def embed_script(public_id: str):
     """
     Returns JavaScript that injects the voice chat widget and connects to our WebSocket.
-    Use as: <script src="https://your-api/api/v2/web-agent/embed.js/42"></script>
+    Use as: <script src="https://your-api/api/v2/web-agent/embed.js/uuid"></script>
     """
-    agent = (
-        db.session.query(AgentModel)
-        .filter(AgentModel.id == agent_id)
-        .first()
-    )
-    if not agent:
+    web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
+    if not web_agent:
         return Response(
-            "// Agent not found.",
+            "// Web Agent not found.",
             media_type="application/javascript",
             headers={"Cache-Control": "no-cache"},
         )
-    if not agent.elevenlabs_agent_id:
+    
+    if not web_agent.is_enabled:
+        return Response(
+            "// Web Agent is disabled.",
+            media_type="application/javascript",
+            headers={"Cache-Control": "no-cache"},
+        )
+    
+    agent = web_agent.agent
+    if not agent or not agent.elevenlabs_agent_id:
         return Response(
             "// Agent has no ElevenLabs configuration.",
             media_type="application/javascript",
             headers={"Cache-Control": "no-cache"},
         )
 
-    # Build WS URL from request (caller will load script from their page origin; we need our API host)
-    # Script will use same host as the script src for WS
-    script_content = _get_embed_script_content(agent_id)
+    script_content = _get_embed_script_content(public_id)
     return Response(
         script_content,
         media_type="application/javascript",
@@ -208,24 +216,26 @@ async def embed_script(agent_id: int):
     )
 
 
-def _get_embed_script_content(agent_id: int) -> str:
-    """Return full embed script JS (widget + WebSocket client). WS URL is derived from script src (API host)."""
+def _get_embed_script_content(public_id: str) -> str:
+    """Return full embed script JS (widget + WebSocket client). WS URL and Config are fetched dynamically."""
     return r"""
 (function() {
-  var agentId = %d;
+  var publicId = '%s';
   var script = document.currentScript;
-  var wsUrl;
+  var baseUrl;
   if (script && script.src) {
     var u = new URL(script.src);
-    var proto = u.protocol === 'https:' ? 'wss:' : 'ws:';
-    var path = u.pathname.replace(/\/embed\.js\/\d+$/, '') + '/ws/' + agentId;
-    wsUrl = proto + '//' + u.host + path;
+    baseUrl = u.origin + u.pathname.replace(/\/embed\.js\/[^\/]+$/, '');
   } else {
-    wsUrl = (location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host + '/api/v2/web-agent/ws/' + agentId;
+    baseUrl = window.location.origin + '/api/v2/web-agent';
   }
-  var logoUrl = (script && script.src) ? script.src.replace(/\/embed\.js\/\d+$/, '') + '/logo.svg' : '';
+  
+  var wsUrl = (baseUrl.startsWith('https') ? 'wss:' : 'ws:') + baseUrl.split('://')[1] + '/ws/' + publicId;
+  var configUrl = baseUrl + '/config/' + publicId;
+  var leadUrl = baseUrl + '/lead/' + publicId;
+  var logoUrl = baseUrl + '/logo.svg';
 
-  window.voiceNinjaAgentId = agentId;
+  window.voiceNinjaPublicId = publicId;
   window.voiceNinjaWsUrl = wsUrl;
 
   var vnStyles = '<style id="vn-widget-styles">' +
@@ -247,37 +257,82 @@ def _get_embed_script_content(agent_id: int) -> str:
     '#vn-btn.vn-end{background:linear-gradient(135deg,#5a5a5a 0%%,#3d3d3d 100%%);}' +
     '#vn-btn.vn-end:hover{box-shadow:0 6px 20px rgba(0,0,0,0.25);}' +
     '#vn-status{font-size:12px;color:#64748b;letter-spacing:0.02em;margin-top:10px;min-height:18px;}' +
+    '#vn-prechat{margin-bottom:15px;}' +
+    '#vn-prechat input{width:100%%;padding:10px;margin-bottom:8px;border:1px solid #ddd;border-radius:8px;box-sizing:border-box;}' +
     '</style>';
+
+  var config = null;
+
+  async function init() {
+    try {
+      var resp = await fetch(configUrl);
+      config = await resp.json();
+      window.voiceNinjaLeadId = null;
+      injectWidget();
+    } catch (e) {
+      console.error('Voice Ninja init failed:', e);
+    }
+  }
 
   function injectWidget() {
     if (document.getElementById('voice-ninja-widget')) return;
+    
+    var pos = config.appearance.position || 'bottom-right';
+    var posStyles = '';
+    if (pos === 'bottom-right') posStyles = 'bottom:24px;right:24px;';
+    else if (pos === 'bottom-left') posStyles = 'bottom:24px;left:24px;';
+    else if (pos === 'top-right') posStyles = 'top:24px;right:24px;';
+    else if (pos === 'top-left') posStyles = 'top:24px;left:24px;';
+
+    var headerHtml = '';
+    if (config.appearance.widget_title || config.appearance.widget_subtitle) {
+      headerHtml = '<div class="vn-header" style="margin-bottom:16px;border-bottom:1px solid rgba(0,0,0,0.05);padding-bottom:12px;">' +
+        (config.appearance.widget_title ? '<div style="font-weight:700;font-size:16px;color:#1e293b;line-height:1.2;margin-bottom:4px;">' + config.appearance.widget_title + '</div>' : '') +
+        (config.appearance.widget_subtitle ? '<div style="font-size:12px;color:#64748b;line-height:1.4;">' + config.appearance.widget_subtitle + '</div>' : '') +
+      '</div>';
+    }
+
     var div = document.createElement('div');
     div.id = 'voice-ninja-widget';
     div.innerHTML = vnStyles +
-    '<div class="vn-root" style="position:fixed;bottom:24px;right:24px;z-index:99999;">' +
+    '<div class="vn-root" style="position:fixed;' + posStyles + 'z-index:99999;">' +
       '<div class="vn-card">' +
-      '<div style="display:flex;align-items:center;gap:14px;">' +
+      headerHtml +
+      '<div id="vn-prechat-container" style="display:none;">' +
+        '<div id="vn-prechat">' +
+          (config.prechat.require_name ? '<input type="text" id="vn-lead-name" placeholder="Your Name">' : '') +
+          (config.prechat.require_email ? '<input type="email" id="vn-lead-email" placeholder="Email Address">' : '') +
+          (config.prechat.require_phone ? '<input type="tel" id="vn-lead-phone" placeholder="Phone Number">' : '') +
+        '</div>' +
+        '<button id="vn-start-prechat" style="width:100%%;background:#562C7C;color:#fff;border:none;padding:10px;border-radius:8px;cursor:pointer;margin-bottom:10px;">Start Chat</button>' +
+      '</div>' +
+      '<div id="vn-main-controls" style="display:flex;align-items:center;gap:14px;">' +
       '<div id="vn-indicator-wrap" title="Voice Ninja">' +
-        (logoUrl ? '<img class="vn-logo" src="' + logoUrl + '" alt="Voice Ninja"/>' : '<div class="vn-logo-fallback" style="width:56px;height:28px;border-radius:10px;background:linear-gradient(135deg,#E06943,#562C7C);flex-shrink:0;"></div>') +
+        '<img class="vn-logo" src="' + logoUrl + '" alt="Voice Ninja"/>' +
         '<div class="vn-voice-bars"><span></span><span></span><span></span><span></span></div>' +
       '</div>' +
-      '<button id="vn-btn" type="button">Start voice chat</button>' +
+      '<button id="vn-btn" type="button" style="background:' + config.appearance.primary_color + ';">Start voice chat</button>' +
       '</div>' +
       '<div id="vn-status"></div>' +
+      (config.appearance.show_branding ? '<div style="font-size:9px;text-align:center;margin-top:8px;opacity:0.5;">Powered by Voice Ninja</div>' : '') +
       '</div></div>';
     document.body.appendChild(div);
 
     var btn = document.getElementById('vn-btn');
     var statusEl = document.getElementById('vn-status');
+    var prechatContainer = document.getElementById('vn-prechat-container');
+    var mainControls = document.getElementById('vn-main-controls');
+    var startPrechatBtn = document.getElementById('vn-start-prechat');
+    
     var connected = false;
     var client = null;
 
-    function VoiceNinjaClient() {
+    function VoiceNinjaClient(url) {
+      this.wsUrl = url;
       this.ws = null;
       this.audioContext = null;
       this.mic = null;
       this.processor = null;
-      this.conversationReady = false;
       this.audioReady = false;
       this.SAMPLE_RATE = 16000;
       this.audioQueue = [];
@@ -288,7 +343,7 @@ def _get_embed_script_content(agent_id: int) -> str:
     VoiceNinjaClient.prototype.connect = function() {
       var self = this;
       return new Promise(function(resolve, reject) {
-        self.ws = new WebSocket(wsUrl);
+        self.ws = new WebSocket(self.wsUrl);
         self.ws.onopen = function() {
           self.ws.send(JSON.stringify({ type: 'conversation_init', language: 'en', model: 'eleven_turbo_v2' }));
           resolve();
@@ -296,7 +351,6 @@ def _get_embed_script_content(agent_id: int) -> str:
         self.ws.onmessage = function(ev) {
           try {
             var msg = JSON.parse(ev.data);
-            if (msg.type === 'conversation_ready') self.conversationReady = true;
             if (msg.type === 'audio_interface_ready') {
               self.audioReady = true;
               if (self.audioContext) self.startStreaming();
@@ -305,7 +359,6 @@ def _get_embed_script_content(agent_id: int) -> str:
               var buf = Uint8Array.from(atob(msg.data_b64), function(c) { return c.charCodeAt(0); });
               self.queuePlay(buf);
             }
-            if (msg.type === 'error') statusEl.textContent = msg.message || 'Error';
           } catch (e) {}
         };
         self.ws.onclose = function() {
@@ -318,7 +371,6 @@ def _get_embed_script_content(agent_id: int) -> str:
           statusEl.textContent = 'Disconnected';
         };
         self.ws.onerror = function() { reject(new Error('WebSocket error')); };
-        setTimeout(function() { if (!self.ws || self.ws.readyState !== 1) reject(new Error('Timeout')); }, 12000);
       });
     };
 
@@ -382,10 +434,7 @@ def _get_embed_script_content(agent_id: int) -> str:
 
     VoiceNinjaClient.prototype.stopPlayback = function() {
       this.audioQueue = [];
-      if (this.currentSource) {
-        try { this.currentSource.stop(); } catch (e) {}
-        this.currentSource = null;
-      }
+      if (this.currentSource) { try { this.currentSource.stop(); } catch (e) {} this.currentSource = null; }
       this.isPlaying = false;
     };
 
@@ -396,60 +445,99 @@ def _get_embed_script_content(agent_id: int) -> str:
       if (this.ws) this.ws.close();
     };
 
+    async function submitLead() {
+        var leadData = {
+            name: document.getElementById('vn-lead-name')?.value,
+            email: document.getElementById('vn-lead-email')?.value,
+            phone: document.getElementById('vn-lead-phone')?.value
+        };
+        var resp = await fetch(leadUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(leadData)
+        }).then(r => r.json());
+        if (resp && resp.id) return resp;
+        return null;
+    }
+
     btn.addEventListener('click', function() {
       if (connected) {
-        if (client) client.disconnect();
-        var w = document.getElementById('vn-indicator-wrap');
-        if (w) w.classList.remove('vn-speaking');
-        btn.textContent = 'Start voice chat';
-        btn.classList.remove('vn-end');
-        statusEl.textContent = 'Disconnected';
+        client.disconnect();
         return;
       }
+      
+      if (config.prechat.enable_prechat) {
+          mainControls.style.display = 'none';
+          prechatContainer.style.display = 'block';
+      } else {
+          startCall();
+      }
+    });
+
+    startPrechatBtn.addEventListener('click', async function() {
+        var resp = await submitLead();
+        if (resp && resp.id) window.voiceNinjaLeadId = resp.id;
+        prechatContainer.style.display = 'none';
+        mainControls.style.display = 'flex';
+        startCall();
+    });
+
+    function startCall() {
       statusEl.textContent = 'Connecting...';
-      client = new VoiceNinjaClient();
+      var wsUrlWithLead = wsUrl;
+      if (window.voiceNinjaLeadId) {
+          wsUrlWithLead += (wsUrlWithLead.indexOf('?') === -1 ? '?' : '&') + 'lead_id=' + window.voiceNinjaLeadId;
+      }
+      client = new VoiceNinjaClient(wsUrlWithLead);
       client.connect().then(function() {
         connected = true;
         btn.textContent = 'End call';
         btn.classList.add('vn-end');
-        statusEl.textContent = 'Connecting audio...';
+        statusEl.textContent = '';
         client.unlockAndStream();
       }).catch(function(e) {
         statusEl.textContent = 'Connection failed';
       });
-    });
+    }
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', injectWidget);
+    document.addEventListener('DOMContentLoaded', init);
   } else {
-    injectWidget();
+    init();
   }
 })();
-""" % (agent_id,)
+""" % (public_id,)
 
 
 # ---------- WebSocket proxy ----------
 
 
-@router.websocket("/ws/{agent_id}")
-async def web_agent_ws(websocket: WebSocket, agent_id: int):
+@router.websocket("/ws/{public_id}")
+async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int] = None):
     await websocket.accept()
-    logger.info("Web agent WS connected for agent_id=%s", agent_id)
+    logger.info("Web agent WS connected for public_id=%s", public_id)
 
     # WebSocket has no request-scoped session; use db() context
     with db():
-        agent = (
-            db.session.query(AgentModel)
-            .options(selectinload(AgentModel.agent_languages).selectinload(AgentLanguageBridge.language))
-            .filter(AgentModel.id == agent_id)
-            .first()
-        )
-        if not agent or not agent.elevenlabs_agent_id:
+        web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
+        if not web_agent:
+            await websocket.send_json({"type": "error", "message": "Web Agent not found"})
+            await websocket.close(code=1008)
+            return
+        
+        if not web_agent.agent or not web_agent.agent.elevenlabs_agent_id:
             await websocket.send_json({"type": "error", "message": "Agent not found or not configured"})
             await websocket.close(code=1008)
             return
-        elevenlabs_agent_id = agent.elevenlabs_agent_id
+        
+        if not web_agent.is_enabled:
+            await websocket.send_json({"type": "error", "message": "Web Agent is disabled"})
+            await websocket.close(code=1008)
+            return
+        elevenlabs_agent_id = web_agent.agent.elevenlabs_agent_id
+        agent_id = web_agent.agent_id
+        user_id = web_agent.user_id
 
     # Use elevenlabs_agent_id (and agent_id) after block; no further DB access in this handler
     call_id = f"web_{agent_id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
@@ -562,6 +650,53 @@ async def web_agent_ws(websocket: WebSocket, agent_id: int):
         if conversation:
             conversation.end_session()
             conversation.wait_for_session_end()
+            
+            # Use ElevenLabs internal state to get conversation_id if possible
+            # Based on SDK, it might be in conversation.session_id or similar
+            # If not, we might need a different approach, but let's try to get it
+            conv_id = conversation._conversation_id
+            
+            if conv_id:
+                logger.info("Captured conversation_id: %s", conv_id)
+                try:
+                    el_conv = ElevenLabsConversation()
+                    metadata = await asyncio.to_thread(
+                        el_conv.extract_conversation_metadata,
+                        conv_id
+                    )
+                    
+                    if metadata:
+                        call_status_enum = (
+                            CallStatusEnum.success
+                            if metadata.get("call_successful")
+                            else CallStatusEnum.failed
+                        )
+                        
+                        with db():
+                            new_conv = ConversationsModel(
+                                agent_id=agent_id,
+                                user_id=user_id,
+                                message_count=metadata.get("message_count"),
+                                duration=metadata.get("duration"),
+                                call_status=call_status_enum,
+                                channel=ChannelEnum.widget,
+                                transcript_summary=metadata.get("transcript_summary"),
+                                elevenlabs_conv_id=conv_id,
+                            )
+                            db.session.add(new_conv)
+                            db.session.commit()
+                            db.session.refresh(new_conv)
+                            
+                            if lead_id:
+                                lead = db.session.query(WebAgentLeadModel).get(lead_id)
+                                if lead:
+                                    lead.conversation_id = new_conv.id
+                                    db.session.commit()
+                                    logger.info("Linked lead %s to conversation %s", lead_id, new_conv.id)
+                except Exception:
+                    logger.error("Error saving conversation: %s", traceback.format_exc())
+    except Exception:
+        pass
     except Exception:
         pass
     try:
@@ -569,4 +704,58 @@ async def web_agent_ws(websocket: WebSocket, agent_id: int):
             await websocket.close()
     except Exception:
         pass
-    logger.info("Web agent WS closed for agent_id=%s", agent_id)
+    logger.info("Web agent WS closed for public_id=%s", public_id)
+
+
+@router.get("/config/{public_id}", response_model=WebAgentPublicConfig)
+def get_public_config(public_id: str):
+    web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
+    if not web_agent:
+        raise HTTPException(status_code=404, detail="Web Agent not found")
+    
+    if not web_agent.is_enabled:
+        raise HTTPException(status_code=403, detail="Web Agent is disabled")
+    
+    return WebAgentPublicConfig(
+        public_id=web_agent.public_id,
+        web_agent_name=web_agent.web_agent_name,
+        appearance={
+            "widget_title": web_agent.widget_title,
+            "widget_subtitle": web_agent.widget_subtitle,
+            "primary_color": web_agent.primary_color,
+            "position": web_agent.position,
+            "show_branding": web_agent.show_branding,
+        },
+        prechat={
+            "enable_prechat": web_agent.enable_prechat,
+            "require_name": web_agent.require_name,
+            "require_email": web_agent.require_email,
+            "require_phone": web_agent.require_phone,
+            "custom_fields": web_agent.custom_fields or [],
+        }
+    )
+
+@router.post("/lead/{public_id}")
+def submit_lead(public_id: str, lead: WebAgentLeadCreate):
+    web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
+    if not web_agent:
+        raise HTTPException(status_code=404, detail="Web Agent not found")
+    
+    if not web_agent.is_enabled:
+        raise HTTPException(status_code=403, detail="Web Agent is disabled")
+    
+    if not web_agent.enable_prechat:
+        raise HTTPException(status_code=400, detail="Pre-chat is not enabled for this agent")
+    
+    new_lead = WebAgentLeadModel(
+        web_agent_id=web_agent.id,
+        name=lead.name,
+        email=lead.email,
+        phone=lead.phone,
+        custom_data=lead.custom_data,
+        conversation_id=lead.conversation_id
+    )
+    db.session.add(new_lead)
+    db.session.commit()
+    db.session.refresh(new_lead)
+    return {"detail": "Lead captured", "id": new_lead.id}
