@@ -426,7 +426,9 @@ class ElevenLabsAgent(BaseElevenLabs):
         """
         logger.info(f"Updating ElevenLabs tool: {tool_id}")
 
-        tool_config = {}
+        tool_config = {
+            "type": "webhook"
+        }
         if name:
             tool_config["name"] = name
         if description:
