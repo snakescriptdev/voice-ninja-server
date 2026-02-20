@@ -36,6 +36,7 @@ def list_web_agents(request: Request, user=Depends(get_current_user)):
     base_url = str(request.base_url).rstrip("/")
     return [
         WebAgentListResponse(
+            id=wa.id,
             web_agent_name=wa.web_agent_name,
             public_id=wa.public_id,
             shareable_link=f"{base_url}/api/v2/web-agent/preview/{wa.public_id}",

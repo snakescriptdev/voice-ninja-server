@@ -52,7 +52,7 @@ class WebAgentListResponse(BaseModel):
     web_agent_name: str
     public_id: str
     shareable_link: str
-    is_enabled: bool
+    is_enabled: bool | None = True
 
 
 
