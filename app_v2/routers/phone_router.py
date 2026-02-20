@@ -25,6 +25,7 @@ from app_v2.core.logger import setup_logger
 from app_v2.core.config import VoiceSettings
 from app_v2.utils.crypto_utils import encrypt_data, decrypt_data
 from twilio.base.exceptions import TwilioRestException
+from app_v2.utils.activity_logger import log_activity
 
 logger = setup_logger(__name__)
 
@@ -113,6 +114,14 @@ async def buy_number(
             db.session.add(new_phone)
             db.session.commit()
             db.session.refresh(new_phone)
+            
+            log_activity(
+                user_id=current_user.id,
+                event_type="phone_purchased",
+                description=f"Purchased phone number: {new_phone.phone_number}",
+                metadata={"phone_id": new_phone.id, "phone_number": new_phone.phone_number}
+            )
+            
             logger.info(f"Phone number {new_phone.phone_number} purchased and saved for user {current_user.id}")
             return new_phone
 
@@ -198,6 +207,13 @@ async def import_phone_number(
                 db.session.commit()
                 db.session.refresh(db_phone)
                 
+                log_activity(
+                    user_id=current_user.id,
+                    event_type="phone_imported",
+                    description=f"Imported phone number: {db_phone.phone_number}",
+                    metadata={"phone_id": db_phone.id, "phone_number": db_phone.phone_number}
+                )
+                
                 # 4. Update webhook to point to our system
                 base_url = get_webhook_base_url()
                 voice_url = f"{base_url}/api/v2/twilio/voice"
@@ -268,9 +284,18 @@ async def delete_phone_number(
                 logger.info(f"Phone number {phone.phone_number} is imported, only removing from local DB")
             
             # Delete from database
+            phone_number = phone.phone_number # Store before delete
             db.session.delete(phone)
             db.session.commit()
-            logger.info(f"Phone number {phone.phone_number} deleted from database for user {current_user.id}")
+            
+            log_activity(
+                user_id=current_user.id,
+                event_type="phone_deleted",
+                description=f"Deleted/Released phone number: {phone_number}",
+                metadata={"phone_number": phone_number}
+            )
+            
+            logger.info(f"Phone number {phone_number} deleted from database for user {current_user.id}")
             return Response(status_code=204)
         except Exception as e:
             logger.error(f"Failed to delete phone number: {str(e)}")
@@ -376,6 +401,18 @@ async def handle_voice_webhook(request: Request):
                 signed_url = el_response.data.get("signed_url")
                 logger.info(f"Connecting call {call_sid} to ElevenLabs agent {agent.agent_name}")
                 
+                log_activity(
+                    user_id=phone.user_id,
+                    event_type="voice_call_initiated",
+                    description=f"Incoming call from {from_number} to agent {agent.agent_name}",
+                    metadata={
+                        "call_sid": call_sid,
+                        "from_number": from_number,
+                        "to_number": to_number,
+                        "agent_id": agent.id
+                    }
+                )
+
                 # Return TwiML to connect to ElevenLabs WebSocket
                 twiml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <Response>

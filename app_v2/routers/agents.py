@@ -7,6 +7,7 @@ from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 import math
 from app_v2.utils.llm_utils import generate_system_prompt_async
+from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import (
@@ -28,9 +29,8 @@ from app_v2.databases.models import (
     VariablesModel
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
+from app_v2.utils.activity_logger import log_activity
 from app_v2.core.logger import setup_logger
-from app_v2.utils.elevenlabs import ElevenLabsAgent
-
 logger = setup_logger(__name__)
 
 router = APIRouter(
@@ -482,6 +482,13 @@ async def create_agent(
 
         db.session.commit()
         db.session.refresh(new_agent)
+
+        log_activity(
+            user_id=user_id,
+            event_type="agent_created",
+            description=f"Created agent: {new_agent.agent_name}",
+            metadata={"agent_id": new_agent.id, "elevenlabs_agent_id": elevenlabs_agent_id}
+        )
     except Exception as db_error:
         db.session.rollback()
         if elevenlabs_agent_id:
@@ -865,6 +872,13 @@ async def update_agent(
 
     db.session.commit()
     db.session.refresh(agent)
+
+    log_activity(
+        user_id=current_user.id,
+        event_type="agent_updated",
+        description=f"Updated agent: {agent.agent_name}",
+        metadata={"agent_id": agent.id, "elevenlabs_agent_id": agent.elevenlabs_agent_id}
+    )
 
     return agent_to_read(agent)
 
