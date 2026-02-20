@@ -8,8 +8,9 @@ from fastapi_sqlalchemy import db
 from sqlalchemy.orm import selectinload
 
 from app_v2.databases.models import AgentModel, AgentLanguageBridge, WebAgentModel, UnifiedAuthModel
-from app_v2.schemas.web_agent_schema import WebAgentConfig, WebAgentConfigResponse, WebAgentListResponse,WebAgentConfigUpdate
+from app_v2.schemas.web_agent_schema import WebAgentConfig, WebAgentConfigResponse, WebAgentListResponse, WebAgentConfigUpdate
 from sqlalchemy.exc import NoResultFound
+from app_v2.utils.activity_logger import log_activity
 import uuid
 from fastapi import Depends
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
@@ -71,6 +72,14 @@ def create_web_agent(request: Request, config: WebAgentConfig, user=Depends(get_
   )
   db.session.add(web_agent)
   db.session.commit()
+  
+  log_activity(
+      user_id=user.id,
+      event_type="web_agent_created",
+      description=f"Created web agent: {web_agent.web_agent_name}",
+      metadata={"web_agent_id": web_agent.id, "public_id": web_agent.public_id}
+  )
+
   base_url = str(request.base_url).rstrip("/")
   shareable_link = f"{base_url}/api/v2/web-agent/preview/{public_id}"
   return WebAgentConfigResponse(
@@ -229,6 +238,13 @@ def update_web_agent(
         "require_phone": web_agent.require_phone,
         "custom_fields": web_agent.custom_fields or [],
     }
+
+    log_activity(
+      user_id=user.id,
+      event_type="web_agent_updated",
+      description=f"Created web agent: {web_agent.web_agent_name}",
+      metadata={"web_agent_id": web_agent.id, "public_id": web_agent.public_id}
+  )
 
     return WebAgentConfigResponse(
         id=web_agent.id,

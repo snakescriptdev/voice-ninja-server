@@ -608,3 +608,17 @@ class WebAgentLeadModel(Base):
 
     web_agent = relationship("WebAgentModel", back_populates="leads")
     # conversations = relationship("ConversationsModel",back_populates="web_agent")
+
+class ActivityLogModel(Base):
+    __tablename__ = "activity_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
+    
+    event_type: Mapped[str] = mapped_column(String(100), index=True) # e.g., agent_created, call_made
+    description: Mapped[str] = mapped_column(Text)
+    metadata_json: Mapped[dict | None] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True) # Renamed to avoid reserved word confusion if any
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user = relationship("UnifiedAuthModel")
