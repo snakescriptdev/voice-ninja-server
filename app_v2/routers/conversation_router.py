@@ -4,6 +4,7 @@ from sqlalchemy.orm import joinedload
 from datetime import timedelta
 from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
+from app_v2.utils.activity_logger import log_activity
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
 import io
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
@@ -124,6 +125,13 @@ def delete_conversation(conversation_id: int,current_user= Depends(get_current_u
 		try:
 			db.session.delete(conv)
 			db.session.commit()
+			
+			log_activity(
+				user_id=current_user.id,
+				event_type="conversation_deleted",
+				description=f"Deleted conversation: {elevenlabs_conv_id}",
+				metadata={"conversation_id": conversation_id, "elevenlabs_conv_id": elevenlabs_conv_id}
+			)
 		except Exception as e:
 			db.session.rollback()
 			raise HTTPException(status_code=500, detail="Failed to delete conversation from DB")

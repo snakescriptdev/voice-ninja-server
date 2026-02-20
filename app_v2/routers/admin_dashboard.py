@@ -2,9 +2,13 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from app_v2.utils.jwt_utils import is_admin
 from datetime import datetime
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import UnifiedAuthModel, AgentModel,PhoneNumberService
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel
+from app_v2.schemas.activity_schema import ActivityLogResponse
+from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
+from app_v2.utils.time_utils import format_time_ago
+# from elevenlabs
 
 
 logger = setup_logger(__name__)
@@ -12,28 +16,10 @@ logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/admin/dashboard",tags=["Admin"])
 
-def format_time_ago(dt: datetime) -> str:
-    now = datetime.utcnow()
-    diff = now - dt
+# ... (format_time_ago logic)
 
-    if diff.days > 365:
-        years = diff.days // 365
-        return f"{years} year{'s' if years > 1 else ''} ago"
-    if diff.days > 30:
-        months = diff.days // 30
-        return f"{months} month{'s' if months > 1 else ''} ago"
-    if diff.days > 0:
-        return f"{diff.days} day{'s' if diff.days > 1 else ''} ago"
-    
-    seconds = diff.seconds
-    if seconds > 3600:
-        hours = seconds // 3600
-        return f"{hours} hour{'s' if hours > 1 else ''} ago"
-    if seconds > 60:
-        minutes = seconds // 60
-        return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
-    
-    return "just now"
+
+
 
 
 
@@ -138,3 +124,10 @@ def get_agent_count():
         )
 
 
+
+
+
+
+
+
+#eleven labs useage tracking
