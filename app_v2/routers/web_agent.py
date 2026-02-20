@@ -752,8 +752,7 @@ def submit_lead(public_id: str, lead: WebAgentLeadCreate):
         name=lead.name,
         email=lead.email,
         phone=lead.phone,
-        custom_data=lead.custom_data,
-        conversation_id=lead.conversation_id
+        custom_data=lead.custom_data
     )
     db.session.add(new_lead)
     db.session.commit()

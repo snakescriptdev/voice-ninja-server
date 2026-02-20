@@ -84,7 +84,6 @@ class WebAgentLeadCreate(BaseModel):
     email: Optional[str] = None
     phone: Optional[str] = None
     custom_data: Optional[list] = None
-    conversation_id: Optional[int] = None
 
 class WebAgentConfigUpdate(BaseModel):
     web_agent_name: Optional[str] = None
