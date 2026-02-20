@@ -15,6 +15,8 @@ from .web_agent import router as web_agent_router
 from .websocket_router import router as websocket_router
 from .conversation_router import router as conversation_router
 from .web_agent_config import router as web_agent_config_router
+from .user_dashboard import router as user_dashboard_router
+from .admin_dashboard import router as admin_dashboard_router
 
-__all__ = ['otp_router', 'health_router', 'google_auth_router', 'profile_router', "agent_router", "ai_model_router", "lang_router", "voice_router", "function_router", "knowledge_base_router", "phone_router", "web_agent_router", "websocket_router","conversation_router","web_agent_config_router"]
+__all__ = ['otp_router', 'health_router', 'google_auth_router', 'profile_router', "agent_router", "ai_model_router", "lang_router", "voice_router", "function_router", "knowledge_base_router", "phone_router", "web_agent_router", "websocket_router","conversation_router","web_agent_config_router", "user_dashboard_router","admin_dashboard_router" ]
 

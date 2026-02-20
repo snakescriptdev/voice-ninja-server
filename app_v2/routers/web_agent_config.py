@@ -160,6 +160,8 @@ def update_web_agent(
     # ------------------ Basic Fields ------------------
     if "web_agent_name" in update_data:
         web_agent.web_agent_name = update_data["web_agent_name"]
+    if "is_enabled" in update_data:
+        web_agent.is_enabled = update_data["is_enabled"]
 
     # ------------------ Appearance Update ------------------
     if "appearance" in update_data:
