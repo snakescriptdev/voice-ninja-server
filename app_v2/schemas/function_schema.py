@@ -68,6 +68,7 @@ class BodyField(BaseModel):
     required: Optional[List[str]] = None
     
     model_config = {"extra": "ignore"}
+BodyField.model_rebuild()
 
 
 class RequestBodySchema(BaseModel):

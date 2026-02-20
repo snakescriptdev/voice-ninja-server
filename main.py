@@ -14,7 +14,7 @@ from fastapi_sqlalchemy import DBSessionMiddleware, db
 from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
-from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router,  web_agent_router,websocket_router
+from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router,  web_agent_router,websocket_router,conversation_router,web_agent_config_router
 from app_v2.utils.jwt_utils import HTTPBearer
 
 app = FastAPI(title="Voice Ninja V2 API", version="2.0.0")
@@ -23,16 +23,25 @@ app = FastAPI(title="Voice Ninja V2 API", version="2.0.0")
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Handle Pydantic validation errors and return consistent error format."""
-    # Extract the first error message
     errors = exc.errors()
     if errors:
-        first_error = errors[0]
-        # Get the error message
-        error_msg = first_error.get('msg', 'Validation error')
-        # Clean up the message - remove "Value error, " prefix if present
-        if error_msg.startswith('Value error, '):
-            error_msg = error_msg.replace('Value error, ', '')
-        
+        # Build a list of field errors
+        field_errors = []
+        for err in errors:
+            loc = err.get('loc', [])
+            field = loc[-1] if loc else None
+            msg = err.get('msg', 'Invalid value')
+            if field:
+                # Clean up message for required fields
+                if msg.lower().startswith('field required'):
+                    field_errors.append(f"Missing required field: '{field}'")
+                elif msg.lower().startswith('none is not an allowed value'):
+                    field_errors.append(f"Field '{field}' cannot be null")
+                else:
+                    field_errors.append(f"Field '{field}': {msg}")
+            else:
+                field_errors.append(msg)
+        error_msg = "; ".join(field_errors)
         return JSONResponse(
             status_code=400,
             content={
@@ -43,7 +52,6 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
                 }
             }
         )
-    
     return JSONResponse(
         status_code=400,
         content={
@@ -160,7 +168,8 @@ app.include_router(function_router)
 app.include_router(knowledge_base_router)
 app.include_router(web_agent_router)
 app.include_router(websocket_router)
-
+app.include_router(conversation_router)
+app.include_router(web_agent_config_router)
 
 @app.get("/", tags=["System"])
 async def root():

@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
-from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus
+from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -11,6 +11,7 @@ import bcrypt
 import os
 from datetime import datetime
 from app_v2.core.config import VoiceSettings
+import uuid
 
 
 # Database configuration
@@ -148,6 +149,8 @@ class UnifiedAuthModel(Base):
     twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", uselist=False, cascade="all, delete-orphan")
     knowledge_bases = relationship("KnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
     functions = relationship("FunctionModel",back_populates="user",cascade="all, delete-orphan")
+    conversations = relationship("ConversationsModel",back_populates="user",cascade="all, delete-orphan")
+    web_agents = relationship("WebAgentModel", back_populates="user",cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -247,6 +250,7 @@ class AgentModel(Base):
     created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     built_in_tools: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True, default={})
+    # is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     
     user = relationship("UnifiedAuthModel",back_populates="agents")
 
@@ -259,6 +263,8 @@ class AgentModel(Base):
     variables = relationship("VariablesModel",back_populates="agent",cascade="all, delete-orphan")
     phone_number = relationship("PhoneNumberService",back_populates="agent")
     agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent",cascade="all, delete-orphan", order_by="AgentKnowledgeBaseBridge.id")
+    conversations = relationship("ConversationsModel",back_populates="agent",cascade="all, delete-orphan")
+    web_agent = relationship("WebAgentModel",back_populates="agent",cascade="all, delete-orphan")
 
 
 
@@ -505,3 +511,100 @@ class TwilioUserCreds(Base):
     auth_token: Mapped[str] = mapped_column(String,nullable=False)
 
     user = relationship("UnifiedAuthModel", back_populates="twilio_user_creds")
+
+
+class ConversationsModel(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True)
+    agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"),nullable=False,index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("unified_auth.id"),nullable=False,index=True)
+    message_count: Mapped[int] = mapped_column(Integer,nullable=True)
+    duration: Mapped[int] = mapped_column(Integer,nullable=True)
+    call_status: Mapped[CallStatusEnum] = mapped_column(Enum(CallStatusEnum),nullable=True)
+    phone_number_id: Mapped[int] = mapped_column(Integer,ForeignKey("phone_number_service.id"),nullable=True)
+    channel: Mapped[ChannelEnum] = mapped_column(Enum(ChannelEnum),nullable=True)
+    transcript_summary: Mapped[str] = mapped_column(String,nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime,default= datetime.utcnow)
+    elevenlabs_conv_id: Mapped[str] = mapped_column(String,nullable=True)
+
+    #relationships
+    agent = relationship("AgentModel",back_populates="conversations")
+    user = relationship("UnifiedAuthModel",back_populates="conversations")
+    # web_agent = relationship("WebAgentLeadModel",back_populates="conversations",cascade="all, delete-orphan")
+
+class WebAgentModel(Base):
+    __tablename__ = "web_agents"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    public_id: Mapped[str] = mapped_column(
+        String(36),
+        unique=True,
+        index=True,
+        default=lambda: str(uuid.uuid4())
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("unified_auth.id"),
+        nullable=False
+    )
+
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id"),
+        nullable=False
+    )
+
+    web_agent_name: Mapped[str] = mapped_column(String(255))
+    is_enabled: Mapped[bool] = mapped_column(Boolean,default=True)
+
+    # Appearance
+    widget_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    widget_subtitle: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    primary_color: Mapped[str] = mapped_column(String(20), default="#562C7C")
+
+    position: Mapped[str] = mapped_column(
+        Enum("top-right", "top-left", "bottom-right", "bottom-left", name="widget_position"),
+        default="bottom-right"
+    )
+
+    show_branding: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # Prechat
+    enable_prechat: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_name: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_email: Mapped[bool] = mapped_column(Boolean, default=False)
+    require_phone: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    custom_fields: Mapped[list | None] = mapped_column(MutableList.as_mutable(JSONB), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    # Relationships
+    user = relationship("UnifiedAuthModel", back_populates="web_agents")
+    agent = relationship("AgentModel",back_populates="web_agent")
+    leads = relationship("WebAgentLeadModel", back_populates="web_agent")
+
+
+class WebAgentLeadModel(Base):
+    __tablename__ = "web_agent_leads"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    web_agent_id: Mapped[int] = mapped_column(
+        ForeignKey("web_agents.id"),
+        nullable=False
+    )
+
+    # conversation_id: Mapped[int] = mapped_column(Integer,ForeignKey("conversations.id"),nullable=True)
+
+    name: Mapped[str | None] = mapped_column(String(255))
+    email: Mapped[str | None] = mapped_column(String(255))
+    phone: Mapped[str | None] = mapped_column(String(50))
+
+    custom_data: Mapped[list | None] = mapped_column(MutableList.as_mutable(JSONB))
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    web_agent = relationship("WebAgentModel", back_populates="leads")
+    # conversations = relationship("ConversationsModel",back_populates="web_agent")
