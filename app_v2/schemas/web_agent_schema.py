@@ -9,6 +9,14 @@ class AppearanceConfig(BaseModel):
     position: WidgetPosition
     show_branding: bool = True
 
+
+class AppearanceConfigUpdate(BaseModel):
+    widget_title: Optional[str] = None
+    widget_subtitle: Optional[str] = None
+    primary_color: Optional[str] = None
+    position: Optional[WidgetPosition] = None
+    show_branding: Optional[bool] = None
+
 class CustomFieldSchema(BaseModel):
     field_name: str
     required: bool = False
@@ -21,6 +29,14 @@ class PrechatConfig(BaseModel):
     require_email: bool = False
     require_phone: bool = False
     custom_fields: list[CustomFieldSchema] = []
+
+
+class PrechatConfigUpdate(BaseModel):
+    enable_prechat: Optional[bool] = None
+    require_name: Optional[bool] = None
+    require_email: Optional[bool] = None
+    require_phone: Optional[bool] = None
+    custom_fields: Optional[list[CustomFieldSchema]] = None
 
 
 
@@ -69,3 +85,11 @@ class WebAgentLeadCreate(BaseModel):
     phone: Optional[str] = None
     custom_data: Optional[list] = None
     conversation_id: Optional[int] = None
+
+class WebAgentConfigUpdate(BaseModel):
+    web_agent_name: Optional[str] = None
+    agent_id: Optional[int] = None
+
+    appearance: Optional[AppearanceConfigUpdate] = None
+    prechat: Optional[PrechatConfigUpdate] = None
+    is_enabled: Optional[bool] = None
