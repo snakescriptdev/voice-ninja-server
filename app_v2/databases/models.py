@@ -531,7 +531,7 @@ class ConversationsModel(Base):
     #relationships
     agent = relationship("AgentModel",back_populates="conversations")
     user = relationship("UnifiedAuthModel",back_populates="conversations")
-    web_agent = relationship("WebAgentLeadModel",back_populates="conversations",cascade="all, delete-orphan")
+    # web_agent = relationship("WebAgentLeadModel",back_populates="conversations",cascade="all, delete-orphan")
 
 class WebAgentModel(Base):
     __tablename__ = "web_agents"
@@ -596,7 +596,7 @@ class WebAgentLeadModel(Base):
         nullable=False
     )
 
-    conversation_id: Mapped[int] = mapped_column(Integer,ForeignKey("conversations.id"),nullable=True)
+    # conversation_id: Mapped[int] = mapped_column(Integer,ForeignKey("conversations.id"),nullable=True)
 
     name: Mapped[str | None] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(255))
@@ -607,4 +607,4 @@ class WebAgentLeadModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     web_agent = relationship("WebAgentModel", back_populates="leads")
-    conversations = relationship("ConversationsModel",back_populates="web_agent")
+    # conversations = relationship("ConversationsModel",back_populates="web_agent")
