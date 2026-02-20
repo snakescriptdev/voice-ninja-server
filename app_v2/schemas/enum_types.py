@@ -62,3 +62,18 @@ class GenderEnum(str,Enum):
 class PhoneNumberAssignStatus(str,Enum):
     assigned = "assigned"
     unassigned = "unassigned"
+
+class CallStatusEnum(str,Enum):
+    success = "success"
+    failed = "failed"
+
+class ChannelEnum(str,Enum):
+    chat = "chat"
+    call= "call"
+    widget = "widget"
+
+class WidgetPosition(str,Enum):
+    top_left = "top-left"
+    top_right = "top-right"
+    bottom_left = "bottom-left"
+    bottom_right = "bottom-right"
