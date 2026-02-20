@@ -15,6 +15,7 @@ from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.databases.models import ConversationsModel
 from app_v2.schemas.enum_types import ChannelEnum, CallStatusEnum
+from app_v2.utils.activity_logger import log_activity
 logger = setup_logger(__name__)
 
 router = APIRouter(
@@ -100,6 +101,13 @@ async def websocket_test_agent(
 
     # await websocket.accept()
     logger.info(f"Accepted WebSocket connection for agent {agent_id} (EL: {elevenlabs_agent_id})")
+    with db():
+        log_activity(
+            user_id=user_id,
+            event_type="agent_conversation_started",
+            description=f"Started voice chat for agent: {agent.agent_name if agent else 'Unknown'}",
+            metadata={"agent_id": agent_id, "elevenlabs_agent_id": elevenlabs_agent_id}
+    )
 
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={elevenlabs_agent_id}"
 
@@ -204,6 +212,17 @@ async def websocket_test_agent(
                 task.cancel()
             
             logger.info("WebSocket connection flow completed")
+            with db():
+                log_activity(
+                    user_id=user_id,
+                    event_type="agent_conversation_completed",
+                    description=f"Completed voice chat for agent: {agent.agent_name if agent else 'Unknown'}",
+                    metadata={
+                    "agent_id": agent_id, 
+                    "elevenlabs_agent_id": elevenlabs_agent_id,
+                    "conversation_id": conversation_id
+                }
+            )
 
 # ---------------- FETCH & STORE CONVERSATION ---------------- #
 
