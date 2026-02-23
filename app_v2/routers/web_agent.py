@@ -616,7 +616,7 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
             try:
                 config = ConversationInitiationData(
                     user_id=f"web_{agent_id}",
-                    conversation_config_override={"agent": {"language": selected_language}},
+                    # conversation_config_override={"agent": {"language": selected_language}},
                     extra_body={"model": selected_model},
                     dynamic_variables={"call_id": call_id},
                 )
@@ -692,6 +692,7 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                                 channel=ChannelEnum.widget,
                                 transcript_summary=metadata.get("transcript_summary"),
                                 elevenlabs_conv_id=conv_id,
+                                cost=metadata.get("cost")
                             )
                             db.session.add(new_conv)
                             db.session.commit()

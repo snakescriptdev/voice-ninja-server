@@ -8,7 +8,13 @@ from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
 from app_v2.utils.time_utils import format_time_ago
-# from elevenlabs
+from elevenlabs import ElevenLabs
+from app_v2.core.config import VoiceSettings
+from elevenlabs import ElevenLabs
+from datetime import datetime, timezone
+
+client = ElevenLabs(api_key=VoiceSettings.ELEVENLABS_API_KEY)
+
 
 
 logger = setup_logger(__name__)
@@ -127,7 +133,76 @@ def get_agent_count():
 
 
 
+@router.get("/elevenlabs/usage-and-billing")
+def get_elevenlabs_usage_and_billing():
+    try:
+        # Fetch subscription from ElevenLabs
+        subscription = client.user.subscription.get()
 
+        if not subscription:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Subscription information not found."
+            )
 
+        # Safely format reset time
+        next_reset = None
+        if getattr(subscription, "next_character_count_reset_unix", None):
+            try:
+                next_reset = datetime.fromtimestamp(
+                    subscription.next_character_count_reset_unix,
+                    tz=timezone.utc
+                ).strftime("%Y-%m-%d %H:%M:%S %Z")
+            except Exception:
+                next_reset = None
 
-#eleven labs useage tracking
+        billing_summary = {
+            "tier": getattr(subscription, "tier", None),
+            "currency": getattr(subscription, "currency", None),
+            "billing_period": getattr(subscription, "billing_period", None),
+            "has_open_invoices": getattr(subscription, "has_open_invoices", None),
+            "character_count": getattr(subscription, "character_count", 0),
+            "character_limit": getattr(subscription, "character_limit", 0),
+            "next_character_count_reset": next_reset,
+        }
+
+        # Handle next invoice safely
+        if getattr(subscription, "next_invoice", None):
+            inv = subscription.next_invoice
+
+            next_payment_attempt = None
+            if getattr(inv, "next_payment_attempt_unix", None):
+                try:
+                    next_payment_attempt = datetime.fromtimestamp(
+                        inv.next_payment_attempt_unix,
+                        tz=timezone.utc
+                    ).strftime("%Y-%m-%d %H:%M:%S %Z")
+                except Exception:
+                    next_payment_attempt = None
+
+            billing_summary["next_invoice"] = {
+                "amount_due_usd": (
+                    inv.amount_due_cents / 100
+                    if getattr(inv, "amount_due_cents", None)
+                    else None
+                ),
+                "next_payment_attempt": next_payment_attempt,
+            }
+        else:
+            billing_summary["next_invoice"] = None
+
+        return {
+            "status": "success",
+            "subscription_billing": billing_summary,
+        }
+
+    except HTTPException:
+        # Re-raise FastAPI HTTP exceptions
+        raise
+
+    except Exception as e:
+        logger.error(f"Error fetching ElevenLabs billing info: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch usage and billing information from ElevenLabs."
+        )

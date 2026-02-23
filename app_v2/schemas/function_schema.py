@@ -172,10 +172,24 @@ class FunctionCreateSchema(BaseModel):
     api_config: ApiSchema
 
 
+class ApiUpdateSchema(BaseModel):
+    url: Optional[str] = None
+    method: Optional[HttpMethod] = None
+    request_headers: Optional[Dict[str, str]] = None
+    path_params_schema: Optional[Dict[str, PrimitiveField]] = None
+    query_params_schema: Optional[QueryParamsSchema] = None
+    request_body_schema: Optional[RequestBodySchema] = None
+    content_type: Optional[ContentType] = None
+    response_variables: Optional[Dict[str, str]] = None
+
+    model_config = {"extra": "forbid"}
+
+
 class FunctionUpdateSchema(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = Field(None, min_length=10)
-    api_config: Optional[ApiSchema] = None
+    api_config: Optional[ApiUpdateSchema] = None
+    response_variables: Optional[Dict[str, str]] = None # Allow top-level update too
 
 
 class FunctionRead(BaseModel):

@@ -340,7 +340,7 @@ class AgentLanguageBridge(Base):
 class FunctionModel(Base):
     __tablename__ = "functions"
     id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True,autoincrement=True)
-    name: Mapped[str] = mapped_column(String,unique=True,nullable=False)
+    name: Mapped[str] = mapped_column(String,nullable=False)
     description: Mapped[str] = mapped_column(String,nullable=False)
     elevenlabs_tool_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"),nullable=True)
@@ -527,7 +527,7 @@ class ConversationsModel(Base):
     transcript_summary: Mapped[str] = mapped_column(String,nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime,default= datetime.utcnow)
     elevenlabs_conv_id: Mapped[str] = mapped_column(String,nullable=True)
-
+    cost: Mapped[int] = mapped_column(Integer,nullable=True)
     #relationships
     agent = relationship("AgentModel",back_populates="conversations")
     user = relationship("UnifiedAuthModel",back_populates="conversations")
