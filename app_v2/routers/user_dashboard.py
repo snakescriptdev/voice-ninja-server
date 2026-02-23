@@ -1,9 +1,17 @@
 from fastapi import APIRouter, status, Depends,HTTPException
 from fastapi_sqlalchemy import db
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel
+from sqlalchemy import func
 from app_v2.schemas.pagination import PaginatedResponse
-from app_v2.schemas.user_dashboard import UserDashboardAgentResponse,UserDashboardPhoneNumberResponse
+from app_v2.schemas.user_dashboard import (
+    UserDashboardAgentResponse,
+    UserDashboardPhoneNumberResponse,
+    UserAnalyticsResponse,
+    HourlyDistribution,
+    AgentAnalytics,
+    ChannelDistribution
+)
 from app_v2.core.logger import setup_logger
 from app_v2.utils.time_utils import format_time_ago
 from math import ceil
@@ -115,4 +123,93 @@ def get_global_activities(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
+        )
+
+@router.get("/analytics", response_model=UserAnalyticsResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_analytics(current_user: UnifiedAuthModel = Depends(get_current_user)):
+    try:
+        # 1. Overall stats
+        total_calls = db.session.query(func.count(ConversationsModel.id)).filter(
+            ConversationsModel.user_id == current_user.id
+        ).scalar() or 0
+        
+        avg_duration = db.session.query(func.avg(ConversationsModel.duration)).filter(
+            ConversationsModel.user_id == current_user.id
+        ).scalar() or 0.0
+        
+        # 2. Hourly distribution
+        hourly_data = db.session.query(
+            func.extract('hour', ConversationsModel.created_at).label('hour'),
+            func.count(ConversationsModel.id).label('count')
+        ).filter(
+            ConversationsModel.user_id == current_user.id
+        ).group_by('hour').all()
+        
+        def format_hour(h):
+            h = int(h)
+            if h == 0: return "12 AM"
+            if h == 12: return "12 PM"
+            if h < 12: return f"{h} AM"
+            return f"{h-12} PM"
+
+        hourly_list = [
+            HourlyDistribution(
+                hour=int(h.hour), 
+                time_label=format_hour(h.hour), 
+                count=h.count
+            ) for h in hourly_data
+        ]
+        
+        # 3. Agent analytics
+        agent_data = db.session.query(
+            AgentModel.id.label('agent_id'),
+            AgentModel.agent_name,
+            func.count(ConversationsModel.id).label('call_count'),
+            func.avg(ConversationsModel.duration).label('avg_duration')
+        ).join(ConversationsModel, AgentModel.id == ConversationsModel.agent_id)\
+         .filter(ConversationsModel.user_id == current_user.id)\
+         .group_by(AgentModel.id, AgentModel.agent_name).all()
+        
+        agent_list = [
+            AgentAnalytics(
+                agent_id=a.agent_id,
+                agent_name=a.agent_name,
+                call_count=a.call_count,
+                avg_duration=round(float(a.avg_duration or 0), 2)
+            ) for a in agent_data
+        ]
+        
+        # 4. Channel distribution
+        channel_data = db.session.query(
+            ConversationsModel.channel,
+            func.count(ConversationsModel.id).label('count')
+        ).filter(
+            ConversationsModel.user_id == current_user.id
+        ).group_by(ConversationsModel.channel).all()
+        
+        channel_list = []
+        for c in channel_data:
+            if c.channel is not None:
+                count = c.count
+                percentage = round((count / total_calls * 100), 2) if total_calls > 0 else 0.0
+                channel_name = str(c.channel.value if hasattr(c.channel, 'value') else c.channel)
+                channel_list.append(ChannelDistribution(
+                    channel=channel_name, 
+                    count=count, 
+                    percentage=percentage
+                ))
+        
+        return UserAnalyticsResponse(
+            total_calls=total_calls,
+            avg_call_duration=round(float(avg_duration), 2),
+            hourly_distribution=hourly_list,
+            agent_analytics=agent_list,
+            channel_distribution=channel_list
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in get_user_analytics: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch analytics data: {str(e)}"
         )

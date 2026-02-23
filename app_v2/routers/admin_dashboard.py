@@ -2,8 +2,10 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from app_v2.utils.jwt_utils import is_admin
 from datetime import datetime
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel
 from app_v2.schemas.activity_schema import ActivityLogResponse
+from app_v2.schemas.admin_dashboard import UserCostItem
+from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
@@ -205,4 +207,62 @@ def get_elevenlabs_usage_and_billing():
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to fetch usage and billing information from ElevenLabs."
+        )
+
+@router.get("/users-cost", response_model=PaginatedResponse[UserCostItem])
+def get_users_cost(
+    skip: int = 0, 
+    limit: int = 10
+):
+    try:
+        # Aggregate cost per user
+        cost_query = db.session.query(
+            ConversationsModel.user_id,
+            func.sum(ConversationsModel.cost).label("total_cost")
+        ).group_by(ConversationsModel.user_id).subquery()
+
+        # Join with UnifiedAuthModel to get user details
+        query = db.session.query(
+            UnifiedAuthModel.id.label("user_id"),
+            UnifiedAuthModel.name,
+            UnifiedAuthModel.username,
+            UnifiedAuthModel.email,
+            func.coalesce(cost_query.c.total_cost, 0).label("total_cost")
+        ).outerjoin(cost_query, UnifiedAuthModel.id == cost_query.c.user_id)
+
+        # Order by total_cost DESC
+        query = query.order_by(func.coalesce(cost_query.c.total_cost, 0).desc())
+
+        # Total count for pagination
+        total_count = query.count()
+
+        # Apply pagination
+        results = query.offset(skip).limit(limit).all()
+
+        items = [
+            UserCostItem(
+                user_id=r.user_id,
+                user_name=r.name or r.username or "Unknown",
+                email=r.email or "",
+                total_cost=float(r.total_cost)
+            ) for r in results
+        ]
+
+        from math import ceil
+        total_pages = ceil(total_count / limit) if limit > 0 else 1
+        current_page = (skip // limit) + 1 if limit > 0 else 1
+
+        return PaginatedResponse(
+            total=total_count,
+            page=current_page,
+            size=limit,
+            pages=total_pages,
+            items=items
+        )
+
+    except Exception as e:
+        logger.error(f"Error in get_users_cost: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch users cost data: {str(e)}"
         )
