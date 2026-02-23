@@ -260,6 +260,7 @@ async def websocket_test_agent(
                         channel=ChannelEnum.chat,
                         transcript_summary=metadata.get("transcript_summary"),
                         elevenlabs_conv_id=conversation_id,   # make sure column exists
+                        cost=metadata.get("cost")
                     )
 
                     db.session.add(conversation_data)
