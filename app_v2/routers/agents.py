@@ -150,7 +150,7 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
                 el_transfers.append(transfer_data)
 
             el_tools["transfer_to_agent"] = {
-                "name": config.name or "agent-transfer",
+                "name": config.name or "transfer_to_agent",
                 "params": {
                     "system_tool_type": "transfer_to_agent",
                     "transfers": el_transfers
