@@ -239,32 +239,71 @@ async def update_function(
         el_params["description"] = function_in.description
         el_update = True
         
+    # Allow top-level response_variables update
+    if function_in.response_variables is not None:
+        if not function.api_endpoint_url:
+            function.api_endpoint_url = FunctionApiConfig(function_id=function_id)
+            db.session.add(function.api_endpoint_url)
+        function.api_endpoint_url.response_variables = function_in.response_variables
+        
     if function_in.api_config is not None:
         api_config = function.api_endpoint_url
         if not api_config:
-            # Should not happen if data is consistent
             api_config = FunctionApiConfig(function_id=function_id)
             db.session.add(api_config)
             
-        # Encrypt auth-related headers
-        headers = function_in.api_config.request_headers or {}
-        sensitive_keys = {"authorization", "x-api-key", "api-key", "token"}
-        encrypted_headers = {}
-        for k, v in headers.items():
+        # Update fields only if provided
+        if function_in.api_config.url:
+            api_config.endpoint_url = function_in.api_config.url
+        if function_in.api_config.method:
+            api_config.http_method = function_in.api_config.method
+            
+        if function_in.api_config.request_headers is not None:
+            headers = function_in.api_config.request_headers
+            sensitive_keys = {"authorization", "x-api-key", "api-key", "token"}
+            encrypted_headers = {}
+            for k, v in headers.items():
+                if k.lower() in sensitive_keys:
+                    encrypted_headers[k] = encrypt_data(v)
+                else:
+                    encrypted_headers[k] = v
+            api_config.headers = encrypted_headers
+
+        if function_in.api_config.path_params_schema is not None:
+            api_config.path_params = {k: v.model_dump(exclude_none=True) for k, v in function_in.api_config.path_params_schema.items()}
+        if function_in.api_config.query_params_schema is not None:
+            api_config.query_params = function_in.api_config.query_params_schema.model_dump(exclude_none=True)
+        if function_in.api_config.request_body_schema is not None:
+            api_config.body_schema = function_in.api_config.request_body_schema.model_dump()
+        if function_in.api_config.response_variables is not None:
+            api_config.response_variables = function_in.api_config.response_variables
+
+        # Decrypt auth-related headers for ElevenLabs sync
+        headers_to_sync = api_config.headers or {}
+        decrypted_headers = {}
+        for k, v in headers_to_sync.items():
             if k.lower() in sensitive_keys:
-                encrypted_headers[k] = encrypt_data(v)
+                try:
+                    decrypted_headers[k] = decrypt_data(v)
+                except Exception:
+                    decrypted_headers[k] = v
             else:
-                encrypted_headers[k] = v
+                decrypted_headers[k] = v
 
-        api_config.endpoint_url = function_in.api_config.url
-        api_config.http_method = function_in.api_config.method
-        api_config.headers = encrypted_headers
-        api_config.path_params = {k: v.model_dump(exclude_none=True) for k, v in function_in.api_config.path_params_schema.items()} if function_in.api_config.path_params_schema else None
-        api_config.query_params = function_in.api_config.query_params_schema.model_dump(exclude_none=True) if function_in.api_config.query_params_schema else None
-        api_config.body_schema = function_in.api_config.request_body_schema.model_dump() if function_in.api_config.request_body_schema else None
-        api_config.response_variables = function_in.api_config.response_variables
-
-        el_params["api_schema"] = function_in.api_config
+        # Merged data for ElevenLabs
+        api_config_data = {
+            "url": api_config.endpoint_url,
+            "method": api_config.http_method,
+            "request_headers": decrypted_headers,
+            "path_params_schema": api_config.path_params,
+            "query_params_schema": api_config.query_params,
+            "request_body_schema": api_config.body_schema,
+            "response_variables": api_config.response_variables,
+            "content_type": "application/json" if api_config.body_schema else None,
+        }
+        
+        # Validate merged config via ApiSchema before sending to EL
+        el_params["api_schema"] = ApiSchema(**api_config_data)
         el_update = True
 
     # 2. Sync with ElevenLabs

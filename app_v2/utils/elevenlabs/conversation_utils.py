@@ -146,6 +146,7 @@ class ElevenLabsConversation(BaseElevenLabs):
                         "duration": (conv_data.get("metadata") or {}).get("call_duration_secs"),
                         "call_successful": (conv_data.get("analysis") or {}).get("call_successful", True),
                         "transcript_summary": (conv_data.get("analysis") or {}).get("transcript_summary"),
+                        "cost": (conv_data.get("metadata") or {}).get("cost"),
                     }
 
                     transcript_list = []

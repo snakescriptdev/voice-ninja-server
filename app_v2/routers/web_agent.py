@@ -26,6 +26,7 @@ import uuid
 from fastapi import Depends
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.core.logger import setup_logger
+from app_v2.utils.activity_logger import log_activity
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 
 logger = setup_logger(__name__)
@@ -538,6 +539,14 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
         elevenlabs_agent_id = web_agent.agent.elevenlabs_agent_id
         agent_id = web_agent.agent_id
         user_id = web_agent.user_id
+        agent_name = web_agent.web_agent_name
+    with db():
+        log_activity(
+            user_id=user_id,
+            event_type="web_agent_chat_started",
+            description=f"Public web chat started for agent: {agent_name}",
+            metadata={"public_id": public_id, "agent_id": agent_id, "lead_id": lead_id}
+    )
 
     # Use elevenlabs_agent_id (and agent_id) after block; no further DB access in this handler
     call_id = f"web_{agent_id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
@@ -607,7 +616,7 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
             try:
                 config = ConversationInitiationData(
                     user_id=f"web_{agent_id}",
-                    conversation_config_override={"agent": {"language": selected_language}},
+                    # conversation_config_override={"agent": {"language": selected_language}},
                     extra_body={"model": selected_model},
                     dynamic_variables={"call_id": call_id},
                 )
@@ -646,6 +655,7 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
         elif msg_type == "end":
             break
 
+    conv_id = None
     try:
         if conversation:
             conversation.end_session()
@@ -682,6 +692,7 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                                 channel=ChannelEnum.widget,
                                 transcript_summary=metadata.get("transcript_summary"),
                                 elevenlabs_conv_id=conv_id,
+                                cost=metadata.get("cost")
                             )
                             db.session.add(new_conv)
                             db.session.commit()
@@ -695,6 +706,14 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                                     logger.info("Linked lead %s to conversation %s", lead_id, new_conv.id)
                 except Exception:
                     logger.error("Error saving conversation: %s", traceback.format_exc())
+
+            with db():
+                log_activity(
+                    user_id=user_id,
+                    event_type="web_agent_chat_ended",
+                    description=f"Public web chat ended for agent",
+                    metadata={"public_id": public_id, "agent_id": agent_id, "conversation_id": conv_id, "lead_id": lead_id}
+            )
     except Exception:
         pass
     except Exception:
