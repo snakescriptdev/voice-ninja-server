@@ -77,3 +77,39 @@ class WidgetPosition(str,Enum):
     top_right = "top-right"
     bottom_left = "bottom-left"
     bottom_right = "bottom-right"
+
+class BillingPeriodEnum(str, Enum):
+    monthly = "monthly"
+    annual = "annual"
+
+class PlanIconEnum(str, Enum):
+    zap = "zap"
+    sparkles = "sparkles"
+    crown = "crown"
+
+class PaymentProviderEnum(str, Enum):
+    razorpay = "razorpay"
+    stripe = "stripe"
+
+class SubscriptionStatusEnum(str, Enum):
+    active = "active"
+    cancelled = "cancelled"
+    expired = "expired"
+    past_due = "past_due"
+
+class PaymentStatusEnum(str, Enum):
+    pending = "pending"
+    success = "success"
+    failed = "failed"
+    refunded = "refunded"
+
+class PaymentTypeEnum(str, Enum):
+    subscription = "subscription"
+    coin_purchase = "coin_purchase"
+    addon = "addon"
+
+class CoinTransactionTypeEnum(str, Enum):
+    credit_subscription = "credit_subscription"
+    credit_purchase = "credit_purchase"
+    debit_usage = "debit_usage"
+    refund = "refund"
