@@ -538,14 +538,15 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
             return
         elevenlabs_agent_id = web_agent.agent.elevenlabs_agent_id
         agent_id = web_agent.agent_id
+        agent_name = web_agent.agent.agent_name
         user_id = web_agent.user_id
-        agent_name = web_agent.web_agent_name
+        web_agent_name = web_agent.web_agent_name
     with db():
         log_activity(
             user_id=user_id,
             event_type="web_agent_chat_started",
             description=f"Public web chat started for agent: {agent_name}",
-            metadata={"public_id": public_id, "agent_id": agent_id, "lead_id": lead_id}
+            metadata={"public_id": public_id, "agent_id": agent_id, "agent_name": agent_name, "web_agent_name": web_agent_name, "lead_id": lead_id}
     )
 
     # Use elevenlabs_agent_id (and agent_id) after block; no further DB access in this handler
@@ -712,7 +713,7 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                     user_id=user_id,
                     event_type="web_agent_chat_ended",
                     description=f"Public web chat ended for agent",
-                    metadata={"public_id": public_id, "agent_id": agent_id, "conversation_id": conv_id, "lead_id": lead_id}
+                    metadata={"public_id": public_id, "agent_id": agent_id, "conversation_id": conv_id, "lead_id": lead_id,"agent_name":agent_name,"web_agent_name":web_agent_name}
             )
     except Exception:
         pass
@@ -726,33 +727,7 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
     logger.info("Web agent WS closed for public_id=%s", public_id)
 
 
-@router.get("/config/{public_id}", response_model=WebAgentPublicConfig)
-def get_public_config(public_id: str):
-    web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
-    if not web_agent:
-        raise HTTPException(status_code=404, detail="Web Agent not found")
-    
-    if not web_agent.is_enabled:
-        raise HTTPException(status_code=403, detail="Web Agent is disabled")
-    
-    return WebAgentPublicConfig(
-        public_id=web_agent.public_id,
-        web_agent_name=web_agent.web_agent_name,
-        appearance={
-            "widget_title": web_agent.widget_title,
-            "widget_subtitle": web_agent.widget_subtitle,
-            "primary_color": web_agent.primary_color,
-            "position": web_agent.position,
-            "show_branding": web_agent.show_branding,
-        },
-        prechat={
-            "enable_prechat": web_agent.enable_prechat,
-            "require_name": web_agent.require_name,
-            "require_email": web_agent.require_email,
-            "require_phone": web_agent.require_phone,
-            "custom_fields": web_agent.custom_fields or [],
-        }
-    )
+
 
 @router.post("/lead/{public_id}")
 def submit_lead(public_id: str, lead: WebAgentLeadCreate):
