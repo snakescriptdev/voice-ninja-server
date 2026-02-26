@@ -33,7 +33,7 @@ router = APIRouter(
 
 @router.get("/web-agents", response_model=list[WebAgentListResponse], openapi_extra={"security": [{"BearerAuth": []}]})
 def list_web_agents(request: Request, user=Depends(get_current_user)):
-    web_agents = db.session.query(WebAgentModel).filter(WebAgentModel.user_id == user.id).all()
+    web_agents = db.session.query(WebAgentModel).filter(WebAgentModel.user_id == user.id).order_by(WebAgentModel.created_at.desc()).all()
     base_url = str(request.base_url).rstrip("/")
     return [
         WebAgentListResponse(
@@ -41,7 +41,9 @@ def list_web_agents(request: Request, user=Depends(get_current_user)):
             web_agent_name=wa.web_agent_name,
             public_id=wa.public_id,
             shareable_link=f"{base_url}/api/v2/web-agent/preview/{wa.public_id}",
-            is_enabled=wa.is_enabled
+            is_enabled=wa.is_enabled,
+            created_at = wa.created_at,
+            agent_name=wa.agent.agent_name if wa.agent else ""
         ) for wa in web_agents
     ]
 
@@ -122,7 +124,7 @@ def get_web_agent(request: Request, public_id: str, user=Depends(get_current_use
     public_id=web_agent.public_id,
     web_agent_name=web_agent.web_agent_name,
     shareable_link=shareable_link,
-    agent_name=agent.agent_name if agent else "",
+    agent_id=agent.id if agent else "",
     is_enabled=web_agent.is_enabled,
     appearance=appearance,
     prechat=prechat,
