@@ -93,10 +93,18 @@ async def websocket_test_agent(
              elevenlabs_agent_id = agent.elevenlabs_agent_id
         else:
              elevenlabs_agent_id = None
+             
+        from app_v2.utils.coin_utils import get_user_coin_balance
+        user_balance = get_user_coin_balance(user_id)
 
     if not elevenlabs_agent_id:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Agent not found")
         logger.error(f"Agent not found for user {user_id}")
+        return
+        
+    if user_balance <= 0:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Insufficient coins")
+        logger.error(f"Insufficient coins for user {user_id}. Balance: {user_balance}")
         return
 
     # await websocket.accept()
@@ -106,7 +114,7 @@ async def websocket_test_agent(
             user_id=user_id,
             event_type="agent_conversation_started",
             description=f"Started voice chat for agent: {agent.agent_name if agent else 'Unknown'}",
-            metadata={"agent_id": agent_id, "elevenlabs_agent_id": elevenlabs_agent_id}
+            metadata={"agent_id": agent_id, "agent_name": agent.agent_name if agent else 'Unknown', "elevenlabs_agent_id": elevenlabs_agent_id}
     )
 
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={elevenlabs_agent_id}"
@@ -219,6 +227,7 @@ async def websocket_test_agent(
                     description=f"Completed voice chat for agent: {agent.agent_name if agent else 'Unknown'}",
                     metadata={
                     "agent_id": agent_id, 
+                    "agent_name": agent.agent_name if agent else 'Unknown',
                     "elevenlabs_agent_id": elevenlabs_agent_id,
                     "conversation_id": conversation_id
                 }
@@ -264,13 +273,21 @@ async def websocket_test_agent(
                     )
 
                     db.session.add(conversation_data)
+                    db.session.flush() # flush to get the conversation ID
+                    
+                    cost = metadata.get("cost")
+                    if cost and cost > 0:
+                        from app_v2.utils.coin_utils import deduct_coins
+                        deduct_coins(user_id=user_id, amount=cost, reference_type="conversation", reference_id=conversation_data.id, commit=False)
+
                     db.session.commit()
                     db.session.refresh(conversation_data)
 
                 logger.info(
                     f"✅ Conversation {conversation_id} stored successfully "
                     f"(duration={metadata.get('duration')}s, "
-                    f"messages={metadata.get('message_count')})"
+                    f"messages={metadata.get('message_count')}, "
+                    f"cost={metadata.get('cost')})"
                 )
 
             except Exception:

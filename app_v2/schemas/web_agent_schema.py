@@ -1,6 +1,7 @@
 from pydantic import BaseModel,AnyHttpUrl
 from typing import Optional,Literal
 from app_v2.schemas.enum_types import WidgetPosition
+from datetime import datetime
 
 class AppearanceConfig(BaseModel):
     widget_title: str | None = None
@@ -54,7 +55,7 @@ class WebAgentConfigResponse(BaseModel):
     public_id: str
     web_agent_name: str
     shareable_link: str
-    agent_name: str
+    agent_id: int
     is_enabled: Optional[bool]
 
     appearance: AppearanceConfig
@@ -69,6 +70,8 @@ class WebAgentListResponse(BaseModel):
     public_id: str
     shareable_link: str
     is_enabled: bool | None = True
+    created_at: datetime
+    agent_name: str
 
 
 

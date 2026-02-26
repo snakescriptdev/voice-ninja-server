@@ -22,7 +22,7 @@ client = ElevenLabs(api_key=VoiceSettings.ELEVENLABS_API_KEY)
 logger = setup_logger(__name__)
 
 
-router = APIRouter(prefix="/admin/dashboard",tags=["Admin"])
+router = APIRouter(prefix="/api/v2/admin/dashboard",tags=["Admin"])
 
 # ... (format_time_ago logic)
 

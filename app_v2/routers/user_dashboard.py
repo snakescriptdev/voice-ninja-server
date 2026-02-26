@@ -1,7 +1,8 @@
 from fastapi import APIRouter, status, Depends,HTTPException
 from fastapi_sqlalchemy import db
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel,UserSubscriptionModel
+
 from sqlalchemy import func
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.schemas.user_dashboard import (
@@ -10,7 +11,8 @@ from app_v2.schemas.user_dashboard import (
     UserAnalyticsResponse,
     HourlyDistribution,
     AgentAnalytics,
-    ChannelDistribution
+    ChannelDistribution,
+    UserSubscriptionResponse
 )
 from app_v2.core.logger import setup_logger
 from app_v2.utils.time_utils import format_time_ago
@@ -213,3 +215,8 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(get_current_user
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch analytics data: {str(e)}"
         )
+
+# @router.get("/get-user-subscription",openapi_extra={"security":[{"BearerAuth":[]}]},response_model=UserSubscriptionResponse )
+# def user_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
+#     plan = db.session.query(UserSubscriptionModel).filter(UserSubscriptionModel.user_id == current_user.id).first()
+#     return plan

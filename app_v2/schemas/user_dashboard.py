@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import List, Optional
-
+from app_v2.schemas.enum_types import BillingPeriodEnum
+from datetime import datetime
 
 class UserDashboardAgentResponse(BaseModel):
     id: int
@@ -34,3 +35,13 @@ class UserAnalyticsResponse(BaseModel):
     hourly_distribution: List[HourlyDistribution]
     agent_analytics: List[AgentAnalytics]
     channel_distribution: List[ChannelDistribution]
+
+class UserSubscriptionResponse(BaseModel):
+    plan_id: int
+    plan_name: str
+    coins_included: int
+    price: int
+    billing_period: BillingPeriodEnum
+    current_period_end: datetime
+    class Config:
+        from_attributes = True
