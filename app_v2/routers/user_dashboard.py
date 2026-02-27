@@ -1,7 +1,7 @@
 from fastapi import APIRouter, status, Depends,HTTPException
 from fastapi_sqlalchemy import db
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel,UserSubscriptionModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel,PlanModel,UserSubscriptionModel
 
 from sqlalchemy import func
 from app_v2.schemas.pagination import PaginatedResponse
@@ -216,7 +216,34 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(get_current_user
             detail=f"Failed to fetch analytics data: {str(e)}"
         )
 
-# @router.get("/get-user-subscription",openapi_extra={"security":[{"BearerAuth":[]}]},response_model=UserSubscriptionResponse )
-# def user_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
-#     plan = db.session.query(UserSubscriptionModel).filter(UserSubscriptionModel.user_id == current_user.id).first()
-#     return plan
+
+def map_subcription_response_db(plan:PlanModel,user_subscription:UserSubscriptionModel):
+    return UserSubscriptionResponse(
+        plan_id=plan.id,
+        plan_name=plan.display_name,
+        coins_included=plan.coins_included,
+        price=plan.price,
+        billing_period=plan.billing_period,
+        current_period_end=user_subscription.current_period_end
+    )
+    
+@router.get("/get-user-subscription",openapi_extra={"security":[{"BearerAuth":[]}]},response_model=UserSubscriptionResponse )
+def user_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
+    try:
+        logger.info(f"Fetching user subscription for user: {current_user.id}")
+        user_subscription = db.session.query(UserSubscriptionModel).filter(UserSubscriptionModel.user_id == current_user.id).first()
+        if not user_subscription:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User subscription not found"
+            )
+        logger.info(f"User subscription found: {user_subscription}")
+        return map_subcription_response_db(user_subscription.plan,user_subscription)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in user_subscription: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch user subscription data: {str(e)}"
+        )
