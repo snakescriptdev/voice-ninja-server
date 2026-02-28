@@ -39,6 +39,14 @@ class BasePaymentProvider(ABC):
     def verify_payment_signature(self, params: Dict[str, str]) -> bool:
         pass
 
+    @abstractmethod
+    def create_order(self, amount: float, currency: str, receipt: str, notes: Optional[Dict] = None) -> Dict[str, Any]:
+        pass
+
+    @abstractmethod
+    def verify_order_signature(self, params: Dict[str, str]) -> bool:
+        pass
+
 class RazorpayProvider(BasePaymentProvider):
     def __init__(self):
         self.client = razorpay.Client(auth=(VoiceSettings.RAZOR_KEY_ID, VoiceSettings.RAZOR_KEY_SECRET))
@@ -110,6 +118,37 @@ class RazorpayProvider(BasePaymentProvider):
             return hmac.compare_digest(generated_signature, razorpay_signature)
 
         except Exception:
+            return False
+
+    def create_order(self, amount: float, currency: str, receipt: str, notes: Optional[Dict] = None) -> Dict[str, Any]:
+        # Razorpay expects amount in smallest currency unit (paisa for INR)
+        amount_in_units = int(amount * 100)
+        data = {
+            "amount": amount_in_units,
+            "currency": currency,
+            "receipt": receipt,
+            "notes": notes or {}
+        }
+        try:
+            order = self.client.order.create(data=data)
+            return order
+        except Exception as e:
+            raise Exception(f"Razorpay order creation failed: {str(e)}")
+
+    def verify_order_signature(self, params: Dict[str, str]) -> bool:
+        try:
+            order_id = params.get("razorpay_order_id")
+            payment_id = params.get("razorpay_payment_id")
+            razorpay_signature = params.get("razorpay_signature")
+            
+            # For orders, the signature is based on order_id + "|" + payment_id
+            return self.client.utility.verify_payment_signature({
+                'razorpay_order_id': order_id,
+                'razorpay_payment_id': payment_id,
+                'razorpay_signature': razorpay_signature
+            })
+        except Exception as e:
+            logger.error(f"Razorpay order signature verification failed: {str(e)}")
             return False
 
     def create_subscription_webhook(
