@@ -2,53 +2,191 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func
 from app_v2.databases.models import CoinsLedgerModel, CoinTransactionTypeEnum
 from app_v2.core.logger import setup_logger
+from sqlalchemy import or_
+from datetime import datetime
 
 logger = setup_logger(__name__)
 
 def get_user_coin_balance(user_id: int) -> int:
     """
-    Returns the current coin balance for a user.
-    It calculates the sum of all coin transactions in the ledger.
+    Returns the current coin balance for a user based on valid credit batches.
+    Sum of remaining_coins where not expired.
     Must be called within an active db() session block.
     """
     try:
-        result = db.session.query(func.sum(CoinsLedgerModel.coins)).filter(
-            CoinsLedgerModel.user_id == user_id
+        now = datetime.utcnow()
+        result = db.session.query(func.sum(CoinsLedgerModel.remaining_coins)).filter(
+            CoinsLedgerModel.user_id == user_id,
+            CoinsLedgerModel.remaining_coins > 0,
+            or_(
+                CoinsLedgerModel.expiry_at == None,
+                CoinsLedgerModel.expiry_at > now
+            )
         ).scalar()
         return result or 0
     except Exception as e:
         logger.error(f"Failed to get coin balance for user {user_id}: {e}")
         return 0
 
-def deduct_coins(user_id: int, amount: int, reference_type: str = None, reference_id: int = None, commit: bool = True) -> bool:
+def deduct_coins(user_id: int, amount: float | int, reference_type: str = None, reference_id: int = None, commit: bool = True) -> bool:
     """
-    Deducts coins from the user's ledger and updates the balance.
-    amount should be a positive integer representing the usage cost.
+    Deducts coins from the user's ledger using FIFO logic on valid credit batches.
+    amount is treated as the raw coin count.
     Must be called within an active db() session block.
     """
-    if amount <= 0:
-        raise Exception("Amount should be greater than 0")
+    coin_amount = int(amount)
+
+    if coin_amount <= 0:
+        if amount > 0: # If it was a small float > 0, deduct at least 1 coin
+             coin_amount = 1
+        else:
+            logger.info(f"Skipping deduction for 0 or negative amount: {amount}")
+            return True
         
     try:
-        current_balance = get_user_coin_balance(user_id)
+        now = datetime.utcnow()
+        # 1. Fetch valid credit batches FIFO with row-level locking
+        batches = db.session.query(CoinsLedgerModel).filter(
+            CoinsLedgerModel.user_id == user_id,
+            CoinsLedgerModel.remaining_coins > 0,
+            or_(
+                CoinsLedgerModel.expiry_at == None,
+                CoinsLedgerModel.expiry_at > now
+            )
+        ).order_by(CoinsLedgerModel.created_at.asc()).with_for_update().all()
         
+        total_available = sum(b.remaining_coins for b in batches)
+        if total_available < coin_amount:
+            logger.warning(f"Insufficient coins for user {user_id}. Needed: {coin_amount}, Available: {total_available}")
+            return False
+            
+        remaining_to_deduct = coin_amount
+        for batch in batches:
+            if remaining_to_deduct <= 0:
+                break
+                
+            if batch.remaining_coins >= remaining_to_deduct:
+                batch.remaining_coins -= remaining_to_deduct
+                remaining_to_deduct = 0
+            else:
+                remaining_to_deduct -= batch.remaining_coins
+                batch.remaining_coins = 0
+        
+        # 2. Create debit entry
+        current_balance = total_available - coin_amount
         ledger_entry = CoinsLedgerModel(
             user_id=user_id,
             transaction_type=CoinTransactionTypeEnum.debit_usage,
-            coins=-amount,
+            coins=-coin_amount,
             reference_type=reference_type,
             reference_id=reference_id,
-            balance_after=current_balance - amount
+            balance_after=current_balance,
+            remaining_coins=0
         )
         db.session.add(ledger_entry)
         
         if commit:
             db.session.commit()
             
-        logger.info(f"Deducted {amount} coins from user {user_id}. New balance: {current_balance - amount}")
+        logger.info(f"Deducted {coin_amount} coins from user {user_id}. New balance: {current_balance}")
         return True
     except Exception as e:
-        logger.error(f"Failed to deduct {amount} coins from user {user_id}: {e}")
+        logger.error(f"Failed to deduct {coin_amount} coins from user {user_id}: {e}")
         if commit:
             db.session.rollback()
         return False
+
+def reset_unused_subscription_coins(user_id: int):
+    """
+    Zeros out remaining coins for all subscription-related credit batches for the user.
+    Creates an 'carry_forward_reset' ledger entry for the total reset amount.
+    """
+    try:
+        # Find all subscription credits with remaining coins
+        subscription_batches = db.session.query(CoinsLedgerModel).filter(
+            CoinsLedgerModel.user_id == user_id,
+            CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.credit_subscription,
+            CoinsLedgerModel.remaining_coins > 0
+        ).all()
+        
+        total_reset = 0
+        for batch in subscription_batches:
+            total_reset += batch.remaining_coins
+            batch.remaining_coins = 0
+            
+        if total_reset > 0:
+            current_balance = get_user_coin_balance(user_id) # Should reflect the reset now
+            ledger_entry = CoinsLedgerModel(
+                user_id=user_id,
+                transaction_type=CoinTransactionTypeEnum.carry_forward_reset,
+                coins=-total_reset,
+                reference_type="carry_forward_reset",
+                balance_after=current_balance,
+                remaining_coins=0
+            )
+            db.session.add(ledger_entry)
+            logger.info(f"Reset {total_reset} subscription coins for user {user_id} due to non-carry-forward policy.")
+            return total_reset
+        return 0
+    except Exception as e:
+        logger.error(f"Failed to reset subscription coins for user {user_id}: {e}")
+        return 0
+
+def expire_user_coins(user_id: int):
+    """
+    Finds all credit batches that have expired but still have remaining coins for a specific user.
+    Zeros them out and creates 'expired' ledger entries.
+    """
+    try:
+        now = datetime.utcnow()
+        expired_batches = db.session.query(CoinsLedgerModel).filter(
+            CoinsLedgerModel.user_id == user_id,
+            CoinsLedgerModel.remaining_coins > 0,
+            CoinsLedgerModel.expiry_at != None,
+            CoinsLedgerModel.expiry_at <= now
+        ).all()
+        
+        total_expired = 0
+        for batch in expired_batches:
+            total_expired += batch.remaining_coins
+            batch.remaining_coins = 0
+            
+        if total_expired > 0:
+            current_balance = get_user_coin_balance(user_id)
+            ledger_entry = CoinsLedgerModel(
+                user_id=user_id,
+                transaction_type=CoinTransactionTypeEnum.expired,
+                coins=-total_expired,
+                reference_type="expiry",
+                balance_after=current_balance,
+                remaining_coins=0
+            )
+            db.session.add(ledger_entry)
+            logger.info(f"Expired {total_expired} coins for user {user_id}.")
+            return total_expired
+        return 0
+    except Exception as e:
+        logger.error(f"Failed to expire coins for user {user_id}: {e}")
+        return 0
+
+def run_expiry_check():
+    """
+    Global expiry check for all users. Ideally run via a background task.
+    """
+    try:
+        now = datetime.utcnow()
+        # Find all users with expired coins
+        expired_users = db.session.query(CoinsLedgerModel.user_id).filter(
+            CoinsLedgerModel.remaining_coins > 0,
+            CoinsLedgerModel.expiry_at != None,
+            CoinsLedgerModel.expiry_at <= now
+        ).distinct().all()
+        
+        for (user_id,) in expired_users:
+            expire_user_coins(user_id)
+            
+        db.session.commit()
+        logger.info("Global expiry check completed successfully.")
+    except Exception as e:
+        logger.error(f"Failed to run global expiry check: {e}")
+        db.session.rollback()

@@ -8,6 +8,7 @@ from app_v2.utils.payment_utils import PaymentProviderFactory
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timedelta
+from app_v2.utils.coin_utils import get_user_coin_balance, reset_unused_subscription_coins
 
 from fastapi.responses import HTMLResponse
 import os
@@ -148,18 +149,18 @@ def verify_subscription(
         db.session.add(payment)
 
         # 6️⃣ Credit Coins
-        # Get current balance
-        last_ledger = db.session.query(CoinsLedgerModel).filter(
-            CoinsLedgerModel.user_id == current_user.id
-        ).order_by(CoinsLedgerModel.id.desc()).first()
+        if not plan.carry_forward_coins:
+            reset_unused_subscription_coins(current_user.id)
 
-        current_balance = last_ledger.balance_after if last_ledger else 0
+        current_balance = get_user_coin_balance(current_user.id)
         new_balance = current_balance + plan.coins_included
 
         ledger_entry = CoinsLedgerModel(
             user_id=current_user.id,
             transaction_type=CoinTransactionTypeEnum.credit_subscription,
             coins=plan.coins_included,
+            remaining_coins=plan.coins_included,
+            expiry_at=current_end,
             reference_type="subscription",
             reference_id=subscription.id,
             balance_after=new_balance

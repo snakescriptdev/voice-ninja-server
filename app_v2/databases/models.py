@@ -586,7 +586,7 @@ class WebAgentModel(Base):
     # Relationships
     user = relationship("UnifiedAuthModel", back_populates="web_agents")
     agent = relationship("AgentModel",back_populates="web_agent")
-    leads = relationship("WebAgentLeadModel", back_populates="web_agent")
+    leads = relationship("WebAgentLeadModel", back_populates="web_agent",cascade="all, delete-orphan")
 
 
 class WebAgentLeadModel(Base):
@@ -643,6 +643,7 @@ class PlanModel(Base):
     currency: Mapped[str] = mapped_column(String(10), default="INR")
 
     coins_included: Mapped[int] = mapped_column(Integer, default=0)
+    carry_forward_coins: Mapped[bool] = mapped_column(Boolean, default=False,server_default="false")
 
     billing_period: Mapped[BillingPeriodEnum] = mapped_column(
         Enum(BillingPeriodEnum),
@@ -792,6 +793,7 @@ class PaymentModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user = relationship("UnifiedAuthModel",back_populates="payments")
+    addon_order = relationship("AddOnCoinOrderModel", back_populates="payment", uselist=False)
 
 class CoinsLedgerModel(Base):
     __tablename__ = "coins_ledger"
@@ -812,8 +814,12 @@ class CoinsLedgerModel(Base):
     reference_id: Mapped[int | None] = mapped_column(Integer)
 
     balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    
+    # New fields for FIFO and Expiry
+    expiry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    remaining_coins: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
     user = relationship("UnifiedAuthModel",back_populates="coins_ledger")
 
@@ -828,7 +834,28 @@ class CoinPackageModel(Base):
     currency: Mapped[str] = mapped_column(String(10), default="INR")
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
+    validity_days: Mapped[int] = mapped_column(Integer,nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+class AddOnCoinOrderModel(Base):
+    __tablename__ = "addon_coin_orders"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
+    bundle_id: Mapped[int] = mapped_column(ForeignKey("coin_packages.id"), nullable=False)
     
+    # Generic provider fields
+    provider: Mapped[PaymentProviderEnum] = mapped_column(Enum(PaymentProviderEnum), nullable=False)
+    provider_order_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    provider_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_signature: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    payment_id: Mapped[int | None] = mapped_column(ForeignKey("payments.id"), nullable=True)
+
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    coins: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[PaymentStatusEnum] = mapped_column(Enum(PaymentStatusEnum), default=PaymentStatusEnum.pending)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    user = relationship("UnifiedAuthModel")
+    bundle = relationship("CoinPackageModel")
+    payment = relationship("PaymentModel", back_populates="addon_order")

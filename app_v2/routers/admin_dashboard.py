@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from app_v2.utils.jwt_utils import is_admin
 from datetime import datetime
+from typing import List
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinPackageModel
 from app_v2.schemas.activity_schema import ActivityLogResponse
-from app_v2.schemas.admin_dashboard import UserCostItem
+from app_v2.schemas.admin_dashboard import UserCostItem, CoinBundleCreate, CoinBundleResponse
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
@@ -265,4 +266,39 @@ def get_users_cost(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch users cost data: {str(e)}"
+        )
+
+@router.post("/coin-bundles", response_model=CoinBundleResponse)
+def create_coin_bundle(data: CoinBundleCreate):
+    try:
+        bundle = CoinPackageModel(
+            name=data.name,
+            coins=data.coins,
+            price=data.price,
+            currency=data.currency,
+            validity_days=data.validity_days,
+            is_active=True
+        )
+        db.session.add(bundle)
+        db.session.commit()
+        db.session.refresh(bundle)
+        return bundle
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating coin bundle: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create coin bundle: {str(e)}"
+        )
+
+@router.get("/coin-bundles", response_model=List[CoinBundleResponse])
+def list_coin_bundles():
+    try:
+        bundles = db.session.query(CoinPackageModel).order_by(CoinPackageModel.created_at.desc()).all()
+        return bundles
+    except Exception as e:
+        logger.error(f"Error listing coin bundles: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch coin bundles: {str(e)}"
         )
