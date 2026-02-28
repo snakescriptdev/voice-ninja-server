@@ -113,3 +113,5 @@ class CoinTransactionTypeEnum(str, Enum):
     credit_purchase = "credit_purchase"
     debit_usage = "debit_usage"
     refund = "refund"
+    expired = "expired"
+    carry_forward_reset = "carry_forward_reset"

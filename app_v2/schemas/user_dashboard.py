@@ -45,3 +45,7 @@ class UserSubscriptionResponse(BaseModel):
     current_period_end: datetime
     class Config:
         from_attributes = True
+
+class UserCoinUsageResponse(BaseModel):
+    available_coins: int
+    this_month_usage: int

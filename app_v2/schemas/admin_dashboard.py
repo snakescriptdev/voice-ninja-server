@@ -29,3 +29,22 @@ class UserCountOverviewResponse(BaseModel):
     total_users: int
     users_by_plan: List[PlanUserCount]
     users: PaginatedResponse[UserDetailItem]
+
+class CoinBundleCreate(BaseModel):
+    name: str
+    coins: int
+    price: float
+    currency: Optional[str] = "INR"
+    validity_days: Optional[int] = None
+
+class CoinBundleResponse(BaseModel):
+    id: int
+    name: str
+    coins: int
+    price: float
+    currency: str
+    is_active: bool
+    validity_days: Optional[int]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}

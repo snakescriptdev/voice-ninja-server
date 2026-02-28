@@ -1,6 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 from fastapi.responses import HTMLResponse
 from fastapi_sqlalchemy import db
+from app_v2.utils.coin_utils import deduct_coins
 from app_v2.databases.models import AgentModel
 import json
 import base64
@@ -272,12 +273,11 @@ async def websocket_test_agent(
                         cost=metadata.get("cost")
                     )
 
-                    db.session.add(conversation_data)
+                    db.sessiaon.add(conversation_data)
                     db.session.flush() # flush to get the conversation ID
                     
                     cost = metadata.get("cost")
                     if cost and cost > 0:
-                        from app_v2.utils.coin_utils import deduct_coins
                         deduct_coins(user_id=user_id, amount=cost, reference_type="conversation", reference_id=conversation_data.id, commit=False)
 
                     db.session.commit()

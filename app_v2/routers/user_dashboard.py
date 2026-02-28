@@ -1,7 +1,10 @@
 from fastapi import APIRouter, status, Depends,HTTPException
 from fastapi_sqlalchemy import db
+from datetime import datetime
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel,PlanModel,UserSubscriptionModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel,PlanModel,UserSubscriptionModel, CoinsLedgerModel
+from app_v2.schemas.enum_types import CoinTransactionTypeEnum
+from app_v2.utils.coin_utils import get_user_coin_balance
 
 from sqlalchemy import func
 from app_v2.schemas.pagination import PaginatedResponse
@@ -12,7 +15,8 @@ from app_v2.schemas.user_dashboard import (
     HourlyDistribution,
     AgentAnalytics,
     ChannelDistribution,
-    UserSubscriptionResponse
+    UserSubscriptionResponse,
+    UserCoinUsageResponse
 )
 from app_v2.core.logger import setup_logger
 from app_v2.utils.time_utils import format_time_ago
@@ -246,4 +250,31 @@ def user_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch user subscription data: {str(e)}"
+        )
+
+@router.get("/coin-usage", response_model=UserCoinUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(get_current_user)):
+    try:
+        # 1. Get current balance
+        balance = get_user_coin_balance(current_user.id)
+        
+        # 2. Get this month's usage
+        now = datetime.utcnow()
+        first_day_of_month = datetime(now.year, now.month, 1)
+        
+        usage = db.session.query(func.abs(func.sum(CoinsLedgerModel.coins))).filter(
+            CoinsLedgerModel.user_id == current_user.id,
+            CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage,
+            CoinsLedgerModel.created_at >= first_day_of_month
+        ).scalar() or 0
+        
+        return UserCoinUsageResponse(
+            available_coins=int(balance),
+            this_month_usage=int(usage)
+        )
+    except Exception as e:
+        logger.error(f"Error in get_user_coin_usage: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch coin usage data: {str(e)}"
         )
