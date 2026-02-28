@@ -295,16 +295,34 @@ def _get_embed_script_content(public_id: str) -> str:
 
     var div = document.createElement('div');
     div.id = 'voice-ninja-widget';
+    // 🔹 NEW: Build custom fields HTML
+var customFieldsHtml = '';
+
+if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
+  config.prechat.custom_fields.forEach(function(field) {
+    var inputType = field.field_type || 'text';
+    var fieldName = field.field_name;
+
+    customFieldsHtml +=
+      '<input ' +
+      'type="' + inputType + '" ' +
+      'id="vn-custom-' + fieldName + '" ' +
+      'placeholder="' + fieldName + '" ' +
+      (field.required ? 'required' : '') +
+      '>';
+  });
+}
     div.innerHTML = vnStyles +
     '<div class="vn-root" style="position:fixed;' + posStyles + 'z-index:99999;">' +
       '<div class="vn-card">' +
       headerHtml +
       '<div id="vn-prechat-container" style="display:none;">' +
         '<div id="vn-prechat">' +
-          (config.prechat.require_name ? '<input type="text" id="vn-lead-name" placeholder="Your Name">' : '') +
-          (config.prechat.require_email ? '<input type="email" id="vn-lead-email" placeholder="Email Address">' : '') +
-          (config.prechat.require_phone ? '<input type="tel" id="vn-lead-phone" placeholder="Phone Number">' : '') +
-        '</div>' +
+  (config.prechat.require_name ? '<input type="text" id="vn-lead-name" placeholder="Your Name">' : '') +
+  (config.prechat.require_email ? '<input type="email" id="vn-lead-email" placeholder="Email Address">' : '') +
+  (config.prechat.require_phone ? '<input type="tel" id="vn-lead-phone" placeholder="Phone Number">' : '') +
+  customFieldsHtml +
+'</div>' +
         '<button id="vn-start-prechat" style="width:100%%;background:#562C7C;color:#fff;border:none;padding:10px;border-radius:8px;cursor:pointer;margin-bottom:10px;">Start Chat</button>' +
       '</div>' +
       '<div id="vn-main-controls" style="display:flex;align-items:center;gap:14px;">' +
@@ -447,19 +465,41 @@ def _get_embed_script_content(public_id: str) -> str:
     };
 
     async function submitLead() {
-        var leadData = {
-            name: document.getElementById('vn-lead-name')?.value,
-            email: document.getElementById('vn-lead-email')?.value,
-            phone: document.getElementById('vn-lead-phone')?.value
-        };
-        var resp = await fetch(leadUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(leadData)
-        }).then(r => r.json());
-        if (resp && resp.id) return resp;
-        return null;
+
+    var customData = [];
+
+    if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
+        config.prechat.custom_fields.forEach(function(field) {
+
+            var fieldName = field.field_name;
+            var el = document.getElementById('vn-custom-' + fieldName);
+
+            if (el) {
+                customData.push({
+                    field_name: fieldName,
+                    field_type: field.field_type,
+                    value: el.value
+                });
+            }
+        });
     }
+
+    var leadData = {
+        name: document.getElementById('vn-lead-name')?.value,
+        email: document.getElementById('vn-lead-email')?.value,
+        phone: document.getElementById('vn-lead-phone')?.value,
+        custom_data: customData
+    };
+
+    var resp = await fetch(leadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(leadData)
+    }).then(r => r.json());
+
+    if (resp && resp.id) return resp;
+    return null;
+}
 
     btn.addEventListener('click', function() {
       if (connected) {
@@ -727,6 +767,34 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
     logger.info("Web agent WS closed for public_id=%s", public_id)
 
 
+
+@router.get("/config/{public_id}", response_model=WebAgentPublicConfig)
+def get_public_config(public_id: str):
+    web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
+    if not web_agent:
+        raise HTTPException(status_code=404, detail="Web Agent not found")
+    
+    if not web_agent.is_enabled:
+        raise HTTPException(status_code=403, detail="Web Agent is disabled")
+    
+    return WebAgentPublicConfig(
+        public_id=web_agent.public_id,
+        web_agent_name=web_agent.web_agent_name,
+        appearance={
+            "widget_title": web_agent.widget_title,
+            "widget_subtitle": web_agent.widget_subtitle,
+            "primary_color": web_agent.primary_color,
+            "position": web_agent.position,
+            "show_branding": web_agent.show_branding,
+        },
+        prechat={
+            "enable_prechat": web_agent.enable_prechat,
+            "require_name": web_agent.require_name,
+            "require_email": web_agent.require_email,
+            "require_phone": web_agent.require_phone,
+            "custom_fields": web_agent.custom_fields or [],
+        }
+    )
 
 
 @router.post("/lead/{public_id}")

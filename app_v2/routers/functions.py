@@ -12,7 +12,8 @@ from app_v2.databases.models import (
 from app_v2.schemas.function_schema import (
     FunctionCreateSchema,
     FunctionUpdateSchema,
-    FunctionRead
+    FunctionRead,
+    ApiSchema
 )
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
