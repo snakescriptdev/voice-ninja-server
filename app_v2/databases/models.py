@@ -859,3 +859,23 @@ class AddOnCoinOrderModel(Base):
     user = relationship("UnifiedAuthModel")
     bundle = relationship("CoinPackageModel")
     payment = relationship("PaymentModel", back_populates="addon_order")
+
+class CoinUsageSettingsModel(Base):
+    __tablename__ = "coin_usage_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    phone_number_purchase_cost: Mapped[int] = mapped_column(Integer, default=500)
+    elevenlabs_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    static_conversation_cost: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    @classmethod
+    def get_settings(cls):
+        with db():
+            settings = db.session.query(cls).first()
+            if not settings:
+                settings = cls()
+                db.session.add(settings)
+                db.session.commit()
+                db.session.refresh(settings)
+            return settings

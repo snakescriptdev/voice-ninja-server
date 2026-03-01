@@ -9,15 +9,16 @@ from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timedelta
 from app_v2.utils.coin_utils import get_user_coin_balance
+from app_v2.schemas.admin_settings import CoinUsageSettingsResponse, CoinUsageSettingsUpdate
 
 from fastapi.responses import HTMLResponse
 import os
 
 logger = setup_logger(__name__)
 security = HTTPBearer()
-router = APIRouter(prefix="/api/v2/coin-purchase", tags=["Coin Purchase"])
+router = APIRouter(prefix="/api/v2/coins", tags=["Coins"])
 
-@router.get("/demo", response_class=HTMLResponse)
+@router.get("/checkout/demo", response_class=HTMLResponse)
 async def get_addon_purchase_demo():
     """
     Serves the demo template for add-on coin purchase testing.
@@ -26,7 +27,7 @@ async def get_addon_purchase_demo():
     with open(template_path, "r") as f:
         return f.read()
 
-@router.post("/create-order", response_model=OrderCreateResponse, dependencies=[Depends(security)], openapi_extra={"security":[{"BearerAuth":[]}]})
+@router.post("/checkout/create-order", response_model=OrderCreateResponse, dependencies=[Depends(security)], openapi_extra={"security":[{"BearerAuth":[]}]})
 def create_coin_order(data: OrderCreateRequest, current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
         # 1. Get bundle details
@@ -118,7 +119,7 @@ def verify_coin_payment(data: OrderVerifyRequest, current_user: UnifiedAuthModel
         new_balance = current_balance + bundle.coins
 
         expiry_date = None
-        if bundle.validity_days:
+        if bundle.validity_days is not None:
             expiry_date = datetime.utcnow() + timedelta(days=bundle.validity_days)
 
         ledger_entry = CoinsLedgerModel(
@@ -151,3 +152,45 @@ def verify_coin_payment(data: OrderVerifyRequest, current_user: UnifiedAuthModel
         db.session.rollback()
         logger.error(f"Error verifying coin payment: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Settings API
+@router.get("/settings/coin-usage", response_model=CoinUsageSettingsResponse)
+def get_coin_usage_settings():
+    """Fetch global coin usage settings"""
+    try:
+        settings = CoinUsageSettingsModel.get_settings()
+        return settings
+    except Exception as e:
+        logger.error(f"Error in get_coin_usage_settings: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+@router.post("/settings/coin-usage", response_model=CoinUsageSettingsResponse)
+def update_coin_usage_settings(data: CoinUsageSettingsUpdate):
+    """Update global coin usage settings"""
+    try:
+        with db():
+            settings = db.session.query(CoinUsageSettingsModel).first()
+            if not settings:
+                settings = CoinUsageSettingsModel()
+                db.session.add(settings)
+            
+            if data.phone_number_purchase_cost is not None:
+                settings.phone_number_purchase_cost = data.phone_number_purchase_cost
+            if data.elevenlabs_multiplier is not None:
+                settings.elevenlabs_multiplier = data.elevenlabs_multiplier
+            if data.static_conversation_cost is not None:
+                settings.static_conversation_cost = data.static_conversation_cost
+            
+            db.session.commit()
+            db.session.refresh(settings)
+            return settings
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error in update_coin_usage_settings: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
