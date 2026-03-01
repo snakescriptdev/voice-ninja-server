@@ -91,6 +91,38 @@ def list_plans():
         logger.error(f"Error listing plans: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/status-wise")
+def list_plans_status_wise():
+    """
+    Categorized plan listing for admin dashboard.
+    """
+    try:
+        plans = (
+            db.session.query(PlanModel)
+            .options(
+                joinedload(PlanModel.features),
+                joinedload(PlanModel.providers)
+            )
+            .all()
+        )
+        
+        active_plans = [p for p in plans if p.is_active]
+        inactive_plans = [p for p in plans if not p.is_active]
+        
+        return {
+            "active_plans": {
+                "count": len(active_plans),
+                "plans": active_plans
+            },
+            "inactive_plans": {
+                "count": len(inactive_plans),
+                "plans": inactive_plans
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error listing status-wise plans: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.get("/{plan_id}", response_model=PlanResponse)
 def get_plan(plan_id: int):
     plan = (
