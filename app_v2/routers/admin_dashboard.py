@@ -3,7 +3,7 @@ from app_v2.utils.jwt_utils import is_admin
 from datetime import datetime
 from typing import List
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinPackageModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinPackageModel, CoinUsageSettingsModel, PlanModel, UserSubscriptionModel, SubscriptionStatusEnum, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum
 from app_v2.schemas.activity_schema import ActivityLogResponse
 from app_v2.schemas.admin_dashboard import UserCostItem, CoinBundleCreate, CoinBundleResponse
 from app_v2.schemas.pagination import PaginatedResponse
@@ -15,46 +15,77 @@ from elevenlabs import ElevenLabs
 from app_v2.core.config import VoiceSettings
 from elevenlabs import ElevenLabs
 from datetime import datetime, timezone
+from sqlalchemy import select, func
 
 client = ElevenLabs(api_key=VoiceSettings.ELEVENLABS_API_KEY)
-
-
-
 logger = setup_logger(__name__)
-
-
 router = APIRouter(prefix="/api/v2/admin/dashboard",tags=["Admin"])
 
-# ... (format_time_ago logic)
 
-
-
-
-
-
-
-#overview page api's
-
-@router.get("/overview/user-count")
-def get_user_count():
+@router.get("/overview/stats")
+def get_overview_stats():
+    """
+    Consolidated API for admin dashboard overview stats.
+    """
     try:
-        users = db.session.query(UnifiedAuthModel).filter(
-            UnifiedAuthModel.is_admin.is_(False)
+        # 1. Total Users
+        total_users = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.is_admin.is_(False)).count()
+
+        # 2. Active Subscriptions
+        active_subscriptions = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active
         ).count()
 
-    #will be updated to return users grouped by subscription Plan
+        # 3. Total Phone Numbers
+        total_phone_numbers = db.session.query(PhoneNumberService).count()
+
+        # 4. Agent Stats
+        agent_stats_query = db.session.query(
+            AgentModel.is_enabled,
+            func.count(AgentModel.id).label("count")
+        ).group_by(AgentModel.is_enabled).all()
+
+        active_agents = 0
+        disabled_agents = 0
+        for is_enabled, count in agent_stats_query:
+            if is_enabled is True:
+                active_agents = count
+            else:
+                disabled_agents = count
+        total_agents = active_agents + disabled_agents
+
+        # 5. Total Coins Distributed
+        total_coins_distributed = db.session.query(func.sum(CoinsLedgerModel.coins)).filter(
+            CoinsLedgerModel.coins > 0
+        ).scalar() or 0
+
+        # 6. Current Month Revenue
+        now = datetime.now()
+        first_day_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        current_month_revenue = db.session.query(func.sum(PaymentModel.amount)).filter(
+            PaymentModel.status == PaymentStatusEnum.success,
+            PaymentModel.created_at >= first_day_of_month
+        ).scalar() or 0
 
         return {
-            "status":"success",
-            "user_count": users
+            "status": "success",
+            "stats": {
+                "total_users": total_users,
+                "active_subscriptions": active_subscriptions,
+                "total_phone_numbers": total_phone_numbers,
+                "total_agents": total_agents,
+                "active_agents": active_agents,
+                "disabled_agents": disabled_agents,
+                "total_coins_distributed": int(total_coins_distributed),
+                "current_month_revenue": float(current_month_revenue)
+            }
         }
     except Exception as e:
-        logger.error(f"Error in get_user_count: {str(e)}")
+        logger.error(f"Error in get_overview_stats: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
-
 
 @router.get("/overview/recent-users")
 def get_recent_users():
@@ -69,7 +100,7 @@ def get_recent_users():
                 "id": user.id,
                 "name": user.name or user.username or "Unknown",
                 "email": user.email,
-                "registered_at": format_time_ago(user.created_at) if user.created_at else "Unknown"
+                "registered_at": format_time_ago(user.created_at) if user.created_at else "long time ago"
             })
 
         return {
@@ -81,52 +112,79 @@ def get_recent_users():
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
-        )
+        )   
 
-@router.get("/overview/phone-number-count")
-def get_phone_number_count():
+@router.get("/analytics/revenue-graph")
+def get_revenue_graph():
+    """
+    Monthly revenue for the last 6 months.
+    """
     try:
-        phone_numbers = db.session.query(PhoneNumberService).count()
+        now = datetime.now()
+        year = now.year
+        month = now.month
+        # Calculate 5 months ago to get a total of 6 months including current
+        for _ in range(5):
+            month -= 1
+            if month == 0:
+                month = 12
+                year -= 1
+        six_months_ago = datetime(year, month, 1)
+        
+        revenue_query = db.session.query(
+            func.to_char(PaymentModel.created_at, 'YYYY-MM').label('month'),
+            func.sum(PaymentModel.amount).label('revenue')
+        ).filter(
+            PaymentModel.status == PaymentStatusEnum.success,
+            PaymentModel.created_at >= six_months_ago
+        ).group_by('month').order_by('month').all()
 
         return {
-            "status":"success",
-            "phone_number_count": phone_numbers
+            "status": "success",
+            "revenue_graph": [{"month": r.month, "revenue": float(r.revenue)} for r in revenue_query]
         }
-    
     except Exception as e:
-        logger.error(f"Error in get_phone_number_count: {str(e)}")
+        logger.error(f"Error in get_revenue_graph: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
 
-@router.get("/overview/agent-count")
-def get_agent_count():
+@router.get("/analytics/subscription-distribution")
+def get_subscription_distribution():
+    """
+    Subscription distribution by plan percentage.
+    """
     try:
-        agent_count_list = db.session.query(
-            AgentModel.is_enabled,
-            func.count(AgentModel.id).label("count")
-        ).group_by(AgentModel.is_enabled).all()
+        total_active = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active
+        ).count()
 
-        active_count = 0
-        disabled_count = 0
+        if total_active == 0:
+            return {"status": "success", "distribution": []}
 
-        for is_enabled, count in agent_count_list:
-            if is_enabled is True:
-                active_count = count
-            elif is_enabled is False:
-                disabled_count = count
+        distribution_query = db.session.query(
+            PlanModel.display_name,
+            func.count(UserSubscriptionModel.id).label('count')
+        ).join(PlanModel, UserSubscriptionModel.plan_id == PlanModel.id).filter(
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active
+        ).group_by(PlanModel.display_name).all()
 
-        total_count = active_count + disabled_count
+        distribution = [
+            {
+                "plan_name": d.display_name,
+                "count": d.count,
+                "percentage": round((d.count / total_active) * 100, 2)
+            } for d in distribution_query
+        ]
 
         return {
-            "total_agents": total_count,
-            "active_agents": active_count,
-            "disabled_agents": disabled_count
+            "status": "success",
+            "total_active": total_active,
+            "distribution": distribution
         }
-    
     except Exception as e:
-        logger.error(f"Error in get_agent_count: {str(e)}")
+        logger.error(f"Error in get_subscription_distribution: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
