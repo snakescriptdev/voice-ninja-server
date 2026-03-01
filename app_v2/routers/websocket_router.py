@@ -261,6 +261,15 @@ async def websocket_test_agent(
                 )
 
                 with db():
+                    cost_data = metadata.get("cost")
+                    
+                    from app_v2.databases.models import CoinUsageSettingsModel
+                    settings = CoinUsageSettingsModel.get_settings()
+                    
+                    # Calculate final cost based on settings
+                    raw_el_cost = float(cost_data) if cost_data else 0
+                    calculated_cost = int((raw_el_cost * settings.elevenlabs_multiplier) + settings.static_conversation_cost)
+
                     conversation_data = ConversationsModel(
                         agent_id=agent_id,
                         user_id=user_id,
@@ -269,16 +278,15 @@ async def websocket_test_agent(
                         call_status=call_status_enum,
                         channel=ChannelEnum.chat,
                         transcript_summary=metadata.get("transcript_summary"),
-                        elevenlabs_conv_id=conversation_id,   # make sure column exists
-                        cost=metadata.get("cost")
+                        elevenlabs_conv_id=conversation_id,
+                        cost=calculated_cost
                     )
 
-                    db.sessiaon.add(conversation_data)
+                    db.session.add(conversation_data)
                     db.session.flush() # flush to get the conversation ID
                     
-                    cost = metadata.get("cost")
-                    if cost and cost > 0:
-                        deduct_coins(user_id=user_id, amount=cost, reference_type="conversation", reference_id=conversation_data.id, commit=False)
+                    if calculated_cost > 0:
+                        deduct_coins(user_id=user_id, amount=calculated_cost, reference_type="conversation", reference_id=conversation_data.id, commit=False)
 
                     db.session.commit()
                     db.session.refresh(conversation_data)
@@ -287,7 +295,7 @@ async def websocket_test_agent(
                     f"✅ Conversation {conversation_id} stored successfully "
                     f"(duration={metadata.get('duration')}s, "
                     f"messages={metadata.get('message_count')}, "
-                    f"cost={metadata.get('cost')})"
+                    f"cost={calculated_cost})"
                 )
 
             except Exception:

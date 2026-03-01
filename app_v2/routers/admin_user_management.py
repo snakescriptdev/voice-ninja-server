@@ -1,0 +1,150 @@
+from fastapi import APIRouter, HTTPException, status, Depends, Query
+from fastapi_sqlalchemy import db
+from sqlalchemy import func, or_, desc, select
+from typing import List, Optional
+from datetime import datetime
+from app_v2.databases.models import UnifiedAuthModel, UserSubscriptionModel, PlanModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, SubscriptionStatusEnum
+from app_v2.utils.jwt_utils import is_admin
+from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem
+from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.utils.time_utils import format_time_ago
+from app_v2.core.logger import setup_logger
+
+logger = setup_logger(__name__)
+router = APIRouter(prefix="/api/v2/admin/user-management", tags=["Admin"])
+
+@router.get("/stats", response_model=UserManagementStats)
+def get_user_management_stats():
+    """
+    Get general user management statistics.
+    """
+    try:
+        # Total users (non-admin)
+        total_users = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.is_admin.is_(False)).count()
+
+        # Users by plan
+        plan_counts = db.session.query(
+            PlanModel.display_name,
+            func.count(UserSubscriptionModel.id).label("count")
+        ).join(UserSubscriptionModel, PlanModel.id == UserSubscriptionModel.plan_id)\
+         .filter(UserSubscriptionModel.status == SubscriptionStatusEnum.active)\
+         .group_by(PlanModel.display_name).all()
+
+        plan_distribution = [{"plan_name": r.display_name, "count": r.count} for r in plan_counts]
+
+        return {
+            "total_users": total_users,
+            "plan_distribution": plan_distribution
+        }
+    except Exception as e:
+        logger.error(f"Error in get_user_management_stats: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/users", response_model=PaginatedResponse[UserManagementListItem])
+def list_users_managed(
+    page: int = Query(1, ge=1),
+    limit: int = Query(10, ge=1),
+    search: Optional[str] = None,
+    plan_id: Optional[int] = Query(None),
+    sort_order: str = Query("desc", enum=["asc", "desc"])
+):
+    """
+    Paginated, searchable, and filtered user listing for admin.
+    Default sorted by last login.
+    """
+    try:
+        # Subqueries for counts
+        agent_subquery = db.session.query(
+            AgentModel.user_id,
+            func.count(AgentModel.id).label("agent_count")
+        ).group_by(AgentModel.user_id).subquery()
+
+        phone_subquery = db.session.query(
+            PhoneNumberService.user_id,
+            func.count(PhoneNumberService.id).label("phone_count")
+        ).group_by(PhoneNumberService.user_id).subquery()
+
+        coins_subquery = db.session.query(
+            CoinsLedgerModel.user_id,
+            func.sum(CoinsLedgerModel.remaining_coins).label("balance")
+        ).group_by(CoinsLedgerModel.user_id).subquery()
+
+        last_active_subquery = db.session.query(
+            ActivityLogModel.user_id,
+            func.max(ActivityLogModel.created_at).label("last_active")
+        ).group_by(ActivityLogModel.user_id).subquery()
+
+        # Main query
+        query = db.session.query(
+            UnifiedAuthModel.id.label("user_id"),
+            UnifiedAuthModel.name.label("username"),
+            UnifiedAuthModel.email,
+            PlanModel.display_name.label("plan_name"),
+            PlanModel.id.label("plan_id"),
+            func.coalesce(coins_subquery.c.balance, 0).label("balance_coins"),
+            func.coalesce(agent_subquery.c.agent_count, 0).label("no_of_agents"),
+            func.coalesce(phone_subquery.c.phone_count, 0).label("no_of_phones"),
+            func.greatest(
+                UnifiedAuthModel.last_login,
+                last_active_subquery.c.last_active
+            ).label("last_active")
+        ).filter(UnifiedAuthModel.is_admin.is_(False))\
+         .outerjoin(UserSubscriptionModel, (UnifiedAuthModel.id == UserSubscriptionModel.user_id) & (UserSubscriptionModel.status == SubscriptionStatusEnum.active))\
+         .outerjoin(PlanModel, UserSubscriptionModel.plan_id == PlanModel.id)\
+         .outerjoin(agent_subquery, UnifiedAuthModel.id == agent_subquery.c.user_id)\
+         .outerjoin(phone_subquery, UnifiedAuthModel.id == phone_subquery.c.user_id)\
+         .outerjoin(coins_subquery, UnifiedAuthModel.id == coins_subquery.c.user_id)\
+         .outerjoin(last_active_subquery, UnifiedAuthModel.id == last_active_subquery.c.user_id)
+
+        # Search
+        if search:
+            query = query.filter(
+                or_(
+                    UnifiedAuthModel.name.ilike(f"%{search}%"),
+                    UnifiedAuthModel.email.ilike(f"%{search}%")
+                )
+            )
+
+        # Plan Filter
+        if plan_id:
+            query = query.filter(PlanModel.id == plan_id)
+
+        # Default Sorting (Last Active)
+        order_attr = last_active_subquery.c.last_active
+        if sort_order == "desc":
+            query = query.order_by(desc(order_attr))
+        else:
+            query = query.order_by(order_attr)
+
+        # Pagination
+        total_count = query.count()
+        offset = (page - 1) * limit
+        results = query.offset(offset).limit(limit).all()
+
+        items = [
+            UserManagementListItem(
+                user_id=r.user_id,
+                username=r.username or "Unknown",
+                email=r.email or "",
+                plan_name=r.plan_name,
+                plan_id=r.plan_id,
+                balance_coins=int(r.balance_coins),
+                no_of_agents=r.no_of_agents,
+                no_of_phones=r.no_of_phones,
+                last_active=format_time_ago(r.last_active) if r.last_active else "long time ago"
+            ) for r in results
+        ]
+
+        total_pages = (total_count + limit - 1) // limit if limit > 0 else 0
+
+        return PaginatedResponse(
+            total=total_count,
+            page=page,
+            size=limit,
+            pages=total_pages,
+            items=items
+        )
+
+    except Exception as e:
+        logger.error(f"Error listing users managed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
