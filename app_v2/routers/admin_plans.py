@@ -16,13 +16,17 @@ router = APIRouter(prefix="/api/v2/admin/plans", tags=["Admin Plans"])
 @router.post("", response_model=PlanResponse, status_code=status.HTTP_201_CREATED)
 def create_plan(plan_data: PlanCreate):
     try:
+        #if display name exists raise error
+        if db.session.query(PlanModel).filter(PlanModel.display_name == plan_data.display_name).first():
+            raise HTTPException(status_code=400, detail="Display name already exists")
         # 1. Create plan in database
         new_plan = PlanModel(
             display_name=plan_data.display_name,
-            internal_name=plan_data.internal_name,
             price=plan_data.price,
             currency=plan_data.currency,
+            description=plan_data.description,
             coins_included=plan_data.coins_included,
+            carry_forward_coins=plan_data.carry_forward_coins,
             billing_period=plan_data.billing_period,
             icon=plan_data.icon,
             gradient_color=plan_data.gradient_color,
@@ -37,8 +41,7 @@ def create_plan(plan_data: PlanCreate):
             new_feature = PlanFeatureModel(
                 plan_id=new_plan.id,
                 feature_key=feature.feature_key,
-                limit=feature.limit,
-                is_unlimited=feature.is_unlimited
+                limit=feature.limit
             )
             db.session.add(new_feature)
 
@@ -70,6 +73,8 @@ def create_plan(plan_data: PlanCreate):
         db.session.commit()
         db.session.refresh(new_plan)
         return new_plan
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error creating plan: {str(e)}")
@@ -163,6 +168,8 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
         db.session.commit()
         db.session.refresh(plan)
         return plan
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error updating plan: {str(e)}")
@@ -178,6 +185,8 @@ def delete_plan(plan_id: int):
         db.session.delete(plan)
         db.session.commit()
         return None
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error deleting plan: {str(e)}")
