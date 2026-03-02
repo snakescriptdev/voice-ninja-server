@@ -576,6 +576,14 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
             await websocket.send_json({"type": "error", "message": "Web Agent is disabled"})
             await websocket.close(code=1008)
             return
+
+        # Check owner coin balance
+        from app_v2.utils.coin_utils import get_user_coin_balance
+        owner_balance = get_user_coin_balance(web_agent.user_id)
+        if owner_balance <= 0:
+            await websocket.send_json({"type": "error", "message": "Insufficient coins"})
+            await websocket.close(code=1008)
+            return
         elevenlabs_agent_id = web_agent.agent.elevenlabs_agent_id
         agent_id = web_agent.agent_id
         agent_name = web_agent.agent.agent_name
@@ -724,6 +732,13 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                         )
                         
                         with db():
+                            from app_v2.databases.models import CoinUsageSettingsModel
+                            from app_v2.utils.coin_utils import deduct_coins
+                            settings = CoinUsageSettingsModel.get_settings()
+                            
+                            raw_el_cost = float(metadata.get("cost")) if metadata.get("cost") is not None else 0
+                            calculated_cost = int((raw_el_cost * settings.elevenlabs_multiplier) + settings.static_conversation_cost)
+
                             new_conv = ConversationsModel(
                                 agent_id=agent_id,
                                 user_id=user_id,
@@ -733,9 +748,14 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                                 channel=ChannelEnum.widget,
                                 transcript_summary=metadata.get("transcript_summary"),
                                 elevenlabs_conv_id=conv_id,
-                                cost=metadata.get("cost")
+                                cost=calculated_cost
                             )
                             db.session.add(new_conv)
+                            db.session.flush() # flush to get the conversation ID
+                            
+                            if calculated_cost > 0:
+                                deduct_coins(user_id=user_id, amount=calculated_cost, reference_type="conversation", reference_id=new_conv.id, commit=False)
+
                             db.session.commit()
                             db.session.refresh(new_conv)
                             

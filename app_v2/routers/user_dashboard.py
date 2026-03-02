@@ -1,4 +1,6 @@
 from fastapi import APIRouter, status, Depends,HTTPException
+from fastapi.responses import HTMLResponse
+import os
 from fastapi_sqlalchemy import db
 from datetime import datetime, timedelta
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
@@ -37,6 +39,41 @@ logger = setup_logger(__name__)
 security = HTTPBearer()
 
 router = APIRouter(prefix="/api/v2/user-dashboard", tags=["User Dashboard"], dependencies=[Depends(security)])
+
+@router.get("/billing/invoice/{payment_id}/view",openapi_extra={"security":[{"BearerAuth":[]}]} )
+def view_invoice(payment_id: int, current_user: UnifiedAuthModel = Depends(get_current_user)):
+    """
+    Renders a custom HTML invoice for a specific payment.
+    """
+    try:
+        logger.info(f"Viewing invoice for payment ID: {payment_id}")
+        logger.info(f"Current user ID: {current_user.id}")
+        payment = db.session.query(PaymentModel).filter(
+            PaymentModel.id == payment_id,
+            PaymentModel.user_id == current_user.id
+        ).first()
+
+        if not payment:
+            raise HTTPException(status_code=404, detail="Payment record not found")
+
+        invoice_details = payment.metadata_json.get("invoice_details") if payment.metadata_json else None
+        
+        if not invoice_details:
+             raise HTTPException(status_code=404, detail="Invoice data not available for this payment")
+
+        # Convert timestamp to human readable date
+        date_val = invoice_details.get("issued_at") or invoice_details.get("created_at")
+        date_str = datetime.fromtimestamp(date_val).strftime("%B %d, %Y") if date_val else "N/A"
+
+        return {
+            "invoice": invoice_details,
+            "date_str": date_str
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error rendering invoice: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to render invoice: {str(e)}")
 
 
 
@@ -467,7 +504,8 @@ def get_billing_history(current_user: UnifiedAuthModel = Depends(get_current_use
                 description=description,
                 amount=p.amount,
                 currency=p.currency,
-                status=p.status
+                status=p.status,
+                invoice_url=p.invoice_url
             ))
             
         return BillingHistoryResponse(history=history)

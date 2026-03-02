@@ -176,6 +176,7 @@ app.include_router(admin_plans.router)
 app.include_router(coin_purchase_router)
 app.include_router(payment_insights_router)
 app.include_router(admin_user_management.router)
+app.include_router(subscription_router)
 
 @app.get("/", tags=["System"])
 async def root():

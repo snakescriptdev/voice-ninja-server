@@ -87,7 +87,7 @@ class BillingHistoryItem(BaseModel):
     amount: float
     currency: str
     status: PaymentStatusEnum
-    # invoice skip as requested
+    invoice_url: Optional[str] = None
 
 class BillingHistoryResponse(BaseModel):
     history: List[BillingHistoryItem]

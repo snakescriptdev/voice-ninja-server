@@ -47,6 +47,26 @@ class BasePaymentProvider(ABC):
     def verify_order_signature(self, params: Dict[str, str]) -> bool:
         pass
 
+    @abstractmethod
+    def cancel_subscription(self, subscription_id: str, cancel_at_cycle_end: bool = True) -> Dict[str, Any]:
+        pass
+
+    @abstractmethod
+    def update_subscription(self, subscription_id: str, plan_id: str, offer_id: Optional[str] = None) -> Dict[str, Any]:
+        pass
+
+    @abstractmethod
+    def pause_subscription(self, subscription_id: str, pause_at: str = "now") -> Dict[str, Any]:
+        pass
+
+    @abstractmethod
+    def resume_subscription(self, subscription_id: str, resume_at: str = "now") -> Dict[str, Any]:
+        pass
+
+    @abstractmethod
+    def get_subscription_invoices(self, subscription_id: str) -> List[Dict[str, Any]]:
+        pass
+
 class RazorpayProvider(BasePaymentProvider):
     def __init__(self):
         self.client = razorpay.Client(auth=(VoiceSettings.RAZOR_KEY_ID, VoiceSettings.RAZOR_KEY_SECRET))
@@ -150,6 +170,54 @@ class RazorpayProvider(BasePaymentProvider):
         except Exception as e:
             logger.error(f"Razorpay order signature verification failed: {str(e)}")
             return False
+
+    def cancel_subscription(self, subscription_id: str, cancel_at_cycle_end: bool = True) -> Dict[str, Any]:
+        try:
+            # cancel_at_cycle_end: 1 for end of cycle, 0 for immediate
+            cancel_at = 1 if cancel_at_cycle_end else 0
+            response = self.client.subscription.cancel(subscription_id, {"cancel_at_cycle_end": cancel_at})
+            return response
+        except Exception as e:
+            logger.error(f"Razorpay subscription cancellation failed: {str(e)}")
+            raise Exception(f"Failed to cancel subscription: {str(e)}")
+
+    def update_subscription(self, subscription_id: str, plan_id: str, offer_id: Optional[str] = None) -> Dict[str, Any]:
+        try:
+            data = {"plan_id": plan_id}
+            if offer_id:
+                data["offer_id"] = offer_id
+            response = self.client.subscription.update(subscription_id, data)
+            return response
+        except Exception as e:
+            logger.error(f"Razorpay subscription update failed: {str(e)}")
+            raise Exception(f"Failed to update subscription: {str(e)}")
+
+    def pause_subscription(self, subscription_id: str, pause_at: str = "now") -> Dict[str, Any]:
+        try:
+            # pause_at can be 'now' or a timestamp
+            response = self.client.subscription.pause(subscription_id, {"pause_at": pause_at})
+            return response
+        except Exception as e:
+            logger.error(f"Razorpay subscription pause failed: {str(e)}")
+            raise Exception(f"Failed to pause subscription: {str(e)}")
+
+    def resume_subscription(self, subscription_id: str, resume_at: str = "now") -> Dict[str, Any]:
+        try:
+            response = self.client.subscription.resume(subscription_id, {"resume_at": resume_at})
+            return response
+        except Exception as e:
+            logger.error(f"Razorpay subscription resume failed: {str(e)}")
+            raise Exception(f"Failed to resume subscription: {str(e)}")
+
+    def get_subscription_invoices(self, subscription_id: str) -> List[Dict[str, Any]]:
+        try:
+            # Razorpay doesn't have a direct 'subscription invoices' endpoint in the same way, 
+            # but we can fetch invoices filtered by subscription_id
+            response = self.client.invoice.all({"subscription_id": subscription_id})
+            return response.get("items", [])
+        except Exception as e:
+            logger.error(f"Razorpay invoice fetch failed: {str(e)}")
+            raise Exception(f"Failed to fetch invoices: {str(e)}")
 
     def create_subscription_webhook(
         self,
