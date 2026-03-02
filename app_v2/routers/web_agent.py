@@ -516,12 +516,58 @@ if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
     });
 
     startPrechatBtn.addEventListener('click', async function() {
-        var resp = await submitLead();
-        if (resp && resp.id) window.voiceNinjaLeadId = resp.id;
-        prechatContainer.style.display = 'none';
-        mainControls.style.display = 'flex';
-        startCall();
-    });
+
+    // 🔹 Validate default fields
+    if (config.prechat.require_name) {
+        var nameEl = document.getElementById('vn-lead-name');
+        if (!nameEl.value.trim()) {
+            alert('Name is required');
+            nameEl.focus();
+            return;
+        }
+    }
+
+    if (config.prechat.require_email) {
+        var emailEl = document.getElementById('vn-lead-email');
+        if (!emailEl.value.trim()) {
+            alert('Email is required');
+            emailEl.focus();
+            return;
+        }
+    }
+
+    if (config.prechat.require_phone) {
+        var phoneEl = document.getElementById('vn-lead-phone');
+        if (!phoneEl.value.trim()) {
+            alert('Phone is required');
+            phoneEl.focus();
+            return;
+        }
+    }
+
+    // 🔹 Validate custom fields
+    if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
+        for (var i = 0; i < config.prechat.custom_fields.length; i++) {
+            var field = config.prechat.custom_fields[i];
+            if (field.required) {
+                var el = document.getElementById('vn-custom-' + field.field_name);
+                if (el && !el.value.trim()) {
+                    alert(field.field_name + ' is required');
+                    el.focus();
+                    return;
+                }
+            }
+        }
+    }
+
+    // ✅ If validation passes
+    var resp = await submitLead();
+    if (resp && resp.id) window.voiceNinjaLeadId = resp.id;
+
+    prechatContainer.style.display = 'none';
+    mainControls.style.display = 'flex';
+    startCall();
+});
 
     function startCall() {
       statusEl.textContent = 'Connecting...';
