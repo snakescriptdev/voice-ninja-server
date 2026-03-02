@@ -64,16 +64,27 @@ async def generate_system_prompt_async(
         "Generating system prompt for agent=%s model=%s",
         config.agent_name,
         config.ai_model,
+
+    )
+    use_cases = (
+        "\n".join(f"- {u}" for u in config.use_cases)
+        if config.use_cases
+        else "No specific use cases defined."
     )
 
+    capabilities = (
+        "\n".join(f"- {c}" for c in config.capebilites)
+        if config.capebilites
+        else "No additional capabilities defined."
+    )   
     try:
         # Construct the prompt
         formatted_prompt = SYSTEM_PROMPT_TEMPLATE.format(
             agent_name=config.agent_name,
             language=config.language,
             main_goal=config.main_goal,
-            use_cases="\n".join(f"- {u}" for u in config.use_cases),
-            capebilites="\n".join(f"- {c}" for c in config.capebilites),
+            use_cases=use_cases,
+            capebilites=capabilities,
             voice=config.voice,
             ai_model=config.ai_model,
             response_style=config.response_style,

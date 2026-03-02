@@ -10,7 +10,7 @@ from app_v2.core.logger import setup_logger
 from datetime import datetime, timedelta
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.schemas.admin_settings import CoinUsageSettingsResponse, CoinUsageSettingsUpdate
-
+from app_v2.databases.models import CoinUsageSettingsModel
 from fastapi.responses import HTMLResponse
 import os
 
@@ -114,6 +114,35 @@ def verify_coin_payment(data: OrderVerifyRequest, current_user: UnifiedAuthModel
         db.session.add(payment)
         db.session.flush()
 
+        # 3a. Synthesize Invoice Details for Frontend
+        invoice_details = {
+            "id": f"INV-COIN-{payment.id}",
+            "entity": "invoice",
+            "invoice_number": f"VN-{datetime.utcnow().strftime('%Y%m%d')}-{payment.id}",
+            "customer_details": {
+                "name": current_user.name or "Customer",
+                "email": current_user.email,
+                "contact": current_user.phone
+            },
+            "line_items": [
+                {
+                    "name": f"Coin Bundle: {bundle.name}",
+                    "description": f"Credit of {bundle.coins} coins with {bundle.validity_days or 'unlimited'} days validity",
+                    "amount": int(bundle.price * 100),
+                    "unit_amount": int(bundle.price * 100),
+                    "quantity": 1,
+                    "currency": bundle.currency
+                }
+            ],
+            "amount": int(bundle.price * 100),
+            "currency": bundle.currency,
+            "status": "paid",
+            "issued_at": int(datetime.utcnow().timestamp()),
+            "paid_at": int(datetime.utcnow().timestamp())
+        }
+        payment.metadata_json["invoice_details"] = invoice_details
+        payment.invoice_url = f"/api/v2/user-dashboard/billing/invoice/{payment.id}/view"
+
         # 4. Credit Coins to Ledger
         current_balance = get_user_coin_balance(current_user.id)
         new_balance = current_balance + bundle.coins
@@ -167,16 +196,15 @@ def get_coin_usage_settings():
             detail=str(e)
         )
 
-@router.post("/settings/coin-usage", response_model=CoinUsageSettingsResponse)
+@router.put("/settings/coin-usage", response_model=CoinUsageSettingsResponse)
 def update_coin_usage_settings(data: CoinUsageSettingsUpdate):
     """Update global coin usage settings"""
     try:
+        settings = CoinUsageSettingsModel.get_settings()
+        
         with db():
-            settings = db.session.query(CoinUsageSettingsModel).first()
-            if not settings:
-                settings = CoinUsageSettingsModel()
-                db.session.add(settings)
-            
+            # Refresh to ensure we have the latest and are in the session
+            db.session.add(settings) 
             if data.phone_number_purchase_cost is not None:
                 settings.phone_number_purchase_cost = data.phone_number_purchase_cost
             if data.elevenlabs_multiplier is not None:

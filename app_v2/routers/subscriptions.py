@@ -2,7 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import UnifiedAuthModel, PlanModel, UserSubscriptionModel, PaymentModel, PlanProviderModel, CoinsLedgerModel
-from app_v2.schemas.subscriptions import SubscriptionCreate, SubscriptionResponse, SubscriptionVerifyRequest
+from app_v2.schemas.subscriptions import (
+    SubscriptionCreate, SubscriptionResponse, SubscriptionVerifyRequest, 
+    SubscriptionCancelRequest, SubscriptionUpdateRequest, SubscriptionPauseRequest,
+    InvoiceListResponse, InvoiceItemResponse
+)
 from app_v2.schemas.enum_types import PaymentProviderEnum, SubscriptionStatusEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum  
 from app_v2.utils.payment_utils import PaymentProviderFactory
 from app_v2.core.config import VoiceSettings
@@ -30,6 +34,17 @@ async def get_subscription_demo():
 @router.post("/create", response_model=SubscriptionResponse, dependencies=[Depends(security)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def create_subscription(data: SubscriptionCreate, current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
+        # 0. Check for existing active subscription
+        active_sub = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.user_id == current_user.id,
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active
+        ).first()
+        if active_sub:
+            raise HTTPException(
+                status_code=400, 
+                detail="You already have an active subscription. Please update your current subscription instead of creating a new one."
+            )
+
         # 1. Get plan details
         plan = db.session.query(PlanModel).filter(PlanModel.id == data.plan_id, PlanModel.is_active == True).first()
         if not plan:
@@ -64,6 +79,8 @@ def create_subscription(data: SubscriptionCreate, current_user: UnifiedAuthModel
             user_phone=current_user.phone,
             key_id=VoiceSettings.RAZOR_KEY_ID
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error creating subscription: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -147,6 +164,26 @@ def verify_subscription(
         )
 
         db.session.add(payment)
+        db.session.flush()
+
+        # Try to fetch invoice details for the subscription
+        try:
+            invoices = rzp_provider.get_subscription_invoices(data.razorpay_subscription_id)
+            if invoices:
+                # Razorpay invoices are usually returned in descending order of creation
+                # The first one should be the one just generated for this charge
+                invoice = invoices[0]
+                
+                # Update metadata with full invoice details
+                # payment.metadata_json is a MutableDict, so we update it directly
+                payment.metadata_json["invoice_details"] = invoice
+                
+                # Internal URL for viewing the invoice
+                payment.invoice_url = f"/api/v2/user-dashboard/billing/invoice/{payment.id}/view"
+                logger.info(f"Stored full invoice details and URL for payment: {payment.id}")
+        except Exception as inv_err:
+            logger.error(f"Failed to fetch invoice for subscription {data.razorpay_subscription_id}: {inv_err}")
+            # Don't fail the verification if only invoice fetching fails
 
         # 6️⃣ Credit Coins
         if not plan.carry_forward_coins:
@@ -172,8 +209,168 @@ def verify_subscription(
         db.session.commit()
 
         return {"message": "Subscription activated successfully"}
-
+    except HTTPException as e:
+        raise e
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error verifying subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/cancel", dependencies=[Depends(security)], openapi_extra={"security": [{"BearerAuth": []}]})
+def cancel_subscription(data: SubscriptionCancelRequest, current_user: UnifiedAuthModel = Depends(get_current_user)):
+    """
+    Cancel the user's active subscription.
+    """
+    try:
+        subscription = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.user_id == current_user.id,
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active
+        ).first()
+
+        if not subscription:
+            raise HTTPException(status_code=404, detail="No active subscription found")
+
+        provider = PaymentProviderFactory.get_provider(subscription.provider)
+        response = provider.cancel_subscription(
+            subscription.provider_subscription_id, 
+            data.cancel_at_cycle_end
+        )
+
+        if data.cancel_at_cycle_end:
+            subscription.cancel_at_period_end = True
+        else:
+            subscription.status = SubscriptionStatusEnum.cancelled
+            subscription.cancel_at_period_end = True
+
+        db.session.commit()
+        return {"message": "Subscription cancellation initiated", "provider_response": response}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error cancelling subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/update", dependencies=[Depends(security)], openapi_extra={"security": [{"BearerAuth": []}]})
+def update_subscription(data: SubscriptionUpdateRequest, current_user: UnifiedAuthModel = Depends(get_current_user)):
+    """
+    Update the user's active subscription to a new plan.
+    """
+    try:
+        subscription = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.user_id == current_user.id,
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active
+        ).first()
+
+        if not subscription:
+            raise HTTPException(status_code=404, detail="No active subscription found")
+
+        # Get new plan details
+        new_plan = db.session.query(PlanModel).filter(PlanModel.id == data.plan_id, PlanModel.is_active == True).first()
+        if not new_plan:
+            raise HTTPException(status_code=404, detail="New plan not found or inactive")
+
+        # Get Provider Plan ID
+        provider_plan = db.session.query(PlanProviderModel).filter(
+            PlanProviderModel.plan_id == new_plan.id,
+            PlanProviderModel.provider == subscription.provider,
+            PlanProviderModel.is_active == True
+        ).first()
+
+        if not provider_plan:
+            raise HTTPException(status_code=400, detail=f"Provider plan not configured for {subscription.provider}")
+
+        provider = PaymentProviderFactory.get_provider(subscription.provider)
+        response = provider.update_subscription(
+            subscription.provider_subscription_id, 
+            provider_plan.provider_plan_id
+        )
+
+        subscription.plan_id = new_plan.id
+        db.session.commit()
+
+        return {"message": "Subscription update initiated", "provider_response": response}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/pause", dependencies=[Depends(security)], openapi_extra={"security": [{"BearerAuth": []}]})
+def pause_subscription(data: SubscriptionPauseRequest, current_user: UnifiedAuthModel = Depends(get_current_user)):
+    """
+    Pause the active subscription.
+    """
+    try:
+        subscription = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.user_id == current_user.id,
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active
+        ).first()
+
+        if not subscription:
+            raise HTTPException(status_code=404, detail="No active subscription found")
+
+        provider = PaymentProviderFactory.get_provider(subscription.provider)
+        response = provider.pause_subscription(subscription.provider_subscription_id, data.pause_at)
+
+        return {"message": "Subscription pause initiated", "provider_response": response}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error pausing subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/resume", dependencies=[Depends(security)], openapi_extra={"security": [{"BearerAuth": []}]})
+def resume_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
+    """
+    Resume a paused subscription.
+    """
+    try:
+        subscription = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.user_id == current_user.id
+        ).order_by(UserSubscriptionModel.created_at.desc()).first()
+
+        if not subscription:
+            raise HTTPException(status_code=404, detail="No subscription found")
+
+        provider = PaymentProviderFactory.get_provider(subscription.provider)
+        response = provider.resume_subscription(subscription.provider_subscription_id)
+
+        return {"message": "Subscription resume initiated", "provider_response": response}
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error resuming subscription: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/invoices", response_model=InvoiceListResponse, dependencies=[Depends(security)], openapi_extra={"security": [{"BearerAuth": []}]})
+def fetch_invoices(current_user: UnifiedAuthModel = Depends(get_current_user)):
+    """
+    Fetch invoices for the user's subscriptions.
+    """
+    try:
+        subscriptions = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.user_id == current_user.id
+        ).all()
+
+        all_invoices = []
+        for sub in subscriptions:
+            provider = PaymentProviderFactory.get_provider(sub.provider)
+            invoices = provider.get_subscription_invoices(sub.provider_subscription_id)
+            
+            for inv in invoices:
+                all_invoices.append(InvoiceItemResponse(
+                    id=inv.get("id"),
+                    amount=float(inv.get("amount", 0)) / 100.0,
+                    status=inv.get("status"),
+                    date=inv.get("date"),
+                    invoice_url=inv.get("short_url") or inv.get("invoice_url"),
+                    description=inv.get("description")
+                ))
+
+        return InvoiceListResponse(invoices=all_invoices)
+
+    except Exception as e:
+        logger.error(f"Error fetching invoices: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

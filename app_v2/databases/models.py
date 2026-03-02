@@ -637,7 +637,7 @@ class PlanModel(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
     display_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    internal_name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=True)
 
     price: Mapped[float] = mapped_column(Float, nullable=False)
     currency: Mapped[str] = mapped_column(String(10), default="INR")
@@ -694,8 +694,6 @@ class PlanFeatureModel(Base):
 
     limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # NULL = unlimited
-
-    is_unlimited: Mapped[bool] = mapped_column(Boolean, default=False)
 
     plan = relationship("PlanModel", back_populates="features")
 
@@ -789,6 +787,7 @@ class PaymentModel(Base):
     )
 
     metadata_json: Mapped[dict | None] = mapped_column(MutableDict.as_mutable(JSONB))
+    invoice_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -867,15 +866,29 @@ class CoinUsageSettingsModel(Base):
     phone_number_purchase_cost: Mapped[int] = mapped_column(Integer, default=500)
     elevenlabs_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     static_conversation_cost: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # Singleton guard: only one row can have this value
+    singleton_guard: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("singleton_guard", name="uq_coin_usage_settings_singleton"),
+    )
 
     @classmethod
     def get_settings(cls):
+        """Always returns the single settings record, creating it if it doesn't exist."""
         with db():
             settings = db.session.query(cls).first()
             if not settings:
-                settings = cls()
-                db.session.add(settings)
-                db.session.commit()
-                db.session.refresh(settings)
+                try:
+                    settings = cls()
+                    db.session.add(settings)
+                    db.session.commit()
+                    db.session.refresh(settings)
+                except Exception:
+                    # In case of race condition where another process created it
+                    db.session.rollback()
+                    settings = db.session.query(cls).first()
             return settings
