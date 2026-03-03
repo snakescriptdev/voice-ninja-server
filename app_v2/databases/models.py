@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
-from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition
+from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, BillingPeriodEnum, PlanIconEnum, PaymentProviderEnum, SubscriptionStatusEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -151,6 +151,9 @@ class UnifiedAuthModel(Base):
     functions = relationship("FunctionModel",back_populates="user",cascade="all, delete-orphan")
     conversations = relationship("ConversationsModel",back_populates="user",cascade="all, delete-orphan")
     web_agents = relationship("WebAgentModel", back_populates="user",cascade="all, delete-orphan")
+    subscriptions = relationship("UserSubscriptionModel", back_populates="user",cascade="all, delete-orphan")
+    payments = relationship("PaymentModel", back_populates="user",cascade="all, delete-orphan")
+    coins_ledger = relationship("CoinsLedgerModel", back_populates="user",cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -583,7 +586,7 @@ class WebAgentModel(Base):
     # Relationships
     user = relationship("UnifiedAuthModel", back_populates="web_agents")
     agent = relationship("AgentModel",back_populates="web_agent")
-    leads = relationship("WebAgentLeadModel", back_populates="web_agent")
+    leads = relationship("WebAgentLeadModel", back_populates="web_agent",cascade="all, delete-orphan")
 
 
 class WebAgentLeadModel(Base):
@@ -622,3 +625,270 @@ class ActivityLogModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     user = relationship("UnifiedAuthModel")
+
+
+
+
+############## Payments and related models ##############
+
+class PlanModel(Base):
+    __tablename__ = "plans"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[str] = mapped_column(String(255), nullable=True)
+
+    price: Mapped[float] = mapped_column(Float, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), default="INR")
+
+    coins_included: Mapped[int] = mapped_column(Integer, default=0)
+    carry_forward_coins: Mapped[bool] = mapped_column(Boolean, default=False,server_default="false")
+
+    billing_period: Mapped[BillingPeriodEnum] = mapped_column(
+        Enum(BillingPeriodEnum),
+        nullable=False
+    )
+
+    icon: Mapped[PlanIconEnum] = mapped_column(
+        Enum(PlanIconEnum),
+        nullable=False
+    )
+
+    gradient_color: Mapped[str] = mapped_column(String(50))
+    mark_as_popular: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    features = relationship("PlanFeatureModel", back_populates="plan", cascade="all, delete-orphan")
+    subscriptions = relationship(
+        "UserSubscriptionModel",
+        back_populates="plan",
+        cascade="all, delete-orphan"
+    )
+    providers = relationship(
+        "PlanProviderModel",
+        back_populates="plan",
+        cascade="all, delete-orphan"
+    )
+
+
+class PlanFeatureModel(Base):
+    __tablename__ = "plan_features"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=False)
+
+    feature_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    # Examples:
+    # "ai_voice_agents"
+    # "phone_numbers"
+    # "monthly_knowledgebases"
+    # "web_voice_agents"
+    # "api_access"
+    # "analytics_dashboard"
+
+    limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # NULL = unlimited
+
+    plan = relationship("PlanModel", back_populates="features")
+
+    __table_args__ = (
+        UniqueConstraint("plan_id", "feature_key", name="uq_plan_feature"),
+    )
+
+
+class PlanProviderModel(Base):
+    __tablename__ = "plan_providers"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=False)
+
+    provider: Mapped[PaymentProviderEnum] = mapped_column(
+        Enum(PaymentProviderEnum),
+        nullable=False
+    )
+
+    provider_plan_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Razorpay plan_id OR Stripe product_id
+
+    provider_price_id: Mapped[str | None] = mapped_column(String(255))
+    # Stripe price_id (optional)
+
+    provider_metadata: Mapped[dict | None] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        nullable=True
+    )
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    plan = relationship("PlanModel", back_populates="providers")
+
+    __table_args__ = (
+        UniqueConstraint("plan_id", "provider", name="uq_plan_provider"),
+    )
+
+class UserSubscriptionModel(Base):
+    __tablename__ = "user_subscriptions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=False)
+
+    status: Mapped[SubscriptionStatusEnum] = mapped_column(
+        Enum(SubscriptionStatusEnum),
+        default=SubscriptionStatusEnum.active
+    )
+
+    current_period_start: Mapped[datetime] = mapped_column(DateTime)
+    current_period_end: Mapped[datetime] = mapped_column(DateTime)
+
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    provider: Mapped[str] = mapped_column(String(50))  # razorpay / stripe
+    provider_subscription_id: Mapped[str] = mapped_column(String(255), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("UnifiedAuthModel",back_populates="subscriptions")
+    plan = relationship("PlanModel",back_populates="subscriptions")
+
+class PaymentModel(Base):
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
+
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    currency: Mapped[str] = mapped_column(String(10), default="INR")
+
+    status: Mapped[PaymentStatusEnum] = mapped_column(
+        Enum(PaymentStatusEnum),
+        default=PaymentStatusEnum.pending
+    )
+
+    provider: Mapped[PaymentProviderEnum] = mapped_column(Enum(PaymentProviderEnum), nullable=True)  # razorpay / stripe
+    provider_payment_id: Mapped[str] = mapped_column(String(255), nullable=True)
+    provider_order_id: Mapped[str] = mapped_column(String(255), nullable=True)
+
+    payment_type: Mapped[PaymentTypeEnum] = mapped_column(
+        Enum(PaymentTypeEnum),
+        nullable=False
+    )
+
+    metadata_json: Mapped[dict | None] = mapped_column(MutableDict.as_mutable(JSONB))
+    invoice_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user = relationship("UnifiedAuthModel",back_populates="payments")
+    addon_order = relationship("AddOnCoinOrderModel", back_populates="payment", uselist=False)
+
+class CoinsLedgerModel(Base):
+    __tablename__ = "coins_ledger"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
+
+    transaction_type: Mapped[CoinTransactionTypeEnum] = mapped_column(
+        Enum(CoinTransactionTypeEnum),
+        nullable=False
+    )
+
+    coins: Mapped[int] = mapped_column(Integer, nullable=False)
+    # positive for credit, negative for debit
+
+    reference_type: Mapped[str | None] = mapped_column(String(50))
+    reference_id: Mapped[int | None] = mapped_column(Integer)
+
+    balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    
+    # New fields for FIFO and Expiry
+    expiry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    remaining_coins: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=0)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    user = relationship("UnifiedAuthModel",back_populates="coins_ledger")
+
+class CoinPackageModel(Base):
+    __tablename__ = "coin_packages"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+
+    name: Mapped[str] = mapped_column(String(100))
+    coins: Mapped[int] = mapped_column(Integer)
+    price: Mapped[float] = mapped_column(Float)
+    currency: Mapped[str] = mapped_column(String(10), default="INR")
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    validity_days: Mapped[int] = mapped_column(Integer,nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+class AddOnCoinOrderModel(Base):
+    __tablename__ = "addon_coin_orders"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
+    bundle_id: Mapped[int] = mapped_column(ForeignKey("coin_packages.id"), nullable=False)
+    
+    # Generic provider fields
+    provider: Mapped[PaymentProviderEnum] = mapped_column(Enum(PaymentProviderEnum), nullable=False)
+    provider_order_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
+    provider_payment_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    provider_signature: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    payment_id: Mapped[int | None] = mapped_column(ForeignKey("payments.id"), nullable=True)
+
+    amount: Mapped[float] = mapped_column(Float, nullable=False)
+    coins: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[PaymentStatusEnum] = mapped_column(Enum(PaymentStatusEnum), default=PaymentStatusEnum.pending)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    user = relationship("UnifiedAuthModel")
+    bundle = relationship("CoinPackageModel")
+    payment = relationship("PaymentModel", back_populates="addon_order")
+
+class CoinUsageSettingsModel(Base):
+    __tablename__ = "coin_usage_settings"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    phone_number_purchase_cost: Mapped[int] = mapped_column(Integer, default=500)
+    elevenlabs_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
+    static_conversation_cost: Mapped[int] = mapped_column(Integer, default=0)
+    
+    # Singleton guard: only one row can have this value
+    singleton_guard: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint("singleton_guard", name="uq_coin_usage_settings_singleton"),
+    )
+
+    @classmethod
+    def get_settings(cls):
+        """Always returns the single settings record, creating it if it doesn't exist."""
+        with db():
+            settings = db.session.query(cls).first()
+            if not settings:
+                try:
+                    settings = cls()
+                    db.session.add(settings)
+                    db.session.commit()
+                    db.session.refresh(settings)
+                except Exception:
+                    # In case of race condition where another process created it
+                    db.session.rollback()
+                    settings = db.session.query(cls).first()
+            return settings

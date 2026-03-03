@@ -295,16 +295,34 @@ def _get_embed_script_content(public_id: str) -> str:
 
     var div = document.createElement('div');
     div.id = 'voice-ninja-widget';
+    // 🔹 NEW: Build custom fields HTML
+var customFieldsHtml = '';
+
+if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
+  config.prechat.custom_fields.forEach(function(field) {
+    var inputType = field.field_type || 'text';
+    var fieldName = field.field_name;
+
+    customFieldsHtml +=
+      '<input ' +
+      'type="' + inputType + '" ' +
+      'id="vn-custom-' + fieldName + '" ' +
+      'placeholder="' + fieldName + '" ' +
+      (field.required ? 'required' : '') +
+      '>';
+  });
+}
     div.innerHTML = vnStyles +
     '<div class="vn-root" style="position:fixed;' + posStyles + 'z-index:99999;">' +
       '<div class="vn-card">' +
       headerHtml +
       '<div id="vn-prechat-container" style="display:none;">' +
         '<div id="vn-prechat">' +
-          (config.prechat.require_name ? '<input type="text" id="vn-lead-name" placeholder="Your Name">' : '') +
-          (config.prechat.require_email ? '<input type="email" id="vn-lead-email" placeholder="Email Address">' : '') +
-          (config.prechat.require_phone ? '<input type="tel" id="vn-lead-phone" placeholder="Phone Number">' : '') +
-        '</div>' +
+  (config.prechat.require_name ? '<input type="text" id="vn-lead-name" placeholder="Your Name">' : '') +
+  (config.prechat.require_email ? '<input type="email" id="vn-lead-email" placeholder="Email Address">' : '') +
+  (config.prechat.require_phone ? '<input type="tel" id="vn-lead-phone" placeholder="Phone Number">' : '') +
+  customFieldsHtml +
+'</div>' +
         '<button id="vn-start-prechat" style="width:100%%;background:#562C7C;color:#fff;border:none;padding:10px;border-radius:8px;cursor:pointer;margin-bottom:10px;">Start Chat</button>' +
       '</div>' +
       '<div id="vn-main-controls" style="display:flex;align-items:center;gap:14px;">' +
@@ -447,19 +465,41 @@ def _get_embed_script_content(public_id: str) -> str:
     };
 
     async function submitLead() {
-        var leadData = {
-            name: document.getElementById('vn-lead-name')?.value,
-            email: document.getElementById('vn-lead-email')?.value,
-            phone: document.getElementById('vn-lead-phone')?.value
-        };
-        var resp = await fetch(leadUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(leadData)
-        }).then(r => r.json());
-        if (resp && resp.id) return resp;
-        return null;
+
+    var customData = [];
+
+    if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
+        config.prechat.custom_fields.forEach(function(field) {
+
+            var fieldName = field.field_name;
+            var el = document.getElementById('vn-custom-' + fieldName);
+
+            if (el) {
+                customData.push({
+                    field_name: fieldName,
+                    field_type: field.field_type,
+                    value: el.value
+                });
+            }
+        });
     }
+
+    var leadData = {
+        name: document.getElementById('vn-lead-name')?.value,
+        email: document.getElementById('vn-lead-email')?.value,
+        phone: document.getElementById('vn-lead-phone')?.value,
+        custom_data: customData
+    };
+
+    var resp = await fetch(leadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(leadData)
+    }).then(r => r.json());
+
+    if (resp && resp.id) return resp;
+    return null;
+}
 
     btn.addEventListener('click', function() {
       if (connected) {
@@ -476,12 +516,58 @@ def _get_embed_script_content(public_id: str) -> str:
     });
 
     startPrechatBtn.addEventListener('click', async function() {
-        var resp = await submitLead();
-        if (resp && resp.id) window.voiceNinjaLeadId = resp.id;
-        prechatContainer.style.display = 'none';
-        mainControls.style.display = 'flex';
-        startCall();
-    });
+
+    // 🔹 Validate default fields
+    if (config.prechat.require_name) {
+        var nameEl = document.getElementById('vn-lead-name');
+        if (!nameEl.value.trim()) {
+            alert('Name is required');
+            nameEl.focus();
+            return;
+        }
+    }
+
+    if (config.prechat.require_email) {
+        var emailEl = document.getElementById('vn-lead-email');
+        if (!emailEl.value.trim()) {
+            alert('Email is required');
+            emailEl.focus();
+            return;
+        }
+    }
+
+    if (config.prechat.require_phone) {
+        var phoneEl = document.getElementById('vn-lead-phone');
+        if (!phoneEl.value.trim()) {
+            alert('Phone is required');
+            phoneEl.focus();
+            return;
+        }
+    }
+
+    // 🔹 Validate custom fields
+    if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
+        for (var i = 0; i < config.prechat.custom_fields.length; i++) {
+            var field = config.prechat.custom_fields[i];
+            if (field.required) {
+                var el = document.getElementById('vn-custom-' + field.field_name);
+                if (el && !el.value.trim()) {
+                    alert(field.field_name + ' is required');
+                    el.focus();
+                    return;
+                }
+            }
+        }
+    }
+
+    // ✅ If validation passes
+    var resp = await submitLead();
+    if (resp && resp.id) window.voiceNinjaLeadId = resp.id;
+
+    prechatContainer.style.display = 'none';
+    mainControls.style.display = 'flex';
+    startCall();
+});
 
     function startCall() {
       statusEl.textContent = 'Connecting...';
@@ -536,16 +622,25 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
             await websocket.send_json({"type": "error", "message": "Web Agent is disabled"})
             await websocket.close(code=1008)
             return
+
+        # Check owner coin balance
+        from app_v2.utils.coin_utils import get_user_coin_balance
+        owner_balance = get_user_coin_balance(web_agent.user_id)
+        if owner_balance <= 0:
+            await websocket.send_json({"type": "error", "message": "Insufficient coins"})
+            await websocket.close(code=1008)
+            return
         elevenlabs_agent_id = web_agent.agent.elevenlabs_agent_id
         agent_id = web_agent.agent_id
+        agent_name = web_agent.agent.agent_name
         user_id = web_agent.user_id
-        agent_name = web_agent.web_agent_name
+        web_agent_name = web_agent.web_agent_name
     with db():
         log_activity(
             user_id=user_id,
             event_type="web_agent_chat_started",
             description=f"Public web chat started for agent: {agent_name}",
-            metadata={"public_id": public_id, "agent_id": agent_id, "lead_id": lead_id}
+            metadata={"public_id": public_id, "agent_id": agent_id, "agent_name": agent_name, "web_agent_name": web_agent_name, "lead_id": lead_id}
     )
 
     # Use elevenlabs_agent_id (and agent_id) after block; no further DB access in this handler
@@ -683,6 +778,13 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                         )
                         
                         with db():
+                            from app_v2.databases.models import CoinUsageSettingsModel
+                            from app_v2.utils.coin_utils import deduct_coins
+                            settings = CoinUsageSettingsModel.get_settings()
+                            
+                            raw_el_cost = float(metadata.get("cost")) if metadata.get("cost") is not None else 0
+                            calculated_cost = int((raw_el_cost * settings.elevenlabs_multiplier) + settings.static_conversation_cost)
+
                             new_conv = ConversationsModel(
                                 agent_id=agent_id,
                                 user_id=user_id,
@@ -692,9 +794,14 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                                 channel=ChannelEnum.widget,
                                 transcript_summary=metadata.get("transcript_summary"),
                                 elevenlabs_conv_id=conv_id,
-                                cost=metadata.get("cost")
+                                cost=calculated_cost
                             )
                             db.session.add(new_conv)
+                            db.session.flush() # flush to get the conversation ID
+                            
+                            if calculated_cost > 0:
+                                deduct_coins(user_id=user_id, amount=calculated_cost, reference_type="conversation", reference_id=new_conv.id, commit=False)
+
                             db.session.commit()
                             db.session.refresh(new_conv)
                             
@@ -712,7 +819,7 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                     user_id=user_id,
                     event_type="web_agent_chat_ended",
                     description=f"Public web chat ended for agent",
-                    metadata={"public_id": public_id, "agent_id": agent_id, "conversation_id": conv_id, "lead_id": lead_id}
+                    metadata={"public_id": public_id, "agent_id": agent_id, "conversation_id": conv_id, "lead_id": lead_id,"agent_name":agent_name,"web_agent_name":web_agent_name}
             )
     except Exception:
         pass
@@ -724,6 +831,7 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
     except Exception:
         pass
     logger.info("Web agent WS closed for public_id=%s", public_id)
+
 
 
 @router.get("/config/{public_id}", response_model=WebAgentPublicConfig)
@@ -753,6 +861,7 @@ def get_public_config(public_id: str):
             "custom_fields": web_agent.custom_fields or [],
         }
     )
+
 
 @router.post("/lead/{public_id}")
 def submit_lead(public_id: str, lead: WebAgentLeadCreate):

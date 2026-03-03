@@ -1,6 +1,7 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, status
 from fastapi.responses import HTMLResponse
 from fastapi_sqlalchemy import db
+from app_v2.utils.coin_utils import deduct_coins
 from app_v2.databases.models import AgentModel
 import json
 import base64
@@ -93,10 +94,18 @@ async def websocket_test_agent(
              elevenlabs_agent_id = agent.elevenlabs_agent_id
         else:
              elevenlabs_agent_id = None
+             
+        from app_v2.utils.coin_utils import get_user_coin_balance
+        user_balance = get_user_coin_balance(user_id)
 
     if not elevenlabs_agent_id:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Agent not found")
         logger.error(f"Agent not found for user {user_id}")
+        return
+        
+    if user_balance <= 0:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Insufficient coins")
+        logger.error(f"Insufficient coins for user {user_id}. Balance: {user_balance}")
         return
 
     # await websocket.accept()
@@ -106,7 +115,7 @@ async def websocket_test_agent(
             user_id=user_id,
             event_type="agent_conversation_started",
             description=f"Started voice chat for agent: {agent.agent_name if agent else 'Unknown'}",
-            metadata={"agent_id": agent_id, "elevenlabs_agent_id": elevenlabs_agent_id}
+            metadata={"agent_id": agent_id, "agent_name": agent.agent_name if agent else 'Unknown', "elevenlabs_agent_id": elevenlabs_agent_id}
     )
 
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={elevenlabs_agent_id}"
@@ -219,6 +228,7 @@ async def websocket_test_agent(
                     description=f"Completed voice chat for agent: {agent.agent_name if agent else 'Unknown'}",
                     metadata={
                     "agent_id": agent_id, 
+                    "agent_name": agent.agent_name if agent else 'Unknown',
                     "elevenlabs_agent_id": elevenlabs_agent_id,
                     "conversation_id": conversation_id
                 }
@@ -251,6 +261,15 @@ async def websocket_test_agent(
                 )
 
                 with db():
+                    cost_data = metadata.get("cost")
+                    
+                    from app_v2.databases.models import CoinUsageSettingsModel
+                    settings = CoinUsageSettingsModel.get_settings()
+                    
+                    # Calculate final cost based on settings
+                    raw_el_cost = float(cost_data) if cost_data else 0
+                    calculated_cost = int((raw_el_cost * settings.elevenlabs_multiplier) + settings.static_conversation_cost)
+
                     conversation_data = ConversationsModel(
                         agent_id=agent_id,
                         user_id=user_id,
@@ -259,18 +278,24 @@ async def websocket_test_agent(
                         call_status=call_status_enum,
                         channel=ChannelEnum.chat,
                         transcript_summary=metadata.get("transcript_summary"),
-                        elevenlabs_conv_id=conversation_id,   # make sure column exists
-                        cost=metadata.get("cost")
+                        elevenlabs_conv_id=conversation_id,
+                        cost=calculated_cost
                     )
 
                     db.session.add(conversation_data)
+                    db.session.flush() # flush to get the conversation ID
+                    
+                    if calculated_cost > 0:
+                        deduct_coins(user_id=user_id, amount=calculated_cost, reference_type="conversation", reference_id=conversation_data.id, commit=False)
+
                     db.session.commit()
                     db.session.refresh(conversation_data)
 
                 logger.info(
                     f"✅ Conversation {conversation_id} stored successfully "
                     f"(duration={metadata.get('duration')}s, "
-                    f"messages={metadata.get('message_count')})"
+                    f"messages={metadata.get('message_count')}, "
+                    f"cost={calculated_cost})"
                 )
 
             except Exception:

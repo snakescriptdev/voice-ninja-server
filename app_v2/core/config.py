@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     #Ngrok base url
     NGROK_BASE_URL: str = os.getenv("NGROK_BASE_URL")
 
+    # Razorpay Configuration
+    RAZOR_KEY_ID: str = os.getenv("RAZOR_KEY_ID")
+    RAZOR_KEY_SECRET: str = os.getenv("RAZOR_KEY_SECRET")
+
     class Config:
         env_file = ".env"
         extra = "ignore"

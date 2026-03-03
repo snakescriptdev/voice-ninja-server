@@ -23,8 +23,11 @@ from app_v2.databases.models import (
     VoiceTraitsModel,
     AdminTokenModel,
     TokensToConsume,
-    AgentModel
+    AgentModel,
+    UnifiedAuthModel,
+    CoinsLedgerModel
 )
+from app_v2.schemas.enum_types import CoinTransactionTypeEnum
 import requests
 from app_v2.core.elevenlabs_config import (
     get_all_supported_languages,
@@ -334,6 +337,59 @@ def remove_default_voices_unsynced(session: Session):
     logger.info("✅ Default voices cleanup complete.")
 
 
+def populate_test_coins(session: Session):
+    """
+    Populate each user with 25,000 coins for testing purposes.
+    """
+    logger.info("\n" + "=" * 60)
+    logger.info("Populating Test Coins (25,000 each)...")
+    logger.info("=" * 60)
+    
+    users = session.query(UnifiedAuthModel).all()
+    added_count = 0
+    skipped_count = 0
+    
+    for user in users:
+        # Check if user already has test coins from this script
+        existing_credit = session.query(CoinsLedgerModel).filter(
+            CoinsLedgerModel.user_id == user.id,
+            CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.credit_purchase,
+            CoinsLedgerModel.reference_type == "test_population"
+        ).first()
+        
+        if existing_credit:
+            logger.debug(f"User {user.email or user.id} already has test coins. Skipping.")
+            skipped_count += 1
+            continue
+            
+        # Add 25,000 coins
+        amount = 25000
+        
+        # Update user's total tokens
+        current_tokens = user.tokens or 0
+        new_tokens = current_tokens + amount
+        user.tokens = new_tokens
+        
+        ledger_entry = CoinsLedgerModel(
+            user_id=user.id,
+            transaction_type=CoinTransactionTypeEnum.credit_purchase,
+            coins=amount,
+            reference_type="test_population",
+            balance_after=new_tokens,
+            remaining_coins=amount
+        )
+        session.add(ledger_entry)
+        logger.info(f"✅ Credited 25,000 coins to user: {user.email or user.id}")
+        added_count += 1
+        
+    try:
+        session.commit()
+        logger.info(f"\n📊 Summary: {added_count} users credited, {skipped_count} users skipped")
+    except Exception as e:
+        session.rollback()
+        logger.error(f"❌ Error populating test coins: {e}")
+        raise
+
 def ensure_admin_defaults(session: Session):
     logger.info("Ensuring admin defaults...")
 
@@ -370,6 +426,7 @@ def main():
         populate_ai_models(session)
         remove_default_voices_unsynced(session)
         populate_elevenlabs_voices(session)
+        populate_test_coins(session)
         
         logger.info("\n" + "✨" * 30)
         logger.info("DATA POPULATION COMPLETE!")
