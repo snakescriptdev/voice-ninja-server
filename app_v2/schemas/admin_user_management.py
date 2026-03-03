@@ -1,0 +1,21 @@
+from pydantic import BaseModel
+from typing import List, Optional
+from datetime import datetime
+
+class UserManagementStats(BaseModel):
+    total_users: int
+    plan_distribution: List[dict] # [{"plan_name": str, "count": int}]
+
+class UserManagementListItem(BaseModel):
+    user_id: int
+    username: str
+    email: str
+    plan_name: Optional[str]
+    plan_id: Optional[int]
+    balance_coins: int
+    no_of_agents: int
+    no_of_phones: int
+    last_active: Optional[str]
+
+    class Config:
+        from_attributes = True
