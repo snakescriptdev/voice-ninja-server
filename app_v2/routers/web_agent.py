@@ -240,26 +240,38 @@ def _get_embed_script_content(public_id: str) -> str:
   window.voiceNinjaWsUrl = wsUrl;
 
   var vnStyles = '<style id="vn-widget-styles">' +
-    '#voice-ninja-widget .vn-card{background:linear-gradient(165deg,#ffffff 0%%,#fafbff 100%%);border-radius:20px;padding:20px;min-width:280px;box-shadow:0 10px 40px rgba(86,44,124,0.12),0 2px 12px rgba(0,0,0,0.06);border:1px solid rgba(224,105,67,0.08);}' +
-    '#voice-ninja-widget .vn-root{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,\'Helvetica Neue\',sans-serif;}' +
-    '#vn-indicator-wrap{min-width:44px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;gap:10px;padding:0 12px;background:linear-gradient(145deg,#fef8f6 0%%,#f6f4ff 100%%);border:1px solid rgba(86,44,124,0.06);flex-shrink:0;}' +
-    '#vn-indicator-wrap .vn-logo{height:28px;width:auto;object-fit:contain;display:block;}' +
-    '#vn-indicator-wrap .vn-voice-bars{display:flex;align-items:flex-end;gap:3px;height:16px;}' +
-    '#vn-indicator-wrap .vn-voice-bars span{width:4px;border-radius:2px;background:linear-gradient(180deg,#E06943,#562C7C);height:4px;opacity:0.4;transition:opacity 0.2s ease;}' +
-    '#vn-indicator-wrap.vn-speaking .vn-voice-bars span{opacity:0.95;}' +
+    '.vn-root{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,\'Helvetica Neue\',sans-serif;}' +
+    '#vn-indicator-wrap{width:52px;height:52px;border-radius:50%%;display:flex;align-items:center;justify-content:center;gap:8px;padding:0;background:linear-gradient(145deg,#fef8f6 0%%,#f6f4ff 100%%);border:1px solid rgba(86,44,124,0.08);cursor:pointer;transition:width 0.35s cubic-bezier(.4,0,.2,1),border-radius 0.35s cubic-bezier(.4,0,.2,1),padding 0.35s cubic-bezier(.4,0,.2,1),box-shadow 0.35s ease;overflow:hidden;box-shadow:0 4px 16px rgba(86,44,124,0.10);}' +
+    '#vn-indicator-wrap:hover{width:130px;border-radius:26px;padding:0 14px;box-shadow:0 6px 24px rgba(86,44,124,0.18);}' +
+    '#vn-indicator-wrap.vn-expanded,#vn-indicator-wrap.vn-active,#vn-indicator-wrap.vn-connecting{width:130px;border-radius:26px;padding:0 14px;}' +
+    '#vn-indicator-wrap.vn-active{box-shadow:0 0 20px rgba(224,105,67,0.35);}' +
+    '#vn-indicator-wrap.vn-active:hover{box-shadow:0 0 24px rgba(220,50,50,0.40);}' +
+    '#vn-indicator-wrap.vn-connecting{animation:vn-pulse 1.8s ease-in-out infinite;}' +
+    '@keyframes vn-pulse{0%%,100%%{box-shadow:0 0 12px rgba(86,44,124,0.15);}50%%{box-shadow:0 0 24px rgba(86,44,124,0.35);}}' +
+    '#vn-indicator-wrap .vn-logo{height:28px;width:auto;object-fit:contain;display:block;flex-shrink:0;}' +
+    '#vn-indicator-wrap .vn-voice-bars{display:flex;align-items:flex-end;gap:3px;height:16px;opacity:0;transition:opacity 0.25s ease;}' +
+    '#vn-indicator-wrap:hover .vn-voice-bars,#vn-indicator-wrap.vn-expanded .vn-voice-bars,#vn-indicator-wrap.vn-active .vn-voice-bars,#vn-indicator-wrap.vn-connecting .vn-voice-bars{opacity:1;}' +
+    '#vn-indicator-wrap .vn-voice-bars span{width:4px;border-radius:2px;background:linear-gradient(180deg,#E06943,#562C7C);height:4px;transition:height 0.15s ease;}' +
+    '#vn-indicator-wrap:hover .vn-voice-bars span{animation:vn-bounce 0.35s ease;}' +
+    '@keyframes vn-bounce{0%%{height:4px;}40%%{height:8px;}100%%{height:4px;}}' +
     '#vn-indicator-wrap.vn-speaking .vn-voice-bars span:nth-child(1){animation:vn-bar 0.55s ease-in-out 0s infinite alternate;}' +
     '#vn-indicator-wrap.vn-speaking .vn-voice-bars span:nth-child(2){animation:vn-bar 0.55s ease-in-out 0.12s infinite alternate;}' +
     '#vn-indicator-wrap.vn-speaking .vn-voice-bars span:nth-child(3){animation:vn-bar 0.55s ease-in-out 0.24s infinite alternate;}' +
     '#vn-indicator-wrap.vn-speaking .vn-voice-bars span:nth-child(4){animation:vn-bar 0.55s ease-in-out 0.36s infinite alternate;}' +
     '@keyframes vn-bar{from{height:4px;}to{height:16px;}}' +
-    '#vn-btn{flex:1;background:linear-gradient(135deg,#E06943 0%%,#a81e7a 50%%,#562C7C 100%%);background-size:200%% 100%%;color:#fff;border:none;border-radius:14px;padding:14px 20px;font-weight:600;font-size:15px;letter-spacing:0.02em;cursor:pointer;transition:transform 0.15s ease,box-shadow 0.2s ease,opacity 0.2s ease;}' +
-    '#vn-btn:hover{transform:translateY(-1px);box-shadow:0 8px 24px rgba(86,44,124,0.35);}' +
-    '#vn-btn:active{transform:translateY(0);}' +
-    '#vn-btn.vn-end{background:linear-gradient(135deg,#5a5a5a 0%%,#3d3d3d 100%%);}' +
-    '#vn-btn.vn-end:hover{box-shadow:0 6px 20px rgba(0,0,0,0.25);}' +
-    '#vn-status{font-size:12px;color:#64748b;letter-spacing:0.02em;margin-top:10px;min-height:18px;}' +
-    '#vn-prechat{margin-bottom:15px;}' +
-    '#vn-prechat input{width:100%%;padding:10px;margin-bottom:8px;border:1px solid #ddd;border-radius:8px;box-sizing:border-box;}' +
+    '#vn-indicator-wrap.vn-connecting .vn-voice-bars span:nth-child(1){animation:vn-bar 1.2s ease-in-out 0s infinite alternate;}' +
+    '#vn-indicator-wrap.vn-connecting .vn-voice-bars span:nth-child(2){animation:vn-bar 1.2s ease-in-out 0.2s infinite alternate;}' +
+    '#vn-indicator-wrap.vn-connecting .vn-voice-bars span:nth-child(3){animation:vn-bar 1.2s ease-in-out 0.4s infinite alternate;}' +
+    '#vn-indicator-wrap.vn-connecting .vn-voice-bars span:nth-child(4){animation:vn-bar 1.2s ease-in-out 0.6s infinite alternate;}' +
+    '#vn-prechat-card{position:absolute;background:#fff;border-radius:16px;padding:20px;min-width:260px;box-shadow:0 10px 40px rgba(86,44,124,0.14),0 2px 12px rgba(0,0,0,0.06);border:1px solid rgba(224,105,67,0.08);transform:scale(0.92);opacity:0;pointer-events:none;transition:transform 0.25s cubic-bezier(.4,0,.2,1),opacity 0.25s ease;}' +
+    '#vn-prechat-card.vn-show{transform:scale(1);opacity:1;pointer-events:auto;}' +
+    '#vn-prechat-card .vn-prechat-title{font-weight:700;font-size:16px;color:#1e293b;line-height:1.2;margin-bottom:4px;}' +
+    '#vn-prechat-card .vn-prechat-subtitle{font-size:12px;color:#64748b;line-height:1.4;margin-bottom:12px;}' +
+    '#vn-prechat input{width:100%%;padding:10px;margin-bottom:8px;border:1px solid #ddd;border-radius:8px;box-sizing:border-box;font-size:14px;}' +
+    '#vn-start-prechat{width:100%%;background:#562C7C;color:#fff;border:none;padding:10px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;}' +
+    '#vn-status-toast{position:absolute;background:#1e293b;color:#fff;font-size:12px;padding:8px 16px;border-radius:10px;white-space:nowrap;transform:scale(0.92);opacity:0;pointer-events:none;transition:transform 0.25s cubic-bezier(.4,0,.2,1),opacity 0.25s ease;}' +
+    '#vn-status-toast.vn-show{transform:scale(1);opacity:1;pointer-events:auto;}' +
+    '#vn-branding{font-size:9px;text-align:center;margin-top:8px;opacity:0.5;}' +
     '</style>';
 
   var config = null;
@@ -277,7 +289,7 @@ def _get_embed_script_content(public_id: str) -> str:
 
   function injectWidget() {
     if (document.getElementById('voice-ninja-widget')) return;
-    
+
     var pos = config.appearance.position || 'bottom-right';
     var posStyles = '';
     if (pos === 'bottom-right') posStyles = 'bottom:24px;right:24px;';
@@ -285,66 +297,72 @@ def _get_embed_script_content(public_id: str) -> str:
     else if (pos === 'top-right') posStyles = 'top:24px;right:24px;';
     else if (pos === 'top-left') posStyles = 'top:24px;left:24px;';
 
-    var headerHtml = '';
-    if (config.appearance.widget_title || config.appearance.widget_subtitle) {
-      headerHtml = '<div class="vn-header" style="margin-bottom:16px;border-bottom:1px solid rgba(0,0,0,0.05);padding-bottom:12px;">' +
-        (config.appearance.widget_title ? '<div style="font-weight:700;font-size:16px;color:#1e293b;line-height:1.2;margin-bottom:4px;">' + config.appearance.widget_title + '</div>' : '') +
-        (config.appearance.widget_subtitle ? '<div style="font-size:12px;color:#64748b;line-height:1.4;">' + config.appearance.widget_subtitle + '</div>' : '') +
-      '</div>';
-    }
+    var prechatPos = '';
+    if (pos.indexOf('bottom') !== -1) prechatPos += 'bottom:62px;';
+    else prechatPos += 'top:62px;';
+    if (pos.indexOf('right') !== -1) prechatPos += 'right:0;';
+    else prechatPos += 'left:0;';
 
     var div = document.createElement('div');
     div.id = 'voice-ninja-widget';
-    // 🔹 NEW: Build custom fields HTML
-var customFieldsHtml = '';
 
-if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
-  config.prechat.custom_fields.forEach(function(field) {
-    var inputType = field.field_type || 'text';
-    var fieldName = field.field_name;
+    var customFieldsHtml = '';
+    if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
+      config.prechat.custom_fields.forEach(function(field) {
+        var inputType = field.field_type || 'text';
+        var fieldName = field.field_name;
+        customFieldsHtml +=
+          '<input ' +
+          'type="' + inputType + '" ' +
+          'id="vn-custom-' + fieldName + '" ' +
+          'placeholder="' + fieldName + '" ' +
+          (field.required ? 'required' : '') +
+          '>';
+      });
+    }
 
-    customFieldsHtml +=
-      '<input ' +
-      'type="' + inputType + '" ' +
-      'id="vn-custom-' + fieldName + '" ' +
-      'placeholder="' + fieldName + '" ' +
-      (field.required ? 'required' : '') +
-      '>';
-  });
-}
     div.innerHTML = vnStyles +
     '<div class="vn-root" style="position:fixed;' + posStyles + 'z-index:99999;">' +
-      '<div class="vn-card">' +
-      headerHtml +
-      '<div id="vn-prechat-container" style="display:none;">' +
+      '<div id="vn-prechat-card" style="' + prechatPos + '">' +
+        (config.appearance.widget_title ? '<div class="vn-prechat-title">' + config.appearance.widget_title + '</div>' : '') +
+        (config.appearance.widget_subtitle ? '<div class="vn-prechat-subtitle">' + config.appearance.widget_subtitle + '</div>' : '') +
         '<div id="vn-prechat">' +
-  (config.prechat.require_name ? '<input type="text" id="vn-lead-name" placeholder="Your Name">' : '') +
-  (config.prechat.require_email ? '<input type="email" id="vn-lead-email" placeholder="Email Address">' : '') +
-  (config.prechat.require_phone ? '<input type="tel" id="vn-lead-phone" placeholder="Phone Number">' : '') +
-  customFieldsHtml +
-'</div>' +
-        '<button id="vn-start-prechat" style="width:100%%;background:#562C7C;color:#fff;border:none;padding:10px;border-radius:8px;cursor:pointer;margin-bottom:10px;">Start Chat</button>' +
+          (config.prechat.require_name ? '<input type="text" id="vn-lead-name" placeholder="Your Name">' : '') +
+          (config.prechat.require_email ? '<input type="email" id="vn-lead-email" placeholder="Email Address">' : '') +
+          (config.prechat.require_phone ? '<input type="tel" id="vn-lead-phone" placeholder="Phone Number">' : '') +
+          customFieldsHtml +
+        '</div>' +
+        '<button id="vn-start-prechat">Start Chat</button>' +
       '</div>' +
-      '<div id="vn-main-controls" style="display:flex;align-items:center;gap:14px;">' +
-      '<div id="vn-indicator-wrap" title="Voice Ninja">' +
+      '<div id="vn-status-toast" style="' + prechatPos + '"></div>' +
+      '<div id="vn-indicator-wrap" title="Click to start voice chat">' +
         '<img class="vn-logo" src="' + logoUrl + '" alt="Voice Ninja"/>' +
         '<div class="vn-voice-bars"><span></span><span></span><span></span><span></span></div>' +
       '</div>' +
-      '<button id="vn-btn" type="button" style="background:' + config.appearance.primary_color + ';">Start voice chat</button>' +
-      '</div>' +
-      '<div id="vn-status"></div>' +
-      (config.appearance.show_branding ? '<div style="font-size:9px;text-align:center;margin-top:8px;opacity:0.5;">Powered by Voice Ninja</div>' : '') +
-      '</div></div>';
+      (config.appearance.show_branding ? '<div id="vn-branding">Powered by Voice Ninja</div>' : '') +
+    '</div>';
     document.body.appendChild(div);
 
-    var btn = document.getElementById('vn-btn');
-    var statusEl = document.getElementById('vn-status');
-    var prechatContainer = document.getElementById('vn-prechat-container');
-    var mainControls = document.getElementById('vn-main-controls');
+    var pill = document.getElementById('vn-indicator-wrap');
+    var prechatCard = document.getElementById('vn-prechat-card');
+    var statusToast = document.getElementById('vn-status-toast');
     var startPrechatBtn = document.getElementById('vn-start-prechat');
-    
     var connected = false;
+    var connecting = false;
     var client = null;
+
+    function showStatus(msg, duration) {
+      statusToast.textContent = msg;
+      statusToast.classList.add('vn-show');
+      if (duration) setTimeout(function() { statusToast.classList.remove('vn-show'); }, duration);
+    }
+    function hideStatus() { statusToast.classList.remove('vn-show'); }
+    function setState(state) {
+      pill.classList.remove('vn-active', 'vn-connecting');
+      pill.title = 'Click to start voice chat';
+      if (state === 'connecting') { pill.classList.add('vn-connecting'); pill.title = 'Connecting...'; }
+      else if (state === 'active') { pill.classList.add('vn-active'); pill.title = 'Click to end call'; }
+    }
 
     function VoiceNinjaClient(url) {
       this.wsUrl = url;
@@ -385,9 +403,9 @@ if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
           self.stopPlayback();
           var w = document.getElementById('vn-indicator-wrap');
           if (w) w.classList.remove('vn-speaking');
-          btn.textContent = 'Start voice chat';
-          btn.classList.remove('vn-end');
-          statusEl.textContent = 'Disconnected';
+          connecting = false;
+          setState('idle');
+          showStatus('Disconnected', 3000);
         };
         self.ws.onerror = function() { reject(new Error('WebSocket error')); };
       });
@@ -400,7 +418,7 @@ if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
         navigator.mediaDevices.getUserMedia({ audio: { sampleRate: self.SAMPLE_RATE, channelCount: 1 } }).then(function(stream) {
           self.mic = stream;
           self.startStreaming();
-        }).catch(function(e) { statusEl.textContent = 'Microphone access denied'; });
+        }).catch(function(e) { showStatus('Microphone access denied', 4000); });
       });
     };
 
@@ -501,17 +519,16 @@ if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
     return null;
 }
 
-    btn.addEventListener('click', function() {
+    pill.addEventListener('click', function() {
       if (connected) {
         client.disconnect();
         return;
       }
-      
+      if (connecting) return;
       if (config.prechat.enable_prechat) {
-          mainControls.style.display = 'none';
-          prechatContainer.style.display = 'block';
+        prechatCard.classList.toggle('vn-show');
       } else {
-          startCall();
+        startCall();
       }
     });
 
@@ -564,26 +581,29 @@ if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
     var resp = await submitLead();
     if (resp && resp.id) window.voiceNinjaLeadId = resp.id;
 
-    prechatContainer.style.display = 'none';
-    mainControls.style.display = 'flex';
+    prechatCard.classList.remove('vn-show');
     startCall();
 });
 
     function startCall() {
-      statusEl.textContent = 'Connecting...';
+      connecting = true;
+      setState('connecting');
+      showStatus('Connecting...', 0);
       var wsUrlWithLead = wsUrl;
       if (window.voiceNinjaLeadId) {
-          wsUrlWithLead += (wsUrlWithLead.indexOf('?') === -1 ? '?' : '&') + 'lead_id=' + window.voiceNinjaLeadId;
+        wsUrlWithLead += (wsUrlWithLead.indexOf('?') === -1 ? '?' : '&') + 'lead_id=' + window.voiceNinjaLeadId;
       }
       client = new VoiceNinjaClient(wsUrlWithLead);
       client.connect().then(function() {
         connected = true;
-        btn.textContent = 'End call';
-        btn.classList.add('vn-end');
-        statusEl.textContent = '';
+        connecting = false;
+        setState('active');
+        hideStatus();
         client.unlockAndStream();
       }).catch(function(e) {
-        statusEl.textContent = 'Connection failed';
+        connecting = false;
+        setState('idle');
+        showStatus('Connection failed', 4000);
       });
     }
   }
