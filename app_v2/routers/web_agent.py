@@ -240,16 +240,20 @@ def _get_embed_script_content(public_id: str) -> str:
   window.voiceNinjaWsUrl = wsUrl;
 
   var vnStyles = '<style id="vn-widget-styles">' +
-    '.vn-root{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,\'Helvetica Neue\',sans-serif;}' +
-    '#vn-indicator-wrap{width:52px;height:52px;border-radius:50%%;display:flex;align-items:center;justify-content:center;gap:8px;padding:0;background:linear-gradient(145deg,#fef8f6 0%%,#f6f4ff 100%%);border:1px solid rgba(86,44,124,0.08);cursor:pointer;transition:width 0.35s cubic-bezier(.4,0,.2,1),border-radius 0.35s cubic-bezier(.4,0,.2,1),padding 0.35s cubic-bezier(.4,0,.2,1),box-shadow 0.35s ease;overflow:hidden;box-shadow:0 4px 16px rgba(86,44,124,0.10);}' +
-    '#vn-indicator-wrap:hover{width:130px;border-radius:26px;padding:0 14px;box-shadow:0 6px 24px rgba(86,44,124,0.18);}' +
-    '#vn-indicator-wrap.vn-active,#vn-indicator-wrap.vn-connecting{width:130px;border-radius:26px;padding:0 14px;}' +
+    '.vn-root{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,\'Helvetica Neue\',sans-serif;display:flex;flex-direction:column;align-items:center;}' +
+    '#vn-indicator-wrap{width:auto;height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:0px;padding:0 12px;background:transparent;border:1px solid transparent;cursor:pointer;transition:width 0.35s cubic-bezier(.4,0,.2,1),border-radius 0.35s cubic-bezier(.4,0,.2,1),padding 0.35s cubic-bezier(.4,0,.2,1),gap 0.3s ease,box-shadow 0.35s ease,background 0.3s ease,border-color 0.3s ease;overflow:hidden;box-shadow:none;}' +
+    '#vn-indicator-wrap:hover{width:130px;border-radius:26px;padding:0 14px;gap:10px;background:linear-gradient(145deg,#fef8f6 0%%,#f6f4ff 100%%);border-color:rgba(86,44,124,0.08);box-shadow:0 6px 24px rgba(86,44,124,0.18);}' +
+    '#vn-indicator-wrap.vn-active,#vn-indicator-wrap.vn-connecting{width:130px;border-radius:26px;padding:0 14px;gap:10px;background:linear-gradient(145deg,#fef8f6 0%%,#f6f4ff 100%%);border-color:rgba(86,44,124,0.08);}' +
     '#vn-indicator-wrap.vn-active{box-shadow:0 0 20px rgba(224,105,67,0.35);}' +
     '#vn-indicator-wrap.vn-active:hover{box-shadow:0 0 24px rgba(220,50,50,0.40);}' +
+    '#vn-indicator-wrap .vn-end-hint{display:none;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%%;background:rgba(220,50,50,0.15);color:#dc3232;font-size:11px;font-weight:700;flex-shrink:0;line-height:1;transition:background 0.2s ease;}' +
+    '#vn-indicator-wrap.vn-active:hover .vn-end-hint{display:flex;}' +
+    '#vn-indicator-wrap.vn-active:hover .vn-end-hint:hover{background:rgba(220,50,50,0.25);}' +
     '#vn-indicator-wrap.vn-connecting{animation:vn-pulse 1.8s ease-in-out infinite;}' +
     '@keyframes vn-pulse{0%%,100%%{box-shadow:0 0 12px rgba(86,44,124,0.15);}50%%{box-shadow:0 0 24px rgba(86,44,124,0.35);}}' +
     '#vn-indicator-wrap .vn-logo{height:28px;width:auto;object-fit:contain;display:block;flex-shrink:0;}' +
-    '#vn-indicator-wrap .vn-voice-bars{display:flex;align-items:flex-end;gap:3px;height:16px;}' +
+    '#vn-indicator-wrap .vn-voice-bars{display:flex;align-items:flex-end;gap:3px;height:16px;max-width:0;overflow:hidden;transition:max-width 0.3s cubic-bezier(.4,0,.2,1);}' +
+    '#vn-indicator-wrap:hover .vn-voice-bars,#vn-indicator-wrap.vn-active .vn-voice-bars,#vn-indicator-wrap.vn-connecting .vn-voice-bars{max-width:50px;}' +
     '#vn-indicator-wrap .vn-voice-bars span{width:4px;border-radius:2px;background:linear-gradient(180deg,#E06943,#562C7C);height:4px;opacity:0;transition:height 0.15s ease,opacity 0.25s ease;}' +
     '#vn-indicator-wrap .vn-voice-bars span:nth-child(1){transition-delay:0s;}' +
     '#vn-indicator-wrap .vn-voice-bars span:nth-child(2){transition-delay:0.05s;}' +
@@ -275,7 +279,7 @@ def _get_embed_script_content(public_id: str) -> str:
     '#vn-start-prechat{width:100%%;background:#562C7C;color:#fff;border:none;padding:10px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;}' +
     '#vn-status-toast{position:absolute;background:#1e293b;color:#fff;font-size:12px;padding:8px 16px;border-radius:10px;white-space:nowrap;transform:scale(0.92);opacity:0;pointer-events:none;transition:transform 0.25s cubic-bezier(.4,0,.2,1),opacity 0.25s ease;}' +
     '#vn-status-toast.vn-show{transform:scale(1);opacity:1;pointer-events:auto;}' +
-    '#vn-branding{font-size:9px;text-align:center;margin-top:8px;opacity:0.5;}' +
+    '#vn-branding{font-size:8px;text-align:center;margin-top:6px;opacity:0.4;white-space:nowrap;transition:opacity 0.3s ease;}' +
     '</style>';
 
   var config = null;
@@ -307,8 +311,8 @@ def _get_embed_script_content(public_id: str) -> str:
     else if (pos === 'top-left') posStyles = 'top:24px;left:24px;';
 
     var prechatPos = '';
-    if (pos.indexOf('bottom') !== -1) prechatPos += 'bottom:62px;';
-    else prechatPos += 'top:62px;';
+    if (pos.indexOf('bottom') !== -1) prechatPos += 'bottom:58px;';
+    else prechatPos += 'top:58px;';
     if (pos.indexOf('right') !== -1) prechatPos += 'right:0;';
     else prechatPos += 'left:0;';
 
@@ -348,6 +352,7 @@ def _get_embed_script_content(public_id: str) -> str:
       '<div id="vn-indicator-wrap" title="Click to start voice chat">' +
         '<img class="vn-logo" src="' + logoUrl + '" alt="Voice Ninja"/>' +
         '<div class="vn-voice-bars"><span></span><span></span><span></span><span></span></div>' +
+        '<div class="vn-end-hint">\u00d7</div>' +
       '</div>' +
       (config.appearance.show_branding ? '<div id="vn-branding">Powered by Voice Ninja</div>' : '') +
     '</div>';
@@ -547,16 +552,20 @@ def _get_embed_script_content(public_id: str) -> str:
     return null;
 }
 
-    pill.addEventListener('click', function() {
-      if (connected) {
-        client.disconnect();
-        return;
-      }
-      if (connecting) return;
+    pill.addEventListener('click', function(e) {
+      if (connected || connecting) return;
       if (config.prechat.enable_prechat) {
         prechatCard.classList.toggle('vn-show');
       } else {
         startCall();
+      }
+    });
+
+    var endHint = pill.querySelector('.vn-end-hint');
+    endHint.addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (connected) {
+        client.disconnect();
       }
     });
 
