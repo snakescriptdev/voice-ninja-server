@@ -243,15 +243,19 @@ def _get_embed_script_content(public_id: str) -> str:
     '.vn-root{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,\'Helvetica Neue\',sans-serif;}' +
     '#vn-indicator-wrap{width:52px;height:52px;border-radius:50%%;display:flex;align-items:center;justify-content:center;gap:8px;padding:0;background:linear-gradient(145deg,#fef8f6 0%%,#f6f4ff 100%%);border:1px solid rgba(86,44,124,0.08);cursor:pointer;transition:width 0.35s cubic-bezier(.4,0,.2,1),border-radius 0.35s cubic-bezier(.4,0,.2,1),padding 0.35s cubic-bezier(.4,0,.2,1),box-shadow 0.35s ease;overflow:hidden;box-shadow:0 4px 16px rgba(86,44,124,0.10);}' +
     '#vn-indicator-wrap:hover{width:130px;border-radius:26px;padding:0 14px;box-shadow:0 6px 24px rgba(86,44,124,0.18);}' +
-    '#vn-indicator-wrap.vn-expanded,#vn-indicator-wrap.vn-active,#vn-indicator-wrap.vn-connecting{width:130px;border-radius:26px;padding:0 14px;}' +
+    '#vn-indicator-wrap.vn-active,#vn-indicator-wrap.vn-connecting{width:130px;border-radius:26px;padding:0 14px;}' +
     '#vn-indicator-wrap.vn-active{box-shadow:0 0 20px rgba(224,105,67,0.35);}' +
     '#vn-indicator-wrap.vn-active:hover{box-shadow:0 0 24px rgba(220,50,50,0.40);}' +
     '#vn-indicator-wrap.vn-connecting{animation:vn-pulse 1.8s ease-in-out infinite;}' +
     '@keyframes vn-pulse{0%%,100%%{box-shadow:0 0 12px rgba(86,44,124,0.15);}50%%{box-shadow:0 0 24px rgba(86,44,124,0.35);}}' +
     '#vn-indicator-wrap .vn-logo{height:28px;width:auto;object-fit:contain;display:block;flex-shrink:0;}' +
-    '#vn-indicator-wrap .vn-voice-bars{display:flex;align-items:flex-end;gap:3px;height:16px;opacity:0;transition:opacity 0.25s ease;}' +
-    '#vn-indicator-wrap:hover .vn-voice-bars,#vn-indicator-wrap.vn-expanded .vn-voice-bars,#vn-indicator-wrap.vn-active .vn-voice-bars,#vn-indicator-wrap.vn-connecting .vn-voice-bars{opacity:1;}' +
-    '#vn-indicator-wrap .vn-voice-bars span{width:4px;border-radius:2px;background:linear-gradient(180deg,#E06943,#562C7C);height:4px;transition:height 0.15s ease;}' +
+    '#vn-indicator-wrap .vn-voice-bars{display:flex;align-items:flex-end;gap:3px;height:16px;}' +
+    '#vn-indicator-wrap .vn-voice-bars span{width:4px;border-radius:2px;background:linear-gradient(180deg,#E06943,#562C7C);height:4px;opacity:0;transition:height 0.15s ease,opacity 0.25s ease;}' +
+    '#vn-indicator-wrap .vn-voice-bars span:nth-child(1){transition-delay:0s;}' +
+    '#vn-indicator-wrap .vn-voice-bars span:nth-child(2){transition-delay:0.05s;}' +
+    '#vn-indicator-wrap .vn-voice-bars span:nth-child(3){transition-delay:0.1s;}' +
+    '#vn-indicator-wrap .vn-voice-bars span:nth-child(4){transition-delay:0.15s;}' +
+    '#vn-indicator-wrap:hover .vn-voice-bars span,#vn-indicator-wrap.vn-active .vn-voice-bars span,#vn-indicator-wrap.vn-connecting .vn-voice-bars span{opacity:0.4;}' +
     '#vn-indicator-wrap:hover .vn-voice-bars span{animation:vn-bounce 0.35s ease;}' +
     '@keyframes vn-bounce{0%%{height:4px;}40%%{height:8px;}100%%{height:4px;}}' +
     '#vn-indicator-wrap.vn-speaking .vn-voice-bars span:nth-child(1){animation:vn-bar 0.55s ease-in-out 0s infinite alternate;}' +
@@ -343,6 +347,12 @@ def _get_embed_script_content(public_id: str) -> str:
     '</div>';
     document.body.appendChild(div);
 
+    var colorStyle = document.createElement('style');
+    colorStyle.textContent = '#vn-indicator-wrap.vn-active{box-shadow:0 0 20px ' + config.appearance.primary_color + '66;}' +
+      '#vn-indicator-wrap.vn-active:hover{box-shadow:0 0 24px ' + config.appearance.primary_color + '99;border-color:' + config.appearance.primary_color + '4D;}' +
+      '#vn-start-prechat{background:' + config.appearance.primary_color + ';}';
+    div.appendChild(colorStyle);
+
     var pill = document.getElementById('vn-indicator-wrap');
     var prechatCard = document.getElementById('vn-prechat-card');
     var statusToast = document.getElementById('vn-status-toast');
@@ -351,6 +361,13 @@ def _get_embed_script_content(public_id: str) -> str:
     var connecting = false;
     var client = null;
 
+    var vnRoot = div.querySelector('.vn-root');
+    vnRoot.addEventListener('mouseleave', function() {
+      if (!connected && !connecting) {
+        prechatCard.classList.remove('vn-show');
+      }
+    });
+
     function showStatus(msg, duration) {
       statusToast.textContent = msg;
       statusToast.classList.add('vn-show');
@@ -358,7 +375,7 @@ def _get_embed_script_content(public_id: str) -> str:
     }
     function hideStatus() { statusToast.classList.remove('vn-show'); }
     function setState(state) {
-      pill.classList.remove('vn-active', 'vn-connecting');
+      pill.classList.remove('vn-active', 'vn-connecting', 'vn-speaking');
       pill.title = 'Click to start voice chat';
       if (state === 'connecting') { pill.classList.add('vn-connecting'); pill.title = 'Connecting...'; }
       else if (state === 'active') { pill.classList.add('vn-active'); pill.title = 'Click to end call'; }
