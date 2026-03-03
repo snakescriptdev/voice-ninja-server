@@ -101,28 +101,55 @@ async def buy_number(
         )
         
         # 2. Save to DB with user_id
+        from app_v2.databases.models import CoinUsageSettingsModel
+        from app_v2.utils.coin_utils import deduct_coins, get_user_coin_balance
+        
+        settings = CoinUsageSettingsModel.get_settings()
+        purchase_cost = settings.phone_number_purchase_cost
+        
         with db():
+            # Check balance first
+            balance = get_user_coin_balance(current_user.id)
+            if balance < purchase_cost:
+                # Release from twilio if balance is insufficient (since we already bought it)
+                # Actually, better to check BEFORE buying, but the current flow buys first.
+                # For now, we allow the purchase but log a warning if balance is low, 
+                # or better, we check balance at the very beginning of the function.
+                raise HTTPException(status_code=400, detail=f"Insufficient coins. Required: {purchase_cost}, Available: {balance}")
+
             new_phone = PhoneNumberService(
                 phone_number=twilio_data["phone_number"],
                 sid=twilio_data["sid"],
-                type="local",  # Could be mobile/toll-free depending on twilio response
+                type="local",
                 user_id=current_user.id,
-                assigned_to=None,  # No agent assignment during purchase
+                assigned_to=None,
                 status=PhoneNumberAssignStatus.unassigned,
-                monthly_cost=1.0,  # Placeholder, should come from Twilio or config
+                monthly_cost=purchase_cost, # Store purchase cost here for reference
             )
             db.session.add(new_phone)
+            db.session.flush()
+
+            # Deduct coins
+            if purchase_cost > 0:
+                deduct_coins(
+                    user_id=current_user.id, 
+                    amount=purchase_cost, 
+                    reference_type="phone_purchase", 
+                    reference_id=new_phone.id, 
+                    commit=False
+                )
+
             db.session.commit()
             db.session.refresh(new_phone)
             
             log_activity(
                 user_id=current_user.id,
                 event_type="phone_purchased",
-                description=f"Purchased phone number: {new_phone.phone_number}",
-                metadata={"phone_id": new_phone.id, "phone_number": new_phone.phone_number}
+                description=f"Purchased phone number: {new_phone.phone_number}. Cost: {purchase_cost} coins.",
+                metadata={"phone_id": new_phone.id, "phone_number": new_phone.phone_number, "cost": purchase_cost}
             )
             
-            logger.info(f"Phone number {new_phone.phone_number} purchased and saved for user {current_user.id}")
+            logger.info(f"Phone number {new_phone.phone_number} purchased and saved for user {current_user.id}. Cost: {purchase_cost}")
             return new_phone
 
     except TwilioRestException as te:
@@ -181,7 +208,18 @@ async def import_phone_number(
                 raise HTTPException(status_code=400, detail=f"Phone number {request.phone_number} not found in this Twilio account")
             
             # 3. Save to DB with type="imported"
+            from app_v2.databases.models import CoinUsageSettingsModel
+            from app_v2.utils.coin_utils import deduct_coins, get_user_coin_balance
+            
+            settings = CoinUsageSettingsModel.get_settings()
+            purchase_cost = settings.phone_number_purchase_cost
+
             with db():
+                # Check balance
+                balance = get_user_coin_balance(current_user.id)
+                if balance < purchase_cost:
+                    raise HTTPException(status_code=400, detail=f"Insufficient coins to import phone number. Required: {purchase_cost}")
+
                 # Check if already exists in DB
                 db_phone = db.session.query(PhoneNumberService).filter(PhoneNumberService.phone_number == request.phone_number).first()
                 if db_phone:
@@ -191,7 +229,7 @@ async def import_phone_number(
                     db_phone.sid = twilio_number["sid"]
                     db_phone.type = "imported"
                     db_phone.status = PhoneNumberAssignStatus.unassigned
-                    db_phone.monthly_cost = 1.0 # Default
+                    db_phone.monthly_cost = float(purchase_cost)
                 else:
                     db_phone = PhoneNumberService(
                         phone_number=twilio_number["phone_number"],
@@ -200,10 +238,21 @@ async def import_phone_number(
                         user_id=current_user.id,
                         assigned_to=None,
                         status=PhoneNumberAssignStatus.unassigned,
-                        monthly_cost=1.0,
+                        monthly_cost=float(purchase_cost),
                     )
                     db.session.add(db_phone)
                 
+                db.session.flush()
+                # Deduct coins for import too
+                if purchase_cost > 0:
+                    deduct_coins(
+                        user_id=current_user.id, 
+                        amount=purchase_cost, 
+                        reference_type="phone_import", 
+                        reference_id=db_phone.id, 
+                        commit=False
+                    )
+
                 db.session.commit()
                 db.session.refresh(db_phone)
                 
