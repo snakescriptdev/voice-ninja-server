@@ -280,6 +280,11 @@ def _get_embed_script_content(public_id: str) -> str:
 
   var config = null;
 
+  function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
   async function init() {
     try {
       var resp = await fetch(configUrl);
@@ -314,12 +319,13 @@ def _get_embed_script_content(public_id: str) -> str:
     if (config.prechat.custom_fields && config.prechat.custom_fields.length) {
       config.prechat.custom_fields.forEach(function(field) {
         var inputType = field.field_type || 'text';
-        var fieldName = field.field_name;
+        var safeFieldName = escapeHtml(field.field_name);
+        var safeFieldId = field.field_name.replace(/[^a-zA-Z0-9_-]/g, '_');
         customFieldsHtml +=
           '<input ' +
           'type="' + inputType + '" ' +
-          'id="vn-custom-' + fieldName + '" ' +
-          'placeholder="' + fieldName + '" ' +
+          'id="vn-custom-' + safeFieldId + '" ' +
+          'placeholder="' + safeFieldName + '" ' +
           (field.required ? 'required' : '') +
           '>';
       });
@@ -328,8 +334,8 @@ def _get_embed_script_content(public_id: str) -> str:
     div.innerHTML = vnStyles +
     '<div class="vn-root" style="position:fixed;' + posStyles + 'z-index:99999;">' +
       '<div id="vn-prechat-card" style="' + prechatPos + '">' +
-        (config.appearance.widget_title ? '<div class="vn-prechat-title">' + config.appearance.widget_title + '</div>' : '') +
-        (config.appearance.widget_subtitle ? '<div class="vn-prechat-subtitle">' + config.appearance.widget_subtitle + '</div>' : '') +
+        (config.appearance.widget_title ? '<div class="vn-prechat-title">' + escapeHtml(config.appearance.widget_title) + '</div>' : '') +
+        (config.appearance.widget_subtitle ? '<div class="vn-prechat-subtitle">' + escapeHtml(config.appearance.widget_subtitle) + '</div>' : '') +
         '<div id="vn-prechat">' +
           (config.prechat.require_name ? '<input type="text" id="vn-lead-name" placeholder="Your Name">' : '') +
           (config.prechat.require_email ? '<input type="email" id="vn-lead-email" placeholder="Email Address">' : '') +
@@ -347,11 +353,13 @@ def _get_embed_script_content(public_id: str) -> str:
     '</div>';
     document.body.appendChild(div);
 
-    var colorStyle = document.createElement('style');
-    colorStyle.textContent = '#vn-indicator-wrap.vn-active{box-shadow:0 0 20px ' + config.appearance.primary_color + '66;}' +
-      '#vn-indicator-wrap.vn-active:hover{box-shadow:0 0 24px ' + config.appearance.primary_color + '99;border-color:' + config.appearance.primary_color + '4D;}' +
-      '#vn-start-prechat{background:' + config.appearance.primary_color + ';}';
-    div.appendChild(colorStyle);
+    if (config.appearance.primary_color) {
+      var colorStyle = document.createElement('style');
+      colorStyle.textContent = '#vn-indicator-wrap.vn-active{box-shadow:0 0 20px ' + config.appearance.primary_color + '66;}' +
+        '#vn-indicator-wrap.vn-active:hover{box-shadow:0 0 24px ' + config.appearance.primary_color + '99;border-color:' + config.appearance.primary_color + '4D;}' +
+        '#vn-start-prechat{background:' + config.appearance.primary_color + ';}';
+      div.appendChild(colorStyle);
+    }
 
     var pill = document.getElementById('vn-indicator-wrap');
     var prechatCard = document.getElementById('vn-prechat-card');
@@ -368,10 +376,14 @@ def _get_embed_script_content(public_id: str) -> str:
       }
     });
 
+    var statusTimer = null;
     function showStatus(msg, duration) {
       statusToast.textContent = msg;
       statusToast.classList.add('vn-show');
-      if (duration) setTimeout(function() { statusToast.classList.remove('vn-show'); }, duration);
+      if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+      if (duration && duration > 0) {
+        statusTimer = setTimeout(function() { statusToast.classList.remove('vn-show'); statusTimer = null; }, duration);
+      }
     }
     function hideStatus() { statusToast.classList.remove('vn-show'); }
     function setState(state) {
@@ -418,8 +430,6 @@ def _get_embed_script_content(public_id: str) -> str:
         self.ws.onclose = function() {
           connected = false;
           self.stopPlayback();
-          var w = document.getElementById('vn-indicator-wrap');
-          if (w) w.classList.remove('vn-speaking');
           connecting = false;
           setState('idle');
           showStatus('Disconnected', 3000);
@@ -507,7 +517,8 @@ def _get_embed_script_content(public_id: str) -> str:
         config.prechat.custom_fields.forEach(function(field) {
 
             var fieldName = field.field_name;
-            var el = document.getElementById('vn-custom-' + fieldName);
+            var safeFieldId = fieldName.replace(/[^a-zA-Z0-9_-]/g, '_');
+            var el = document.getElementById('vn-custom-' + safeFieldId);
 
             if (el) {
                 customData.push({
@@ -584,9 +595,10 @@ def _get_embed_script_content(public_id: str) -> str:
         for (var i = 0; i < config.prechat.custom_fields.length; i++) {
             var field = config.prechat.custom_fields[i];
             if (field.required) {
-                var el = document.getElementById('vn-custom-' + field.field_name);
+                var safeId = field.field_name.replace(/[^a-zA-Z0-9_-]/g, '_');
+                var el = document.getElementById('vn-custom-' + safeId);
                 if (el && !el.value.trim()) {
-                    alert(field.field_name + ' is required');
+                    alert(escapeHtml(field.field_name) + ' is required');
                     el.focus();
                     return;
                 }
