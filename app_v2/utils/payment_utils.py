@@ -6,6 +6,7 @@ from app_v2.schemas.enum_types import BillingPeriodEnum
 import requests
 from app_v2.core.logger import setup_logger
 from requests.auth import HTTPBasicAuth
+from app_v2.schemas.enum_types import BillingPeriodEnum
 from typing import List, Dict, Any
 import hmac
 import hashlib
@@ -52,7 +53,7 @@ class BasePaymentProvider(ABC):
         pass
 
     @abstractmethod
-    def update_subscription(self, subscription_id: str, plan_id: str, offer_id: Optional[str] = None, schedule_change_at: str = "cycle_end") -> Dict[str, Any]:
+    def update_subscription(self, subscription_id: str, plan_id: str,billing_period:BillingPeriodEnum,offer_id: Optional[str] = None, schedule_change_at: str = "cycle_end") -> Dict[str, Any]:
         pass
 
     @abstractmethod
@@ -187,7 +188,7 @@ class RazorpayProvider(BasePaymentProvider):
             logger.error(f"Razorpay subscription cancellation failed: {str(e)}")
             raise Exception(f"Failed to cancel subscription: {str(e)}")
 
-    def update_subscription(self, subscription_id: str, new_plan_id: str, offer_id: Optional[str] = None) -> Dict[str, Any]:
+    def update_subscription(self, subscription_id: str, new_plan_id: str,billing_period:BillingPeriodEnum, offer_id: Optional[str] = None) -> Dict[str, Any]:
         """
         Update subscription by:
         1. Cancelling the existing subscription at cycle end
@@ -215,10 +216,11 @@ class RazorpayProvider(BasePaymentProvider):
             logger.info(f"Customer ID retrieved: {customer_id}")
 
             # Step 3: Create new subscription
+            total_count = 1 if billing_period == BillingPeriodEnum.annual else 12
             payload = {
                 "plan_id": new_plan_id,
                 "customer_id": customer_id,
-                "total_count": 12
+                "total_count": total_count
             }
 
             if offer_id:
