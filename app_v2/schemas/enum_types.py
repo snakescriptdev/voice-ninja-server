@@ -96,6 +96,7 @@ class SubscriptionStatusEnum(str, Enum):
     cancelled = "cancelled"
     expired = "expired"
     past_due = "past_due"
+    paused = "paused"
 
 class PaymentStatusEnum(str, Enum):
     pending = "pending"

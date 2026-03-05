@@ -69,11 +69,11 @@ def create_subscription(data: SubscriptionCreate, current_user: UnifiedAuthModel
                 "plan_id": str(plan.id)
             }
         )
-
         return SubscriptionResponse(
             subscription_id=subscription["id"],
             amount=plan.price,
             currency=plan.currency,
+            plan_id=plan.id,
             plan_name=plan.display_name,
             user_email=current_user.email,
             user_phone=current_user.phone,
@@ -174,13 +174,9 @@ def verify_subscription(
                 # The first one should be the one just generated for this charge
                 invoice = invoices[0]
                 
-                # Update metadata with full invoice details
-                # payment.metadata_json is a MutableDict, so we update it directly
-                payment.metadata_json["invoice_details"] = invoice
-                
                 # Internal URL for viewing the invoice
-                payment.invoice_url = f"/api/v2/user-dashboard/billing/invoice/{payment.id}/view"
-                logger.info(f"Stored full invoice details and URL for payment: {payment.id}")
+                payment.invoice_url = invoice.get("short_url") or invoice.get("invoice_url")
+                logger.info(f"Stored full invoice link for payment: {payment.id}")
         except Exception as inv_err:
             logger.error(f"Failed to fetch invoice for subscription {data.razorpay_subscription_id}: {inv_err}")
             # Don't fail the verification if only invoice fetching fails
@@ -241,7 +237,9 @@ def cancel_subscription(data: SubscriptionCancelRequest, current_user: UnifiedAu
         else:
             subscription.status = SubscriptionStatusEnum.cancelled
             subscription.cancel_at_period_end = True
-
+        if subscription.subscription_metadata is None:
+            subscription.subscription_metadata = {}
+        subscription.subscription_metadata["customer_id"] = response.get("customer_id", "")
         db.session.commit()
         return {"message": "Subscription cancellation initiated", "provider_response": response}
     except HTTPException as e:
@@ -265,12 +263,16 @@ def update_subscription(data: SubscriptionUpdateRequest, current_user: UnifiedAu
         if not subscription:
             raise HTTPException(status_code=404, detail="No active subscription found")
 
-        # Get new plan details
-        new_plan = db.session.query(PlanModel).filter(PlanModel.id == data.plan_id, PlanModel.is_active == True).first()
+        # Fetch new plan
+        new_plan = db.session.query(PlanModel).filter(
+            PlanModel.id == data.plan_id,
+            PlanModel.is_active == True
+        ).first()
+
         if not new_plan:
             raise HTTPException(status_code=404, detail="New plan not found or inactive")
 
-        # Get Provider Plan ID
+        # Fetch provider plan mapping
         provider_plan = db.session.query(PlanProviderModel).filter(
             PlanProviderModel.plan_id == new_plan.id,
             PlanProviderModel.provider == subscription.provider,
@@ -278,24 +280,65 @@ def update_subscription(data: SubscriptionUpdateRequest, current_user: UnifiedAu
         ).first()
 
         if not provider_plan:
-            raise HTTPException(status_code=400, detail=f"Provider plan not configured for {subscription.provider}")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Provider plan not configured for {subscription.provider}"
+            )
 
         provider = PaymentProviderFactory.get_provider(subscription.provider)
-        response = provider.update_subscription(
-            subscription.provider_subscription_id, 
-            provider_plan.provider_plan_id
+
+        logger.info(
+            f"Updating subscription {subscription.provider_subscription_id} "
+            f"for user {current_user.id}"
         )
 
-        subscription.plan_id = new_plan.id
+        # 🔹 Call your utility
+        result = provider.update_subscription(
+            subscription_id=subscription.provider_subscription_id,
+            new_plan_id=provider_plan.provider_plan_id
+        )
+
+        cancel_response = result["cancelled_subscription"]
+        new_subscription = result["new_subscription"]
+
+        # Extract customer_id
+        customer_id = cancel_response.get("customer_id")
+
+        # Ensure metadata exists
+        if subscription.subscription_metadata is None:
+            subscription.subscription_metadata = {}
+
+        subscription.subscription_metadata["customer_id"] = customer_id
+
+        # Mark old subscription to cancel
+        subscription.cancel_at_period_end = True
+        subscription.next_plan_id = new_plan.id
+
+        # Save new Razorpay subscription id
+        subscription.subscription_metadata["new_subscription_id"] = new_subscription["id"]
+
         db.session.commit()
 
-        return {"message": "Subscription update initiated", "provider_response": response}
+        return {
+            "message": "Subscription update initiated. Complete payment for the new plan.",
+            "subscription_id": new_subscription["id"],
+            "amount": new_plan.price,
+            "currency": new_plan.currency,
+            "plan_id": new_plan.id,
+            "plan_name": new_plan.display_name,
+            "user_email": current_user.email,
+            "user_phone": current_user.phone,
+            "key_id": VoiceSettings.RAZOR_KEY_ID
+        }
+
     except HTTPException as e:
         raise e
+
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error updating subscription: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+    raise HTTPException(status_code=500, detail=str(e))
+    
 
 @router.post("/pause", dependencies=[Depends(security)], openapi_extra={"security": [{"BearerAuth": []}]})
 def pause_subscription(data: SubscriptionPauseRequest, current_user: UnifiedAuthModel = Depends(get_current_user)):
@@ -313,6 +356,10 @@ def pause_subscription(data: SubscriptionPauseRequest, current_user: UnifiedAuth
 
         provider = PaymentProviderFactory.get_provider(subscription.provider)
         response = provider.pause_subscription(subscription.provider_subscription_id, data.pause_at)
+        #change the state in database also if  pause_at is now
+        if data.pause_at == "now":
+            subscription.status = response.get("status")
+            db.session.commit()
 
         return {"message": "Subscription pause initiated", "provider_response": response}
     except HTTPException as e:
@@ -333,9 +380,15 @@ def resume_subscription(current_user: UnifiedAuthModel = Depends(get_current_use
 
         if not subscription:
             raise HTTPException(status_code=404, detail="No subscription found")
+        if subscription.status == SubscriptionStatusEnum.cancelled:
+            raise HTTPException(status_code=400, detail="Subscription is cancelled")
+        if subscription.status == SubscriptionStatusEnum.active:
+            raise HTTPException(status_code=400, detail="Subscription is already active")
 
         provider = PaymentProviderFactory.get_provider(subscription.provider)
         response = provider.resume_subscription(subscription.provider_subscription_id)
+        subscription.status = response.get("status")
+        db.session.commit()
 
         return {"message": "Subscription resume initiated", "provider_response": response}
     except HTTPException as e:

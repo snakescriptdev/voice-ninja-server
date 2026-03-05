@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, status, Depends
-from app_v2.utils.jwt_utils import is_admin
+from app_v2.utils.jwt_utils import is_admin,HTTPBearer
 from datetime import datetime
 from typing import List
 from app_v2.core.logger import setup_logger
@@ -19,10 +19,10 @@ from sqlalchemy import select, func
 
 client = ElevenLabs(api_key=VoiceSettings.ELEVENLABS_API_KEY)
 logger = setup_logger(__name__)
-router = APIRouter(prefix="/api/v2/admin/dashboard",tags=["Admin"])
+security = HTTPBearer()
+router = APIRouter(prefix="/api/v2/admin/dashboard",tags=["Admin"],dependencies=[Depends(security)])
 
-
-@router.get("/overview/stats")
+@router.get("/overview/stats",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_overview_stats():
     """
     Consolidated API for admin dashboard overview stats.
@@ -87,7 +87,7 @@ def get_overview_stats():
             detail=str(e)
         )
 
-@router.get("/overview/recent-users")
+@router.get("/overview/recent-users",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_recent_users():
     try:
         recent_users = db.session.query(UnifiedAuthModel).filter(
@@ -114,7 +114,7 @@ def get_recent_users():
             detail=str(e)
         )   
 
-@router.get("/analytics/revenue-graph")
+@router.get("/analytics/revenue-graph",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_revenue_graph():
     """
     Monthly revenue for the last 6 months.
@@ -150,7 +150,7 @@ def get_revenue_graph():
             detail=str(e)
         )
 
-@router.get("/analytics/subscription-distribution")
+@router.get("/analytics/subscription-distribution",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_subscription_distribution():
     """
     Subscription distribution by plan percentage.
@@ -194,7 +194,7 @@ def get_subscription_distribution():
 
 
 
-@router.get("/elevenlabs/usage-and-billing")
+@router.get("/elevenlabs/usage-and-billing",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_elevenlabs_usage_and_billing():
     try:
         # Fetch subscription from ElevenLabs
@@ -268,7 +268,7 @@ def get_elevenlabs_usage_and_billing():
             detail="Failed to fetch usage and billing information from ElevenLabs."
         )
 
-@router.get("/users-cost", response_model=PaginatedResponse[UserCostItem])
+@router.get("/users-cost", response_model=PaginatedResponse[UserCostItem],dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_users_cost(
     skip: int = 0, 
     limit: int = 10
@@ -326,37 +326,3 @@ def get_users_cost(
             detail=f"Failed to fetch users cost data: {str(e)}"
         )
 
-@router.post("/coin-bundles", response_model=CoinBundleResponse)
-def create_coin_bundle(data: CoinBundleCreate):
-    try:
-        bundle = CoinPackageModel(
-            name=data.name,
-            coins=data.coins,
-            price=data.price,
-            currency=data.currency,
-            validity_days=data.validity_days,
-            is_active=True
-        )
-        db.session.add(bundle)
-        db.session.commit()
-        db.session.refresh(bundle)
-        return bundle
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error creating coin bundle: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create coin bundle: {str(e)}"
-        )
-
-@router.get("/coin-bundles", response_model=List[CoinBundleResponse])
-def list_coin_bundles():
-    try:
-        bundles = db.session.query(CoinPackageModel).order_by(CoinPackageModel.created_at.desc()).all()
-        return bundles
-    except Exception as e:
-        logger.error(f"Error listing coin bundles: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch coin bundles: {str(e)}"
-        )

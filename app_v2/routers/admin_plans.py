@@ -2,8 +2,9 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi_sqlalchemy import db
 from typing import List
 from app_v2.utils.jwt_utils import get_current_user, is_admin,HTTPBearer
-from app_v2.databases.models import UnifiedAuthModel, PlanModel, PlanFeatureModel, PlanProviderModel
+from app_v2.databases.models import UnifiedAuthModel, PlanModel, PlanFeatureModel, PlanProviderModel, CoinPackageModel
 from app_v2.schemas.plans import PlanCreate, PlanUpdate, PlanResponse
+from app_v2.schemas.admin_dashboard import CoinBundleCreate, CoinBundleResponse
 from app_v2.schemas.enum_types import PaymentProviderEnum
 from app_v2.utils.payment_utils import PaymentProviderFactory
 from app_v2.core.logger import setup_logger
@@ -13,7 +14,65 @@ logger = setup_logger(__name__)
 security = HTTPBearer()
 router = APIRouter(prefix="/api/v2/admin/plans", tags=["Admin Plans"])
 
-@router.post("", response_model=PlanResponse, status_code=status.HTTP_201_CREATED)
+
+
+@router.get("/coin-bundles", response_model=List[CoinBundleResponse])
+def list_coin_bundles():
+    try:
+        bundles = db.session.query(CoinPackageModel).order_by(CoinPackageModel.created_at.desc()).all()
+        return bundles
+    except Exception as e:
+        logger.error(f"Error listing coin bundles: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch coin bundles: {str(e)}"
+        )
+@router.post("/coin-bundles", response_model=CoinBundleResponse,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
+def create_coin_bundle(data: CoinBundleCreate):
+    try:
+        bundle = CoinPackageModel(
+            name=data.name,
+            coins=data.coins,
+            price=data.price,
+            currency=data.currency,
+            validity_days=data.validity_days,
+            is_active=True
+        )
+        db.session.add(bundle)
+        db.session.commit()
+        db.session.refresh(bundle)
+        return bundle
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error creating coin bundle: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create coin bundle: {str(e)}"
+        )
+    
+@router.delete("/coin-bundle/{bundle_id}",status_code=status.HTTP_204_NO_CONTENT,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
+def delete_bundle(bundle_id:int):
+    try:
+        bundle = db.session.query(CoinPackageModel).filter(CoinPackageModel.id == bundle_id).first()
+        if not bundle:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Coin bundle not found"
+            )
+        db.session.delete(bundle)
+        db.session.commit()
+        return
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error deleting coin bundle: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete coin bundle: {str(e)}"
+        )
+
+@router.post("", response_model=PlanResponse, status_code=status.HTTP_201_CREATED,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def create_plan(plan_data: PlanCreate):
     try:
         #if display name exists raise error
@@ -128,7 +187,7 @@ def list_plans_status_wise():
         logger.error(f"Error listing status-wise plans: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/{plan_id}", response_model=PlanResponse)
+@router.get("/{plan_id}", response_model=PlanResponse,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_plan(plan_id: int):
     plan = (
         db.session.query(PlanModel)
@@ -143,7 +202,7 @@ def get_plan(plan_id: int):
         raise HTTPException(status_code=404, detail="Plan not found")
     return plan
 
-@router.put("/{plan_id}", response_model=PlanResponse)
+@router.put("/{plan_id}", response_model=PlanResponse,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def update_plan(plan_id: int, plan_update: PlanUpdate):
     plan = db.session.query(PlanModel).filter(PlanModel.id == plan_id).first()
     if not plan:
@@ -175,7 +234,7 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
         logger.error(f"Error updating plan: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.delete("/{plan_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{plan_id}", status_code=status.HTTP_204_NO_CONTENT,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def delete_plan(plan_id: int):
     plan = db.session.query(PlanModel).filter(PlanModel.id == plan_id).first()
     if not plan:

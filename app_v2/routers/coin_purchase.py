@@ -114,34 +114,17 @@ def verify_coin_payment(data: OrderVerifyRequest, current_user: UnifiedAuthModel
         db.session.add(payment)
         db.session.flush()
 
-        # 3a. Synthesize Invoice Details for Frontend
-        invoice_details = {
-            "id": f"INV-COIN-{payment.id}",
-            "entity": "invoice",
-            "invoice_number": f"VN-{datetime.utcnow().strftime('%Y%m%d')}-{payment.id}",
-            "customer_details": {
-                "name": current_user.name or "Customer",
-                "email": current_user.email,
-                "contact": current_user.phone
-            },
-            "line_items": [
-                {
-                    "name": f"Coin Bundle: {bundle.name}",
-                    "description": f"Credit of {bundle.coins} coins with {bundle.validity_days or 'unlimited'} days validity",
-                    "amount": int(bundle.price * 100),
-                    "unit_amount": int(bundle.price * 100),
-                    "quantity": 1,
-                    "currency": bundle.currency
-                }
-            ],
-            "amount": int(bundle.price * 100),
-            "currency": bundle.currency,
-            "status": "paid",
-            "issued_at": int(datetime.utcnow().timestamp()),
-            "paid_at": int(datetime.utcnow().timestamp())
-        }
-        payment.metadata_json["invoice_details"] = invoice_details
-        payment.invoice_url = f"/api/v2/user-dashboard/billing/invoice/{payment.id}/view"
+        # 3a. Fetch Invoice Details from Razorpay
+        # try:
+        #     invoices = rzp_provider.get_order_invoices(data.razorpay_order_id)
+        #     if invoices:
+        #          # Take the latest invoice associated with the order
+        #          invoice = invoices[0]
+        #          payment.invoice_url = invoice.get("short_url") or invoice.get("invoice_url")
+        #          logger.info(f"Stored Razorpay invoice link for coin purchase payment: {payment.id}")
+        # except Exception as inv_err:
+        #      logger.error(f"Failed to fetch invoice for order {data.razorpay_order_id}: {inv_err}")
+        #      # Don't fail the verification if invoice fetching fails
 
         # 4. Credit Coins to Ledger
         current_balance = get_user_coin_balance(current_user.id)
@@ -176,7 +159,8 @@ def verify_coin_payment(data: OrderVerifyRequest, current_user: UnifiedAuthModel
         db.session.commit()
 
         return {"status": "success", "message": "Coins credited successfully", "new_balance": new_balance}
-
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error verifying coin payment: {str(e)}")
