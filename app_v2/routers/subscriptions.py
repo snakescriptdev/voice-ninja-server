@@ -295,7 +295,7 @@ def update_subscription(data: SubscriptionUpdateRequest, current_user: UnifiedAu
         # 🔹 Call your utility
         result = provider.update_subscription(
             subscription_id=subscription.provider_subscription_id,
-            new_plan_id=provider_plan.provider_plan_id
+            new_plan_id=provider_plan.provider_plan_id,billing_period=new_plan.billing_period
         )
 
         cancel_response = result["cancelled_subscription"]

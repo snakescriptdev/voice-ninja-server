@@ -21,7 +21,7 @@ router = APIRouter(
 @router.post(
     "/",
     response_model=APIKeyFullResponse,
-    status_code=status.HTTP_201_CREATED,
+    status_code=status.HTTP_201_CREATED,openapi_extra={"security":[{"BearerAuth":[]}]}
 )
 async def create_api_key(
     key_in: APIKeyCreate,
@@ -85,6 +85,7 @@ async def create_api_key(
 @router.get(
     "/",
     response_model=List[APIKeyResponse],
+    openapi_extra={"security": [{"BearerAuth": []}]}
 )
 async def list_api_keys(
     current_user: UnifiedAuthModel = Depends(get_current_user)
@@ -124,8 +125,7 @@ async def list_api_keys(
 
 @router.delete(
     "/{key_id}",
-    status_code=status.HTTP_204_NO_CONTENT,
-)
+    status_code=status.HTTP_204_NO_CONTENT,openapi_extra={"security": [{"BearerAuth": []}]})
 async def delete_api_key(
     key_id: int,
     current_user: UnifiedAuthModel = Depends(get_current_user)
