@@ -2,6 +2,8 @@ from pydantic import BaseModel
 from typing import List, Optional, Any
 from app_v2.schemas.enum_types import BillingPeriodEnum, CoinTransactionTypeEnum, PaymentStatusEnum
 from datetime import datetime
+from app_v2.schemas.plans import PlanFeatureResponse
+from app_v2.schemas.enum_types import SubscriptionStatusEnum,BillingPeriodEnum,PlanIconEnum
 
 class UserDashboardAgentResponse(BaseModel):
     id: int
@@ -46,14 +48,33 @@ class UserAnalyticsResponse(BaseModel):
     coin_trends: List[DailyTrendSeries]
 
 class UserSubscriptionResponse(BaseModel):
+    # ---- Subscription fields ----
+    subscription_id: int
+    status: SubscriptionStatusEnum
+    current_period_start: datetime
+    current_period_end: datetime
+    cancel_at_period_end: bool
+    provider: str
+    provider_subscription_id: Optional[str]
+    marked_for_update: bool = False
+    next_plan_id: Optional[int] = None
+
+    # ---- Plan fields ----
     plan_id: int
     plan_name: str
+    description: Optional[str]
+    price: float
+    currency: str
     coins_included: int
-    price: int
+    carry_forward_coins: bool
     billing_period: BillingPeriodEnum
-    current_period_end: datetime
-    class Config:
-        from_attributes = True
+    icon: PlanIconEnum
+    gradient_color: str
+    mark_as_popular: bool
+    is_active: bool
+
+    # ---- Features ----
+    features: List[PlanFeatureResponse]
 
 class UserCoinUsageResponse(BaseModel):
     available_coins: int

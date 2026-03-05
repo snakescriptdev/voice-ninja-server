@@ -9,6 +9,7 @@ class SubscriptionResponse(BaseModel):
     subscription_id: str
     amount: float
     currency: str
+    plan_id: int
     plan_name: str
     user_email: str
     user_phone: Optional[str] = None

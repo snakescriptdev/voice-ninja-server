@@ -4,7 +4,7 @@ from sqlalchemy import func, desc, and_
 from datetime import datetime, timedelta
 from typing import List
 
-from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.jwt_utils import HTTPBearer,is_admin
 from app_v2.databases.models import UnifiedAuthModel, PaymentModel, PlanModel
 from app_v2.schemas.payment_insights_schema import (
     PaymentInsightsResponse, 
@@ -15,9 +15,9 @@ from app_v2.schemas.payment_insights_schema import (
 from app_v2.schemas.enum_types import PaymentStatusEnum, PaymentTypeEnum
 
 security = HTTPBearer()
-router = APIRouter(prefix="/api/v2/admin/payments/insights", tags=["Admin Payment Insights"])
+router = APIRouter(prefix="/api/v2/admin/payments/insights", tags=["Admin Payment Insights"],dependencies=[Depends(is_admin)],)
 
-@router.get("", response_model=PaymentInsightsResponse)
+@router.get("", response_model=PaymentInsightsResponse,openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_payment_insights():
     """
     Fetch comprehensive payment insights for the admin dashboard.
