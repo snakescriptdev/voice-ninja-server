@@ -1,15 +1,16 @@
 from fastapi import APIRouter, status, Depends,HTTPException
 from fastapi.responses import HTMLResponse
 import os
+
 from fastapi_sqlalchemy import db
 from datetime import datetime, timedelta
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import (
     UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, 
     ConversationsModel, PlanModel, UserSubscriptionModel, CoinsLedgerModel, 
-    PaymentModel, WebAgentModel, WebAgentLeadModel
+    PaymentModel, WebAgentModel, WebAgentLeadModel,APIDailyUsageModel,CoinPackageModel
 )
-from app_v2.schemas.enum_types import CoinTransactionTypeEnum, PaymentStatusEnum
+from app_v2.schemas.enum_types import CoinTransactionTypeEnum, PaymentStatusEnum,SubscriptionStatusEnum,PaymentTypeEnum
 from app_v2.utils.coin_utils import get_user_coin_balance
 
 from sqlalchemy import func
@@ -40,40 +41,6 @@ security = HTTPBearer()
 
 router = APIRouter(prefix="/api/v2/user-dashboard", tags=["User Dashboard"], dependencies=[Depends(security)])
 
-@router.get("/billing/invoice/{payment_id}/view",openapi_extra={"security":[{"BearerAuth":[]}]} )
-def view_invoice(payment_id: int, current_user: UnifiedAuthModel = Depends(get_current_user)):
-    """
-    Renders a custom HTML invoice for a specific payment.
-    """
-    try:
-        logger.info(f"Viewing invoice for payment ID: {payment_id}")
-        logger.info(f"Current user ID: {current_user.id}")
-        payment = db.session.query(PaymentModel).filter(
-            PaymentModel.id == payment_id,
-            PaymentModel.user_id == current_user.id
-        ).first()
-
-        if not payment:
-            raise HTTPException(status_code=404, detail="Payment record not found")
-
-        invoice_details = payment.metadata_json.get("invoice_details") if payment.metadata_json else None
-        
-        if not invoice_details:
-             raise HTTPException(status_code=404, detail="Invoice data not available for this payment")
-
-        # Convert timestamp to human readable date
-        date_val = invoice_details.get("issued_at") or invoice_details.get("created_at")
-        date_str = datetime.fromtimestamp(date_val).strftime("%B %d, %Y") if date_val else "N/A"
-
-        return {
-            "invoice": invoice_details,
-            "date_str": date_str
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error rendering invoice: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Failed to render invoice: {str(e)}")
 
 
 
@@ -334,28 +301,49 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(get_current_user
         )
 
 
-def map_subcription_response_db(plan:PlanModel,user_subscription:UserSubscriptionModel):
-    return UserSubscriptionResponse(
-        plan_id=plan.id,
-        plan_name=plan.display_name,
-        coins_included=plan.coins_included,
-        price=plan.price,
-        billing_period=plan.billing_period,
-        current_period_end=user_subscription.current_period_end
-    )
+
     
-@router.get("/get-user-subscription",openapi_extra={"security":[{"BearerAuth":[]}]},response_model=UserSubscriptionResponse )
+@router.get("/get-user-subscription",response_model=UserSubscriptionResponse, openapi_extra={"security":[{"BearerAuth":[]}]} )
 def user_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
         logger.info(f"Fetching user subscription for user: {current_user.id}")
-        user_subscription = db.session.query(UserSubscriptionModel).filter(UserSubscriptionModel.user_id == current_user.id).first()
+        user_subscription = db.session.query(UserSubscriptionModel).filter(UserSubscriptionModel.user_id == current_user.id).order_by(UserSubscriptionModel.modified_at.desc()).first()
         if not user_subscription:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User subscription not found"
             )
+        plan = user_subscription.plan
         logger.info(f"User subscription found: {user_subscription}")
-        return map_subcription_response_db(user_subscription.plan,user_subscription)
+        return UserSubscriptionResponse(
+            # ---- subscription ----
+            subscription_id=user_subscription.id,
+            status=user_subscription.status,
+            current_period_start=user_subscription.current_period_start,
+            current_period_end=user_subscription.current_period_end,
+            cancel_at_period_end=user_subscription.cancel_at_period_end,
+            provider=user_subscription.provider,
+            provider_subscription_id=user_subscription.provider_subscription_id,
+            marked_for_update=True if user_subscription.next_plan_id else False,
+            next_plan_id=user_subscription.next_plan_id or None,
+
+            # ---- plan ----
+            plan_id=plan.id,
+            plan_name=plan.display_name,
+            description=plan.description,
+            price=plan.price,
+            currency=plan.currency,
+            coins_included=plan.coins_included,
+            carry_forward_coins=plan.carry_forward_coins,
+            billing_period=plan.billing_period,
+            icon=plan.icon,
+            gradient_color=plan.gradient_color,
+            mark_as_popular=plan.mark_as_popular,
+            is_active=plan.is_active,
+
+            # ---- features ----
+            features=plan.features
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -392,42 +380,116 @@ def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(get_current_use
             detail=f"Failed to fetch coin usage data: {str(e)}"
         )
 
-@router.get("/coin-buckets", response_model=CoinBucketsResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_coin_buckets(current_user: UnifiedAuthModel = Depends(get_current_user)):
-    """List coins organized by source and expiry date."""
+@router.get("/coins/buckets", response_model=CoinBucketsResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_coin_buckets(
+    current_user: UnifiedAuthModel = Depends(get_current_user),
+):
     try:
-        buckets_query = db.session.query(CoinsLedgerModel).filter(
-            CoinsLedgerModel.user_id == current_user.id,
-            CoinsLedgerModel.remaining_coins > 0
-        ).order_by(CoinsLedgerModel.expiry_at.asc().nulls_last()).all()
-        
+        # Get ledger entries
+        buckets_query = (
+            db.session.query(CoinsLedgerModel)
+            .filter(
+                CoinsLedgerModel.user_id == current_user.id,
+                CoinsLedgerModel.remaining_coins > 0
+            )
+            .order_by(CoinsLedgerModel.expiry_at.asc().nulls_last())
+            .all()
+        )
+
+        payment_ids = [item.reference_id for item in buckets_query if item.reference_id]
+
+        # Fetch payments
+        payments = (
+            db.session.query(PaymentModel)
+            .filter(PaymentModel.id.in_(payment_ids))
+            .all()
+        )
+
+        payment_map = {p.id: p for p in payments}
+
+        subscription_ids = []
+        bundle_ids = []
+
+        # Extract metadata ids
+        for p in payments:
+            metadata = p.metadata_json or {}
+
+            if p.payment_type == PaymentTypeEnum.subscription:
+                sub_id = metadata.get("subscription_id")
+                if sub_id:
+                    subscription_ids.append(sub_id)
+
+            elif p.payment_type == PaymentTypeEnum.coin_purchase:
+                bundle_id = metadata.get("bundle_id")
+                if bundle_id:
+                    bundle_ids.append(bundle_id)
+
+        # Fetch subscriptions
+        subscriptions = (
+            db.session.query(UserSubscriptionModel)
+            .filter(UserSubscriptionModel.id.in_(subscription_ids))
+            .all()
+        )
+        subscription_map = {s.id: s for s in subscriptions}
+
+        # Fetch bundles
+        bundles = (
+            db.session.query(CoinPackageModel)
+            .filter(CoinPackageModel.id.in_(bundle_ids))
+            .all()
+        )
+        bundle_map = {b.id: b for b in bundles}
+
         buckets = []
         total_available = 0
+
         for item in buckets_query:
-            source_name = str(item.transaction_type.value if hasattr(item.transaction_type, 'value') else item.transaction_type)
-            # Make source name more user-friendly
-            source_map = {
-                "credit_subscription": "Monthly Subscription",
-                "credit_purchase": "Coin Pack Purchase",
-                "refund": "Refunded Coins"
-            }
-            friendly_source = source_map.get(source_name, source_name.replace("_", " ").title())
-            
-            buckets.append(CoinBucketItem(
-                source=friendly_source,
-                amount=item.remaining_coins,
-                expiry_date=item.expiry_at,
-                expiry_label=item.expiry_at.strftime("%Y-%m-%d") if item.expiry_at else "No Expiry"
-            ))
+
+            source_name = "Coins"
+
+            payment = payment_map.get(item.reference_id)
+
+            if payment:
+                metadata = payment.metadata_json or {}
+
+                if payment.payment_type == PaymentTypeEnum.subscription:
+                    sub_id = metadata.get("subscription_id")
+                    sub = subscription_map.get(sub_id)
+
+                    if sub and sub.plan:
+                        source_name = f"{sub.plan.display_name} Subscription"
+
+                elif payment.payment_type == PaymentTypeEnum.coin_purchase:
+                    bundle_id = metadata.get("bundle_id")
+                    bundle = bundle_map.get(bundle_id)
+
+                    if bundle:
+                        source_name = bundle.name
+
+            buckets.append(
+                CoinBucketItem(
+                    source=source_name,
+                    amount=item.remaining_coins,
+                    expiry_date=item.expiry_at,
+                    expiry_label=item.expiry_at.strftime("%Y-%m-%d") if item.expiry_at else "No Expiry"
+                )
+            )
+
             total_available += item.remaining_coins
-            
+
         return CoinBucketsResponse(
             buckets=buckets,
             total_available=total_available
         )
+
     except Exception as e:
-        logger.error(f"Error in get_coin_buckets: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to fetch coin buckets: {str(e)}")
+    except Exception as e:
+        logger.error(f"Failed to fetch coin buckets: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to fetch coin buckets"
+        )
 
 @router.get("/usage-history", response_model=UsageHistoryResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_usage_history(current_user: UnifiedAuthModel = Depends(get_current_user)):
@@ -511,4 +573,32 @@ def get_billing_history(current_user: UnifiedAuthModel = Depends(get_current_use
         return BillingHistoryResponse(history=history)
     except Exception as e:
         logger.error(f"Error in get_billing_history: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/public-api/usage", openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_api_usage(current_user: UnifiedAuthModel = Depends(get_current_user)):
+    """Returns public API usage for the last 7 days for bar graph."""
+    try:
+        now = datetime.utcnow()
+        seven_days_ago = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        usage_records = db.session.query(APIDailyUsageModel).filter(
+            APIDailyUsageModel.user_id == current_user.id,
+            APIDailyUsageModel.usage_date >= seven_days_ago
+        ).order_by(APIDailyUsageModel.usage_date.asc()).all()
+        
+        usage_map = {str(r.usage_date.date()): r.hit_count for r in usage_records}
+        
+        results = []
+        for i in range(7):
+            date = (seven_days_ago + timedelta(days=i)).date()
+            date_str = str(date)
+            results.append({
+                "date": date_str,
+                "count": usage_map.get(date_str, 0)
+            })
+            
+        return results
+    except Exception as e:
+        logger.error(f"Error in get_public_api_usage: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

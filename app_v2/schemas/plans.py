@@ -42,7 +42,7 @@ class PlanFeatureResponse(PlanFeatureBase):
 class PlanBase(BaseModel):
     display_name: str = Field(..., min_length=1)
 
-    price: float = Field(..., ge=0)
+    price: float = Field(..., gt=0)
     currency: str = Field(default="INR", min_length=1)
     description: Optional[str] = None
     coins_included: int = Field(default=0, ge=0)

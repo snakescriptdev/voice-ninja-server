@@ -4,16 +4,17 @@ from sqlalchemy import func, or_, desc, select
 from typing import List, Optional
 from datetime import datetime
 from app_v2.databases.models import UnifiedAuthModel, UserSubscriptionModel, PlanModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, SubscriptionStatusEnum
-from app_v2.utils.jwt_utils import is_admin
+from app_v2.utils.jwt_utils import is_admin, HTTPBearer
 from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
 
+security = HTTPBearer()
 logger = setup_logger(__name__)
-router = APIRouter(prefix="/api/v2/admin/user-management", tags=["Admin"])
+router = APIRouter(prefix="/api/v2/admin/user-management", tags=["Admin"],dependencies=[Depends(security),Depends(is_admin)])
 
-@router.get("/stats", response_model=UserManagementStats)
+@router.get("/stats", response_model=UserManagementStats,openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_management_stats():
     """
     Get general user management statistics.
@@ -40,7 +41,7 @@ def get_user_management_stats():
         logger.error(f"Error in get_user_management_stats: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/users", response_model=PaginatedResponse[UserManagementListItem])
+@router.get("/users", response_model=PaginatedResponse[UserManagementListItem],openapi_extra={"security":[{"BearerAuth":[]}]})
 def list_users_managed(
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1),
