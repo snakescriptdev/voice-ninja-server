@@ -154,6 +154,8 @@ class UnifiedAuthModel(Base):
     subscriptions = relationship("UserSubscriptionModel", back_populates="user",cascade="all, delete-orphan")
     payments = relationship("PaymentModel", back_populates="user",cascade="all, delete-orphan")
     coins_ledger = relationship("CoinsLedgerModel", back_populates="user",cascade="all, delete-orphan")
+    api_keys = relationship("APIKeyModel", back_populates="user", cascade="all, delete-orphan")
+    api_usage = relationship("APIDailyUsageModel", back_populates="user", cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -667,7 +669,7 @@ class PlanModel(Base):
     subscriptions = relationship(
         "UserSubscriptionModel",
         back_populates="plan",
-        cascade="all, delete-orphan"
+        foreign_keys="UserSubscriptionModel.plan_id"
     )
     providers = relationship(
         "PlanProviderModel",
@@ -756,11 +758,19 @@ class UserSubscriptionModel(Base):
     provider: Mapped[str] = mapped_column(String(50))  # razorpay / stripe
     provider_subscription_id: Mapped[str] = mapped_column(String(255), nullable=True)
 
+    subscription_metadata: Mapped[dict | None] = mapped_column(
+        MutableDict.as_mutable(JSONB),
+        nullable=True
+    )
+
+    next_plan_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("plans.id"), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("UnifiedAuthModel",back_populates="subscriptions")
-    plan = relationship("PlanModel",back_populates="subscriptions")
+    plan = relationship("PlanModel", foreign_keys=[plan_id], back_populates="subscriptions")
+    next_plan = relationship("PlanModel", foreign_keys=[next_plan_id])
 
 class PaymentModel(Base):
     __tablename__ = "payments"
@@ -892,3 +902,30 @@ class CoinUsageSettingsModel(Base):
                     db.session.rollback()
                     settings = db.session.query(cls).first()
             return settings
+
+class APIKeyModel(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    client_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    client_secret_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    user = relationship("UnifiedAuthModel", back_populates="api_keys")
+
+class APIDailyUsageModel(Base):
+    __tablename__ = "api_daily_usage"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
+    usage_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    user = relationship("UnifiedAuthModel", back_populates="api_usage")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "usage_date", name="uq_user_daily_usage"),
+    )
