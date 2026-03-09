@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
+from sqlalchemy import or_
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import UnifiedAuthModel, PlanModel, UserSubscriptionModel, PaymentModel, PlanProviderModel, CoinsLedgerModel
 from app_v2.schemas.subscriptions import (
@@ -96,6 +97,13 @@ def verify_subscription(
     current_user: UnifiedAuthModel = Depends(get_current_user)
 ):
     try:
+        existing = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.provider_subscription_id == data.razorpay_subscription_id
+        ).first()
+
+        if existing:
+            return {"message": "Subscription already verified"}
+        
         rzp_provider = PaymentProviderFactory.get_provider("razorpay")
 
         params = {
@@ -122,15 +130,30 @@ def verify_subscription(
         if not plan:
             raise HTTPException(status_code=404, detail="Plan not found")
 
-        # 3️⃣ Calculate billing period
-        current_start = datetime.utcnow()
-
-        if plan.billing_period.value == "monthly":
-            current_end = current_start + timedelta(days=30)
-        elif plan.billing_period.value == "yearly":
-            current_end = current_start + timedelta(days=365)
-        else:
-            current_end = current_start + timedelta(days=30)
+        # 3️⃣ Fetch Subscription Details from Razorpay and Calculate billing period
+        try:
+            rzp_subscription = rzp_provider.get_subscription_details(data.razorpay_subscription_id)
+            current_start = datetime.fromtimestamp(rzp_subscription.get("current_start")) if rzp_subscription.get("current_start") else datetime.utcnow()
+            current_end = datetime.fromtimestamp(rzp_subscription.get("current_end")) if rzp_subscription.get("current_end") else datetime.utcnow()
+            
+            # If rzp doesn't provide timestamps (unlikely for active sub), fallback to plan based calculation
+            if not rzp_subscription.get("current_end"):
+                if plan.billing_period.value == "monthly":
+                    current_end = current_start + timedelta(days=30)
+                elif plan.billing_period.value == "yearly":
+                    current_end = current_start + timedelta(days=365)
+                else:
+                    current_end = current_start + timedelta(days=30)
+        except Exception as e:
+            logger.error(f"Failed to fetch subscription details from Razorpay: {str(e)}")
+            # Fallback to manual calculation if fetching fails
+            current_start = datetime.utcnow()
+            if plan.billing_period.value == "monthly":
+                current_end = current_start + timedelta(days=30)
+            elif plan.billing_period.value == "yearly":
+                current_end = current_start + timedelta(days=365)
+            else:
+                current_end = current_start + timedelta(days=30)
 
         # 4️⃣ Create Subscription Record
         subscription = UserSubscriptionModel(
@@ -257,7 +280,8 @@ def update_subscription(data: SubscriptionUpdateRequest, current_user: UnifiedAu
     try:
         subscription = db.session.query(UserSubscriptionModel).filter(
             UserSubscriptionModel.user_id == current_user.id,
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active
+            or_(UserSubscriptionModel.status == SubscriptionStatusEnum.active,UserSubscriptionModel.status==SubscriptionStatusEnum.paused),
+            UserSubscriptionModel.cancel_at_period_end == False
         ).first()
 
         if not subscription:
@@ -337,7 +361,7 @@ def update_subscription(data: SubscriptionUpdateRequest, current_user: UnifiedAu
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error updating subscription: {str(e)}")
-    raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e))
     
 
 @router.post("/pause", dependencies=[Depends(security)], openapi_extra={"security": [{"BearerAuth": []}]})

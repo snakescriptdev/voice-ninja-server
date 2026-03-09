@@ -29,8 +29,10 @@ from app_v2.databases.models import (
     VariablesModel
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
+from typing import List, Optional, Any
 from app_v2.utils.activity_logger import log_activity
 from app_v2.core.logger import setup_logger
+from app_v2.utils.feature_access import RequireFeature
 logger = setup_logger(__name__)
 
 router = APIRouter(
@@ -215,7 +217,7 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
 )
 async def create_agent(
     agent_in: AgentCreate,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(RequireFeature("ai_voice_agents")),
 ):
     user_id = current_user.id
     
@@ -515,6 +517,8 @@ async def create_agent(
 async def get_all_agents(
     page: int = 1,
     size: int = 20,
+    name: Optional[str] = None,
+    voice: Optional[str] = None,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     if page < 1:
@@ -534,8 +538,15 @@ async def get_all_agents(
             selectinload(AgentModel.agent_functions)
         )
         .filter(AgentModel.user_id == current_user.id)
-        .order_by(AgentModel.modified_at.desc())
     )
+    
+    if name:
+        query = query.filter(AgentModel.agent_name.ilike(f"%{name}%"))
+        
+    if voice:
+        query = query.join(AgentModel.voice).filter(VoiceModel.voice_name.ilike(f"%{voice}%"))
+        
+    query = query.order_by(AgentModel.modified_at.desc())
     
     total = query.count()
     pages = math.ceil(total / size)

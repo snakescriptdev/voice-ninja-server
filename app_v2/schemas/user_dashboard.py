@@ -86,7 +86,7 @@ class CoinBucketItem(BaseModel):
     source: str
     amount: int
     expiry_date: Optional[datetime] = None
-    expiry_label: str = "No Expiry"
+    status: Optional[str] = None
 
 class CoinBucketsResponse(BaseModel):
     buckets: List[CoinBucketItem]
@@ -112,3 +112,38 @@ class BillingHistoryItem(BaseModel):
 
 class BillingHistoryResponse(BaseModel):
     history: List[BillingHistoryItem]
+
+class UserAPICallLogItem(BaseModel):
+    id: int
+    api_route: str
+    status_code: int
+    response_time_ms: Optional[float]
+    coins_used: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class UserAPICallLogResponse(BaseModel):
+    total: int
+    page: int
+    size: int
+    pages: int
+    logs: List[UserAPICallLogItem]
+
+class APIUsageDailyItem(BaseModel):
+    date: str
+    count: int
+
+class APIListItem(BaseModel):
+    path: str
+    method: str
+    description: str
+    swagger_link: str
+
+class PublicAPIUsageResponse(BaseModel):
+    total_api_calls_this_month: int
+    api_coins_used_this_month: int
+    avg_api_response_time_24h: float
+    daily_usage: List[APIUsageDailyItem]
+    api_list: List[APIListItem]

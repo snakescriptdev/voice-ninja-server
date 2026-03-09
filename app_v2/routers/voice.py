@@ -3,6 +3,7 @@ This file has CRUD routes defined for the voice
 """
 from fastapi import HTTPException, APIRouter, status, Depends, Form, UploadFile, File
 from app_v2.utils.jwt_utils import HTTPBearer, get_current_user
+from app_v2.utils.feature_access import RequireFeature
 from fastapi_sqlalchemy import db
 from typing import Optional, List
 from app_v2.schemas.voice_schema import VoiceRead, VoiceUpdate
@@ -59,6 +60,8 @@ async def get_all_voices(
     skip: int = 0,
     limit: int = 10,
     synced_only: bool = True,
+    name: Optional[str] = None,
+    gender: Optional[GenderEnum] = None,
     current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
         filters = [
@@ -69,6 +72,13 @@ async def get_all_voices(
         ]
         if synced_only:
             filters.append(VoiceModel.elevenlabs_voice_id.isnot(None))
+            
+        if name:
+            filters.append(VoiceModel.voice_name.ilike(f"%{name}%"))
+            
+        if gender:
+            filters.append(VoiceModel.traits.has(VoiceTraitsModel.gender == gender))
+
         voices = (
             db.session.query(VoiceModel)
             .options(selectinload(VoiceModel.traits))
@@ -136,7 +146,7 @@ async def create_voice(
     gender: Optional[GenderEnum] = Form(GenderEnum.male, description="gender of the voice (Male/Female)"),
     nationality: Optional[str] = Form("british", description="nationality of the voice"),
     file: UploadFile = File(...),
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeature("custom_voice_cloning"))
 ):
     try:
         # Validate file extension

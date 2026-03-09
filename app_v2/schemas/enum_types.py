@@ -71,6 +71,7 @@ class ChannelEnum(str,Enum):
     chat = "chat"
     call= "call"
     widget = "widget"
+    api = "api"
 
 class WidgetPosition(str,Enum):
     top_left = "top-left"

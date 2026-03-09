@@ -27,6 +27,12 @@ from fastapi import Depends
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.core.logger import setup_logger
 from app_v2.utils.activity_logger import log_activity
+from app_v2.utils.feature_access import (
+    RequireFeature,
+    check_feature_limit_and_usage,
+    get_feature_limit,
+    get_feature_usage,
+)
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 
 logger = setup_logger(__name__)
@@ -293,7 +299,11 @@ def _get_embed_script_content(public_id: str) -> str:
     try {
       var resp = await fetch(configUrl);
       config = await resp.json();
-      window.voiceNinjaLeadId = null;
+      
+      // Load lead from storage
+      var savedLeadId = localStorage.getItem('vn_lead_' + publicId);
+      window.voiceNinjaLeadId = savedLeadId;
+      
       injectWidget();
     } catch (e) {
       console.error('Voice Ninja init failed:', e);
@@ -548,13 +558,16 @@ def _get_embed_script_content(public_id: str) -> str:
         body: JSON.stringify(leadData)
     }).then(r => r.json());
 
-    if (resp && resp.id) return resp;
+    if (resp && resp.id) {
+        localStorage.setItem('vn_lead_' + publicId, resp.id);
+        return resp;
+    }
     return null;
 }
 
     pill.addEventListener('click', function(e) {
       if (connected || connecting) return;
-      if (config.prechat.enable_prechat) {
+      if (config.prechat.enable_prechat && !window.voiceNinjaLeadId) {
         prechatCard.classList.toggle('vn-show');
       } else {
         startCall();
@@ -592,8 +605,15 @@ def _get_embed_script_content(public_id: str) -> str:
 
     if (config.prechat.require_phone) {
         var phoneEl = document.getElementById('vn-lead-phone');
-        if (!phoneEl.value.trim()) {
+        var phoneVal = phoneEl.value.trim();
+        if (!phoneVal) {
             alert('Phone is required');
+            phoneEl.focus();
+            return;
+        }
+        var phoneRegex = /^\+?[1-9]\d{1,14}$/;
+        if (!phoneRegex.test(phoneVal.replace(/[\s\(\)\-\.]/g, ''))) {
+            alert('Please enter a valid phone number');
             phoneEl.focus();
             return;
         }
@@ -688,11 +708,24 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
             await websocket.send_json({"type": "error", "message": "Insufficient coins"})
             await websocket.close(code=1008)
             return
+
+        # Check feature limit (Monthly Minutes)
+        try:
+            check_feature_limit_and_usage(web_agent.user_id, "monthly_minutes")
+        except HTTPException as e:
+            await websocket.send_json({"type": "error", "message": e.detail})
+            await websocket.close(code=1008)
+            return
+            
         elevenlabs_agent_id = web_agent.agent.elevenlabs_agent_id
         agent_id = web_agent.agent_id
         agent_name = web_agent.agent.agent_name
         user_id = web_agent.user_id
         web_agent_name = web_agent.web_agent_name
+
+        call_start_time = datetime.now()
+        initial_usage = get_feature_usage(user_id, "monthly_minutes")
+        minute_limit = get_feature_limit(user_id, "monthly_minutes")
     with db():
         log_activity(
             user_id=user_id,
@@ -747,8 +780,22 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
         except Exception as e:
             logger.error("Error sending user_transcript: %s", e)
 
+    chunk_count = 0
     while True:
         try:
+            # Periodically check limit (every message)
+            chunk_count += 1
+            if chunk_count % 10 == 0:
+                current_call_minutes = (datetime.now() - call_start_time).total_seconds() / 60
+                if minute_limit is not None and (initial_usage + current_call_minutes) >= minute_limit:
+                    logger.warning(f"Auto-disconnecting web agent session for user {user_id} - Monthly minutes limit reached.")
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Monthly minutes limit reached. Call disconnected."
+                    })
+                    await websocket.close(code=1008)
+                    break
+
             data = await websocket.receive_json()
         except WebSocketDisconnect:
             break
@@ -867,6 +914,8 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                                 lead = db.session.query(WebAgentLeadModel).get(lead_id)
                                 if lead:
                                     lead.conversation_id = new_conv.id
+                                    # Ensure session is committed
+                                    db.session.add(lead)
                                     db.session.commit()
                                     logger.info("Linked lead %s to conversation %s", lead_id, new_conv.id)
                 except Exception:
