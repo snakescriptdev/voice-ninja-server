@@ -14,6 +14,7 @@ from app_v2.utils.activity_logger import log_activity
 import uuid
 from fastapi import Depends
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.feature_access import RequireFeature
 from app_v2.core.logger import setup_logger
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 
@@ -49,7 +50,7 @@ def list_web_agents(request: Request, user=Depends(get_current_user)):
 
 
 @router.post("/web-agents", response_model=WebAgentConfigResponse,openapi_extra={"security":[{"BearerAuth":[]}]})
-def create_web_agent(request: Request, config: WebAgentConfig, user=Depends(get_current_user)):
+def create_web_agent(request: Request, config: WebAgentConfig, user=Depends(RequireFeature("web_voice_agent"))):
   # Validate agent belongs to user
   agent = db.session.query(AgentModel).filter(AgentModel.id == config.agent_id, AgentModel.user_id == user.id).first()
   if not agent:

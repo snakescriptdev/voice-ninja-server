@@ -1,7 +1,7 @@
 from fastapi import HTTPException, status
 from fastapi_sqlalchemy import db
 from datetime import datetime, timedelta
-from app_v2.databases.models import ActivityLogModel, APIDailyUsageModel
+from app_v2.databases.models import ActivityLogModel, APIDailyUsageModel, APICallLogModel
 from sqlalchemy import func
 from app_v2.utils.activity_logger import log_activity
 
@@ -31,10 +31,6 @@ def track_and_limit_api(user_id: int):
             )
 
         # 2. Log activity
-        # We don't want to use the standard log_activity here if it opens its own db() context 
-        # that might conflict or be redundant, but activity_logger.py usually handles its own db context.
-        # Let's direct log here to be safe within the same session if possible, 
-        # or just use the utility if it's clean.
         log_activity(
             user_id=user_id,
             event_type="public_api_hit",
@@ -43,8 +39,6 @@ def track_and_limit_api(user_id: int):
         )
 
         # 3. Increment Daily Usage
-        # We need to find or create a record for today
-        # Convert date to datetime for comparison as usage_date is DateTime in models.py
         today_dt = datetime(today.year, today.month, today.day)
         
         usage_record = db.session.query(APIDailyUsageModel).filter(
@@ -62,4 +56,26 @@ def track_and_limit_api(user_id: int):
             )
             db.session.add(usage_record)
         
+        # We don't commit here if we want to include more work in the same session,
+        # but the original code had db.session.commit().
         db.session.commit()
+
+def log_public_api_call(user_id: int, api_route: str, status_code: int, response_time_ms: int, coins_used: int = 0):
+    """
+    Logs a detailed public API call record.
+    """
+    try:
+        with db():
+            log_entry = APICallLogModel(
+                user_id=user_id,
+                api_route=api_route,
+                status_code=status_code,
+                response_time_ms=response_time_ms,
+                coins_used=coins_used
+            )
+            db.session.add(log_entry)
+            db.session.commit()
+    except Exception as e:
+        # Avoid crashing the response if logging fails
+        import logging
+        logging.getLogger(__name__).error(f"Failed to log public API call: {e}")

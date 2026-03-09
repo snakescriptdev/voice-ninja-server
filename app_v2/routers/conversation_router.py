@@ -1,8 +1,10 @@
 from fastapi import APIRouter, HTTPException, Query, Response,Depends
 from fastapi_sqlalchemy import db
 from sqlalchemy.orm import joinedload
-from datetime import timedelta
-from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel
+from sqlalchemy import or_
+from datetime import timedelta, date
+from typing import Optional
+from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WebAgentLeadModel
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.activity_logger import log_activity
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
@@ -19,15 +21,44 @@ router = APIRouter(prefix="/api/v2/conversation", tags=["conversation"],dependen
 def list_user_conversations(
 	page: int = Query(1, ge=1),
 	page_size: int = Query(10, ge=1, le=100),
+	search: Optional[str] = Query(None, description="Search by agent name or lead name"),
+	date_after: Optional[date] = Query(None),
+	date_before: Optional[date] = Query(None),
+	call_status: Optional[CallStatusEnum] = Query(None),
+	agent: Optional[str] = Query(None, description="Filter by agent name"),
 	current_user: UnifiedAuthModel = Depends(get_current_user)
 ):
 	with db():
 		q = (
 			db.session.query(ConversationsModel)
-			.options(joinedload(ConversationsModel.agent))
+			.outerjoin(AgentModel, ConversationsModel.agent_id == AgentModel.id)
+			.outerjoin(WebAgentLeadModel, WebAgentLeadModel.conversation_id == ConversationsModel.id)
+			.options(joinedload(ConversationsModel.agent), joinedload(ConversationsModel.lead))
 			.filter(ConversationsModel.user_id == current_user.id)
-			.order_by(ConversationsModel.created_at.desc())
 		)
+
+		if search:
+			q = q.filter(
+				or_(
+					AgentModel.agent_name.ilike(f"%{search}%"),
+					WebAgentLeadModel.name.ilike(f"%{search}%")
+				)
+			)
+			
+		if agent:
+			q = q.filter(AgentModel.agent_name.ilike(f"%{agent}%"))
+			
+		if date_after:
+			q = q.filter(ConversationsModel.created_at >= date_after)
+			
+		if date_before:
+			q = q.filter(ConversationsModel.created_at <= date_before)
+			
+		if call_status:
+			q = q.filter(ConversationsModel.call_status == call_status)
+
+		q = q.order_by(ConversationsModel.created_at.desc())
+
 		total = q.count()
 		conversations = q.offset((page-1)*page_size).limit(page_size).all()
 
@@ -45,6 +76,7 @@ def list_user_conversations(
 				"duration": seconds_to_timer(conv.duration),
 				"messages": conv.message_count,
 				"call_status": conv.call_status.name if conv.call_status else None,
+				"lead_name": getattr(conv.lead, "name", None) if conv.lead else None,
 			})
 
 		return {
@@ -79,7 +111,10 @@ def get_conversation_audio(conversation_id: int,current_user:UnifiedAuthModel= D
 @router.get("/{conversation_id}/details",openapi_extra={"security":[{"BearerAuth": []}]})
 def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel = Depends(get_current_user)):
 	with db():
-		conv = db.session.query(ConversationsModel).options(joinedload(ConversationsModel.agent)).filter(ConversationsModel.id == conversation_id,ConversationsModel.user_id==current_user.id).first()
+		conv = db.session.query(ConversationsModel).options(
+			joinedload(ConversationsModel.agent),
+			joinedload(ConversationsModel.lead)
+		).filter(ConversationsModel.id == conversation_id,ConversationsModel.user_id==current_user.id).first()
 		if not conv:
 			raise HTTPException(status_code=404, detail="Conversation not found")
 		elevenlabs_conv_id = conv.elevenlabs_conv_id
@@ -105,6 +140,13 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 		"call_info": {
 			"agent": getattr(conv.agent, "agent_name", None),
 			"status": conv.call_status.name if conv.call_status else None,
+			"lead": {
+				"name": conv.lead.name,
+				"email": conv.lead.email,
+				"phone": conv.lead.phone,
+				"custom_data": conv.lead.custom_data,
+				"created_at": conv.lead.created_at.isoformat()
+			} if conv.lead else None
 		},
 		"transcripts": transcript
 	}

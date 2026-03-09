@@ -72,6 +72,10 @@ class BasePaymentProvider(ABC):
     def get_order_invoices(self, order_id: str) -> List[Dict[str, Any]]:
         pass
 
+    @abstractmethod
+    def get_subscription_details(self, subscription_id: str) -> Dict[str, Any]:
+        pass
+
 class RazorpayProvider(BasePaymentProvider):
     def __init__(self):
         self.client = razorpay.Client(auth=(VoiceSettings.RAZOR_KEY_ID, VoiceSettings.RAZOR_KEY_SECRET))
@@ -207,21 +211,18 @@ class RazorpayProvider(BasePaymentProvider):
 
             logger.info(f"Cancel response: {cancel_response}")
 
+            payload ={"plan_id":new_plan_id}
             # Step 2: Extract customer_id
             customer_id = cancel_response.get("customer_id")
 
-            if not customer_id:
-                raise Exception("customer_id not found in cancel response")
+            if customer_id:
+                payload["customer_id"] = customer_id
 
             logger.info(f"Customer ID retrieved: {customer_id}")
 
             # Step 3: Create new subscription
             total_count = 1 if billing_period == BillingPeriodEnum.annual else 12
-            payload = {
-                "plan_id": new_plan_id,
-                "customer_id": customer_id,
-                "total_count": total_count
-            }
+            payload["total_count"] = total_count
 
             if offer_id:
                 payload["offer_id"] = offer_id
@@ -276,6 +277,14 @@ class RazorpayProvider(BasePaymentProvider):
         except Exception as e:
             logger.error(f"Razorpay order invoice fetch failed: {str(e)}")
             raise Exception(f"Failed to fetch order invoices: {str(e)}")
+
+    def get_subscription_details(self, subscription_id: str) -> Dict[str, Any]:
+        try:
+            subscription = self.client.subscription.fetch(subscription_id)
+            return subscription
+        except Exception as e:
+            logger.error(f"Razorpay subscription fetch failed: {str(e)}")
+            raise Exception(f"Failed to fetch subscription details: {str(e)}")
 
     def create_subscription_webhook(
         self,
