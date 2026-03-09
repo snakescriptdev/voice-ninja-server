@@ -203,6 +203,14 @@ class FunctionRead(BaseModel):
 
     model_config = {"from_attributes": True}
 
+class FunctionBind(BaseModel):
+    agent_id: int
+    function_id: int
+
+class FunctionUnbind(BaseModel):
+    agent_id: int
+    function_id: int
+
     @model_validator(mode="before")
     @classmethod
     def map_database_fields(cls, data: Any) -> Any:
