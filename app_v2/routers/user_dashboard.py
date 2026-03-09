@@ -1,17 +1,20 @@
 from fastapi import APIRouter, status, Depends,HTTPException
 from fastapi.responses import HTMLResponse
 import os
-
+from fastapi.requests import Request
 from fastapi_sqlalchemy import db
 from datetime import datetime, timedelta
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.feature_access import RequireFeature
 from app_v2.databases.models import (
     UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, 
     ConversationsModel, PlanModel, UserSubscriptionModel, CoinsLedgerModel, 
-    PaymentModel, WebAgentModel, WebAgentLeadModel,APIDailyUsageModel,CoinPackageModel
+    PaymentModel, WebAgentModel, WebAgentLeadModel,APIDailyUsageModel,CoinPackageModel,
+    APICallLogModel
 )
 from app_v2.schemas.enum_types import CoinTransactionTypeEnum, PaymentStatusEnum,SubscriptionStatusEnum,PaymentTypeEnum
 from app_v2.utils.coin_utils import get_user_coin_balance
+from app_v2.constants import api_list
 
 from sqlalchemy import func
 from app_v2.schemas.pagination import PaginatedResponse
@@ -30,7 +33,12 @@ from app_v2.schemas.user_dashboard import (
     UsageHistoryItem,
     BillingHistoryResponse,
     BillingHistoryItem,
-    DailyTrendSeries
+    DailyTrendSeries,
+    UserAPICallLogResponse,
+    UserAPICallLogItem,
+    PublicAPIUsageResponse,
+    APIUsageDailyItem,
+    APIListItem
 )
 from app_v2.core.logger import setup_logger
 from app_v2.utils.time_utils import format_time_ago
@@ -146,8 +154,9 @@ def get_global_activities(
             detail=str(e)
         )
 
-@router.get("/analytics", response_model=UserAnalyticsResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_user_analytics(current_user: UnifiedAuthModel = Depends(get_current_user)):
+@router.get("/analytics", response_model=UserAnalyticsResponse,openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("analytics_dashboard"))):
+    
     try:
         # 1. Overall stats
         total_calls = db.session.query(func.count(ConversationsModel.id)).filter(
@@ -382,57 +391,64 @@ def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(get_current_use
 
 @router.get("/coins/buckets", response_model=CoinBucketsResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_coin_buckets(
+    page: int = 1,
+    size: int = 10,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     try:
-        # Get ledger entries
-        buckets_query = (
-            db.session.query(CoinsLedgerModel)
+        skip = (page - 1) * size
+
+        base_query = db.session.query(CoinsLedgerModel).filter(
+            CoinsLedgerModel.user_id == current_user.id,
+            CoinsLedgerModel.remaining_coins > 0
+        )
+
+        total_available = (
+            db.session.query(func.sum(CoinsLedgerModel.remaining_coins))
             .filter(
                 CoinsLedgerModel.user_id == current_user.id,
                 CoinsLedgerModel.remaining_coins > 0
             )
+            .scalar() or 0
+        )
+
+        total_count = base_query.count()
+
+        buckets_query = (
+            base_query
             .order_by(CoinsLedgerModel.expiry_at.asc().nulls_last())
+            .offset(skip)
+            .limit(size)
             .all()
         )
 
-        payment_ids = [item.reference_id for item in buckets_query if item.reference_id]
+        reference_ids = [item.reference_id for item in buckets_query if item.reference_id]
 
-        # Fetch payments
-        payments = (
-            db.session.query(PaymentModel)
-            .filter(PaymentModel.id.in_(payment_ids))
-            .all()
-        )
-
-        payment_map = {p.id: p for p in payments}
-
-        subscription_ids = []
-        bundle_ids = []
-
-        # Extract metadata ids
-        for p in payments:
-            metadata = p.metadata_json or {}
-
-            if p.payment_type == PaymentTypeEnum.subscription:
-                sub_id = metadata.get("subscription_id")
-                if sub_id:
-                    subscription_ids.append(sub_id)
-
-            elif p.payment_type == PaymentTypeEnum.coin_purchase:
-                bundle_id = metadata.get("bundle_id")
-                if bundle_id:
-                    bundle_ids.append(bundle_id)
-
-        # Fetch subscriptions
+        # Fetch subscriptions FIRST
         subscriptions = (
             db.session.query(UserSubscriptionModel)
-            .filter(UserSubscriptionModel.id.in_(subscription_ids))
+            .filter(UserSubscriptionModel.id.in_(reference_ids))
             .all()
         )
         subscription_map = {s.id: s for s in subscriptions}
 
-        # Fetch bundles
+        # Fetch payments
+        payments = (
+            db.session.query(PaymentModel)
+            .filter(PaymentModel.id.in_(reference_ids))
+            .all()
+        )
+        payment_map = {p.id: p for p in payments}
+
+        # Extract bundle ids
+        bundle_ids = []
+        for p in payments:
+            metadata = p.metadata_json or {}
+            if p.payment_type == PaymentTypeEnum.coin_purchase:
+                bundle_id = metadata.get("bundle_id")
+                if bundle_id:
+                    bundle_ids.append(bundle_id)
+
         bundles = (
             db.session.query(CoinPackageModel)
             .filter(CoinPackageModel.id.in_(bundle_ids))
@@ -441,65 +457,76 @@ def get_coin_buckets(
         bundle_map = {b.id: b for b in bundles}
 
         buckets = []
-        total_available = 0
+        now = datetime.utcnow()
 
         for item in buckets_query:
 
             source_name = "Coins"
 
-            payment = payment_map.get(item.reference_id)
+            # ✅ PRIORITY 1 — Subscription
+            sub = subscription_map.get(item.reference_id)
+            if sub and sub.plan:
+                source_name = f"{sub.plan.display_name} Subscription"
 
-            if payment:
-                metadata = payment.metadata_json or {}
+            # ✅ PRIORITY 2 — Bundle purchase
+            else:
+                payment = payment_map.get(item.reference_id)
 
-                if payment.payment_type == PaymentTypeEnum.subscription:
-                    sub_id = metadata.get("subscription_id")
-                    sub = subscription_map.get(sub_id)
-
-                    if sub and sub.plan:
-                        source_name = f"{sub.plan.display_name} Subscription"
-
-                elif payment.payment_type == PaymentTypeEnum.coin_purchase:
+                if payment and payment.payment_type == PaymentTypeEnum.coin_purchase:
+                    metadata = payment.metadata_json or {}
                     bundle_id = metadata.get("bundle_id")
                     bundle = bundle_map.get(bundle_id)
 
                     if bundle:
                         source_name = bundle.name
 
+            status = None
+            if item.expiry_at and now <= item.expiry_at <= now + timedelta(days=7):
+                status = "expiring soon"
+
             buckets.append(
                 CoinBucketItem(
                     source=source_name,
                     amount=item.remaining_coins,
                     expiry_date=item.expiry_at,
-                    expiry_label=item.expiry_at.strftime("%Y-%m-%d") if item.expiry_at else "No Expiry"
+                    status=status
                 )
             )
 
-            total_available += item.remaining_coins
+        total_pages = ceil(total_count / size) if size > 0 else 1
 
         return CoinBucketsResponse(
+            total=total_count,
+            page=page,
+            size=size,
+            pages=total_pages,
             buckets=buckets,
             total_available=total_available
         )
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch coin buckets: {str(e)}")
-    except Exception as e:
-        logger.error(f"Failed to fetch coin buckets: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to fetch coin buckets"
-        )
+        logger.exception("Error fetching coin buckets")
+        raise HTTPException(status_code=500, detail="Failed to fetch coin buckets")
 
 @router.get("/usage-history", response_model=UsageHistoryResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_usage_history(current_user: UnifiedAuthModel = Depends(get_current_user)):
+def get_usage_history(
+    page: int = 1,
+    size: int = 10,
+    current_user: UnifiedAuthModel = Depends(get_current_user)
+):
     """Details coin usage transactions."""
     try:
+        skip = (page - 1) * size
+
         # Fetch usage (debit) transactions
-        history_query = db.session.query(CoinsLedgerModel).filter(
+        base_query = db.session.query(CoinsLedgerModel).filter(
             CoinsLedgerModel.user_id == current_user.id,
             CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage
-        ).order_by(CoinsLedgerModel.created_at.desc()).all()
+        )
+
+        total_count = base_query.count()
+
+        history_query = base_query.order_by(CoinsLedgerModel.created_at.desc()).offset(skip).limit(size).all()
         
         # We need agent names for the records. Reference ID in debit_usage is often the conversation ID.
         # However, the ledger doesn't always have direct agent link. 
@@ -530,18 +557,36 @@ def get_usage_history(current_user: UnifiedAuthModel = Depends(get_current_user)
                 balance=item.balance_after
             ))
             
-        return UsageHistoryResponse(history=history)
+        total_pages = ceil(total_count / size) if size > 0 else 1
+
+        return UsageHistoryResponse(
+            total=total_count,
+            page=page,
+            size=size,
+            pages=total_pages,
+            history=history
+        )
     except Exception as e:
         logger.error(f"Error in get_usage_history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/billing-history", response_model=BillingHistoryResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_billing_history(current_user: UnifiedAuthModel = Depends(get_current_user)):
+def get_billing_history(
+    page: int = 1,
+    size: int = 10,
+    current_user: UnifiedAuthModel = Depends(get_current_user)
+):
     """Lists past payments and billing events."""
     try:
-        payments = db.session.query(PaymentModel).filter(
+        skip = (page - 1) * size
+
+        base_query = db.session.query(PaymentModel).filter(
             PaymentModel.user_id == current_user.id
-        ).order_by(PaymentModel.created_at.desc()).all()
+        )
+
+        total_count = base_query.count()
+
+        payments = base_query.order_by(PaymentModel.created_at.desc()).offset(skip).limit(size).all()
         
         # Pre-fetch plans and bundles for descriptions
         plans = {p.id: p.display_name for p in db.session.query(PlanModel).all()}
@@ -570,16 +615,43 @@ def get_billing_history(current_user: UnifiedAuthModel = Depends(get_current_use
                 invoice_url=p.invoice_url
             ))
             
-        return BillingHistoryResponse(history=history)
+        total_pages = ceil(total_count / size) if size > 0 else 1
+
+        return BillingHistoryResponse(
+            total=total_count,
+            page=page,
+            size=size,
+            pages=total_pages,
+            history=history
+        )
     except Exception as e:
         logger.error(f"Error in get_billing_history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/public-api/usage", openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_public_api_usage(current_user: UnifiedAuthModel = Depends(get_current_user)):
-    """Returns public API usage for the last 7 days for bar graph."""
+@router.get("/public-api/usage", response_model=PublicAPIUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depends(get_current_user)):
+    """Returns public API usage metrics and last 7 days for bar graph."""
     try:
         now = datetime.utcnow()
+        first_day_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        last_24h = now - timedelta(hours=24)
+        
+        # API Metrics
+        total_api_calls_this_month = db.session.query(func.count(APICallLogModel.id)).filter(
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.created_at >= first_day_of_month
+        ).scalar() or 0
+
+        api_coins_used_this_month = db.session.query(func.sum(APICallLogModel.coins_used)).filter(
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.created_at >= first_day_of_month
+        ).scalar() or 0
+
+        avg_api_response_time_24h = db.session.query(func.avg(APICallLogModel.response_time_ms)).filter(
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.created_at >= last_24h
+        ).scalar() or 0.0
+
         seven_days_ago = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
         
         usage_records = db.session.query(APIDailyUsageModel).filter(
@@ -589,16 +661,61 @@ def get_public_api_usage(current_user: UnifiedAuthModel = Depends(get_current_us
         
         usage_map = {str(r.usage_date.date()): r.hit_count for r in usage_records}
         
-        results = []
+        daily_usage = []
         for i in range(7):
             date = (seven_days_ago + timedelta(days=i)).date()
             date_str = str(date)
-            results.append({
-                "date": date_str,
-                "count": usage_map.get(date_str, 0)
-            })
+            daily_usage.append(APIUsageDailyItem(
+                date=date_str,
+                count=usage_map.get(date_str, 0)
+            ))
+        apis = [
+            APIListItem(
+                path= api["path"],
+                method = api["method"],
+                description = api["description"],
+                swagger_link = str(request.base_url)+api["swagger_link"]
+
+            ) for api in api_list
+        ]
             
-        return results
+        return PublicAPIUsageResponse(
+            total_api_calls_this_month=total_api_calls_this_month,
+            api_coins_used_this_month=int(api_coins_used_this_month),
+            avg_api_response_time_24h=round(float(avg_api_response_time_24h), 2),
+            daily_usage=daily_usage,
+            api_list=apis
+        )
     except Exception as e:
         logger.error(f"Error in get_public_api_usage: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/api-logs", response_model=UserAPICallLogResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_api_logs(
+    page: int = 1,
+    size: int = 20,
+    current_user: UnifiedAuthModel = Depends(get_current_user)
+):
+    """Returns detailed public API call logs for the user."""
+    try:
+        skip = (page - 1) * size
+        
+        base_query = db.session.query(APICallLogModel).filter(
+            APICallLogModel.user_id == current_user.id
+        )
+        
+        total_count = base_query.count()
+        logs = base_query.order_by(APICallLogModel.created_at.desc()).offset(skip).limit(size).all()
+        
+        total_pages = ceil(total_count / size) if size > 0 else 1
+        
+        return UserAPICallLogResponse(
+            total=total_count,
+            page=page,
+            size=size,
+            pages=total_pages,
+            logs=[UserAPICallLogItem.model_validate(log) for log in logs]
+        )
+    except Exception as e:
+        logger.error(f"Error in get_user_api_logs: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

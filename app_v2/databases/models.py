@@ -536,7 +536,7 @@ class ConversationsModel(Base):
     #relationships
     agent = relationship("AgentModel",back_populates="conversations")
     user = relationship("UnifiedAuthModel",back_populates="conversations")
-    # web_agent = relationship("WebAgentLeadModel",back_populates="conversations",cascade="all, delete-orphan")
+    lead = relationship("WebAgentLeadModel", back_populates="conversation", uselist=False)
 
 class WebAgentModel(Base):
     __tablename__ = "web_agents"
@@ -601,7 +601,7 @@ class WebAgentLeadModel(Base):
         nullable=False
     )
 
-    # conversation_id: Mapped[int] = mapped_column(Integer,ForeignKey("conversations.id"),nullable=True)
+    conversation_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("conversations.id"), nullable=True)
 
     name: Mapped[str | None] = mapped_column(String(255))
     email: Mapped[str | None] = mapped_column(String(255))
@@ -612,7 +612,7 @@ class WebAgentLeadModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     web_agent = relationship("WebAgentModel", back_populates="leads")
-    # conversations = relationship("ConversationsModel",back_populates="web_agent")
+    conversation = relationship("ConversationsModel", back_populates="lead")
 
 class ActivityLogModel(Base):
     __tablename__ = "activity_logs"
@@ -929,3 +929,16 @@ class APIDailyUsageModel(Base):
     __table_args__ = (
         UniqueConstraint("user_id", "usage_date", name="uq_user_daily_usage"),
     )
+
+class APICallLogModel(Base):
+    __tablename__ = "api_call_logs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
+    api_route: Mapped[str] = mapped_column(String(255), nullable=False)
+    status_code: Mapped[int] = mapped_column(Integer, nullable=False)
+    response_time_ms: Mapped[int] = mapped_column(Integer, nullable=True) # in milliseconds
+    coins_used: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+    user = relationship("UnifiedAuthModel")

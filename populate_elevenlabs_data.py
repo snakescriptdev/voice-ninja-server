@@ -27,7 +27,21 @@ from app_v2.databases.models import (
     UnifiedAuthModel,
     CoinsLedgerModel
 )
-from app_v2.schemas.enum_types import CoinTransactionTypeEnum
+from app_v2.schemas.enum_types import (
+    CoinTransactionTypeEnum,
+    RequestMethodEnum,
+    GenderEnum,
+    PhoneNumberAssignStatus,
+    ChannelEnum,
+    CallStatusEnum,
+    WidgetPosition,
+    BillingPeriodEnum,
+    PlanIconEnum,
+    PaymentProviderEnum,
+    SubscriptionStatusEnum,
+    PaymentStatusEnum,
+    PaymentTypeEnum
+)
 import requests
 from app_v2.core.elevenlabs_config import (
     get_all_supported_languages,
@@ -404,6 +418,65 @@ def ensure_admin_defaults(session: Session):
 
 
 
+def sync_database_enums(session: Session):
+    """
+    Ensure all PostgreSQL native enums are in sync with the Python Enum classes.
+    """
+    from sqlalchemy import text
+    
+    logger.info("\n" + "=" * 60)
+    logger.info("Syncing Database Enums...")
+    logger.info("=" * 60)
+
+    # Map of PostgreSQL type name to Python Enum class
+    # Type names are usually lowercase version of the class name unless explicitly named
+    enum_mapping = {
+        "requestmethodenum": RequestMethodEnum,
+        "genderenum": GenderEnum,
+        "phonenumberassignstatus": PhoneNumberAssignStatus,
+        "channelenum": ChannelEnum,
+        "callstatusenum": CallStatusEnum,
+        "widget_position": WidgetPosition,
+        "billingperiodenum": BillingPeriodEnum,
+        "planiconenum": PlanIconEnum,
+        "paymentproviderenum": PaymentProviderEnum,
+        "subscriptionstatusenum": SubscriptionStatusEnum,
+        "paymentstatusenum": PaymentStatusEnum,
+        "paymenttypeenum": PaymentTypeEnum,
+        "cointransactiontypeenum": CoinTransactionTypeEnum
+    }
+
+    # We need a connection with AUTOCOMMIT because ALTER TYPE cannot run inside a transaction block
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        for type_name, enum_class in enum_mapping.items():
+            try:
+                # 1. Get existing values from the database
+                res = conn.execute(text(f"SELECT enumlabel FROM pg_enum JOIN pg_type ON pg_enum.enumtypid = pg_type.oid WHERE pg_type.typname = '{type_name}'"))
+                existing_values = {row[0] for row in res}
+                
+                if not existing_values:
+                    logger.debug(f"Enum type '{type_name}' not found or has no values. Skipping.")
+                    continue
+
+                # 2. Identify missing values
+                code_values = {e.value for e in enum_class if e.value is not None}
+                missing_values = code_values - existing_values
+                
+                if not missing_values:
+                    logger.info(f"✅ Enum '{type_name}' is in sync.")
+                    continue
+
+                # 3. Add missing values
+                for val in missing_values:
+                    logger.info(f"➕ Adding missing value '{val}' to enum '{type_name}'")
+                    conn.execute(text(f"ALTER TYPE {type_name} ADD VALUE '{val}'"))
+                
+                logger.info(f"✅ Synced enum '{type_name}' (added {len(missing_values)} values).")
+
+            except Exception as e:
+                # If the type doesn't exist, it might be because migrations haven't run or it's not a native enum
+                logger.warning(f"⚠️ Could not sync enum '{type_name}': {e}")
+
 def main():
     """
     Main function to populate all ElevenLabs data.
@@ -422,11 +495,12 @@ def main():
     try:
         # Populate data in order
         ensure_admin_defaults(session)
+        sync_database_enums(session)
         populate_languages(session)
         populate_ai_models(session)
         remove_default_voices_unsynced(session)
         populate_elevenlabs_voices(session)
-        populate_test_coins(session)
+        # populate_test_coins(session)
         
         logger.info("\n" + "✨" * 30)
         logger.info("DATA POPULATION COMPLETE!")

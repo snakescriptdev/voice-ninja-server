@@ -9,6 +9,7 @@ import aiohttp
 import asyncio
 import traceback
 import os
+from datetime import datetime
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 from app_v2.utils.jwt_utils import SECRET_KEY, ALGORITHM
 from jose import jwt, JWTError
@@ -17,6 +18,7 @@ from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.databases.models import ConversationsModel
 from app_v2.schemas.enum_types import ChannelEnum, CallStatusEnum
 from app_v2.utils.activity_logger import log_activity
+from app_v2.utils.feature_access import RequireFeature, check_feature_limit_and_usage, get_feature_limit, get_feature_usage
 logger = setup_logger(__name__)
 
 router = APIRouter(
@@ -97,6 +99,9 @@ async def websocket_test_agent(
              
         from app_v2.utils.coin_utils import get_user_coin_balance
         user_balance = get_user_coin_balance(user_id)
+        
+        # 2.1 Feature Limit Check (Monthly Minutes)
+        check_feature_limit_and_usage(user_id, "monthly_minutes")
 
     if not elevenlabs_agent_id:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Agent not found")
@@ -120,6 +125,10 @@ async def websocket_test_agent(
 
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={elevenlabs_agent_id}"
 
+    call_start_time = datetime.now()
+    initial_usage = get_feature_usage(user_id, "monthly_minutes")
+    minute_limit = get_feature_limit(user_id, "monthly_minutes")
+
     async with aiohttp.ClientSession() as session:
         if not ELEVENLABS_API_KEY:
             logger.error("ELEVENLABS_API_KEY is missing!")
@@ -135,6 +144,18 @@ async def websocket_test_agent(
                 logger.info("Starting browser_to_elevenlabs loop")
                 try:
                     while True:
+                        # Periodically check limit (e.g., every 5 chunks or ~1s)
+                        if chunk_count % 10 == 0:
+                            current_call_minutes = (datetime.now() - call_start_time).total_seconds() / 60
+                            if minute_limit is not None and (initial_usage + current_call_minutes) >= minute_limit:
+                                logger.warning(f"Auto-disconnecting user {user_id} - Monthly minutes limit reached.")
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "message": "Monthly minutes limit reached. Call disconnected."
+                                })
+                                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                                return # This will stop the loop and potentially trigger cleanup in the wait()
+
                         message = await websocket.receive()
                         if "bytes" in message:
                             chunk_count += 1
