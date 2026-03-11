@@ -14,6 +14,7 @@ logger = setup_logger(__name__)
 
 from app_v2.databases.models import UnifiedAuthModel, UserNotificationSettings
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.feature_access import get_all_feature_limits
 from app_v2.schemas.profile import (
     ProfileRequest,
     ProfileResponse,
@@ -143,7 +144,8 @@ async def get_profile(current_user = Depends(get_current_user)):
                     "is_new_user": (
                         (user.last_login - user.created_at).total_seconds() < 300 
                         if user.last_login and user.created_at else False
-                    )
+                    ),
+                    "feature_limits": get_all_feature_limits(user.id)
                 }
             }
 
@@ -364,7 +366,8 @@ async def update_profile(
                     "phone": user.phone,
                     "first_name": user.first_name,
                     "last_name": user.last_name,
-                    "address": user.address
+                    "address": user.address,
+                    "feature_limits": get_all_feature_limits(user.id)
                 }
             }
             
