@@ -35,6 +35,7 @@ class AgentUpdate(BaseModel):
 class AgentRead(BaseModel):
     id: int
     agent_name: str
+    is_enabled:bool
     first_message: str | None
     system_prompt: str
     voice:str

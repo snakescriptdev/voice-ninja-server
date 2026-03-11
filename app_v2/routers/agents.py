@@ -67,6 +67,7 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
     return AgentRead(
         id=agent.id,
         agent_name=agent.agent_name,
+        is_enabled=agent.is_enabled,
         first_message=agent.first_message,
         system_prompt=agent.system_prompt,
         voice=agent.voice.voice_name,
