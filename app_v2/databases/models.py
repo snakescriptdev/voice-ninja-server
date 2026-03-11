@@ -743,7 +743,7 @@ class UserSubscriptionModel(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
     user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
-    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=False)
+    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=True)
 
     status: Mapped[SubscriptionStatusEnum] = mapped_column(
         Enum(SubscriptionStatusEnum),
