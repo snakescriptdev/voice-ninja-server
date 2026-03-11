@@ -93,11 +93,12 @@ class PaymentProviderEnum(str, Enum):
     stripe = "stripe"
 
 class SubscriptionStatusEnum(str, Enum):
-    active = "active"
+    active    = "active"
     cancelled = "cancelled"
-    expired = "expired"
-    past_due = "past_due"
-    paused = "paused"
+    pending   = "pending"
+    halted    = "halted"
+    paused    = "paused"
+    expired   = "expired"
 
 class PaymentStatusEnum(str, Enum):
     pending = "pending"

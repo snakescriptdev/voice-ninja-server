@@ -38,9 +38,13 @@ class DailyTrendSeries(BaseModel):
 
 class UserAnalyticsResponse(BaseModel):
     total_calls: int
+    total_calls_change: float
     avg_call_duration: float
+    avg_call_duration_change: float
     coin_used_this_month: int
+    coin_used_this_month_change: float
     active_leads_count: int
+    active_leads_count_change: float
     hourly_distribution: List[HourlyDistribution]
     agent_analytics: List[AgentAnalytics]
     channel_distribution: List[ChannelDistribution]
@@ -143,6 +147,7 @@ class APIListItem(BaseModel):
 
 class PublicAPIUsageResponse(BaseModel):
     total_api_calls_this_month: int
+    total_api_calls_this_month_change: float
     api_coins_used_this_month: int
     avg_api_response_time_24h: float
     daily_usage: List[APIUsageDailyItem]

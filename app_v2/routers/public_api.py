@@ -841,49 +841,59 @@ async def create_kb_text_public(
         db.session.refresh(kb_entry)
         return kb_entry
 
-@router.post("/kb/file", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/kb/file", response_model=List[KnowledgeBaseResponse], status_code=status.HTTP_201_CREATED)
 async def create_kb_file_public(
-    file: UploadFile = File(...),
+    files: List[UploadFile] = File(...),
     current_user: UnifiedAuthModel = Depends(get_public_api_user)
 ):
     track_and_limit_api(current_user.id)
-    _, ext = os.path.splitext(file.filename)
-    if ext.lower() not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Invalid file type. Allowed: .docx, .pdf, .txt")
-
-    file.file.seek(0, 2)
-    file_size = file.file.tell()
-    file.file.seek(0)
-    if file_size > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="File exceeds 10MB limit")
-
-    file_path = os.path.join(UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now().timestamp()}_{file.filename}")
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
+    responses = []
+    
     with db():
         kb_client = ElevenLabsKB()
-        kb_response = kb_client.upload_document(file_path, name=file.filename)
-        if not kb_response.status:
-            if os.path.exists(file_path): os.remove(file_path)
-            raise HTTPException(status_code=424, detail=f"ElevenLabs failure: {kb_response.error_message}")
-        
-        doc_id = kb_response.data.get("document_id")
-        rag_id = kb_client.compute_rag_index(doc_id)
+        for file in files:
+            _, ext = os.path.splitext(file.filename)
+            if ext.lower() not in ALLOWED_EXTENSIONS:
+                raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
 
-        kb_entry = KnowledgeBaseModel(
-            user_id=current_user.id,
-            kb_type="file",
-            title=file.filename,
-            content_path=file_path,
-            elevenlabs_document_id=doc_id,
-            rag_index_id=rag_id,
-            file_size=round((file_size / (1024*1024)), 2)
-        )
-        db.session.add(kb_entry)
+            file.file.seek(0, 2)
+            file_size = file.file.tell()
+            file.file.seek(0)
+            if file_size > MAX_FILE_SIZE:
+                raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds 10MB limit")
+
+            file_path = os.path.join(UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now().timestamp()}_{file.filename}")
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+            kb_response = kb_client.upload_document(file_path, name=file.filename)
+            if not kb_response.status:
+                if os.path.exists(file_path): os.remove(file_path)
+                raise HTTPException(status_code=424, detail=f"ElevenLabs failure for {file.filename}: {kb_response.error_message}")
+            
+            doc_id = kb_response.data.get("document_id")
+            rag_id = kb_client.compute_rag_index(doc_id)
+
+            kb_entry = KnowledgeBaseModel(
+                user_id=current_user.id,
+                kb_type="file",
+                title=file.filename,
+                content_path=file_path,
+                elevenlabs_document_id=doc_id,
+                rag_index_id=rag_id,
+                file_size=round((file_size / (1024*1024)), 2)
+            )
+            db.session.add(kb_entry)
+            db.session.flush()
+            
+            # Reattach to session strictly just to be sure
+            responses.append(kb_entry)
+
         db.session.commit()
-        db.session.refresh(kb_entry)
-        return kb_entry
+        for entry in responses:
+            db.session.refresh(entry)
+            
+        return responses
 
 @router.delete("/kb/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_kb_public(
@@ -1258,7 +1268,7 @@ async def bind_function_public(
             if agent.elevenlabs_agent_id:
                 bridges = db.session.query(AgentFunctionBridgeModel).filter(AgentFunctionBridgeModel.agent_id == agent_id).all()
                 tool_ids = [b.function.elevenlabs_tool_id for b in bridges if b.function.elevenlabs_tool_id]
-                ElevenLabsAgent().update_agent(agent_id=agent.elevenlabs_agent_id, tools=tool_ids)
+                ElevenLabsAgent().update_agent(agent_id=agent.elevenlabs_agent_id, tool_ids=tool_ids)
                 
     return {"message": "Function bound successfully"}
 
@@ -1285,7 +1295,7 @@ async def unbind_function_public(
             if agent.elevenlabs_agent_id:
                 bridges = db.session.query(AgentFunctionBridgeModel).filter(AgentFunctionBridgeModel.agent_id == agent_id).all()
                 tool_ids = [b.function.elevenlabs_tool_id for b in bridges if b.function.elevenlabs_tool_id]
-                ElevenLabsAgent().update_agent(agent_id=agent.elevenlabs_agent_id, tools=tool_ids)
+                ElevenLabsAgent().update_agent(agent_id=agent.elevenlabs_agent_id, tool_ids=tool_ids)
                 
     return {"message": "Function unbound successfully"}
 
