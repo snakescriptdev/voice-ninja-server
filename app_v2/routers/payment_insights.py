@@ -13,6 +13,7 @@ from app_v2.schemas.payment_insights_schema import (
     PaymentItemSchema
 )
 from app_v2.schemas.enum_types import PaymentStatusEnum, PaymentTypeEnum
+from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
 
 security = HTTPBearer()
 router = APIRouter(prefix="/api/v2/admin/payments/insights", tags=["Admin Payment Insights"],dependencies=[Depends(is_admin)],)
@@ -24,9 +25,10 @@ def get_payment_insights():
     """
 
     try:
+        first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
+
         # Time ranges
         now = datetime.utcnow()
-        first_day_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         seven_days_ago = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         # 1. Basic Metrics
@@ -38,6 +40,12 @@ def get_payment_insights():
             PaymentModel.status == PaymentStatusEnum.success,
             PaymentModel.created_at >= first_day_of_month
         ).scalar() or 0.0
+        prev_monthly_rev = db.session.query(func.sum(PaymentModel.amount)).filter(
+            PaymentModel.status == PaymentStatusEnum.success,
+            PaymentModel.created_at >= first_day_prev_month,
+            PaymentModel.created_at < first_day_of_month
+        ).scalar() or 0.0
+        total_revenue_monthly_change = calculate_percentage_change(total_revenue_monthly, prev_monthly_rev)
 
         successful_count_all_time = db.session.query(func.count(PaymentModel.id)).filter(
             PaymentModel.status == PaymentStatusEnum.success
@@ -47,6 +55,12 @@ def get_payment_insights():
             PaymentModel.status == PaymentStatusEnum.success,
             PaymentModel.created_at >= first_day_of_month
         ).scalar() or 0
+        prev_succ_monthly = db.session.query(func.count(PaymentModel.id)).filter(
+            PaymentModel.status == PaymentStatusEnum.success,
+            PaymentModel.created_at >= first_day_prev_month,
+            PaymentModel.created_at < first_day_of_month
+        ).scalar() or 0
+        successful_payments_count_monthly_change = calculate_percentage_change(successful_count_monthly, prev_succ_monthly)
 
         failed_count_all_time = db.session.query(func.count(PaymentModel.id)).filter(
             PaymentModel.status == PaymentStatusEnum.failed
@@ -56,6 +70,12 @@ def get_payment_insights():
             PaymentModel.status == PaymentStatusEnum.failed,
             PaymentModel.created_at >= first_day_of_month
         ).scalar() or 0
+        prev_failed_monthly = db.session.query(func.count(PaymentModel.id)).filter(
+            PaymentModel.status == PaymentStatusEnum.failed,
+            PaymentModel.created_at >= first_day_prev_month,
+            PaymentModel.created_at < first_day_of_month
+        ).scalar() or 0
+        failed_payments_count_monthly_change = calculate_percentage_change(failed_count_monthly, prev_failed_monthly)
 
         # 2. Daily Trends (Last 7 Days)
         daily_trends_query = db.session.query(
@@ -155,10 +175,13 @@ def get_payment_insights():
         return PaymentInsightsResponse(
             total_revenue_all_time=total_revenue_all_time,
             total_revenue_monthly=total_revenue_monthly,
+            total_revenue_monthly_change=float(total_revenue_monthly_change),
             successful_payments_count_all_time=successful_count_all_time,
             successful_payments_count_monthly=successful_count_monthly,
+            successful_payments_count_monthly_change=float(successful_payments_count_monthly_change),
             failed_payments_count_all_time=failed_count_all_time,
             failed_payments_count_monthly=failed_count_monthly,
+            failed_payments_count_monthly_change=float(failed_payments_count_monthly_change),
             daily_revenue_trend=daily_revenue_trend,
             revenue_by_plan=revenue_by_plan,
             revenue_by_coin_bundle=revenue_by_coin_bundle,

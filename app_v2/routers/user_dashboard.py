@@ -12,6 +12,8 @@ from app_v2.databases.models import (
     PaymentModel, WebAgentModel, WebAgentLeadModel,APIDailyUsageModel,CoinPackageModel,
     APICallLogModel
 )
+from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
+from sqlalchemy import or_
 from app_v2.schemas.enum_types import CoinTransactionTypeEnum, PaymentStatusEnum,SubscriptionStatusEnum,PaymentTypeEnum
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.constants import api_list
@@ -156,9 +158,10 @@ def get_global_activities(
 
 @router.get("/analytics", response_model=UserAnalyticsResponse,openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("analytics_dashboard"))):
-    
     try:
-        # 1. Overall stats
+        first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
+
+        # 1. Overall stats (All-time)
         total_calls = db.session.query(func.count(ConversationsModel.id)).filter(
             ConversationsModel.user_id == current_user.id
         ).scalar() or 0
@@ -167,15 +170,44 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             ConversationsModel.user_id == current_user.id
         ).scalar() or 0.0
 
+        # Change for calls (this month vs last month)
+        curr_calls = db.session.query(func.count(ConversationsModel.id)).filter(
+            ConversationsModel.user_id == current_user.id,
+            ConversationsModel.created_at >= first_day_of_month
+        ).scalar() or 0
+        prev_calls = db.session.query(func.count(ConversationsModel.id)).filter(
+            ConversationsModel.user_id == current_user.id,
+            ConversationsModel.created_at >= first_day_prev_month,
+            ConversationsModel.created_at < first_day_of_month
+        ).scalar() or 0
+        total_calls_change = calculate_percentage_change(curr_calls, prev_calls)
+
+        # Change for avg duration (this month vs last month)
+        curr_avg_dur = db.session.query(func.avg(ConversationsModel.duration)).filter(
+            ConversationsModel.user_id == current_user.id,
+            ConversationsModel.created_at >= first_day_of_month
+        ).scalar() or 0.0
+        prev_avg_dur = db.session.query(func.avg(ConversationsModel.duration)).filter(
+            ConversationsModel.user_id == current_user.id,
+            ConversationsModel.created_at >= first_day_prev_month,
+            ConversationsModel.created_at < first_day_of_month
+        ).scalar() or 0.0
+        avg_call_duration_change = calculate_percentage_change(curr_avg_dur, prev_avg_dur)
+
         # 1.1 New Metrics
-        now = datetime.utcnow()
-        first_day_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-        
         coin_used_this_month = db.session.query(func.abs(func.sum(CoinsLedgerModel.coins))).filter(
             CoinsLedgerModel.user_id == current_user.id,
             CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage,
             CoinsLedgerModel.created_at >= first_day_of_month
         ).scalar() or 0
+        
+        coin_used_prev_month = db.session.query(func.abs(func.sum(CoinsLedgerModel.coins))).filter(
+            CoinsLedgerModel.user_id == current_user.id,
+            CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage,
+            CoinsLedgerModel.created_at >= first_day_prev_month,
+            CoinsLedgerModel.created_at < first_day_of_month
+        ).scalar() or 0
+        coin_used_this_month_change = calculate_percentage_change(coin_used_this_month, coin_used_prev_month)
 
         active_leads_count = db.session.query(func.count(WebAgentLeadModel.id)).join(
             WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
@@ -183,7 +215,24 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             WebAgentModel.user_id == current_user.id
         ).scalar() or 0
         
+        curr_leads = db.session.query(func.count(WebAgentLeadModel.id)).join(
+            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        ).filter(
+            WebAgentModel.user_id == current_user.id,
+            WebAgentLeadModel.created_at >= first_day_of_month
+        ).scalar() or 0
+        
+        prev_leads = db.session.query(func.count(WebAgentLeadModel.id)).join(
+            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        ).filter(
+            WebAgentModel.user_id == current_user.id,
+            WebAgentLeadModel.created_at >= first_day_prev_month,
+            WebAgentLeadModel.created_at < first_day_of_month
+        ).scalar() or 0
+        active_leads_count_change = calculate_percentage_change(curr_leads, prev_leads)
+        
         # 1.2 Trend Data (Last 7 Days)
+        now = datetime.utcnow()
         seven_days_ago = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         # Helper to get daily counts
@@ -292,9 +341,13 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         
         return UserAnalyticsResponse(
             total_calls=total_calls,
+            total_calls_change=float(total_calls_change),
             avg_call_duration=round(float(avg_duration), 2),
+            avg_call_duration_change=float(avg_call_duration_change),
             coin_used_this_month=int(coin_used_this_month),
+            coin_used_this_month_change=float(coin_used_this_month_change),
             active_leads_count=active_leads_count,
+            active_leads_count_change=float(active_leads_count_change),
             hourly_distribution=hourly_list,
             agent_analytics=agent_list,
             channel_distribution=channel_list,
@@ -312,16 +365,56 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
 
 
     
-@router.get("/get-user-subscription",response_model=UserSubscriptionResponse, openapi_extra={"security":[{"BearerAuth":[]}]} )
+@router.get("/get-user-subscription", response_model=UserSubscriptionResponse, openapi_extra={"security": [{"BearerAuth": []}]})
 def user_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
         logger.info(f"Fetching user subscription for user: {current_user.id}")
-        user_subscription = db.session.query(UserSubscriptionModel).filter(UserSubscriptionModel.user_id == current_user.id).order_by(UserSubscriptionModel.modified_at.desc()).first()
+
+        # Priority 1: clean active/paused subscription (not pending cancel or update)
+        user_subscription = (
+            db.session.query(UserSubscriptionModel)
+            .filter(
+                UserSubscriptionModel.user_id == current_user.id,
+                or_(
+                    UserSubscriptionModel.status == SubscriptionStatusEnum.active,
+                    UserSubscriptionModel.status == SubscriptionStatusEnum.paused,
+                ),
+                UserSubscriptionModel.cancel_at_period_end == False,
+            )
+            .order_by(UserSubscriptionModel.created_at.desc())
+            .first()
+        )
+
+        # Priority 2: active/paused but cancel or update is in-flight
+        if not user_subscription:
+            user_subscription = (
+                db.session.query(UserSubscriptionModel)
+                .filter(
+                    UserSubscriptionModel.user_id == current_user.id,
+                    or_(
+                        UserSubscriptionModel.status == SubscriptionStatusEnum.active,
+                        UserSubscriptionModel.status == SubscriptionStatusEnum.paused,
+                    ),
+                )
+                .order_by(UserSubscriptionModel.created_at.desc())
+                .first()
+            )
+
+        # Priority 3: last resort — show most recent regardless of status (expired/cancelled)
+        if not user_subscription:
+            user_subscription = (
+                db.session.query(UserSubscriptionModel)
+                .filter(UserSubscriptionModel.user_id == current_user.id)
+                .order_by(UserSubscriptionModel.created_at.desc())
+                .first()
+            )
+
         if not user_subscription:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User subscription not found"
             )
+
         plan = user_subscription.plan
         logger.info(f"User subscription found: {user_subscription}")
         return UserSubscriptionResponse(
@@ -397,17 +490,26 @@ def get_coin_buckets(
 ):
     try:
         skip = (page - 1) * size
+        now = datetime.utcnow()
 
         base_query = db.session.query(CoinsLedgerModel).filter(
             CoinsLedgerModel.user_id == current_user.id,
-            CoinsLedgerModel.remaining_coins > 0
+            CoinsLedgerModel.remaining_coins > 0,
+            or_(
+                CoinsLedgerModel.expiry_at.is_(None),
+                CoinsLedgerModel.expiry_at > now
+            )
         )
 
         total_available = (
             db.session.query(func.sum(CoinsLedgerModel.remaining_coins))
             .filter(
                 CoinsLedgerModel.user_id == current_user.id,
-                CoinsLedgerModel.remaining_coins > 0
+                CoinsLedgerModel.remaining_coins > 0,
+                or_(
+                    CoinsLedgerModel.expiry_at.is_(None),
+                    CoinsLedgerModel.expiry_at > now
+                )
             )
             .scalar() or 0
         )
@@ -632,8 +734,9 @@ def get_billing_history(
 def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depends(get_current_user)):
     """Returns public API usage metrics and last 7 days for bar graph."""
     try:
+        first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
+
         now = datetime.utcnow()
-        first_day_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         last_24h = now - timedelta(hours=24)
         
         # API Metrics
@@ -641,6 +744,13 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
             APICallLogModel.user_id == current_user.id,
             APICallLogModel.created_at >= first_day_of_month
         ).scalar() or 0
+        
+        total_api_calls_prev_month = db.session.query(func.count(APICallLogModel.id)).filter(
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.created_at >= first_day_prev_month,
+            APICallLogModel.created_at < first_day_of_month
+        ).scalar() or 0
+        total_api_calls_this_month_change = calculate_percentage_change(total_api_calls_this_month, total_api_calls_prev_month)
 
         api_coins_used_this_month = db.session.query(func.sum(APICallLogModel.coins_used)).filter(
             APICallLogModel.user_id == current_user.id,
@@ -681,6 +791,7 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
             
         return PublicAPIUsageResponse(
             total_api_calls_this_month=total_api_calls_this_month,
+            total_api_calls_this_month_change=float(total_api_calls_this_month_change),
             api_coins_used_this_month=int(api_coins_used_this_month),
             avg_api_response_time_24h=round(float(avg_api_response_time_24h), 2),
             daily_usage=daily_usage,

@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     # Razorpay Configuration
     RAZOR_KEY_ID: str = os.getenv("RAZOR_KEY_ID")
     RAZOR_KEY_SECRET: str = os.getenv("RAZOR_KEY_SECRET")
+    RAZOR_WEBHOOK_SECRET: str = os.getenv("RAZOR_WEBHOOK_SECRET")
 
     class Config:
         env_file = ".env"

@@ -55,6 +55,10 @@ async def websocket_test_agent(
             timeout=5
         )
     except asyncio.TimeoutError:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Auth timeout. Call disconnected."
+        })
         await websocket.close(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Auth timeout"
@@ -63,6 +67,10 @@ async def websocket_test_agent(
         return
 
     if auth_msg.get("type") != "auth" or "token" not in auth_msg:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Auth required. Call disconnected."
+        })
         await websocket.close(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Auth required"
@@ -78,6 +86,10 @@ async def websocket_test_agent(
         if not user_id:
             raise JWTError("user_id missing")
     except JWTError:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Invalid token. Call disconnected."
+        })
         await websocket.close(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Invalid token"
@@ -101,14 +113,31 @@ async def websocket_test_agent(
         user_balance = get_user_coin_balance(user_id)
         
         # 2.1 Feature Limit Check (Monthly Minutes)
-        check_feature_limit_and_usage(user_id, "monthly_minutes")
+        try:
+            check_feature_limit_and_usage(user_id, "monthly_minutes")
+        except Exception as e:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Monthly minutes limit reached or no active subscription. Call disconnected."
+            })
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Monthly minutes limit reached or no active subscription")
+            logger.error(f"Monthly minutes limit reached or no active subscription for user {user_id}: {e}")
+            return
 
     if not elevenlabs_agent_id:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Agent not found. Call disconnected."
+        })
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Agent not found")
         logger.error(f"Agent not found for user {user_id}")
         return
         
     if user_balance <= 0:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Insufficient coins. Call disconnected."
+        })
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Insufficient coins")
         logger.error(f"Insufficient coins for user {user_id}. Balance: {user_balance}")
         return
@@ -132,6 +161,10 @@ async def websocket_test_agent(
     async with aiohttp.ClientSession() as session:
         if not ELEVENLABS_API_KEY:
             logger.error("ELEVENLABS_API_KEY is missing!")
+            await websocket.send_json({
+                "type": "error",
+                "message": "ELEVENLABS_API_KEY is missing. Call disconnected."
+            })
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR,reason="ELEVENLABS_API_KEY is missing!")
             return
 

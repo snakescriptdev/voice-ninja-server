@@ -12,20 +12,7 @@ import hmac
 import hashlib
 logger = setup_logger(__name__)
 
-# RAZORPAY_WEBHOOK_SECRET = "74e376355beeaa08d3297918c1eac2679fb40307515e545f6e77fbba48f17a78"
-# WEBHOOK_SUBSCRIPTION_EVENTS= [
-#     "subscription.authenticated",
-#     "subscription.activated",
-#     "subscription.charged",
-#     "subscription.completed",
-#     "subscription.updated",
-#     "subscription.pending",
-#     "subscription.halted",
-#     "subscription.cancelled",
-#     "subscription.paused",
-#     "subscription.resumed"
-# ]
-# ALERT_EMAIL = "vikram@snakescript.com"
+
 
 class BasePaymentProvider(ABC):
     @abstractmethod
@@ -192,55 +179,76 @@ class RazorpayProvider(BasePaymentProvider):
             logger.error(f"Razorpay subscription cancellation failed: {str(e)}")
             raise Exception(f"Failed to cancel subscription: {str(e)}")
 
-    def update_subscription(self, subscription_id: str, new_plan_id: str,billing_period:BillingPeriodEnum, offer_id: Optional[str] = None) -> Dict[str, Any]:
+    def update_subscription(
+        self,
+        subscription_id: str,
+        new_plan_id: str,
+        billing_period: BillingPeriodEnum,
+        offer_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
-        Update subscription by:
-        1. Cancelling the existing subscription at cycle end
-        2. Fetching customer_id from cancel response
-        3. Creating a new subscription with the new plan
+        Plan change flow:
+          1. Cancel the existing subscription at cycle end.
+          2. Create a new subscription on the new plan.
+
+        FIX 4: If step 1 succeeds but step 2 fails we log a CRITICAL alert
+        with the cancelled subscription_id.  Razorpay cancellations cannot be
+        rolled back via API, so ops must manually re-create the subscription.
+        The caller (router) receives a clear exception message indicating which
+        stage failed.
         """
+        logger.info(f"update_subscription | cancelling {subscription_id}")
+
+        # Step 1 – cancel existing
+        try:
+            cancel_response = self.client.subscription.cancel(
+                subscription_id, {"cancel_at_cycle_end": True}
+            )
+        except Exception as e:
+            logger.error(f"update_subscription: cancel step failed | sub={subscription_id} | {e}")
+            raise Exception(f"Subscription cancel step failed: {e}")
+
+        logger.info(f"update_subscription | cancelled {subscription_id} | creating new sub on plan {new_plan_id}")
+
+        # Step 2 – create new subscription
+        payload: Dict[str, Any] = {"plan_id": new_plan_id}
+
+        customer_id = cancel_response.get("customer_id")
+        if customer_id:
+            payload["customer_id"] = customer_id
+
+        payload["total_count"] = 1 if billing_period == BillingPeriodEnum.annual else 12
+
+        if offer_id:
+            payload["offer_id"] = offer_id
 
         try:
-            logger.info(f"Cancelling subscription {subscription_id} at cycle end")
-
-            # Step 1: Cancel existing subscription at cycle end
-            cancel_response = self.client.subscription.cancel(
-                subscription_id,
-                {"cancel_at_cycle_end": True}
+            new_subscription = self.client.subscription.create(payload)
+        except Exception as e:
+            # FIX 4: CRITICAL – old sub is already cancelled, new one failed
+            logger.critical(
+                f"update_subscription: NEW SUBSCRIPTION CREATION FAILED after cancelling "
+                f"{subscription_id}. Manual intervention required. "
+                f"customer_id={customer_id} new_plan_id={new_plan_id} error={e}"
+            )
+            raise Exception(
+                f"Subscription was cancelled but new subscription creation failed: {e}. "
+                f"Please contact support – your previous subscription ID was {subscription_id}."
             )
 
-            logger.info(f"Cancel response: {cancel_response}")
+        logger.info(f"update_subscription | new sub created: {new_subscription['id']}")
 
-            payload ={"plan_id":new_plan_id}
-            # Step 2: Extract customer_id
-            customer_id = cancel_response.get("customer_id")
+        return {
+            "cancelled_subscription": cancel_response,
+            "new_subscription": new_subscription,
+        }
 
-            if customer_id:
-                payload["customer_id"] = customer_id
-
-            logger.info(f"Customer ID retrieved: {customer_id}")
-
-            # Step 3: Create new subscription
-            total_count = 1 if billing_period == BillingPeriodEnum.annual else 12
-            payload["total_count"] = total_count
-
-            if offer_id:
-                payload["offer_id"] = offer_id
-
-            logger.info(f"Creating new subscription with plan {new_plan_id}")
-
-            new_subscription = self.client.subscription.create(payload)
-
-            logger.info(f"New subscription created: {new_subscription['id']}")
-
-            return {
-                "cancelled_subscription": cancel_response,
-                "new_subscription": new_subscription
-            }
-
+    def pause_subscription(self, subscription_id: str, pause_at: str = "now") -> Dict[str, Any]:
+        try:
+            return self.client.subscription.pause(subscription_id, {"pause_at": pause_at})
         except Exception as e:
-            logger.error(f"Failed to update subscription: {str(e)}")
-            raise Exception(f"Subscription update failed: {str(e)}")
+            logger.error(f"Razorpay subscription pause failed: {e}")
+            raise Exception(f"Failed to pause subscription: {e}")
     
     def pause_subscription(self, subscription_id: str, pause_at: str = "now") -> Dict[str, Any]:
             try:
@@ -285,82 +293,6 @@ class RazorpayProvider(BasePaymentProvider):
         except Exception as e:
             logger.error(f"Razorpay subscription fetch failed: {str(e)}")
             raise Exception(f"Failed to fetch subscription details: {str(e)}")
-
-    def create_subscription_webhook(
-        self,
-        account_id: str,
-        url: str,
-        secret: str,
-        alert_email: str,
-        events: List[str],
-    ) -> Dict[str, Any]:
-
-            endpoint = f"{self.base_url}/v2/accounts/{account_id}/webhooks"
-
-            payload = {
-                "url": url,
-                "alert_email": alert_email,
-                "secret": secret,
-                "events": events,
-            }
-
-            logger.info(
-                "Creating Razorpay webhook | account_id=%s | url=%s | events=%s",
-                account_id,
-                url,
-                events,
-            )
-
-            try:
-                response = requests.post(
-                    endpoint,
-                    auth=HTTPBasicAuth(
-                        VoiceSettings.RAZOR_KEY_ID,
-                        VoiceSettings.RAZOR_KEY_SECRET,
-                    ),
-                    json=payload,
-                    timeout=15,
-                )
-
-                logger.debug(
-                    "Razorpay webhook response | status_code=%s | body=%s",
-                    response.status_code,
-                    response.text,
-                )
-
-                if response.status_code not in [200, 201]:
-                    logger.error(
-                        "Webhook creation failed | status=%s | response=%s",
-                        response.status_code,
-                        response.text,
-                    )
-                    raise Exception(
-                        f"Webhook creation failed: {response.status_code} - {response.text}"
-                    )
-
-                webhook_data = response.json()
-
-                logger.info(
-                    "Webhook created successfully | webhook_id=%s",
-                    webhook_data.get("id"),
-                )
-
-                return {
-                    "webhook_id": webhook_data.get("id"),
-                    "provider_metadata": webhook_data,
-                }
-
-            except requests.exceptions.Timeout:
-                logger.exception("Razorpay webhook creation timeout")
-                raise Exception("Razorpay webhook request timed out")
-
-            except requests.exceptions.RequestException as e:
-                logger.exception("Razorpay webhook request error")
-                raise Exception(f"Razorpay webhook request failed: {str(e)}")
-
-            except Exception as e:
-                logger.exception("Unexpected error during webhook creation")
-                raise
 
 
 class PaymentProviderFactory:

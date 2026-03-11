@@ -3,7 +3,7 @@ from app_v2.utils.jwt_utils import is_admin,HTTPBearer
 from datetime import datetime
 from typing import List
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinPackageModel, CoinUsageSettingsModel, PlanModel, UserSubscriptionModel, SubscriptionStatusEnum, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinPackageModel, CoinUsageSettingsModel, PlanModel, UserSubscriptionModel, SubscriptionStatusEnum, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel
 from app_v2.schemas.activity_schema import ActivityLogResponse
 from app_v2.schemas.admin_dashboard import UserCostItem, CoinBundleCreate, CoinBundleResponse
 from app_v2.schemas.pagination import PaginatedResponse
@@ -11,6 +11,7 @@ from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
 from app_v2.utils.time_utils import format_time_ago
+from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
 from elevenlabs import ElevenLabs
 from app_v2.core.config import VoiceSettings
 from elevenlabs import ElevenLabs
@@ -28,13 +29,35 @@ def get_overview_stats():
     Consolidated API for admin dashboard overview stats.
     """
     try:
+        first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
+
         # 1. Total Users
         total_users = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.is_admin.is_(False)).count()
+        curr_users_new = db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.is_admin.is_(False),
+            UnifiedAuthModel.created_at >= first_day_of_month
+        ).count()
+        prev_users_new = db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.is_admin.is_(False),
+            UnifiedAuthModel.created_at >= first_day_prev_month,
+            UnifiedAuthModel.created_at < first_day_of_month
+        ).count()
+        total_users_change = calculate_percentage_change(curr_users_new, prev_users_new)
 
         # 2. Active Subscriptions
         active_subscriptions = db.session.query(UserSubscriptionModel).filter(
             UserSubscriptionModel.status == SubscriptionStatusEnum.active
         ).count()
+        curr_subs_new = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active,
+            UserSubscriptionModel.current_period_start >= first_day_of_month
+        ).count()
+        prev_subs_new = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active,
+            UserSubscriptionModel.current_period_start >= first_day_prev_month,
+            UserSubscriptionModel.current_period_start < first_day_of_month
+        ).count()
+        active_subscriptions_change = calculate_percentage_change(curr_subs_new, prev_subs_new)
 
         # 3. Total Phone Numbers
         total_phone_numbers = db.session.query(PhoneNumberService).count()
@@ -60,24 +83,44 @@ def get_overview_stats():
         ).scalar() or 0
 
         # 6. Current Month Revenue
-        now = datetime.now()
-        first_day_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         current_month_revenue = db.session.query(func.sum(PaymentModel.amount)).filter(
             PaymentModel.status == PaymentStatusEnum.success,
             PaymentModel.created_at >= first_day_of_month
         ).scalar() or 0
+        prev_month_revenue = db.session.query(func.sum(PaymentModel.amount)).filter(
+            PaymentModel.status == PaymentStatusEnum.success,
+            PaymentModel.created_at >= first_day_prev_month,
+            PaymentModel.created_at < first_day_of_month
+        ).scalar() or 0
+        current_month_revenue_change = calculate_percentage_change(current_month_revenue, prev_month_revenue)
+
+        # 7. Total API Hits
+        total_api_hits = db.session.query(func.count(APICallLogModel.id)).scalar() or 0
+        curr_api_hits = db.session.query(func.count(APICallLogModel.id)).filter(
+            APICallLogModel.created_at >= first_day_of_month
+        ).scalar() or 0
+        prev_api_hits = db.session.query(func.count(APICallLogModel.id)).filter(
+            APICallLogModel.created_at >= first_day_prev_month,
+            APICallLogModel.created_at < first_day_of_month
+        ).scalar() or 0
+        total_api_hits_change = calculate_percentage_change(curr_api_hits, prev_api_hits)
 
         return {
             "status": "success",
             "stats": {
                 "total_users": total_users,
+                "total_users_change": float(total_users_change),
                 "active_subscriptions": active_subscriptions,
+                "active_subscriptions_change": float(active_subscriptions_change),
                 "total_phone_numbers": total_phone_numbers,
                 "total_agents": total_agents,
                 "active_agents": active_agents,
                 "disabled_agents": disabled_agents,
                 "total_coins_distributed": int(total_coins_distributed),
-                "current_month_revenue": float(current_month_revenue)
+                "current_month_revenue": float(current_month_revenue),
+                "current_month_revenue_change": float(current_month_revenue_change),
+                "total_api_hits": total_api_hits,
+                "total_api_hits_change": float(total_api_hits_change)
             }
         }
     except Exception as e:

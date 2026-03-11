@@ -765,6 +765,13 @@ class UserSubscriptionModel(Base):
 
     next_plan_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("plans.id"), nullable=True)
 
+    # Holds the new Razorpay subscription id while a plan-change checkout is
+    # in-flight (between POST /update and POST /verify).  verify() promotes
+    # this value into provider_subscription_id and clears this field.
+    # Migration: ALTER TABLE user_subscriptions
+    #              ADD COLUMN pending_provider_subscription_id VARCHAR(255);
+    pending_provider_subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -942,3 +949,38 @@ class APICallLogModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
 
     user = relationship("UnifiedAuthModel")
+
+class WebhookEventLogModel(Base):
+    """
+    Idempotent audit log for inbound webhook events.
+
+    • Written BEFORE business logic so crashes leave a trace.
+    • status transitions: received → processed | failed | duplicate
+    • event_id (Razorpay webhook delivery UUID) is unique-indexed so a second
+      delivery of the same event is detected instantly.
+    """
+    __tablename__ = "webhook_event_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    # e.g. "razorpay"
+
+    event_id: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    # Razorpay's own webhook delivery ID (top-level "id" field in payload)
+
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    # e.g. "subscription.charged", "payment.captured"
+
+    payload: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
+    # Full raw payload – useful for debugging / replays
+
+    status: Mapped[str] = mapped_column(String(20), default="received")
+    # "received" | "processed" | "failed" | "duplicate"
+
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Populated when status == "failed"
+
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)

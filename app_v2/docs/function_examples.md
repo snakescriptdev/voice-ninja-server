@@ -103,7 +103,7 @@ Deleting a resource via API.
     "url": "https://api.example.com/tasks/{task_id}",
     "method": "DELETE",
     "path_params_schema": {
-      "task_id": { "type": "string" }
+      "task_id": { "type": "string", "description": "The unique ID of the task" }
     }
   }
 }
@@ -127,7 +127,7 @@ A standard POST request with a JSON body.
     "request_body_schema": {
       "type": "object",
       "properties": {
-        "subject": { "type": "string" },
+        "subject": { "type": "string", "description": "The subject of the ticket" },
         "priority": { "type": "integer", "description": "1-5" }
       },
       "required": ["subject"]
@@ -152,14 +152,14 @@ When a field in the body is an array of items.
     "method": "POST",
     "content_type": "application/json",
     "path_params_schema": {
-      "post_id": { "type": "integer" }
+      "post_id": { "type": "integer", "description": "The unique ID of the post" }
     },
     "request_body_schema": {
       "type": "object",
       "properties": {
         "tags": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": { "type": "string","description": "The tag to be added" }
         }
       }
     }
@@ -185,12 +185,16 @@ Complex nested JSON structures.
     "request_body_schema": {
       "type": "object",
       "properties": {
-        "full_name": { "type": "string" },
+        "full_name": { "type": "string", "description": "The full name of the user" },
         "address": {
           "type": "object",
           "properties": {
-            "city": { "type": "string" },
-            "zipcode": { "type": "integer" }
+            "city": { "type": "string", "description": "The city of the user" },
+            "zipcode": { "type": "integer", "description": "The zipcode of the user" },
+            "array-property": {
+              "type": "array",
+              "items": { "type": "string", "description": "The array property of the user" }
+            }
           }
         }
       }
@@ -217,7 +221,7 @@ Capturing data from the API response to use later in the conversation.
     "request_body_schema": {
       "type": "object",
       "properties": {
-        "topping": { "type": "string" }
+        "topping": { "type": "string","description": "The topping of the pizza" }
       }
     },
     "response_variables": {
