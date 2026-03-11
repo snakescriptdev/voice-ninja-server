@@ -296,6 +296,26 @@ def get_feature_limit(user_id: int, feature_key: str) -> Optional[float]:
         return float(feature.limit) if feature.limit is not None else None
 
 
+def get_all_feature_limits(user_id: int) -> Optional[Dict[str, Optional[float]]]:
+    """
+    Get all feature limits for the user's active plan.
+    Returns None if no active subscription.
+    """
+    with db():
+        subscription = _get_any_active_subscription(user_id)
+        if not subscription:
+            return None
+
+        features = db.session.query(PlanFeatureModel).filter(
+            PlanFeatureModel.plan_id == subscription.plan_id
+        ).all()
+
+        return {
+            f.feature_key: (float(f.limit) if f.limit is not None else None)
+            for f in features
+        }
+
+
 def get_feature_usage(user_id: int, feature_key: str) -> float:
     """Calculate current usage for a feature."""
     usage_handler = FEATURE_USAGE_HANDLERS.get(feature_key)

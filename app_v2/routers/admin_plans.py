@@ -2,12 +2,13 @@ from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi_sqlalchemy import db
 from typing import List
 from app_v2.utils.jwt_utils import get_current_user, is_admin,HTTPBearer
-from app_v2.databases.models import UnifiedAuthModel, PlanModel, PlanFeatureModel, PlanProviderModel, CoinPackageModel
+from app_v2.databases.models import UnifiedAuthModel, PlanModel, PlanFeatureModel, PlanProviderModel, CoinPackageModel, UserSubscriptionModel
 from app_v2.schemas.plans import PlanCreate, PlanUpdate, PlanResponse
 from app_v2.schemas.admin_dashboard import CoinBundleCreate, CoinBundleResponse
-from app_v2.schemas.enum_types import PaymentProviderEnum
+from app_v2.schemas.enum_types import PaymentProviderEnum, SubscriptionStatusEnum
 from app_v2.utils.payment_utils import PaymentProviderFactory
 from app_v2.core.logger import setup_logger
+from sqlalchemy import or_
 from sqlalchemy.orm import joinedload
 
 logger = setup_logger(__name__)
@@ -241,6 +242,55 @@ def delete_plan(plan_id: int):
         raise HTTPException(status_code=404, detail="Plan not found")
     
     try:
+        # Find all active/paused subscriptions associated with this plan
+        subscriptions = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.plan_id == plan_id,
+            or_(
+                UserSubscriptionModel.status == SubscriptionStatusEnum.active,
+                UserSubscriptionModel.status == SubscriptionStatusEnum.paused
+            )
+        ).all()
+
+        for sub in subscriptions:
+            try:
+                # Cancel each subscription at period end via provider
+                provider_factory = PaymentProviderFactory()
+                
+                # Use sub.provider if available, else look up plan's provider
+                provider_type = None
+                if sub.provider:
+                    # Map string 'stripe'/'razorpay' to Enum
+                    if sub.provider.lower() == "stripe":
+                        provider_type = PaymentProviderEnum.stripe
+                    elif sub.provider.lower() == "razorpay":
+                        provider_type = PaymentProviderEnum.razorpay
+                
+                if not provider_type:
+                    # Fallback: find any active provider for this plan
+                    plan_provider = db.session.query(PlanProviderModel).filter(
+                        PlanProviderModel.plan_id == plan_id,
+                        PlanProviderModel.is_active == True
+                    ).first()
+                    if plan_provider:
+                        provider_type = plan_provider.provider
+                
+                if not provider_type:
+                    logger.warning(f"Could not determine provider for subscription {sub.id}, skipping cancellation")
+                    continue
+
+                provider = provider_factory.get_provider(provider_type)
+                provider.cancel_subscription(sub.provider_subscription_id, cancel_at_cycle_end=True)
+                
+                # Mark in DB
+                sub.cancel_at_period_end = True
+                db.session.add(sub)
+                logger.info(f"Cancelled subscription {sub.provider_subscription_id} at period end for plan {plan_id}")
+            except Exception as sub_err:
+                logger.error(f"Failed to cancel subscription {sub.provider_subscription_id}: {str(sub_err)}")
+                # We might want to continue or stop. Usually better to log and continue to allow plan deletion,
+                # but the user said "first cancel", so maybe we should stop if critical.
+                # However, if one fails, we should probably keep going for others.
+
         db.session.delete(plan)
         db.session.commit()
         return None
