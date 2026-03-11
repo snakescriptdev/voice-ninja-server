@@ -144,7 +144,9 @@ def create_plan(plan_data: PlanCreate):
 def list_plans():
     try:
         plans = (
-            db.session.query(PlanModel)
+            db.session.query(PlanModel).filter(
+                PlanModel.is_deleted== False
+            )
             .options(
                 joinedload(PlanModel.features),
                 joinedload(PlanModel.providers)
@@ -163,7 +165,9 @@ def list_plans_status_wise():
     """
     try:
         plans = (
-            db.session.query(PlanModel)
+            db.session.query(PlanModel).query(
+                PlanModel.is_deleted==False
+            )
             .options(
                 joinedload(PlanModel.features),
                 joinedload(PlanModel.providers)
@@ -196,7 +200,7 @@ def get_plan(plan_id: int):
             joinedload(PlanModel.features),
             joinedload(PlanModel.providers)
         )
-        .filter(PlanModel.id == plan_id)
+        .filter(PlanModel.id == plan_id,PlanModel.is_deleted==False)
         .first()
     )
     if not plan:
@@ -205,7 +209,7 @@ def get_plan(plan_id: int):
 
 @router.put("/{plan_id}", response_model=PlanResponse,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def update_plan(plan_id: int, plan_update: PlanUpdate):
-    plan = db.session.query(PlanModel).filter(PlanModel.id == plan_id).first()
+    plan = db.session.query(PlanModel).filter(PlanModel.id == plan_id,PlanModel.is_deleted==False).first()
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     
@@ -291,7 +295,9 @@ def delete_plan(plan_id: int):
                 # but the user said "first cancel", so maybe we should stop if critical.
                 # However, if one fails, we should probably keep going for others.
 
-        db.session.delete(plan)
+        #soft delete plan
+        plan.is_deleted= True
+        db.session.add(plan)
         db.session.commit()
         return None
     except HTTPException:
