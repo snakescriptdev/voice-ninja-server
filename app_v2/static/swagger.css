@@ -783,6 +783,11 @@ body {
 }
 
 .arrow{
-    /* stroke: #fff !important; */
+    stroke: #fff !important;
     fill: #fff !important;
+}
+.swagger-ui .json-schema-2020-12-expand-deep-button,
+.swagger-ui .json-schema-2020-12-accordion{
+  background-color: #0f1117 !important;
+  color: #fff !important;
 }
