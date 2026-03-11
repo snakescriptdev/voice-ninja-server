@@ -25,7 +25,6 @@ def list_user_conversations(
 	date_after: Optional[date] = Query(None),
 	date_before: Optional[date] = Query(None),
 	call_status: Optional[CallStatusEnum] = Query(None),
-	agent: Optional[str] = Query(None, description="Filter by agent name"),
 	current_user: UnifiedAuthModel = Depends(get_current_user)
 ):
 	with db():
@@ -44,9 +43,6 @@ def list_user_conversations(
 					WebAgentLeadModel.name.ilike(f"%{search}%")
 				)
 			)
-			
-		if agent:
-			q = q.filter(AgentModel.agent_name.ilike(f"%{agent}%"))
 			
 		if date_after:
 			q = q.filter(ConversationsModel.created_at >= date_after)
