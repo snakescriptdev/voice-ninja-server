@@ -104,6 +104,17 @@ async def websocket_test_agent(
             .filter(AgentModel.id == agent_id, AgentModel.user_id == user_id)
             .first()
         )
+        if not agent.is_enabled:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Agent is disabled. Call disconnected."
+            })
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Agent is disabled"
+            )
+            logger.error(f"Agent is disabled for user {user_id}")
+            return
         if agent:
              elevenlabs_agent_id = agent.elevenlabs_agent_id
         else:
