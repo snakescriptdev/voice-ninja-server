@@ -661,7 +661,7 @@ class PlanModel(Base):
     mark_as_popular: Mapped[bool] = mapped_column(Boolean, default=False)
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
+    is_deleted:Mapped[bool] = mapped_column(Boolean,default=False,server_default="false")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
