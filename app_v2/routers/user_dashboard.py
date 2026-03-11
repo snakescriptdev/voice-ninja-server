@@ -166,9 +166,9 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             ConversationsModel.user_id == current_user.id
         ).scalar() or 0
         
-        avg_duration = db.session.query(func.avg(ConversationsModel.duration)).filter(
+        avg_duration = (db.session.query(func.avg(ConversationsModel.duration)).filter(
             ConversationsModel.user_id == current_user.id
-        ).scalar() or 0.0
+        ).scalar() or 0.0)/60 #to fetch in mins
 
         # Change for calls (this month vs last month)
         curr_calls = db.session.query(func.count(ConversationsModel.id)).filter(

@@ -22,6 +22,7 @@ class AgentUpdate(BaseModel):
     agent_name: Optional[str] = None
     first_message: Optional[str] = None
     system_prompt: Optional[str] = None
+    is_enabled:Optional[bool]=None
     voice: Optional[str] = None
     ai_model: Optional[str] = None
     language: Optional[str] = Field(default=None,description="language code to be passed in model (en-01 for english)")

@@ -1,14 +1,14 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from datetime import datetime
-from app_v2.schemas.enum_types import BillingPeriodEnum, PlanIconEnum, PaymentProviderEnum
+from app_v2.schemas.enum_types import BillingPeriodEnum, PlanIconEnum, PaymentProviderEnum, PlanFeatureEnum
 import re
 
 
 # -------------------- Plan Feature --------------------
 
 class PlanFeatureBase(BaseModel):
-    feature_key: str = Field(..., min_length=1)
+    feature_key: PlanFeatureEnum = Field(..., min_length=1)
     limit: Optional[int] = None
 
     @field_validator("feature_key")

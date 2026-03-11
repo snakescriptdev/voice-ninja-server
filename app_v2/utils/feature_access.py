@@ -2,7 +2,7 @@ from fastapi import HTTPException, status, Depends
 from typing import Optional, Callable, Dict
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_
-
+from datetime import datetime
 from app_v2.databases.models import (
     UnifiedAuthModel,
     UserSubscriptionModel,
@@ -112,36 +112,33 @@ def get_user_active_plan(user_id: int) -> Optional[PlanModel]:
 # ------------------------------------------------------------------
 
 def get_ai_voice_agents_usage(user_id: int) -> int:
-    """Count only ENABLED agents — disabled ones don't count toward the limit."""
+    """Count  agents."""
     return (
         db.session.query(func.count(AgentModel.id))
         .filter(
-            AgentModel.user_id == user_id,
-            AgentModel.is_enabled == True,
+            AgentModel.user_id == user_id
         )
         .scalar() or 0
     )
 
 
 def get_web_agents_usage(user_id: int) -> int:
-    """Count only ENABLED web agents."""
+    """Count  web agents."""
     return (
         db.session.query(func.count(WebAgentModel.id))
         .filter(
-            WebAgentModel.user_id == user_id,
-            WebAgentModel.is_enabled == True,
+            WebAgentModel.user_id == user_id
         )
         .scalar() or 0
     )
 
 
 def get_phone_numbers_usage(user_id: int) -> int:
-    """Count only phone numbers that are assigned (not unassigned/released)."""
+    """Count phone numbers."""
     return (
         db.session.query(func.count(PhoneNumberService.id))
         .filter(
-            PhoneNumberService.user_id == user_id,
-            PhoneNumberService.status != PhoneNumberAssignStatus.unassigned,
+            PhoneNumberService.user_id == user_id
         )
         .scalar() or 0
     )
@@ -176,15 +173,26 @@ def get_monthly_minutes_usage(user_id: int) -> float:
     """
     Monthly minutes limit stored in minutes.
     DB stores duration in seconds.
+    Counts only conversations in the current calendar month.
     """
-    total_seconds = db.session.query(
-        func.coalesce(func.sum(ConversationsModel.duration), 0)
-    ).filter(
-        ConversationsModel.user_id == user_id
-    ).scalar()
+
+    now = datetime.utcnow()
+
+    # Start of current month
+    start_of_month = datetime(now.year, now.month, 1)
+
+    total_seconds = (
+        db.session.query(
+            func.coalesce(func.sum(ConversationsModel.duration), 0)
+        )
+        .filter(
+            ConversationsModel.user_id == user_id,
+            ConversationsModel.created_at >= start_of_month
+        )
+        .scalar()
+    )
 
     return float(total_seconds) / 60
-
 
 # ------------------------------------------------------------------
 # FEATURE → USAGE HANDLER MAP
@@ -296,6 +304,95 @@ def get_feature_usage(user_id: int, feature_key: str) -> float:
 
     with db():
         return usage_handler(user_id)
+
+def check_can_enable_resource(user_id: int, feature_key: str):
+    """
+    Called specifically when a user tries to ENABLE an existing resource
+    (agent, web agent etc.) that is currently disabled.
+
+    Rule: enabled_count must be strictly less than the plan limit before
+    allowing the enable action.
+
+    This is separate from check_feature_limit_and_usage() which guards
+    resource CREATION using total owned count.
+
+    Usage:
+        # In your agent enable endpoint, before setting is_enabled = True:
+        check_can_enable_resource(current_user.id, "ai_voice_agents")
+
+        # In your web agent enable endpoint:
+        check_can_enable_resource(current_user.id, "web_voice_agent")
+    """
+    with db():
+        # Get the active subscription — use loose lookup so access is
+        # preserved during plan-change checkout window
+        subscription = _get_any_active_subscription(user_id=user_id)
+        logger.info(f"Subscription: {subscription.id,subscription.plan_id}")
+
+        if not subscription:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Active subscription required.",
+            )
+
+        # Fetch the feature limit from the plan
+        feature = (
+            db.session.query(PlanFeatureModel)
+            .filter(
+                PlanFeatureModel.plan_id == subscription.plan_id,
+                PlanFeatureModel.feature_key == feature_key,
+            )
+            .first()
+        )
+
+        if not feature:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Your current plan does not include access to {feature_key}.",
+            )
+
+        # NULL limit means unlimited — always allow enable
+        if feature.limit is None:
+            return True
+
+        # Count only currently ENABLED resources of this type
+        enabled_count_handlers: Dict[str, Callable[[int], int]] = {
+            "ai_voice_agents": lambda uid: (
+                db.session.query(func.count(AgentModel.id))
+                .filter(AgentModel.user_id == uid, AgentModel.is_enabled == True)
+                .scalar() or 0
+            ),
+            "web_voice_agent": lambda uid: (
+                db.session.query(func.count(WebAgentModel.id))
+                .filter(WebAgentModel.user_id == uid, WebAgentModel.is_enabled == True)
+                .scalar() or 0
+            ),
+        }
+
+        handler = enabled_count_handlers.get(feature_key)
+        if not handler:
+            # Feature has no enabled-count concept (e.g. phone numbers, kb)
+            return True
+
+        enabled_count = handler(user_id)
+
+        logger.info(
+            f"Enable resource check | user={user_id} | "
+            f"feature={feature_key} | "
+            f"enabled={enabled_count} | limit={feature.limit}"
+        )
+
+        if enabled_count >= feature.limit:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"You already have {enabled_count} active {feature_key} "
+                    f"which is the limit on your current plan. "
+                    f"Disable an existing one before enabling another."
+                ),
+            )
+
+        return True
 
 
 # ------------------------------------------------------------------
