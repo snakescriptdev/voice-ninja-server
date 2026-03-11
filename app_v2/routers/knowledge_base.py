@@ -155,7 +155,7 @@ async def upload_files(
                     content_path=file_path,
                     elevenlabs_document_id=elevenlabs_document_id,
                     rag_index_id=rag_index_id,
-                    file_size=round((file_size /(1024*1024)),2)    #file size in Mb
+                    file_size=round((file_size /(1024)),2)    #file size in kb
                 )
                 db.session.add(kb_entry)
                 uploaded_entries.append(kb_entry)

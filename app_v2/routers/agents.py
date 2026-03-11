@@ -8,6 +8,7 @@ from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 import math
 from app_v2.utils.llm_utils import generate_system_prompt_async
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
+from app_v2.utils.feature_access import check_can_enable_resource
 
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import (
@@ -520,6 +521,7 @@ async def get_all_agents(
     size: int = 20,
     name: Optional[str] = None,
     voice: Optional[str] = None,
+    is_enabled: Optional[bool] = None,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     if page < 1:
@@ -546,6 +548,8 @@ async def get_all_agents(
         
     if voice:
         query = query.join(AgentModel.voice).filter(VoiceModel.voice_name.ilike(f"%{voice}%"))
+    if is_enabled is not None:
+        query = query.filter(AgentModel.is_enabled == is_enabled)
         
     query = query.order_by(AgentModel.modified_at.desc())
     
@@ -680,6 +684,10 @@ async def update_agent(
     if agent_in.system_prompt is not None:
         agent.system_prompt = agent_in.system_prompt
         el_update_params["prompt"] = agent_in.system_prompt
+    if agent_in.is_enabled is not None:
+        if agent_in.is_enabled == True and agent.is_enabled == False:
+            check_can_enable_resource(current_user.id, "ai_voice_agents")
+        agent.is_enabled = agent_in.is_enabled
 
     # ---- Voice ----
     if agent_in.voice is not None:
