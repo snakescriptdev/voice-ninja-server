@@ -1,0 +1,672 @@
+"""
+downgrade_utils.py
+────────────────────────────────────────────────────────────────────────────────
+Handles automatic resource enforcement when a user downgrades their subscription
+plan.
+
+Policy rules (per resource type):
+  ai_voice_agents     → Order by fewest ConversationsModel count, then oldest
+                        created_at. Set is_enabled = False on excess.
+  web_voice_agent     → Order by fewest WebAgentLeadModel count, then oldest
+                        created_at. Set is_enabled = False on excess.
+  phone_numbers       → Unassigned first, then oldest created_at. Set
+                        status = unassigned, clear assigned_to on excess.
+  custom_voice_cloning→ Voices with no agents attached first, then oldest
+                        created_at. Detach from agents by re-pointing
+                        agent.agent_voice to the system default voice.
+  knowledge_base      → Usage-based (MB). No disabling — creation guard
+                        re-enforces at next attempt.
+  monthly_minutes     → Usage-based. No disabling — read-only history.
+
+Design decisions:
+  • The session is ALWAYS passed in from the caller (verify() or webhook
+    handler) so all mutations happen inside the same DB transaction.
+    No commits are issued here.
+  • compute_downgrade_diff() is pure read — no side effects, safe to call
+    from the preview endpoint.
+  • enforce_downgrade_for_user() returns a structured summary dict that is
+    logged via ActivityLogModel and returned to the frontend.
+  • ElevenLabs sync is intentionally NOT attempted here — the agent/voice
+    objects are already marked disabled in DB. A background task or the next
+    user-triggered edit should sync the disabled state to ElevenLabs to avoid
+    blocking the plan-change transaction on an external API call.
+"""
+
+from typing import Any, Dict, List, Optional
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+
+from app_v2.databases.models import (
+    AgentModel,
+    WebAgentModel,
+    WebAgentLeadModel,
+    PhoneNumberService,
+    VoiceModel,
+    ConversationsModel,
+    PlanFeatureModel,
+    PlanModel,
+)
+from app_v2.schemas.enum_types import PhoneNumberAssignStatus
+from app_v2.core.logger import setup_logger
+
+logger = setup_logger(__name__)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Feature keys that have count-based (not usage-based) limits
+# ──────────────────────────────────────────────────────────────────────────────
+
+COUNT_BASED_FEATURES = {
+    "ai_voice_agents",
+    "web_voice_agent",
+    "phone_numbers",
+    "custom_voice_cloning",
+}
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Downgrade diff computation  (pure read — no side effects)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def compute_downgrade_diff(
+    old_plan_id: int,
+    new_plan_id: int,
+    session: Session,
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Compare feature limits between old and new plan.
+
+    Returns only the features that are being REDUCED (new_limit < old_limit),
+    limited to count-based features that can actually be enforced.
+
+    Return shape:
+    {
+      "ai_voice_agents": {"old_limit": 5, "new_limit": 2},
+      "phone_numbers":   {"old_limit": 3, "new_limit": 1},
+    }
+
+    None limit means unlimited in the plan_features table.
+    If a feature is unlimited in the old plan but limited in the new one,
+    it is included. If both are unlimited, it is excluded.
+    """
+    old_features: List[PlanFeatureModel] = (
+        session.query(PlanFeatureModel)
+        .filter(PlanFeatureModel.plan_id == old_plan_id)
+        .all()
+    )
+    new_features: List[PlanFeatureModel] = (
+        session.query(PlanFeatureModel)
+        .filter(PlanFeatureModel.plan_id == new_plan_id)
+        .all()
+    )
+
+    old_map: Dict[str, Optional[int]] = {
+        f.feature_key: f.limit for f in old_features
+    }
+    new_map: Dict[str, Optional[int]] = {
+        f.feature_key: f.limit for f in new_features
+    }
+
+    diff: Dict[str, Dict[str, Any]] = {}
+
+    for feature_key in COUNT_BASED_FEATURES:
+        old_limit = old_map.get(feature_key)  # None = unlimited
+        new_limit = new_map.get(feature_key)  # None = unlimited or not in plan
+
+        # Skip if new plan is also unlimited
+        if new_limit is None:
+            continue
+
+        # Include if old was unlimited but new is limited (downgrade)
+        # or if new limit is strictly less than old limit
+        if old_limit is None or new_limit < old_limit:
+            diff[feature_key] = {
+                "old_limit": old_limit,   # None means was unlimited
+                "new_limit": new_limit,
+            }
+
+    return diff
+
+
+def compute_downgrade_preview(
+    user_id: int,
+    old_plan_id: int,
+    new_plan_id: int,
+    session: Session,
+) -> Dict[str, Any]:
+    """
+    Extended version of compute_downgrade_diff that also calculates current
+    usage and how many resources will be affected.
+
+    Used by the GET /downgrade-preview endpoint.
+
+    Return shape:
+    {
+      "is_downgrade": True,
+      "affected_features": {
+        "ai_voice_agents": {
+          "old_limit": 5,
+          "new_limit": 2,
+          "current_usage": 4,
+          "will_disable_count": 2,
+          "message": "2 of your 4 agents will be auto-disabled (fewest calls first)"
+        },
+        ...
+      }
+    }
+    """
+    diff = compute_downgrade_diff(old_plan_id, new_plan_id, session)
+
+    if not diff:
+        return {"is_downgrade": False, "affected_features": {}}
+
+    affected: Dict[str, Any] = {}
+
+    for feature_key, limits in diff.items():
+        new_limit: int = limits["new_limit"]
+        current_usage = _get_current_count(user_id, feature_key, session)
+        will_disable = max(0, current_usage - new_limit)
+
+        message = _build_preview_message(feature_key, current_usage, new_limit, will_disable)
+
+        affected[feature_key] = {
+            "old_limit": limits["old_limit"],
+            "new_limit": new_limit,
+            "current_usage": current_usage,
+            "will_disable_count": will_disable,
+            "message": message,
+        }
+
+    return {
+        "is_downgrade": True,
+        "affected_features": affected,
+    }
+
+
+def _get_current_count(user_id: int, feature_key: str, session: Session) -> int:
+    """Count currently active/owned resources for a user by feature key."""
+    if feature_key == "ai_voice_agents":
+        return (
+            session.query(func.count(AgentModel.id))
+            .filter(
+                AgentModel.user_id == user_id,
+                AgentModel.is_enabled == True,
+            )
+            .scalar() or 0
+        )
+    elif feature_key == "web_voice_agent":
+        return (
+            session.query(func.count(WebAgentModel.id))
+            .filter(
+                WebAgentModel.user_id == user_id,
+                WebAgentModel.is_enabled == True,
+            )
+            .scalar() or 0
+        )
+    elif feature_key == "phone_numbers":
+        return (
+            session.query(func.count(PhoneNumberService.id))
+            .filter(PhoneNumberService.user_id == user_id)
+            .scalar() or 0
+        )
+    elif feature_key == "custom_voice_cloning":
+        return (
+            session.query(func.count(VoiceModel.id))
+            .filter(
+                VoiceModel.user_id == user_id,
+                VoiceModel.is_custom_voice == True,
+            )
+            .scalar() or 0
+        )
+    return 0
+
+
+def _build_preview_message(
+    feature_key: str,
+    current_usage: int,
+    new_limit: int,
+    will_disable: int,
+) -> str:
+    messages = {
+        "ai_voice_agents": (
+            f"{will_disable} of your {current_usage} active agents will be auto-disabled "
+            f"(fewest calls first, then oldest). You will keep {new_limit}."
+        ),
+        "web_voice_agent": (
+            f"{will_disable} of your {current_usage} active web agents will be auto-disabled "
+            f"(fewest leads first, then oldest). You will keep {new_limit}."
+        ),
+        "phone_numbers": (
+            f"{will_disable} of your {current_usage} phone numbers will be unassigned from agents "
+            f"(unassigned numbers first, then oldest). You will keep {new_limit} assigned."
+        ),
+        "custom_voice_cloning": (
+            f"{will_disable} of your {current_usage} custom voices will be detached from agents "
+            f"(voices with no agents first, then oldest). You will keep {new_limit}."
+        ),
+    }
+    return messages.get(
+        feature_key,
+        f"{will_disable} resources will be affected by this downgrade.",
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Main enforcement entry point
+# ──────────────────────────────────────────────────────────────────────────────
+
+def enforce_downgrade_for_user(
+    user_id: int,
+    old_plan_id: int,
+    new_plan_id: int,
+    session: Session,
+) -> Dict[str, Any]:
+    """
+    Computes the downgrade diff and enforces resource limits for each
+    affected feature key.
+
+    IMPORTANT: Does NOT commit. The caller owns the transaction.
+
+    Returns a summary dict describing what was changed:
+    {
+      "ai_voice_agents": {"disabled_ids": [3, 7], "kept_enabled_ids": [1, 2]},
+      "web_voice_agent":  {"disabled_ids": [5]},
+      "phone_numbers":    {"unassigned_ids": [8], "kept_ids": [2]},
+      "custom_voice_cloning": {"detached_voice_ids": [4], "kept_ids": [1, 2]},
+    }
+    """
+    diff = compute_downgrade_diff(old_plan_id, new_plan_id, session)
+
+    if not diff:
+        logger.info(
+            f"enforce_downgrade_for_user | user={user_id} | "
+            f"no count-based features reduced — nothing to enforce"
+        )
+        return {}
+
+    summary: Dict[str, Any] = {}
+
+    for feature_key, limits in diff.items():
+        new_limit: int = limits["new_limit"]
+
+        logger.info(
+            f"enforce_downgrade_for_user | user={user_id} | "
+            f"feature={feature_key} | "
+            f"old_limit={limits['old_limit']} → new_limit={new_limit}"
+        )
+
+        if feature_key == "ai_voice_agents":
+            result = _enforce_ai_voice_agents(user_id, new_limit, session)
+            summary["ai_voice_agents"] = result
+
+        elif feature_key == "web_voice_agent":
+            result = _enforce_web_voice_agents(user_id, new_limit, session)
+            summary["web_voice_agent"] = result
+
+        elif feature_key == "phone_numbers":
+            result = _enforce_phone_numbers(user_id, new_limit, session)
+            summary["phone_numbers"] = result
+
+        elif feature_key == "custom_voice_cloning":
+            result = _enforce_custom_voices(user_id, new_limit, session)
+            summary["custom_voice_cloning"] = result
+
+    logger.info(
+        f"enforce_downgrade_for_user | user={user_id} | summary={summary}"
+    )
+    return summary
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Per-resource enforcers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _enforce_ai_voice_agents(
+    user_id: int,
+    new_limit: int,
+    session: Session,
+) -> Dict[str, Any]:
+    """
+    Disable excess AI voice agents.
+
+    Ordering (least valuable first):
+      1. Fewest total conversations (ConversationsModel count) ASC
+      2. Oldest created_at ASC (tiebreaker)
+
+    Only currently enabled agents are considered — already-disabled agents
+    are ignored since they don't count against the enabled limit.
+
+    Sets is_enabled = False on excess agents.
+    Also unassigns phone numbers from disabled agents (see phone cascade below).
+    """
+    # Subquery: conversation count per agent
+    conv_count_sub = (
+        session.query(
+            ConversationsModel.agent_id,
+            func.count(ConversationsModel.id).label("conv_count"),
+        )
+        .group_by(ConversationsModel.agent_id)
+        .subquery()
+    )
+
+    # All currently enabled agents for this user, ordered by policy
+    enabled_agents = (
+        session.query(AgentModel)
+        .outerjoin(conv_count_sub, AgentModel.id == conv_count_sub.c.agent_id)
+        .filter(
+            AgentModel.user_id == user_id,
+            AgentModel.is_enabled == True,
+        )
+        .order_by(
+            func.coalesce(conv_count_sub.c.conv_count, 0).asc(),
+            AgentModel.created_at.asc(),
+        )
+        .all()
+    )
+
+    total_enabled = len(enabled_agents)
+
+    if total_enabled <= new_limit:
+        # Already within limits — nothing to do
+        return {
+            "disabled_ids": [],
+            "kept_enabled_ids": [a.id for a in enabled_agents],
+        }
+
+    # Agents to disable = everything beyond new_limit (tail of ordered list)
+    # Keep the first new_limit (most active / newest)
+    agents_to_keep = enabled_agents[total_enabled - new_limit:]
+    agents_to_disable = enabled_agents[:total_enabled - new_limit]
+
+    disabled_ids: List[int] = []
+    for agent in agents_to_disable:
+        agent.is_enabled = False
+        disabled_ids.append(agent.id)
+
+        # Cascade: unassign phone numbers attached to this agent
+        for phone in agent.phone_number:
+            phone.assigned_to = None
+            phone.status = PhoneNumberAssignStatus.unassigned
+            logger.info(
+                f"_enforce_ai_voice_agents | cascade unassign phone={phone.id} "
+                f"from disabled agent={agent.id}"
+            )
+
+    logger.info(
+        f"_enforce_ai_voice_agents | user={user_id} | "
+        f"disabled={disabled_ids} | kept={[a.id for a in agents_to_keep]}"
+    )
+
+    return {
+        "disabled_ids": disabled_ids,
+        "kept_enabled_ids": [a.id for a in agents_to_keep],
+    }
+
+
+def _enforce_web_voice_agents(
+    user_id: int,
+    new_limit: int,
+    session: Session,
+) -> Dict[str, Any]:
+    """
+    Disable excess web voice agents.
+
+    Ordering (least valuable first):
+      1. Fewest total leads (WebAgentLeadModel count) ASC
+      2. Oldest created_at ASC (tiebreaker)
+
+    Only currently enabled web agents are considered.
+    Sets is_enabled = False on excess.
+    """
+    # Subquery: lead count per web agent
+    lead_count_sub = (
+        session.query(
+            WebAgentLeadModel.web_agent_id,
+            func.count(WebAgentLeadModel.id).label("lead_count"),
+        )
+        .group_by(WebAgentLeadModel.web_agent_id)
+        .subquery()
+    )
+
+    enabled_web_agents = (
+        session.query(WebAgentModel)
+        .outerjoin(lead_count_sub, WebAgentModel.id == lead_count_sub.c.web_agent_id)
+        .filter(
+            WebAgentModel.user_id == user_id,
+            WebAgentModel.is_enabled == True,
+        )
+        .order_by(
+            func.coalesce(lead_count_sub.c.lead_count, 0).asc(),
+            WebAgentModel.created_at.asc(),
+        )
+        .all()
+    )
+
+    total_enabled = len(enabled_web_agents)
+
+    if total_enabled <= new_limit:
+        return {
+            "disabled_ids": [],
+            "kept_enabled_ids": [wa.id for wa in enabled_web_agents],
+        }
+
+    web_agents_to_keep = enabled_web_agents[total_enabled - new_limit:]
+    web_agents_to_disable = enabled_web_agents[:total_enabled - new_limit]
+
+    disabled_ids: List[int] = []
+    for web_agent in web_agents_to_disable:
+        web_agent.is_enabled = False
+        disabled_ids.append(web_agent.id)
+
+    logger.info(
+        f"_enforce_web_voice_agents | user={user_id} | "
+        f"disabled={disabled_ids} | kept={[wa.id for wa in web_agents_to_keep]}"
+    )
+
+    return {
+        "disabled_ids": disabled_ids,
+        "kept_enabled_ids": [wa.id for wa in web_agents_to_keep],
+    }
+
+
+def _enforce_phone_numbers(
+    user_id: int,
+    new_limit: int,
+    session: Session,
+) -> Dict[str, Any]:
+    """
+    Unassign excess phone numbers.
+
+    Ordering (least valuable first):
+      1. Already unassigned (status = unassigned) first — these are low-impact
+      2. Oldest created_at ASC (tiebreaker)
+
+    Sets status = unassigned and clears assigned_to on excess numbers.
+    Does NOT release/delete the Twilio number — that is a separate admin
+    action with billing implications.
+    """
+    all_phones = (
+        session.query(PhoneNumberService)
+        .filter(PhoneNumberService.user_id == user_id)
+        .order_by(
+            # unassigned = 0 sorts before assigned = 1
+            (PhoneNumberService.status == PhoneNumberAssignStatus.assigned).asc(),
+            PhoneNumberService.created_at.asc(),
+        )
+        .all()
+    )
+
+    total = len(all_phones)
+
+    if total <= new_limit:
+        return {
+            "unassigned_ids": [],
+            "kept_ids": [p.id for p in all_phones],
+        }
+
+    phones_to_keep = all_phones[total - new_limit:]
+    phones_to_unassign = all_phones[:total - new_limit]
+
+    unassigned_ids: List[int] = []
+    for phone in phones_to_unassign:
+        phone.assigned_to = None
+        phone.status = PhoneNumberAssignStatus.unassigned
+        unassigned_ids.append(phone.id)
+
+    logger.info(
+        f"_enforce_phone_numbers | user={user_id} | "
+        f"unassigned={unassigned_ids} | kept={[p.id for p in phones_to_keep]}"
+    )
+
+    return {
+        "unassigned_ids": unassigned_ids,
+        "kept_ids": [p.id for p in phones_to_keep],
+    }
+
+
+def _enforce_custom_voices(
+    user_id: int,
+    new_limit: int,
+    session: Session,
+) -> Dict[str, Any]:
+    """
+    Detach excess custom voices from agents by re-pointing agent.agent_voice
+    to the system default voice.
+
+    Ordering (least valuable first):
+      1. Voices with NO agents attached (agent count = 0) first
+      2. Oldest created_at ASC (tiebreaker)
+
+    The voice record itself is NOT deleted. It remains in custom_voices so the
+    user can re-attach or delete it manually. Agents that were using the
+    detached voice are re-pointed to the system default (user_id IS NULL,
+    is_custom_voice = False).
+
+    System default voice: first VoiceModel where user_id IS NULL and
+    is_custom_voice = False, ordered by id ASC. Falls back to the first
+    non-custom voice available if no global default exists.
+    """
+    system_default_voice = _get_system_default_voice(session)
+
+    if system_default_voice is None:
+        # Safety: if no system voice exists, skip enforcement and warn
+        logger.warning(
+            f"_enforce_custom_voices | user={user_id} | "
+            f"no system default voice found — skipping voice enforcement"
+        )
+        return {
+            "detached_voice_ids": [],
+            "kept_ids": [],
+            "warning": "No system default voice found. Voice enforcement skipped.",
+        }
+
+    # Subquery: count of agents per voice
+    agent_count_sub = (
+        session.query(
+            AgentModel.agent_voice,
+            func.count(AgentModel.id).label("agent_count"),
+        )
+        .group_by(AgentModel.agent_voice)
+        .subquery()
+    )
+
+    custom_voices = (
+        session.query(VoiceModel)
+        .outerjoin(agent_count_sub, VoiceModel.id == agent_count_sub.c.agent_voice)
+        .filter(
+            VoiceModel.user_id == user_id,
+            VoiceModel.is_custom_voice == True,
+        )
+        .order_by(
+            # 0 agents attached sorts first (nulls from outerjoin treated as 0)
+            func.coalesce(agent_count_sub.c.agent_count, 0).asc(),
+            VoiceModel.created_at.asc(),
+        )
+        .all()
+    )
+
+    total = len(custom_voices)
+
+    if total <= new_limit:
+        return {
+            "detached_voice_ids": [],
+            "kept_ids": [v.id for v in custom_voices],
+        }
+
+    voices_to_keep = custom_voices[total - new_limit:]
+    voices_to_detach = custom_voices[:total - new_limit]
+    voices_to_detach_ids = {v.id for v in voices_to_detach}
+
+    detached_voice_ids: List[int] = []
+    reassigned_agent_ids: List[int] = []
+
+    for voice in voices_to_detach:
+        detached_voice_ids.append(voice.id)
+    #disable detached voices
+    for voice in voices_to_detach:
+        voice.is_enabled = False
+        session.add(voice)
+        session.commit()
+
+        # Find all agents using this voice and re-point to system default
+        affected_agents = (
+            session.query(AgentModel)
+            .filter(
+                AgentModel.user_id == user_id,
+                AgentModel.agent_voice == voice.id,
+            )
+            .all()
+        )
+
+        for agent in affected_agents:
+            agent.agent_voice = system_default_voice.id
+            reassigned_agent_ids.append(agent.id)
+            logger.info(
+                f"_enforce_custom_voices | re-pointed agent={agent.id} "
+                f"from custom_voice={voice.id} to system_voice={system_default_voice.id}"
+            )
+
+    logger.info(
+        f"_enforce_custom_voices | user={user_id} | "
+        f"detached_voices={detached_voice_ids} | "
+        f"reassigned_agents={reassigned_agent_ids} | "
+        f"kept_voices={[v.id for v in voices_to_keep]}"
+    )
+
+    return {
+        "detached_voice_ids": detached_voice_ids,
+        "reassigned_agent_ids": reassigned_agent_ids,
+        "kept_ids": [v.id for v in voices_to_keep],
+        "system_default_voice_id": system_default_voice.id,
+    }
+
+
+def _get_system_default_voice(session: Session) -> Optional[VoiceModel]:
+    """
+    Fetch the system-wide default voice (not owned by any user,
+    not a custom voice). Used as the fallback when detaching custom voices.
+
+    Preference order:
+      1. user_id IS NULL AND is_custom_voice = False  (global system voice)
+      2. is_custom_voice = False  (any non-custom voice as last resort)
+    """
+    default = (
+        session.query(VoiceModel)
+        .filter(
+            VoiceModel.user_id == None,
+            VoiceModel.is_custom_voice == False,
+        )
+        .order_by(VoiceModel.id.asc())
+        .first()
+    )
+
+    if default:
+        return default
+
+    # Fallback: any non-custom voice
+    fallback = (
+        session.query(VoiceModel)
+        .filter(VoiceModel.is_custom_voice == False)
+        .order_by(VoiceModel.id.asc())
+        .first()
+    )
+
+    return fallback

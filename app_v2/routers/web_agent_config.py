@@ -176,7 +176,7 @@ def update_web_agent(
         web_agent.web_agent_name = update_data["web_agent_name"]
     if "is_enabled" in update_data:
         if update_data["is_enabled"] and not web_agent.is_enabled:
-            check_can_enable_resource(user, "web_voice_agent")
+            check_can_enable_resource(user.id, "web_voice_agent")
         web_agent.is_enabled = update_data["is_enabled"]
 
     # ------------------ Appearance Update ------------------
