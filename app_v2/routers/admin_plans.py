@@ -15,15 +15,17 @@ logger = setup_logger(__name__)
 security = HTTPBearer()
 router = APIRouter(prefix="/api/v2/admin/plans", tags=["Admin Plans"])
 
-#feature validation
 def validate_unique_features(features):
     seen = set()
     duplicates = set()
 
     for f in features:
-        if f.feature_key in seen:
-            duplicates.add(f.feature_key)
-        seen.add(f.feature_key)
+        key = f.feature_key if hasattr(f, "feature_key") else f["feature_key"]
+
+        if key in seen:
+            duplicates.add(key)
+
+        seen.add(key)
 
     if duplicates:
         raise HTTPException(
