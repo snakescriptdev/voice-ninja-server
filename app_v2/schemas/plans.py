@@ -8,33 +8,14 @@ import re
 # -------------------- Plan Feature --------------------
 
 class PlanFeatureBase(BaseModel):
-    feature_key: PlanFeatureEnum = Field(..., min_length=1)
+    feature_key: PlanFeatureEnum
     limit: Optional[int] = None
-
-    @field_validator("feature_key")
-    @classmethod
-    def normalize_feature_key(cls, v: str):
-        if not v or not v.strip():
-            raise ValueError("feature_key cannot be empty")
-
-        # remove extra spaces and normalize
-        v = v.strip().lower()
-        v = re.sub(r"\s+", "_", v)   # replace multiple spaces with _
-        
-        return v
-
-    @field_validator("feature_key")
-    @classmethod
-    def validate_feature_key(cls, v: str):
-        if not v.strip():
-            raise ValueError("feature_key cannot be empty")
-        return v.strip()
 
     @field_validator("limit")
     @classmethod
     def validate_limit(cls, v):
         if v is not None and v < 0:
-            raise ValueError("limit must be greater than or equal to 0")
+            raise ValueError("limit must be >= 0")
         return v
 
 
