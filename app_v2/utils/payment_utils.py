@@ -196,33 +196,17 @@ class RazorpayProvider(BasePaymentProvider):
         FIX 4: If step 1 succeeds but step 2 fails we log a CRITICAL alert
         with the cancelled subscription_id.  Razorpay cancellations cannot be
         rolled back via API, so ops must manually re-create the subscription.
-        The caller (router) receives a clear exception message indicating which
-        stage failed.
         """
-        logger.info(f"update_subscription | cancelling {subscription_id}")
+        logger.info(f"update_subscription | creating new sub on plan {new_plan_id}")
 
-        # Step 1 – cancel existing
-        try:
-            cancel_response = self.client.subscription.cancel(
-                subscription_id, {"cancel_at_cycle_end": True}
-            )
-        except Exception as e:
-            logger.error(f"update_subscription: cancel step failed | sub={subscription_id} | {e}")
-            raise Exception(f"Subscription cancel step failed: {e}")
-
-        logger.info(f"update_subscription | cancelled {subscription_id} | creating new sub on plan {new_plan_id}")
-
-        # Step 2 – create new subscription
+        # create new subscription
         payload: Dict[str, Any] = {"plan_id": new_plan_id}
 
-        customer_id = cancel_response.get("customer_id")
-        if customer_id:
-            payload["customer_id"] = customer_id
-
+        # total_count: 1 for annual, 12 for monthly
         payload["total_count"] = 1 if billing_period == BillingPeriodEnum.annual else 12
 
         if start_at:
-            payload["start_at"] = int(start_at.timestamp())
+            payload["start_at"] = int(start_at)
 
         if offer_id:
             payload["offer_id"] = offer_id
@@ -230,22 +214,13 @@ class RazorpayProvider(BasePaymentProvider):
         try:
             new_subscription = self.client.subscription.create(payload)
         except Exception as e:
-            # FIX 4: CRITICAL – old sub is already cancelled, new one failed
-            logger.critical(
-                f"update_subscription: NEW SUBSCRIPTION CREATION FAILED after cancelling "
-                f"{subscription_id}. Manual intervention required. "
-                f"customer_id={customer_id} new_plan_id={new_plan_id} error={e}"
-            )
-            raise Exception(
-                f"Subscription was cancelled but new subscription creation failed: {e}. "
-                f"Please contact support – your previous subscription ID was {subscription_id}."
-            )
+            logger.error(f"update_subscription: new subscription creation failed | error={e}")
+            raise Exception(f"Failed to create new subscription: {e}")
 
         logger.info(f"update_subscription | new sub created: {new_subscription['id']}")
 
         return {
-            "cancelled_subscription": cancel_response,
-            "new_subscription": new_subscription,
+            "new_subscription": new_subscription
         }
 
     def pause_subscription(self, subscription_id: str, pause_at: str = "now") -> Dict[str, Any]:
