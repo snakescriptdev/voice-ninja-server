@@ -25,16 +25,37 @@ logger = setup_logger(__name__)
 
 
 # ------------------------------------------------------------------
+# ACTIVE-LIKE STATUSES
+# ------------------------------------------------------------------
+# These are the statuses that grant feature access.
+#
+#   active        – subscription charged and confirmed by webhook
+#   paused        – user-initiated pause, still within paid period
+#   authenticated – mandate confirmed by Razorpay but subscription.charged
+#                   webhook not yet received (window between /verify and the
+#                   first webhook fire).  We grant access optimistically here
+#                   because the user has completed checkout; charge failure
+#                   after authentication is extremely rare and is handled by
+#                   subscription.pending / halted events.
+#
+_ACTIVE_LIKE = (
+    SubscriptionStatusEnum.active,
+    SubscriptionStatusEnum.paused,
+    SubscriptionStatusEnum.authenticated,
+)
+
+
+# ------------------------------------------------------------------
 # CANONICAL SUBSCRIPTION LOOKUP
 # ------------------------------------------------------------------
 
 def _get_active_subscription(user_id: int) -> Optional[UserSubscriptionModel]:
     """
-    Return the single canonical active/paused subscription for a user.
+    Return the single canonical active/paused/authenticated subscription for a user.
 
-    Rules (mirrors subscriptions.py _get_current_subscription):
-      • status is active OR paused
-      • cancel_at_period_end is False  — the row is not pending cancel/update
+    Rules:
+      • status is active OR paused OR authenticated
+      • cancel_at_period_end is False  — not pending cancel/update
       • order by created_at desc as tiebreaker (should only ever be one)
 
     Why cancel_at_period_end=False matters:
@@ -50,16 +71,13 @@ def _get_active_subscription(user_id: int) -> Optional[UserSubscriptionModel]:
       verify) _get_active_subscription returns None, which means feature
       checks will 403.  To keep access alive during that window we fall back
       to allowing the old subscription even when cancel_at_period_end=True
-      (see check_feature_limit_and_usage below).
+      (see _get_any_active_subscription below).
     """
     return (
         db.session.query(UserSubscriptionModel)
         .filter(
             UserSubscriptionModel.user_id == user_id,
-            or_(
-                UserSubscriptionModel.status == SubscriptionStatusEnum.active,
-                UserSubscriptionModel.status == SubscriptionStatusEnum.paused,
-            ),
+            UserSubscriptionModel.status.in_(_ACTIVE_LIKE),
             UserSubscriptionModel.cancel_at_period_end == False,
         )
         .order_by(UserSubscriptionModel.created_at.desc())
@@ -70,21 +88,29 @@ def _get_active_subscription(user_id: int) -> Optional[UserSubscriptionModel]:
 def _get_any_active_subscription(user_id: int) -> Optional[UserSubscriptionModel]:
     """
     Looser lookup used ONLY for feature access checks.
+
     Includes subscriptions where cancel_at_period_end=True so that users
     retain access to their current plan's features during a plan-change
     checkout window (between /update and /verify).
+
+    Also includes authenticated status so users get feature access
+    immediately after completing checkout, even before subscription.charged
+    webhook fires (see module docstring above for rationale).
+
+    Ordering:
+      • Prefer non-pending rows first (cancel_at_period_end=False → 0 sorts first)
+      • Then newest by created_at
+    This means after verify() completes (cancel_at_period_end reset to False,
+    status=authenticated) we always return that fresh row rather than any
+    lingering old row.
     """
     return (
         db.session.query(UserSubscriptionModel)
         .filter(
             UserSubscriptionModel.user_id == user_id,
-            or_(
-                UserSubscriptionModel.status == SubscriptionStatusEnum.active,
-                UserSubscriptionModel.status == SubscriptionStatusEnum.paused,
-            ),
+            UserSubscriptionModel.status.in_(_ACTIVE_LIKE),
         )
         .order_by(
-            # prefer non-pending rows first, then newest
             UserSubscriptionModel.cancel_at_period_end.asc(),
             UserSubscriptionModel.created_at.desc(),
         )
@@ -112,7 +138,7 @@ def get_user_active_plan(user_id: int) -> Optional[PlanModel]:
 # ------------------------------------------------------------------
 
 def get_ai_voice_agents_usage(user_id: int) -> int:
-    """Count  agents."""
+    """Count agents."""
     return (
         db.session.query(func.count(AgentModel.id))
         .filter(
@@ -123,7 +149,7 @@ def get_ai_voice_agents_usage(user_id: int) -> int:
 
 
 def get_web_agents_usage(user_id: int) -> int:
-    """Count  web agents."""
+    """Count web agents."""
     return (
         db.session.query(func.count(WebAgentModel.id))
         .filter(
@@ -175,10 +201,7 @@ def get_monthly_minutes_usage(user_id: int) -> float:
     DB stores duration in seconds.
     Counts only conversations in the current calendar month.
     """
-
     now = datetime.utcnow()
-
-    # Start of current month
     start_of_month = datetime(now.year, now.month, 1)
 
     total_seconds = (
@@ -193,6 +216,7 @@ def get_monthly_minutes_usage(user_id: int) -> float:
     )
 
     return float(total_seconds) / 60
+
 
 # ------------------------------------------------------------------
 # FEATURE → USAGE HANDLER MAP
@@ -218,7 +242,7 @@ def check_feature_limit_and_usage(user_id: int, feature_key: str):
 
     Uses the looser _get_any_active_subscription so that feature access is
     preserved during the plan-change checkout window (after /update, before
-    /verify).
+    /verify) and also during the authenticated→charged webhook window.
     """
     with db():
         subscription = _get_any_active_subscription(user_id)
@@ -296,7 +320,7 @@ def get_feature_limit(user_id: int, feature_key: str) -> Optional[float]:
         return float(feature.limit) if feature.limit is not None else None
 
 
-def get_all_feature_limits(user_id: int) -> Optional[Dict[str, Optional[float]]]:
+def get_all_feature_limits(user_id: int) -> Optional[Dict[str, Optional[int]]]:
     """
     Get all feature limits for the user's active plan.
     Returns None if no active subscription.
@@ -311,7 +335,7 @@ def get_all_feature_limits(user_id: int) -> Optional[Dict[str, Optional[float]]]
         ).all()
 
         return {
-            f.feature_key: (float(f.limit) if f.limit is not None else None)
+            f.feature_key: (int(f.limit) if f.limit is not None else None)
             for f in features
         }
 
@@ -324,6 +348,7 @@ def get_feature_usage(user_id: int, feature_key: str) -> float:
 
     with db():
         return usage_handler(user_id)
+
 
 def check_can_enable_resource(user_id: int, feature_key: str):
     """
@@ -344,10 +369,10 @@ def check_can_enable_resource(user_id: int, feature_key: str):
         check_can_enable_resource(current_user.id, "web_voice_agent")
     """
     with db():
-        # Get the active subscription — use loose lookup so access is
-        # preserved during plan-change checkout window
+        # Use loose lookup so access is preserved during plan-change checkout
+        # window and during the authenticated→charged webhook window.
         subscription = _get_any_active_subscription(user_id=user_id)
-        logger.info(f"Subscription: {subscription.id,subscription.plan_id}")
+        logger.info(f"Subscription: {subscription.id, subscription.plan_id}")
 
         if not subscription:
             raise HTTPException(
@@ -355,7 +380,6 @@ def check_can_enable_resource(user_id: int, feature_key: str):
                 detail="Active subscription required.",
             )
 
-        # Fetch the feature limit from the plan
         feature = (
             db.session.query(PlanFeatureModel)
             .filter(

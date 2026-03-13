@@ -1,56 +1,38 @@
 """
-subscriptions.py  (fixed – sync issues resolved)
+subscriptions.py
 ────────────────────────────────────────────────────────────────────────────────
-Key fixes vs previous version:
+Subscription lifecycle:
 
-  PROBLEM 1 — update_subscription created a NEW UserSubscriptionModel row in
-  verify(), leaving two `status=active` rows in the DB.  The webhook then
-  looked up the subscription by provider_subscription_id and found the NEW row
-  (sub_B), which had next_plan_id=None, so the plan-swap + enforcement never
-  fired.  sub_A was left dangling as active forever.
+  CREATE   → Razorpay subscription object created.  No DB row yet.
+  VERIFY   → Frontend calls after checkout completes.
+               • Signature verified.
+               • DB row created (new) OR updated in-place (plan-change).
+               • status set to  authenticated  (NOT active).
+               • Coins are NOT credited here.
+  WEBHOOK  subscription.charged
+               → status promoted to  active.
+               → Coins credited for the cycle.
+               → This is the canonical "money received" event.
+  WEBHOOK  subscription.activated
+               → status confirmed as  authenticated  (no promotion to active).
 
-  FIX — update_subscription() now immediately stamps the existing subscription
-  row (sub_A) with:
-    • pending_provider_subscription_id  = new Razorpay subscription id
-    • next_plan_id                       = new plan id
-    • cancel_at_period_end               = True
-    • status                             = active  (unchanged, still the live sub)
+Why authenticated ≠ active:
+  Razorpay's authenticated state means the mandate is confirmed but the
+  first charge has not yet been captured.  We grant feature access for
+  authenticated subscriptions (see feature_access.py) because checkout
+  completion is a very strong signal, but we don't credit coins or call the
+  subscription "active" until real money has moved.
 
-  verify() detects it is completing a plan-change (pending_provider_subscription_id
-  matches) and updates sub_A in-place instead of creating sub_B:
-    • provider_subscription_id  ← new Razorpay id
-    • pending_provider_subscription_id ← None  (cleared)
-    • plan_id                   ← next_plan_id   (swapped NOW in verify)
-    • next_plan_id              ← None           (cleared)
-    • cancel_at_period_end      ← False          (fresh cycle)
-    • current_period_start/end  ← from Razorpay
+Single-row-per-user invariant:
+  There is exactly ONE UserSubscriptionModel row per user at all times.
+  Plan changes update that row in-place (verify PATH B).
 
-  The webhook subscription.charged now always finds ONE row by
-  provider_subscription_id and next_plan_id is already cleared, so the old
-  plan-swap logic is no longer needed there (but kept as a safety net).
+Migration notes:
+  ALTER TABLE user_subscriptions
+    ADD COLUMN IF NOT EXISTS pending_provider_subscription_id VARCHAR(255);
 
-  PROBLEM 2 — create_subscription guard allowed a second subscribe while an
-  update was in flight (sub_A had cancel_at_period_end=True but status=active).
-
-  FIX — guard now also blocks when pending_provider_subscription_id is set.
-
-  PROBLEM 3 — cancel_subscription and pause_subscription used .first() without
-  cancel_at_period_end filter, which could pick up the wrong row when two
-  active rows existed.
-
-  FIX — all single-subscription fetches now filter cancel_at_period_end=False
-  to target only the "real" current subscription.
-
-  PROBLEM 4 — resume_subscription had no status filter, could pick any row.
-
-  FIX — resume now explicitly filters for paused status.
-
-  PROBLEM 5 — models.py has no pending_provider_subscription_id column.
-
-  FIX — add it to UserSubscriptionModel migration note below.  The column is
-  nullable String(255).  Add this migration:
-      ALTER TABLE user_subscriptions
-        ADD COLUMN pending_provider_subscription_id VARCHAR(255);
+  -- If SubscriptionStatusEnum is a PG enum:
+  ALTER TYPE subscriptionstatusenum ADD VALUE IF NOT EXISTS 'authenticated';
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -77,10 +59,22 @@ from datetime import datetime, timedelta
 from app_v2.utils.coin_utils import get_user_coin_balance, reset_unused_subscription_coins
 from fastapi.responses import HTMLResponse
 import os
+from app_v2.utils.time_utils import convert_to_unix_timestamp
 
 logger = setup_logger(__name__)
 security = HTTPBearer()
 router = APIRouter(prefix="/api/v2/subscriptions", tags=["Subscriptions"])
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Active-like statuses  (kept in sync with feature_access.py)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_ACTIVE_LIKE = (
+    SubscriptionStatusEnum.active,
+    SubscriptionStatusEnum.paused,
+    SubscriptionStatusEnum.authenticated,
+)
 
 
 @router.get("/demo", response_class=HTMLResponse)
@@ -91,15 +85,15 @@ async def get_subscription_demo():
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Helpers  (defined early so all endpoints can use them)
+# Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _get_current_subscription(user_id: int) -> "UserSubscriptionModel | None":
     """
-    Return the single canonical active subscription for a user.
+    Return the single canonical active/paused/authenticated subscription for a user.
 
     Rules:
-      • status must be active or paused
+      • status must be active, paused, or authenticated
       • cancel_at_period_end must be False  (not already scheduled for cancel/update)
       • order by created_at desc as tiebreaker (should never be needed after fix)
     """
@@ -107,10 +101,7 @@ def _get_current_subscription(user_id: int) -> "UserSubscriptionModel | None":
         db.session.query(UserSubscriptionModel)
         .filter(
             UserSubscriptionModel.user_id == user_id,
-            or_(
-                UserSubscriptionModel.status == SubscriptionStatusEnum.active,
-                UserSubscriptionModel.status == SubscriptionStatusEnum.paused,
-            ),
+            UserSubscriptionModel.status.in_(_ACTIVE_LIKE),
             UserSubscriptionModel.cancel_at_period_end == False,
         )
         .order_by(UserSubscriptionModel.created_at.desc())
@@ -142,7 +133,8 @@ def create_subscription(
     Initiate a brand-new Razorpay subscription (first-time or after expiry/cancel).
 
     Blocked if:
-      • User already has an active subscription with cancel_at_period_end=False
+      • User already has an active/paused/authenticated subscription with
+        cancel_at_period_end=False
       • User already has an update in-flight (pending_provider_subscription_id set)
     """
     try:
@@ -235,18 +227,22 @@ def verify_subscription(
 
     Two paths:
       A) NEW subscription  — no existing DB row for this razorpay_subscription_id.
-         Creates a fresh UserSubscriptionModel row.
+         Creates a fresh UserSubscriptionModel row with status=authenticated.
 
       B) PLAN CHANGE  — existing row has pending_provider_subscription_id matching
-         data.razorpay_subscription_id.  Updates that row in-place.
-         This keeps exactly ONE row per user and ensures the webhook
-         subscription.charged lookup by provider_subscription_id always finds
-         the correct single row.
+         data.razorpay_subscription_id.  Updates that row in-place with
+         status=authenticated.
+
+    In BOTH paths:
+      • status is set to  authenticated  (NOT active).
+      • Coins are NOT credited here.
+      • Active status and coin credit happen exclusively in the
+        subscription.charged webhook handler (_sub_charged in webhooks.py).
 
     Idempotent: if provider_subscription_id already set on any row, return success.
     """
     try:
-        # ── Idempotency: already fully activated ──────────────────────────────
+        # ── Idempotency: already processed ───────────────────────────────────
         existing_sub = (
             db.session.query(UserSubscriptionModel)
             .filter(
@@ -256,7 +252,7 @@ def verify_subscription(
         )
         if existing_sub:
             logger.info(f"verify_subscription: already processed {data.razorpay_subscription_id}")
-            return {"message": "Subscription already verified and active"}
+            return {"message": "Subscription already verified"}
 
         # ── Signature verification ────────────────────────────────────────────
         rzp_provider = PaymentProviderFactory.get_provider("razorpay")
@@ -300,6 +296,7 @@ def verify_subscription(
         )
 
         is_plan_change = pending_sub is not None
+        downgrade_summary: dict = {}
 
         if is_plan_change:
             # ── PATH B: Plan change — update existing row in-place ────────────
@@ -309,18 +306,56 @@ def verify_subscription(
                 f"old_plan={pending_sub.plan_id} → new_plan={plan.id}"
             )
             subscription = pending_sub
+            old_plan_id = pending_sub.plan_id
 
             # Swap the provider subscription id to the new Razorpay one
             subscription.provider_subscription_id = data.razorpay_subscription_id
             subscription.pending_provider_subscription_id = None
 
-            # Activate on new plan
+            # Mark authenticated — NOT active.
+            # subscription.charged webhook will promote to active and credit coins.
             subscription.plan_id = plan.id
             subscription.next_plan_id = None
-            subscription.status = SubscriptionStatusEnum.active
+            subscription.status = SubscriptionStatusEnum.authenticated
             subscription.cancel_at_period_end = False
             subscription.current_period_start = current_start
             subscription.current_period_end = current_end
+
+            # ── Downgrade enforcement ─────────────────────────────────────────
+            # Run enforcement immediately so users can't exploit the window.
+            from app_v2.utils.downgrade_utils import (
+                enforce_downgrade_for_user,
+                compute_downgrade_diff,
+            )
+            from app_v2.utils.activity_logger import log_activity
+
+            downgrade_diff = compute_downgrade_diff(old_plan_id, plan.id, db.session)
+
+            if downgrade_diff:
+                downgrade_summary = enforce_downgrade_for_user(
+                    user_id=current_user.id,
+                    old_plan_id=old_plan_id,
+                    new_plan_id=plan.id,
+                    session=db.session,
+                )
+                log_activity(
+                    user_id=current_user.id,
+                    event_type="subscription_downgrade_enforcement",
+                    description=(
+                        f"Plan downgraded from {old_plan_id} to {plan.id}. "
+                        f"Resources auto-disabled per policy."
+                    ),
+                    metadata={
+                        "old_plan_id": old_plan_id,
+                        "new_plan_id": plan.id,
+                        "diff": downgrade_diff,
+                        "disabled": downgrade_summary,
+                    },
+                )
+                logger.info(
+                    f"verify_subscription | downgrade enforced | "
+                    f"user={current_user.id} | summary={downgrade_summary}"
+                )
 
             db.session.flush()
 
@@ -333,7 +368,9 @@ def verify_subscription(
             subscription = UserSubscriptionModel(
                 user_id=current_user.id,
                 plan_id=plan.id,
-                status=SubscriptionStatusEnum.active,
+                # authenticated — NOT active.
+                # subscription.charged webhook will promote to active + credit coins.
+                status=SubscriptionStatusEnum.authenticated,
                 current_period_start=current_start,
                 current_period_end=current_end,
                 cancel_at_period_end=False,
@@ -345,6 +382,8 @@ def verify_subscription(
             db.session.flush()
 
         # ── Persist payment record ────────────────────────────────────────────
+        # We record the payment here as 'success' because the signature verified,
+        # but the canonical source of truth for billing is the webhook.
         existing_payment = (
             db.session.query(PaymentModel)
             .filter(PaymentModel.provider_payment_id == data.razorpay_payment_id)
@@ -377,40 +416,21 @@ def verify_subscription(
             except Exception as inv_err:
                 logger.warning(f"Could not fetch invoice: {inv_err}")
 
-        # ── Credit coins ──────────────────────────────────────────────────────
-        # Guard: webhook may have already credited for this subscription id
-        already_credited = (
-            db.session.query(CoinsLedgerModel)
-            .filter(
-                CoinsLedgerModel.reference_type == "subscription",
-                CoinsLedgerModel.reference_id == subscription.id,
-                CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.credit_subscription,
-            )
-            .first()
-        )
-        if not already_credited:
-            if not plan.carry_forward_coins:
-                reset_unused_subscription_coins(current_user.id)
-
-            current_balance = get_user_coin_balance(current_user.id)
-            new_balance = current_balance + plan.coins_included
-
-            ledger_entry = CoinsLedgerModel(
-                user_id=current_user.id,
-                transaction_type=CoinTransactionTypeEnum.credit_subscription,
-                coins=plan.coins_included,
-                remaining_coins=plan.coins_included,
-                expiry_at=current_end,
-                reference_type="subscription",
-                reference_id=subscription.id,
-                balance_after=new_balance,
-            )
-            db.session.add(ledger_entry)
+        # NOTE: Coins are NOT credited here.
+        # The subscription.charged webhook is the sole place that credits coins,
+        # ensuring coins are only issued after actual money capture.
 
         db.session.commit()
 
-        msg = "Plan changed successfully" if is_plan_change else "Subscription activated successfully"
-        return {"message": msg}
+        msg = (
+            "Plan change authenticated. Awaiting charge confirmation."
+            if is_plan_change
+            else "Subscription authenticated. Awaiting first charge confirmation."
+        )
+        return {
+            "message": msg,
+            "downgrade_notice": downgrade_summary if (is_plan_change and downgrade_summary) else None,
+        }
 
     except HTTPException:
         raise
@@ -443,6 +463,8 @@ def cancel_subscription(
         subscription = _get_current_subscription(current_user.id)
         if not subscription:
             raise HTTPException(status_code=404, detail="No active subscription found")
+        if subscription.status == SubscriptionStatusEnum.authenticated:
+            raise HTTPException(status_code=400, detail="Subscription cannot be cancelled before billing starts")
 
         provider = PaymentProviderFactory.get_provider(subscription.provider)
         response = provider.cancel_subscription(
@@ -495,7 +517,9 @@ def update_subscription(
       2. Create a new Razorpay subscription on the new plan.
       3. Stamp pending_provider_subscription_id + next_plan_id on the EXISTING
          subscription row — do NOT create a new DB row here.
-      4. verify() will complete the in-place update when checkout succeeds.
+      4. verify() will complete the in-place update (status=authenticated) when
+         checkout succeeds.
+      5. subscription.charged webhook will promote to active + credit coins.
 
     This keeps exactly ONE UserSubscriptionModel row per user at all times.
     """
@@ -503,7 +527,8 @@ def update_subscription(
         subscription = _get_current_subscription(current_user.id)
         if not subscription:
             raise HTTPException(status_code=404, detail="No active subscription found")
-
+        if subscription.status == SubscriptionStatusEnum.authenticated:
+            raise HTTPException(status_code=400, detail="Subscription cannot be updated before billing starts")
         if subscription.plan_id == data.plan_id:
             raise HTTPException(status_code=400, detail="You are already on this plan")
 
@@ -531,10 +556,15 @@ def update_subscription(
             )
 
         provider = PaymentProviderFactory.get_provider(subscription.provider)
+
+        old_plan = db.session.query(PlanModel).filter(PlanModel.id == subscription.plan_id).first()
+        is_downgrade = (old_plan is not None) and (new_plan.price < old_plan.price)
+
         result = provider.update_subscription(
             subscription_id=subscription.provider_subscription_id,
             new_plan_id=provider_plan.provider_plan_id,
             billing_period=new_plan.billing_period,
+            start_at=subscription.current_period_end,
         )
 
         cancel_response = result["cancelled_subscription"]
@@ -543,14 +573,13 @@ def update_subscription(
 
         # ── Stamp the pending state onto the EXISTING row ─────────────────────
         # Do NOT create a new UserSubscriptionModel row.
-        # verify() will promote pending_provider_subscription_id →
-        # provider_subscription_id when checkout completes.
+        # verify() will complete the in-place update when checkout succeeds.
         if subscription.subscription_metadata is None:
             subscription.subscription_metadata = {}
         subscription.subscription_metadata["customer_id"] = cancel_response.get("customer_id", "")
         subscription.subscription_metadata["pending_razorpay_subscription_id"] = new_rzp_sub_id
 
-        # Mark as pending-update — still active for feature access until verify()
+        # Mark as pending-update — still active/authenticated for feature access
         subscription.cancel_at_period_end = True
         subscription.next_plan_id = new_plan.id
         subscription.pending_provider_subscription_id = new_rzp_sub_id
@@ -572,6 +601,11 @@ def update_subscription(
             "user_email": current_user.email,
             "user_phone": current_user.phone,
             "key_id": VoiceSettings.RAZOR_KEY_ID,
+            "is_downgrade": is_downgrade,
+            "downgrade_warning": (
+                "Some resources will be automatically adjusted when payment completes."
+                if is_downgrade else None
+            ),
         }
 
     except HTTPException:
@@ -579,6 +613,50 @@ def update_subscription(
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error updating subscription: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Downgrade preview
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get(
+    "/downgrade-preview",
+    dependencies=[Depends(security)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def downgrade_preview(
+    plan_id: int,
+    current_user: UnifiedAuthModel = Depends(get_current_user),
+):
+    """
+    Returns a dry-run summary of what will be auto-disabled if the user
+    downgrades to the given plan.
+
+    Purely informational — makes NO changes.
+    """
+    try:
+        from app_v2.utils.downgrade_utils import compute_downgrade_preview
+
+        subscription = _get_current_subscription(current_user.id)
+        if not subscription:
+            raise HTTPException(status_code=404, detail="No active subscription found")
+
+        if subscription.plan_id == plan_id:
+            return {"is_downgrade": False, "affected_features": {}}
+
+        preview = compute_downgrade_preview(
+            user_id=current_user.id,
+            old_plan_id=subscription.plan_id,
+            new_plan_id=plan_id,
+            session=db.session,
+        )
+        return preview
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error computing downgrade preview: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -596,12 +674,13 @@ def pause_subscription(
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     try:
-        # Only pause the canonical active subscription (not one pending cancel/update)
         subscription = _get_current_subscription(current_user.id)
         if not subscription:
             raise HTTPException(status_code=404, detail="No active subscription found")
         if subscription.status == SubscriptionStatusEnum.paused:
             raise HTTPException(status_code=400, detail="Subscription is already paused")
+        if subscription.status == SubscriptionStatusEnum.authenticated:
+            raise HTTPException(status_code=400, detail="Subscription cannot be paused before billing starts")
 
         provider = PaymentProviderFactory.get_provider(subscription.provider)
         provider.pause_subscription(subscription.provider_subscription_id, data.pause_at)
@@ -626,7 +705,6 @@ def pause_subscription(
 )
 def resume_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
-        # Explicitly look for a paused subscription only
         subscription = (
             db.session.query(UserSubscriptionModel)
             .filter(
