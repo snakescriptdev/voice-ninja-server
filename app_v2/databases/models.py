@@ -233,6 +233,7 @@ class VoiceModel(Base):
     elevenlabs_voice_id = Column(String, nullable=True)
     has_sample_audio = Column(Boolean,nullable=True)
     audio_file = Column(String, nullable=True)
+    is_enabled = Column(Boolean, default=True,server_default="true")
 
     user = relationship("UnifiedAuthModel", back_populates="voices")
     agents = relationship("AgentModel",back_populates="voice")

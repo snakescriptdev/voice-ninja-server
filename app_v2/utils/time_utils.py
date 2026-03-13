@@ -23,3 +23,8 @@ def format_time_ago(dt: datetime) -> str:
         return f"{minutes} minute{'s' if minutes > 1 else ''} ago"
     
     return "just now"
+
+def convert_to_unix_timestamp(dt: datetime) -> int:
+    return int(dt.timestamp())
+
+print(convert_to_unix_timestamp(datetime.now()))
