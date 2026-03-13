@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel,Field
 from datetime import datetime
 
 class CoinUsageSettingsResponse(BaseModel):
@@ -12,6 +12,6 @@ class CoinUsageSettingsResponse(BaseModel):
         from_attributes = True
 
 class CoinUsageSettingsUpdate(BaseModel):
-    phone_number_purchase_cost: int | None = None
-    elevenlabs_multiplier: float | None = None
-    static_conversation_cost: int | None = None
+    phone_number_purchase_cost: int | None = Field(ge=0)
+    elevenlabs_multiplier: float | None =  Field(gt=0)
+    static_conversation_cost: int | None = Field(ge=0)

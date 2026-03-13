@@ -14,10 +14,30 @@ from fastapi_sqlalchemy import DBSessionMiddleware, db
 from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
-from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router,  web_agent_router,websocket_router,conversation_router,web_agent_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_plans, subscription_router, admin_user_management, payment_insights_router
+from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router,  web_agent_router,websocket_router,conversation_router,web_agent_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_plans, subscription_router, admin_user_management, payment_insights_router, api_key_management, public_api,public_websocket_router,webhooks
 from app_v2.utils.jwt_utils import HTTPBearer
+from fastapi.responses import HTMLResponse
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.responses import HTMLResponse
+from pathlib import Path
+from fastapi.staticfiles import StaticFiles
 
-app = FastAPI(title="Voice Ninja V2 API", version="2.0.0")
+app = FastAPI(title="Voice Ninja V2 API", version="2.0.0",docs_url=None,
+    redoc_url=None)
+
+BASE_DIR = Path(__file__).resolve().parent
+
+app.mount("/static", StaticFiles(directory=BASE_DIR / "app_v2"/"static"), name="static")
+
+@app.get("/docs", include_in_schema=False)
+def custom_docs():
+    html = open(BASE_DIR / "app_v2"/"templates" / "swagger.html").read()
+    return HTMLResponse(html)
+
+
+
+
 
 # Global exception handler for Pydantic validation errors
 @app.exception_handler(RequestValidationError)
@@ -177,6 +197,10 @@ app.include_router(coin_purchase_router)
 app.include_router(payment_insights_router)
 app.include_router(admin_user_management.router)
 app.include_router(subscription_router)
+app.include_router(api_key_management.router)
+app.include_router(public_api.router)
+app.include_router(public_websocket_router.router)
+app.include_router(webhooks.router)
 
 @app.get("/", tags=["System"])
 async def root():
