@@ -1,6 +1,6 @@
 """Pydantic schemas for profile-related endpoints."""
 
-from typing import Optional
+from typing import Optional, Dict
 from pydantic import BaseModel, Field, field_validator
 
 
@@ -109,6 +109,7 @@ class ProfileInfo(BaseModel):
         last_name: User last name.
         address: User address.
         notification_settings: User notification settings
+        feature_limits: User plan limits
     """
 
     id: int = Field(..., description='User ID')
@@ -119,3 +120,4 @@ class ProfileInfo(BaseModel):
     address: Optional[str] = Field(None, description='User address')
     notification_settings: Optional[UserNotificationRead] = Field(None, description="User notification settings")
     is_new_user: bool = Field(False, description="Flag indicating if the user is new (first login session)")
+    feature_limits: Optional[Dict[str, Optional[float]]] = Field(None, description="User plan limits")

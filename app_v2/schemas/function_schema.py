@@ -33,7 +33,7 @@ PrimitiveType = Literal["string", "integer", "number", "boolean"]
 
 class PrimitiveField(BaseModel):
     type: PrimitiveType
-    description: Optional[str] = None
+    description: str
     # dynamic_variable: Optional[str] = None
     
     model_config = {"extra": "ignore"}
@@ -171,6 +171,56 @@ class FunctionCreateSchema(BaseModel):
     # Using the new ApiSchema for execution config
     api_config: ApiSchema
 
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "name": "get_weather",
+                    "description": "Fetches weather data using an API key in headers",
+                    "api_config": {
+                        "url": "https://api.weatherapi.com/v1/current.json?q=London",
+                        "method": "GET",
+                        "request_headers": {
+                            "X-API-Key": "your_api_key_here"
+                        }
+                    }
+                },
+                {
+                    "name": "search_products",
+                    "description": "Searches for products with a query and limit",
+                    "api_config": {
+                        "url": "https://api.example.com/products/search",
+                        "method": "GET",
+                        "query_params_schema": {
+                            "properties": {
+                                "query": { "type": "string", "description": "Search term" },
+                                "limit": { "type": "integer", "description": "Max results" }
+                            },
+                            "required": ["query"]
+                        }
+                    }
+                },
+                {
+                    "name": "create_ticket",
+                    "description": "Creates a support ticket",
+                    "api_config": {
+                        "url": "https://api.example.com/tickets",
+                        "method": "POST",
+                        "content_type": "application/json",
+                        "request_body_schema": {
+                            "type": "object",
+                            "properties": {
+                                "subject": { "type": "string", "description": "The subject of the ticket" },
+                                "priority": { "type": "integer", "description": "1-5" }
+                            },
+                            "required": ["subject"]
+                        }
+                    }
+                }
+            ]
+        }
+    }
+
 
 class ApiUpdateSchema(BaseModel):
     url: Optional[str] = None
@@ -202,6 +252,14 @@ class FunctionRead(BaseModel):
     modified_at: datetime
 
     model_config = {"from_attributes": True}
+
+class FunctionBind(BaseModel):
+    agent_id: int
+    function_id: int
+
+class FunctionUnbind(BaseModel):
+    agent_id: int
+    function_id: int
 
     @model_validator(mode="before")
     @classmethod

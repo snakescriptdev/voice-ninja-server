@@ -20,6 +20,7 @@ from app_v2.schemas.phone_schema import (
 )
 from app_v2.databases.models import PhoneNumberService, AgentModel, UnifiedAuthModel, TwilioUserCreds
 from app_v2.utils.jwt_utils import HTTPBearer, get_current_user
+from app_v2.utils.feature_access import RequireFeature
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 from app_v2.core.logger import setup_logger
 from app_v2.core.config import VoiceSettings
@@ -82,7 +83,7 @@ async def get_available_numbers(
 @router.post("/buy", response_model=PhoneNumberResponse, openapi_extra={"security": [{"BearerAuth": []}]})
 async def buy_number(
     request: PhoneNumberBuyRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeature("phone_numbers"))
 ):
     """Purchase a phone number from Twilio and associate with current user"""
     try:
@@ -179,7 +180,7 @@ async def list_phone_numbers(
 @router.post("/import", response_model=PhoneNumberResponse, openapi_extra={"security": [{"BearerAuth": []}]})
 async def import_phone_number(
     request: PhoneNumberImportRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeature("phone_numbers"))
 ):
     """Import an already existing Twilio number with custom credentials"""
     try:
