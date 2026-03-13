@@ -8,6 +8,7 @@ from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 import math
 from app_v2.utils.llm_utils import generate_system_prompt_async
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
+from app_v2.utils.feature_access import check_can_enable_resource
 
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.databases.models import (
@@ -29,8 +30,10 @@ from app_v2.databases.models import (
     VariablesModel
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
+from typing import List, Optional, Any
 from app_v2.utils.activity_logger import log_activity
 from app_v2.core.logger import setup_logger
+from app_v2.utils.feature_access import RequireFeature
 logger = setup_logger(__name__)
 
 router = APIRouter(
@@ -65,6 +68,7 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
     return AgentRead(
         id=agent.id,
         agent_name=agent.agent_name,
+        is_enabled=agent.is_enabled,
         first_message=agent.first_message,
         system_prompt=agent.system_prompt,
         voice=agent.voice.voice_name,
@@ -215,7 +219,7 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
 )
 async def create_agent(
     agent_in: AgentCreate,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(RequireFeature("ai_voice_agents")),
 ):
     user_id = current_user.id
     
@@ -257,6 +261,13 @@ async def create_agent(
             detail={
                 "message": f"Voice '{agent_in.voice}' not found or not synced with ElevenLabs",
                 "hint": "Run: python populate_elevenlabs_data.py to sync voices, then use a voice from the list.",
+            },
+        )
+    if not voice.is_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": f"Voice '{agent_in.voice}' is not enabled",
             },
         )
 
@@ -515,6 +526,8 @@ async def create_agent(
 async def get_all_agents(
     page: int = 1,
     size: int = 20,
+    name: Optional[str] = None,
+    voice: Optional[str] = None,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     if page < 1:
@@ -534,8 +547,15 @@ async def get_all_agents(
             selectinload(AgentModel.agent_functions)
         )
         .filter(AgentModel.user_id == current_user.id)
-        .order_by(AgentModel.modified_at.desc())
     )
+    
+    if name:
+        query = query.filter(AgentModel.agent_name.ilike(f"%{name}%"))
+        
+    if voice:
+        query = query.join(AgentModel.voice).filter(VoiceModel.voice_name.ilike(f"%{voice}%"))
+
+    query = query.order_by(AgentModel.modified_at.desc())
     
     total = query.count()
     pages = math.ceil(total / size)
@@ -560,7 +580,7 @@ async def get_all_agents(
 
 # -------------------- GET BY ID --------------------
 
-#made for admin to get any agent
+
 @router.get(
     "by-id/{agent_id}",
     response_model=AgentRead,
@@ -668,6 +688,10 @@ async def update_agent(
     if agent_in.system_prompt is not None:
         agent.system_prompt = agent_in.system_prompt
         el_update_params["prompt"] = agent_in.system_prompt
+    if agent_in.is_enabled is not None:
+        if agent_in.is_enabled == True and agent.is_enabled == False:
+            check_can_enable_resource(current_user.id, "ai_voice_agents")
+        agent.is_enabled = agent_in.is_enabled
 
     # ---- Voice ----
     if agent_in.voice is not None:
@@ -687,6 +711,11 @@ async def update_agent(
             raise HTTPException(
                 status_code=400,
                 detail=f"Voice '{agent_in.voice}' not found or not synced with ElevenLabs. Run: python populate_elevenlabs_data.py",
+            )
+        if voice.is_enabled == False:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Voice '{agent_in.voice}' is disabled",
             )
         agent.agent_voice = voice.id
         el_update_params["voice_id"] = voice.elevenlabs_voice_id

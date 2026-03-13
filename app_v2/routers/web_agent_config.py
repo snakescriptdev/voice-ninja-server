@@ -14,6 +14,7 @@ from app_v2.utils.activity_logger import log_activity
 import uuid
 from fastapi import Depends
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.feature_access import RequireFeature, check_can_enable_resource
 from app_v2.core.logger import setup_logger
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 
@@ -49,11 +50,13 @@ def list_web_agents(request: Request, user=Depends(get_current_user)):
 
 
 @router.post("/web-agents", response_model=WebAgentConfigResponse,openapi_extra={"security":[{"BearerAuth":[]}]})
-def create_web_agent(request: Request, config: WebAgentConfig, user=Depends(get_current_user)):
+def create_web_agent(request: Request, config: WebAgentConfig, user=Depends(RequireFeature("web_voice_agent"))):
   # Validate agent belongs to user
   agent = db.session.query(AgentModel).filter(AgentModel.id == config.agent_id, AgentModel.user_id == user.id).first()
   if not agent:
     raise HTTPException(status_code=403, detail="Agent does not belong to user")
+  if not agent.is_enabled:
+        raise HTTPException(status_code=403,detail="agent is disabled")
 
   public_id = str(uuid.uuid4())
   web_agent = WebAgentModel(
@@ -172,6 +175,8 @@ def update_web_agent(
     if "web_agent_name" in update_data:
         web_agent.web_agent_name = update_data["web_agent_name"]
     if "is_enabled" in update_data:
+        if update_data["is_enabled"] and not web_agent.is_enabled:
+            check_can_enable_resource(user.id, "web_voice_agent")
         web_agent.is_enabled = update_data["is_enabled"]
 
     # ------------------ Appearance Update ------------------

@@ -1,14 +1,27 @@
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional
 from datetime import datetime
-from app_v2.schemas.enum_types import BillingPeriodEnum, PlanIconEnum, PaymentProviderEnum
+from app_v2.schemas.enum_types import BillingPeriodEnum, PlanIconEnum, PaymentProviderEnum, PlanFeatureEnum
+import re
 
 
 # -------------------- Plan Feature --------------------
 
 class PlanFeatureBase(BaseModel):
-    feature_key: str = Field(..., min_length=1)
+    feature_key: PlanFeatureEnum = Field(..., min_length=1)
     limit: Optional[int] = None
+
+    @field_validator("feature_key")
+    @classmethod
+    def normalize_feature_key(cls, v: str):
+        if not v or not v.strip():
+            raise ValueError("feature_key cannot be empty")
+
+        # remove extra spaces and normalize
+        v = v.strip().lower()
+        v = re.sub(r"\s+", "_", v)   # replace multiple spaces with _
+        
+        return v
 
     @field_validator("feature_key")
     @classmethod
@@ -42,7 +55,7 @@ class PlanFeatureResponse(PlanFeatureBase):
 class PlanBase(BaseModel):
     display_name: str = Field(..., min_length=1)
 
-    price: float = Field(..., ge=0)
+    price: float = Field(..., gt=0)
     currency: str = Field(default="INR", min_length=1)
     description: Optional[str] = None
     coins_included: int = Field(default=0, ge=0)

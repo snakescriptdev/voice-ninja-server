@@ -9,6 +9,7 @@ class VoiceUpdate(BaseModel):
     voice_name: Optional[str] = None
     gender: Optional[GenderEnum]= None
     nationality: Optional[str] = None
+    is_enabled: Optional[bool] = None
 
 class VoiceRead(BaseModel):
     id: int
@@ -19,6 +20,8 @@ class VoiceRead(BaseModel):
     nationality: Optional[str] = None
     has_sample_audio: Optional[bool] = False
     sample_audio_url: Optional[str] = None
+    is_enabled: bool
+    agents: list
     
 
     class Config:

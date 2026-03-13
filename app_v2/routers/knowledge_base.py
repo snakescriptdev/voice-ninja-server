@@ -20,6 +20,7 @@ from app_v2.schemas.knowledge_base_schema import (
     KnowledgeBaseBind
 )
 from app_v2.utils.jwt_utils import HTTPBearer,get_current_user
+from app_v2.utils.feature_access import RequireFeature, get_feature_limit, get_feature_usage
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs import ElevenLabsKB, ElevenLabsAgent
 from app_v2.utils.scraping_utils import scrape_webpage_title
@@ -79,11 +80,28 @@ def sync_agent_kb(agent_id: int):
 @router.post("/upload", response_model=List[KnowledgeBaseResponse], openapi_extra={"security": [{"BearerAuth": []}]}, status_code=status.HTTP_201_CREATED)
 async def upload_files(
     files: List[UploadFile] = File(...),
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeature("knowledge_base"))
 ):
     try:
+        user_id = current_user.id
+        limit = get_feature_limit(user_id, "knowledge_base") # in MB
+        current_usage = get_feature_usage(user_id, "knowledge_base") # in MB
+        
         uploaded_entries = []
         with db():
+            total_new_size_mb = 0
+            for file in files:
+                file.file.seek(0, 2)
+                size = file.file.tell()
+                file.file.seek(0)
+                total_new_size_mb += (size / (1024 * 1024))
+
+            if limit is not None and (current_usage + total_new_size_mb) > limit:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Knowledge base storage limit exceeded. Limit: {limit}MB, Current: {current_usage:.2f}MB, New: {total_new_size_mb:.2f}MB"
+                )
+
             for file in files:
                 # validation logic
                 _, ext = os.path.splitext(file.filename)
@@ -137,7 +155,7 @@ async def upload_files(
                     content_path=file_path,
                     elevenlabs_document_id=elevenlabs_document_id,
                     rag_index_id=rag_index_id,
-                    file_size=round((file_size /1024),2)    #file size in Kb
+                    file_size=round((file_size /(1024)),2)    #file size in kb
                 )
                 db.session.add(kb_entry)
                 uploaded_entries.append(kb_entry)
@@ -158,7 +176,7 @@ async def upload_files(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/url", response_model=KnowledgeBaseResponse,openapi_extra={"security": [{"BearerAuth": []}]},status_code=status.HTTP_201_CREATED)
-async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthModel = Depends(get_current_user)):
+async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthModel = Depends(RequireFeature("knowledge_base"))):
     try:
         url_str = str(request.url)
         with db():
@@ -209,7 +227,7 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/text", response_model=KnowledgeBaseResponse,openapi_extra={"security": [{"BearerAuth": []}]},status_code=status.HTTP_201_CREATED)
-async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthModel = Depends(get_current_user)):
+async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthModel = Depends(RequireFeature("knowledge_base"))):
     try:
         with db():
             # ---- ElevenLabs KB Sync ----

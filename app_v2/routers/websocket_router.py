@@ -9,6 +9,7 @@ import aiohttp
 import asyncio
 import traceback
 import os
+from datetime import datetime
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 from app_v2.utils.jwt_utils import SECRET_KEY, ALGORITHM
 from jose import jwt, JWTError
@@ -17,6 +18,7 @@ from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.databases.models import ConversationsModel
 from app_v2.schemas.enum_types import ChannelEnum, CallStatusEnum
 from app_v2.utils.activity_logger import log_activity
+from app_v2.utils.feature_access import RequireFeature, check_feature_limit_and_usage, get_feature_limit, get_feature_usage
 logger = setup_logger(__name__)
 
 router = APIRouter(
@@ -53,6 +55,10 @@ async def websocket_test_agent(
             timeout=5
         )
     except asyncio.TimeoutError:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Auth timeout. Call disconnected."
+        })
         await websocket.close(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Auth timeout"
@@ -61,6 +67,10 @@ async def websocket_test_agent(
         return
 
     if auth_msg.get("type") != "auth" or "token" not in auth_msg:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Auth required. Call disconnected."
+        })
         await websocket.close(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Auth required"
@@ -76,6 +86,10 @@ async def websocket_test_agent(
         if not user_id:
             raise JWTError("user_id missing")
     except JWTError:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Invalid token. Call disconnected."
+        })
         await websocket.close(
             code=status.WS_1008_POLICY_VIOLATION,
             reason="Invalid token"
@@ -90,6 +104,17 @@ async def websocket_test_agent(
             .filter(AgentModel.id == agent_id, AgentModel.user_id == user_id)
             .first()
         )
+        if not agent.is_enabled:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Agent is disabled. Call disconnected."
+            })
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Agent is disabled"
+            )
+            logger.error(f"Agent is disabled for user {user_id}")
+            return
         if agent:
              elevenlabs_agent_id = agent.elevenlabs_agent_id
         else:
@@ -97,13 +122,33 @@ async def websocket_test_agent(
              
         from app_v2.utils.coin_utils import get_user_coin_balance
         user_balance = get_user_coin_balance(user_id)
+        
+        # 2.1 Feature Limit Check (Monthly Minutes)
+        try:
+            check_feature_limit_and_usage(user_id, "monthly_minutes")
+        except Exception as e:
+            await websocket.send_json({
+                "type": "error",
+                "message": "Monthly minutes limit reached or no active subscription. Call disconnected."
+            })
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Monthly minutes limit reached or no active subscription")
+            logger.error(f"Monthly minutes limit reached or no active subscription for user {user_id}: {e}")
+            return
 
     if not elevenlabs_agent_id:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Agent not found. Call disconnected."
+        })
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Agent not found")
         logger.error(f"Agent not found for user {user_id}")
         return
         
     if user_balance <= 0:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Insufficient coins. Call disconnected."
+        })
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION,reason="Insufficient coins")
         logger.error(f"Insufficient coins for user {user_id}. Balance: {user_balance}")
         return
@@ -120,9 +165,17 @@ async def websocket_test_agent(
 
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={elevenlabs_agent_id}"
 
+    call_start_time = datetime.now()
+    initial_usage = get_feature_usage(user_id, "monthly_minutes")
+    minute_limit = get_feature_limit(user_id, "monthly_minutes")
+
     async with aiohttp.ClientSession() as session:
         if not ELEVENLABS_API_KEY:
             logger.error("ELEVENLABS_API_KEY is missing!")
+            await websocket.send_json({
+                "type": "error",
+                "message": "ELEVENLABS_API_KEY is missing. Call disconnected."
+            })
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR,reason="ELEVENLABS_API_KEY is missing!")
             return
 
@@ -135,6 +188,18 @@ async def websocket_test_agent(
                 logger.info("Starting browser_to_elevenlabs loop")
                 try:
                     while True:
+                        # Periodically check limit (e.g., every 5 chunks or ~1s)
+                        if chunk_count % 10 == 0:
+                            current_call_minutes = (datetime.now() - call_start_time).total_seconds() / 60
+                            if minute_limit is not None and (initial_usage + current_call_minutes) >= minute_limit:
+                                logger.warning(f"Auto-disconnecting user {user_id} - Monthly minutes limit reached.")
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "message": "Monthly minutes limit reached. Call disconnected."
+                                })
+                                await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                                return # This will stop the loop and potentially trigger cleanup in the wait()
+
                         message = await websocket.receive()
                         if "bytes" in message:
                             chunk_count += 1

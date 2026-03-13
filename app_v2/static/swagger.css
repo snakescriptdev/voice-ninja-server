@@ -1,0 +1,793 @@
+/* ============================================================
+   Swagger UI Custom Theme
+   Dark UI — matches API Endpoints panel aesthetic
+   ============================================================ */
+
+/* ---------- Base / Body ---------- */
+.swagger-ui,
+.swagger-ui * {
+  font-family: 'DM Sans', 'Segoe UI', sans-serif;
+}
+
+body {
+  background-color: #0f1117;
+  color: #e2e8f0;
+}
+
+.swagger-ui .wrapper {
+  background-color: #0f1117;
+  padding: 20px;
+}
+
+/* ---------- Global text visibility fix — no more ghost grey ---------- */
+/* Catch-all: any text Swagger renders that isn't already targeted */
+.swagger-ui,
+.swagger-ui p,
+.swagger-ui span,
+.swagger-ui label,
+.swagger-ui small,
+.swagger-ui div,
+.swagger-ui td,
+.swagger-ui th,
+.swagger-ui li {
+  color: inherit;
+}
+
+/* Force all low-contrast grey Swagger defaults to readable white/near-white */
+.swagger-ui .opblock-summary-description,
+.swagger-ui .opblock-description-wrapper p,
+.swagger-ui .opblock-title_normal p,
+.swagger-ui .markdown p,
+.swagger-ui .markdown li,
+.swagger-ui .renderedMarkdown p,
+.swagger-ui .renderedMarkdown li {
+  color: #c8d3e0 !important;
+}
+
+/* Labels like "Value:", "Name:", form field labels */
+.swagger-ui label,
+.swagger-ui .parameter__name,
+.swagger-ui .body-param-options label,
+.swagger-ui .response-control-media-type__accept-message {
+  color: #dde4ef !important;
+}
+
+/* "No parameters", "No links", placeholder text */
+.swagger-ui .opblock-body .opblock-description-wrapper,
+.swagger-ui .response-col_links,
+.swagger-ui table.responses-table .response-col_links {
+  color: #8a95a8 !important;
+}
+
+/* Close button text, "Schema", "Example Value" tab text */
+.swagger-ui .tab li,
+.swagger-ui .tab li button,
+.swagger-ui .tabitem {
+  color: #c8d3e0 !important;
+}
+.swagger-ui .tab li.active,
+.swagger-ui .tab li button.active,
+.swagger-ui .tab li.tabitem.active {
+  color: #ffffff !important;
+  font-weight: 600;
+}
+
+/* BearerAuth, (http, Bearer) label in modal */
+.swagger-ui .modal-ux-content p,
+.swagger-ui .modal-ux-content h4,
+.swagger-ui .auth-container h4,
+.swagger-ui .auth-container p,
+.swagger-ui .wrapper .auth-container label {
+  color: #dde4ef !important;
+}
+
+/* "Close" button text next to Authorize in modal */
+.swagger-ui .btn.modal-btn-close,
+.swagger-ui .btn.btn-done {
+  color: #c8d3e0 !important;
+  background: transparent;
+  border: 1px solid #3a3d4d;
+}
+
+/* Description text below endpoint path (e.g. "Request OTP", "Verify OTP") */
+.swagger-ui .opblock .opblock-summary-description {
+  color: #8a99b5 !important;
+  font-size: 13px;
+}
+
+/* ---------- Top Bar ---------- */
+.swagger-ui .topbar {
+  background-color: #1a1d27;
+  border-bottom: 1px solid #2a2d3a;
+  padding: 12px 20px;
+}
+
+.swagger-ui .topbar .download-url-wrapper input[type=text] {
+  background: #252836;
+  border: 1px solid #3a3d4d;
+  color: #e2e8f0;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.swagger-ui .topbar a {
+  color: #a78bfa;
+}
+
+/* ---------- Info Section ---------- */
+.swagger-ui .info {
+  background: #1a1d27;
+  border-radius: 14px;
+  padding: 28px 32px;
+  margin-bottom: 24px;
+  border: 1px solid #2a2d3a;
+}
+
+.swagger-ui .info .title {
+  color: #f1f5f9;
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.swagger-ui .info p,
+.swagger-ui .info li,
+.swagger-ui .info .description p {
+  color: #94a3b8;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.swagger-ui .info a {
+  color: #a78bfa;
+}
+
+/* ---------- Section / Tag Headers ---------- */
+.swagger-ui .opblock-tag {
+  background: #1a1d27;
+  border: 1px solid #2a2d3a;
+  border-radius: 12px;
+  padding: 14px 20px;
+  margin-bottom: 10px;
+  color: #f1f5f9;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.swagger-ui .opblock-tag:hover {
+  background: #202330;
+}
+
+.swagger-ui .opblock-tag-section h3 {
+  color: #f1f5f9;
+}
+
+/* ---------- Operation Blocks (Endpoint Cards) ---------- */
+.swagger-ui .opblock {
+  background: #1e2130;
+  border: 1px solid #2a2d3a;
+  border-radius: 12px;
+  margin-bottom: 10px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.swagger-ui .opblock:hover {
+  border-color: #3a3d55;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+}
+
+.swagger-ui .opblock .opblock-summary {
+  padding: 14px 18px;
+  align-items: center;
+  cursor: pointer;
+}
+
+.swagger-ui .opblock .opblock-summary-path {
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.swagger-ui .opblock .opblock-summary-description {
+  color: #64748b;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.swagger-ui .opblock-summary-path__deprecated {
+  text-decoration: line-through;
+  color: #64748b;
+}
+
+/* ---------- HTTP Method Badges ---------- */
+.swagger-ui .opblock-summary-method {
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.5px;
+  padding: 4px 10px;
+  min-width: 58px;
+  text-align: center;
+  text-transform: uppercase;
+  border: none;
+}
+
+/* POST — Purple/Pink gradient (matching screenshot) */
+.swagger-ui .opblock.opblock-post .opblock-summary-method {
+  background: linear-gradient(135deg, #7c3aed, #db2777);
+  color: #ffffff;
+}
+
+.swagger-ui .opblock.opblock-post {
+  border-left: 3px solid #9333ea;
+}
+
+/* GET — Blue */
+.swagger-ui .opblock.opblock-get .opblock-summary-method {
+  background: #2563eb;
+  color: #ffffff;
+}
+
+.swagger-ui .opblock.opblock-get {
+  border-left: 3px solid #2563eb;
+}
+
+/* PUT — Amber */
+.swagger-ui .opblock.opblock-put .opblock-summary-method {
+  background: #d97706;
+  color: #ffffff;
+}
+
+.swagger-ui .opblock.opblock-put {
+  border-left: 3px solid #d97706;
+}
+
+/* DELETE — Red */
+.swagger-ui .opblock.opblock-delete .opblock-summary-method {
+  background: #dc2626;
+  color: #ffffff;
+}
+
+.swagger-ui .opblock.opblock-delete {
+  border-left: 3px solid #dc2626;
+}
+
+/* PATCH — Orange */
+.swagger-ui .opblock.opblock-patch .opblock-summary-method {
+  background: #ea580c;
+  color: #ffffff;
+}
+
+.swagger-ui .opblock.opblock-patch {
+  border-left: 3px solid #ea580c;
+}
+
+/* ---------- Expanded Block Body ---------- */
+.swagger-ui .opblock-body {
+  background: #161824;
+  border-top: 1px solid #2a2d3a;
+  padding: 0;
+}
+
+/* Section headers: PARAMETERS, REQUEST BODY, RESPONSES — kill the grey */
+.swagger-ui .opblock-section-header {
+  background: #1a1d2e !important;
+  border-bottom: 1px solid #2a2d3a;
+  border-top: none !important;
+  padding: 12px 20px;
+  margin: 0;
+  box-shadow: none !important;
+}
+
+.swagger-ui .opblock-section-header h4,
+.swagger-ui .opblock-section-header label {
+  color: #cbd5e1 !important;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+}
+
+/* Responses table header row — the big grey RESPONSES bar */
+.swagger-ui .responses-inner h4,
+.swagger-ui .responses-inner h5 {
+  color: #cbd5e1;
+}
+
+/* The wrapper that Swagger adds around the whole expanded body */
+.swagger-ui .opblock-body > div,
+.swagger-ui .opblock-body .opblock-section {
+  background: #161824;
+}
+
+/* Content areas below section headers */
+.swagger-ui .opblock-description-wrapper,
+.swagger-ui .opblock-external-docs-wrapper,
+.swagger-ui .opblock-title_normal {
+  background: #161824;
+  padding: 14px 20px;
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+/* Parameters and request body content padding */
+.swagger-ui .parameters-container,
+.swagger-ui .request-body-container {
+  padding: 16px 20px;
+  background: #161824;
+}
+
+
+
+/* ---------- Parameters Table ---------- */
+.swagger-ui table.parameters {
+  border-collapse: separate;
+  border-spacing: 0 4px;
+  width: 100%;
+}
+
+.swagger-ui table.parameters thead tr th {
+  background: #252836;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 8px 12px;
+}
+
+.swagger-ui table.parameters tbody tr {
+  background: #1e2130;
+}
+
+.swagger-ui table.parameters tbody tr td {
+  padding: 10px 12px;
+  color: #cbd5e1;
+  border-top: 1px solid #2a2d3a;
+  font-size: 13px;
+}
+
+.swagger-ui .parameter__name {
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.swagger-ui .parameter__name.required::after {
+  color: #f43f5e;
+}
+
+.swagger-ui .parameter__type {
+  color: #a78bfa;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+}
+
+.swagger-ui .parameter__deprecated {
+  color: #64748b;
+}
+
+/* ---------- Input Fields ---------- */
+.swagger-ui input[type=text],
+.swagger-ui input[type=password],
+.swagger-ui input[type=email],
+.swagger-ui textarea,
+.swagger-ui select {
+  background: #252836;
+  border: 1px solid #3a3d4d;
+  border-radius: 8px;
+  color: #e2e8f0;
+  padding: 8px 12px;
+  font-size: 13px;
+  transition: border-color 0.2s;
+}
+
+.swagger-ui input[type=text]:focus,
+.swagger-ui input[type=password]:focus,
+.swagger-ui textarea:focus,
+.swagger-ui select:focus {
+  border-color: #7c3aed;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.15);
+}
+
+.swagger-ui select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748b' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 28px;
+}
+
+/* ---------- Buttons ---------- */
+.swagger-ui .btn {
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 8px 18px;
+  transition: all 0.2s;
+  cursor: pointer;
+  border: none;
+}
+
+.swagger-ui .btn.execute {
+  background: linear-gradient(135deg, #7c3aed, #db2777);
+  color: #ffffff;
+}
+
+.swagger-ui .btn.execute:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(124, 58, 237, 0.4);
+}
+
+.swagger-ui .btn.cancel {
+  background: #252836;
+  color: #94a3b8;
+  border: 1px solid #3a3d4d;
+}
+
+.swagger-ui .btn.cancel:hover {
+  background: #2d3044;
+}
+
+.swagger-ui .btn.try-out__btn {
+  background: transparent;
+  border: 1px solid #3a3d4d;
+  color: #a78bfa;
+}
+
+.swagger-ui .btn.try-out__btn:hover {
+  border-color: #7c3aed;
+  background: rgba(124, 58, 237, 0.08);
+}
+
+.swagger-ui .btn.authorize {
+  background: rgba(13, 148, 136, 0.15);
+  border: 1px solid #0d9488;
+  color: #2dd4bf;
+}
+
+.swagger-ui .btn.authorize:hover {
+  background: rgba(13, 148, 136, 0.25);
+}
+
+/* ---------- Responses ---------- */
+.swagger-ui .responses-wrapper {
+  background: #161824;
+  border-radius: 0 0 8px 8px;
+  padding: 16px 20px;
+}
+
+.swagger-ui .response-col_status {
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.swagger-ui .response-col_description p,
+.swagger-ui .response-col_description .markdown p {
+  color: #94a3b8;
+  font-size: 13px;
+}
+
+/* Responses table — all backgrounds dark */
+.swagger-ui table.responses-table {
+  background: transparent;
+}
+
+.swagger-ui table.responses-table thead tr th {
+  background: #1e2235 !important;
+  color: #64748b;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2a2d3a;
+}
+
+.swagger-ui table.responses-table tbody tr {
+  background: transparent !important;
+}
+
+.swagger-ui table.responses-table tbody tr td {
+  background: transparent !important;
+  border-top: 1px solid #1e2235;
+  padding: 12px 14px;
+  color: #cbd5e1;
+}
+
+/* "No links" and similar muted text */
+.swagger-ui .response-col_links {
+  color: #475569;
+  font-size: 13px;
+}
+
+/* Liveresponse / curl output area */
+.swagger-ui .live-responses-table tbody tr td,
+.swagger-ui .live-responses-table thead tr th {
+  background: #161824 !important;
+  border-color: #2a2d3a;
+}
+
+/* HTTP Status Codes */
+.swagger-ui .response-col_status .response-undocumented { color: #64748b; }
+
+/* Media type select inside responses */
+.swagger-ui .response-controls select,
+.swagger-ui .body-param__example-select {
+  background: #252836;
+  border: 1px solid #3a3d4d;
+  color: #e2e8f0;
+  border-radius: 8px;
+}
+
+
+/* ---------- Code / Pre blocks ---------- */
+.swagger-ui .highlight-code,
+.swagger-ui pre {
+  background: #0d0f18 !important;
+  border: 1px solid #2a2d3a;
+  border-radius: 8px;
+  padding: 14px 16px;
+  color: #e2e8f0;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.swagger-ui .microlight {
+  color: #e2e8f0;
+}
+
+/* ---------- Models / Schema ---------- */
+.swagger-ui section.models {
+  background: #1a1d27;
+  border: 1px solid #2a2d3a;
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 24px;
+}
+
+.swagger-ui section.models h4 {
+  color: #f1f5f9;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.swagger-ui .model-container {
+  background: #161824;
+  border: 1px solid #2a2d3a;
+  border-radius: 8px;
+  margin-top: 10px;
+}
+
+.swagger-ui .model-title {
+  color: #a78bfa;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 13px;
+}
+
+.swagger-ui .model {
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.swagger-ui .prop-type { color: #7dd3fc; }
+.swagger-ui .prop-format { color: #a78bfa; }
+
+/* (auth modal styles moved to scheme-container section above) */
+
+
+/* ---------- Authorize button area — seamlessly blended ---------- */
+/* Match EXACTLY the same background as the page wrapper — no strips, no borders */
+.swagger-ui .scheme-container {
+  background: #0f1117 !important;
+  box-shadow: none !important;
+  border: none !important;
+  padding: 16px 20px;
+  margin: 0;
+}
+
+/* Wrapper row that holds the Authorize button */
+.swagger-ui .auth-wrapper {
+  background: transparent !important;
+  border: none !important;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: flex-end;
+}
+
+/* The padlock icon svg inside authorize */
+.swagger-ui .authorization__btn svg,
+.swagger-ui .btn.authorize svg {
+  fill: #2dd4bf;
+}
+
+/* Servers label above/around the auth button */
+.swagger-ui .servers,
+.swagger-ui .servers label {
+  background: transparent !important;
+  color: #94a3b8;
+}
+
+/* Any stray white/light backgrounds in the top info block */
+.swagger-ui .information-container,
+.swagger-ui .information-container .info,
+.swagger-ui .info__contact,
+.swagger-ui .info__license {
+  background: transparent !important;
+}
+
+/* Inline authorize button itself */
+.swagger-ui .btn.authorize {
+  background: rgba(13, 148, 136, 0.12);
+  border: 1px solid #0d9488;
+  color: #2dd4bf;
+  border-radius: 8px;
+  padding: 7px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.swagger-ui .btn.authorize:hover {
+  background: rgba(13, 148, 136, 0.22);
+  box-shadow: 0 0 12px rgba(13, 148, 136, 0.3);
+}
+
+/* Modal overlay backdrop */
+.swagger-ui .dialog-ux .backdrop-ux {
+  background: rgba(0, 0, 0, 0.7) !important;
+}
+
+/* Auth modal full override */
+.swagger-ui .dialog-ux .modal-ux {
+  background: #1a1d27 !important;
+  border: 1px solid #2a2d3a !important;
+  border-radius: 16px !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
+}
+
+.swagger-ui .dialog-ux .modal-ux-header {
+  background: #161824 !important;
+  border-bottom: 1px solid #2a2d3a !important;
+  border-radius: 16px 16px 0 0;
+  padding: 20px 24px;
+}
+
+.swagger-ui .dialog-ux .modal-ux-header h3 {
+  color: #f1f5f9 !important;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.swagger-ui .dialog-ux .modal-ux-content {
+  background: #1a1d27 !important;
+  padding: 20px 24px;
+  color: #dde4ef !important;
+}
+
+/* Everything inside the auth form */
+.swagger-ui .auth-container {
+  background: transparent !important;
+  border-color: #2a2d3a !important;
+}
+
+.swagger-ui .auth-container h4 {
+  color: #f1f5f9 !important;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.swagger-ui .auth-container .wrapper {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/* Scopes list in OAuth modal */
+.swagger-ui .scopes h2 {
+  color: #dde4ef !important;
+}
+
+.swagger-ui .scope-def {
+  color: #8a99b5 !important;
+}
+
+
+
+/* ---------- Scrollbar ---------- */
+.swagger-ui ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.swagger-ui ::-webkit-scrollbar-track {
+  background: #1a1d27;
+}
+
+.swagger-ui ::-webkit-scrollbar-thumb {
+  background: #3a3d4d;
+  border-radius: 3px;
+}
+
+.swagger-ui ::-webkit-scrollbar-thumb:hover {
+  background: #7c3aed;
+}
+
+/* ---------- Loading / Errors ---------- */
+.swagger-ui .loading-container .loading::after {
+  border-color: #7c3aed transparent transparent;
+}
+
+.swagger-ui .errors-wrapper {
+  background: rgba(220, 38, 38, 0.1);
+  border: 1px solid #dc2626;
+  border-radius: 8px;
+  padding: 12px 16px;
+}
+
+.swagger-ui .errors-wrapper .errors h4 {
+  color: #f87171;
+}
+
+/* ---------- Links ---------- */
+.swagger-ui a {
+  color: #a78bfa;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.swagger-ui a:hover {
+  color: #c4b5fd;
+}
+
+/* ---------- Server Selector ---------- */
+.swagger-ui .servers-title {
+  color: #94a3b8;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.swagger-ui .servers > label select {
+  background: #252836;
+  border: 1px solid #3a3d4d;
+  border-radius: 8px;
+  color: #e2e8f0;
+  padding: 6px 28px 6px 10px;
+}
+
+/* ---------- Required asterisk ---------- */
+.swagger-ui .parameter__name.required span {
+  color: #f43f5e;
+}
+
+/* ---------- Copy to Clipboard btn ---------- */
+.swagger-ui .copy-to-clipboard {
+  background: #252836;
+  border: 1px solid #3a3d4d;
+  border-radius: 6px;
+}
+
+.swagger-ui .copy-to-clipboard:hover {
+  background: #2d3044;
+}
+
+.arrow{
+    stroke: #fff !important;
+    fill: #fff !important;
+}
+.swagger-ui .json-schema-2020-12-expand-deep-button,
+.swagger-ui .json-schema-2020-12-accordion{
+  background-color: #0f1117 !important;
+  color: #fff !important;
+}

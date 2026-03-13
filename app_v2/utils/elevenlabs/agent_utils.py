@@ -284,6 +284,14 @@ class ElevenLabsAgent(BaseElevenLabs):
             config_updated = True
         
         if config_updated:
+            # Always ensure exclusivity of tools and tool_ids in the prompt config
+            # ElevenLabs rejects requests that contain both fields
+            if "agent" in current_config and "prompt" in current_config["agent"]:
+                prompt_config = current_config["agent"]["prompt"]
+                if "tool_ids" in prompt_config and "tools" in prompt_config:
+                    logger.info("Removing 'tools' from retrieved config to avoid conflict with 'tool_ids'")
+                    del prompt_config["tools"]
+            
             payload["conversation_config"] = current_config
         
         if not payload:

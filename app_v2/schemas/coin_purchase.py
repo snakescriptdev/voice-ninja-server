@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel,Field
 from typing import Optional, Dict, Any
 
 class OrderCreateRequest(BaseModel):
@@ -6,7 +6,7 @@ class OrderCreateRequest(BaseModel):
 
 class OrderCreateResponse(BaseModel):
     order_id: str
-    amount: float
+    amount: float = Field(...,gt=0)
     currency: str
     key_id: str
     user_email: str

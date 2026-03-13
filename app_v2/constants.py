@@ -71,3 +71,30 @@ MSG_TOKENS_EXCHANGED = 'Tokens exchanged successfully'
 OAUTH_CODE_EXPIRY_MINUTES = 5
 OAUTH_CODE_LENGTH = 32
 
+# static api list
+api_list = [
+    {
+        "path": "/api/v2/public/agents",
+        "method": "GET",
+        "description": "Get all agents",
+        "swagger_link":"docs#/public-api/list_agents_api_v2_public_agents_get"
+    },
+    {
+        "path":"api/v2/public/web-agents",
+        "method":"POST",
+        "description": "Create a new web agent",
+        "swagger_link":"docs#/public-api/create_web_agent_api_v2_public_web_agents_post"
+    },
+    {
+        "path":"/api/v2/agents/{agent_id}",
+        "method": "DELETE",
+        "description": "Delete an agent",
+        "swagger_link":"docs#/public-api/delete_agent_public_api_v2_public_agents__agent_id__delete"
+    },
+    {
+        "path":"api/v2/agents",
+        "method":"POST",
+        "description":"Create a new agent",
+        "swagger_link":"docs#/public-api/create_agent_api_v2_public_agents_post"
+    }
+]

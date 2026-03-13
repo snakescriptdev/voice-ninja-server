@@ -1,9 +1,9 @@
 from fastapi import APIRouter, HTTPException, status, Depends
-from app_v2.utils.jwt_utils import is_admin
+from app_v2.utils.jwt_utils import is_admin,HTTPBearer
 from datetime import datetime
 from typing import List
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinPackageModel, CoinUsageSettingsModel, PlanModel, UserSubscriptionModel, SubscriptionStatusEnum, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinPackageModel, CoinUsageSettingsModel, PlanModel, UserSubscriptionModel, SubscriptionStatusEnum, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel
 from app_v2.schemas.activity_schema import ActivityLogResponse
 from app_v2.schemas.admin_dashboard import UserCostItem, CoinBundleCreate, CoinBundleResponse
 from app_v2.schemas.pagination import PaginatedResponse
@@ -11,6 +11,7 @@ from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
 from app_v2.utils.time_utils import format_time_ago
+from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
 from elevenlabs import ElevenLabs
 from app_v2.core.config import VoiceSettings
 from elevenlabs import ElevenLabs
@@ -19,22 +20,44 @@ from sqlalchemy import select, func
 
 client = ElevenLabs(api_key=VoiceSettings.ELEVENLABS_API_KEY)
 logger = setup_logger(__name__)
-router = APIRouter(prefix="/api/v2/admin/dashboard",tags=["Admin"])
+security = HTTPBearer()
+router = APIRouter(prefix="/api/v2/admin/dashboard",tags=["Admin"],dependencies=[Depends(security)])
 
-
-@router.get("/overview/stats")
+@router.get("/overview/stats",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_overview_stats():
     """
     Consolidated API for admin dashboard overview stats.
     """
     try:
+        first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
+
         # 1. Total Users
         total_users = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.is_admin.is_(False)).count()
+        curr_users_new = db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.is_admin.is_(False),
+            UnifiedAuthModel.created_at >= first_day_of_month
+        ).count()
+        prev_users_new = db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.is_admin.is_(False),
+            UnifiedAuthModel.created_at >= first_day_prev_month,
+            UnifiedAuthModel.created_at < first_day_of_month
+        ).count()
+        total_users_change = calculate_percentage_change(curr_users_new, prev_users_new)
 
         # 2. Active Subscriptions
         active_subscriptions = db.session.query(UserSubscriptionModel).filter(
             UserSubscriptionModel.status == SubscriptionStatusEnum.active
         ).count()
+        curr_subs_new = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active,
+            UserSubscriptionModel.current_period_start >= first_day_of_month
+        ).count()
+        prev_subs_new = db.session.query(UserSubscriptionModel).filter(
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active,
+            UserSubscriptionModel.current_period_start >= first_day_prev_month,
+            UserSubscriptionModel.current_period_start < first_day_of_month
+        ).count()
+        active_subscriptions_change = calculate_percentage_change(curr_subs_new, prev_subs_new)
 
         # 3. Total Phone Numbers
         total_phone_numbers = db.session.query(PhoneNumberService).count()
@@ -60,24 +83,44 @@ def get_overview_stats():
         ).scalar() or 0
 
         # 6. Current Month Revenue
-        now = datetime.now()
-        first_day_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         current_month_revenue = db.session.query(func.sum(PaymentModel.amount)).filter(
             PaymentModel.status == PaymentStatusEnum.success,
             PaymentModel.created_at >= first_day_of_month
         ).scalar() or 0
+        prev_month_revenue = db.session.query(func.sum(PaymentModel.amount)).filter(
+            PaymentModel.status == PaymentStatusEnum.success,
+            PaymentModel.created_at >= first_day_prev_month,
+            PaymentModel.created_at < first_day_of_month
+        ).scalar() or 0
+        current_month_revenue_change = calculate_percentage_change(current_month_revenue, prev_month_revenue)
+
+        # 7. Total API Hits
+        total_api_hits = db.session.query(func.count(APICallLogModel.id)).scalar() or 0
+        curr_api_hits = db.session.query(func.count(APICallLogModel.id)).filter(
+            APICallLogModel.created_at >= first_day_of_month
+        ).scalar() or 0
+        prev_api_hits = db.session.query(func.count(APICallLogModel.id)).filter(
+            APICallLogModel.created_at >= first_day_prev_month,
+            APICallLogModel.created_at < first_day_of_month
+        ).scalar() or 0
+        total_api_hits_change = calculate_percentage_change(curr_api_hits, prev_api_hits)
 
         return {
             "status": "success",
             "stats": {
                 "total_users": total_users,
+                "total_users_change": float(total_users_change),
                 "active_subscriptions": active_subscriptions,
+                "active_subscriptions_change": float(active_subscriptions_change),
                 "total_phone_numbers": total_phone_numbers,
                 "total_agents": total_agents,
                 "active_agents": active_agents,
                 "disabled_agents": disabled_agents,
                 "total_coins_distributed": int(total_coins_distributed),
-                "current_month_revenue": float(current_month_revenue)
+                "current_month_revenue": float(current_month_revenue),
+                "current_month_revenue_change": float(current_month_revenue_change),
+                "total_api_hits": total_api_hits,
+                "total_api_hits_change": float(total_api_hits_change)
             }
         }
     except Exception as e:
@@ -87,7 +130,7 @@ def get_overview_stats():
             detail=str(e)
         )
 
-@router.get("/overview/recent-users")
+@router.get("/overview/recent-users",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_recent_users():
     try:
         recent_users = db.session.query(UnifiedAuthModel).filter(
@@ -114,7 +157,7 @@ def get_recent_users():
             detail=str(e)
         )   
 
-@router.get("/analytics/revenue-graph")
+@router.get("/analytics/revenue-graph",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_revenue_graph():
     """
     Monthly revenue for the last 6 months.
@@ -150,7 +193,7 @@ def get_revenue_graph():
             detail=str(e)
         )
 
-@router.get("/analytics/subscription-distribution")
+@router.get("/analytics/subscription-distribution",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_subscription_distribution():
     """
     Subscription distribution by plan percentage.
@@ -194,7 +237,7 @@ def get_subscription_distribution():
 
 
 
-@router.get("/elevenlabs/usage-and-billing")
+@router.get("/elevenlabs/usage-and-billing",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_elevenlabs_usage_and_billing():
     try:
         # Fetch subscription from ElevenLabs
@@ -268,7 +311,7 @@ def get_elevenlabs_usage_and_billing():
             detail="Failed to fetch usage and billing information from ElevenLabs."
         )
 
-@router.get("/users-cost", response_model=PaginatedResponse[UserCostItem])
+@router.get("/users-cost", response_model=PaginatedResponse[UserCostItem],dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_users_cost(
     skip: int = 0, 
     limit: int = 10
@@ -326,37 +369,3 @@ def get_users_cost(
             detail=f"Failed to fetch users cost data: {str(e)}"
         )
 
-@router.post("/coin-bundles", response_model=CoinBundleResponse)
-def create_coin_bundle(data: CoinBundleCreate):
-    try:
-        bundle = CoinPackageModel(
-            name=data.name,
-            coins=data.coins,
-            price=data.price,
-            currency=data.currency,
-            validity_days=data.validity_days,
-            is_active=True
-        )
-        db.session.add(bundle)
-        db.session.commit()
-        db.session.refresh(bundle)
-        return bundle
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error creating coin bundle: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to create coin bundle: {str(e)}"
-        )
-
-@router.get("/coin-bundles", response_model=List[CoinBundleResponse])
-def list_coin_bundles():
-    try:
-        bundles = db.session.query(CoinPackageModel).order_by(CoinPackageModel.created_at.desc()).all()
-        return bundles
-    except Exception as e:
-        logger.error(f"Error listing coin bundles: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch coin bundles: {str(e)}"
-        )

@@ -71,6 +71,7 @@ class ChannelEnum(str,Enum):
     chat = "chat"
     call= "call"
     widget = "widget"
+    api = "api"
 
 class WidgetPosition(str,Enum):
     top_left = "top-left"
@@ -92,10 +93,13 @@ class PaymentProviderEnum(str, Enum):
     stripe = "stripe"
 
 class SubscriptionStatusEnum(str, Enum):
-    active = "active"
+    active    = "active"
     cancelled = "cancelled"
-    expired = "expired"
-    past_due = "past_due"
+    pending   = "pending"
+    halted    = "halted"
+    paused    = "paused"
+    expired   = "expired"
+    authenticated = "authenticated"
 
 class PaymentStatusEnum(str, Enum):
     pending = "pending"
@@ -115,3 +119,13 @@ class CoinTransactionTypeEnum(str, Enum):
     refund = "refund"
     expired = "expired"
     carry_forward_reset = "carry_forward_reset"
+
+class PlanFeatureEnum(str,Enum):
+    ai_voice_agents = "ai_voice_agents"
+    phone_numbers = "phone_numbers"
+    monthly_minutes = "monthly_minutes"
+    knowledge_base = "knowledge_base"
+    web_voice_agent = "web_voice_agent"
+    api_access = "api_access"
+    analytics_dashboard= "analytics_dashboard"
+    custom_voice_cloning= "custom_voice_cloning"
