@@ -11,6 +11,7 @@ from typing import List, Dict, Any
 import hmac
 import hashlib
 logger = setup_logger(__name__)
+import datetime
 
 
 
@@ -40,7 +41,7 @@ class BasePaymentProvider(ABC):
         pass
 
     @abstractmethod
-    def update_subscription(self, subscription_id: str, plan_id: str,billing_period:BillingPeriodEnum,offer_id: Optional[str] = None, schedule_change_at: str = "cycle_end") -> Dict[str, Any]:
+    def update_subscription(self, subscription_id: str, plan_id: str, billing_period: BillingPeriodEnum, offer_id: Optional[str] = None, start_at: Optional[int] = None) -> Dict[str, Any]:
         pass
 
     @abstractmethod
@@ -185,6 +186,7 @@ class RazorpayProvider(BasePaymentProvider):
         new_plan_id: str,
         billing_period: BillingPeriodEnum,
         offer_id: Optional[str] = None,
+        start_at: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
         Plan change flow:
@@ -218,6 +220,9 @@ class RazorpayProvider(BasePaymentProvider):
             payload["customer_id"] = customer_id
 
         payload["total_count"] = 1 if billing_period == BillingPeriodEnum.annual else 12
+
+        if start_at:
+            payload["start_at"] = int(start_at.timestamp())
 
         if offer_id:
             payload["offer_id"] = offer_id

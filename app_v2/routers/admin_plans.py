@@ -15,7 +15,21 @@ logger = setup_logger(__name__)
 security = HTTPBearer()
 router = APIRouter(prefix="/api/v2/admin/plans", tags=["Admin Plans"])
 
+#feature validation
+def validate_unique_features(features):
+    seen = set()
+    duplicates = set()
 
+    for f in features:
+        if f.feature_key in seen:
+            duplicates.add(f.feature_key)
+        seen.add(f.feature_key)
+
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Duplicate feature keys are not allowed: {list(duplicates)}"
+        )
 
 @router.get("/coin-bundles", response_model=List[CoinBundleResponse])
 def list_coin_bundles():
@@ -79,6 +93,7 @@ def create_plan(plan_data: PlanCreate):
         #if display name exists raise error
         if db.session.query(PlanModel).filter(PlanModel.display_name == plan_data.display_name).first():
             raise HTTPException(status_code=400, detail="Display name already exists")
+        validate_unique_features(plan_data.features)
         # 1. Create plan in database
         new_plan = PlanModel(
             display_name=plan_data.display_name,
@@ -165,7 +180,7 @@ def list_plans_status_wise():
     """
     try:
         plans = (
-            db.session.query(PlanModel).query(
+            db.session.query(PlanModel).filter(
                 PlanModel.is_deleted==False
             )
             .options(
@@ -216,6 +231,7 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
     try:
         update_data = plan_update.dict(exclude_unset=True)
         if "features" in update_data:
+            validate_unique_features(update_data["features"])
             # Delete old features and add new ones
             db.session.query(PlanFeatureModel).filter(PlanFeatureModel.plan_id == plan_id).delete()
             for feature in update_data["features"]:

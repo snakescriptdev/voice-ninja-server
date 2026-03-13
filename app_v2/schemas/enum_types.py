@@ -99,6 +99,7 @@ class SubscriptionStatusEnum(str, Enum):
     halted    = "halted"
     paused    = "paused"
     expired   = "expired"
+    authenticated = "authenticated"
 
 class PaymentStatusEnum(str, Enum):
     pending = "pending"

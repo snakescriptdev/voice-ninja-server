@@ -263,6 +263,13 @@ async def create_agent(
                 "hint": "Run: python populate_elevenlabs_data.py to sync voices, then use a voice from the list.",
             },
         )
+    if not voice.is_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": f"Voice '{agent_in.voice}' is not enabled",
+            },
+        )
 
     # -------------------------------------------------
     # AI Model validation (single)
@@ -521,7 +528,6 @@ async def get_all_agents(
     size: int = 20,
     name: Optional[str] = None,
     voice: Optional[str] = None,
-    is_enabled: Optional[bool] = None,
     current_user: UnifiedAuthModel = Depends(get_current_user),
 ):
     if page < 1:
@@ -548,9 +554,7 @@ async def get_all_agents(
         
     if voice:
         query = query.join(AgentModel.voice).filter(VoiceModel.voice_name.ilike(f"%{voice}%"))
-    if is_enabled is not None:
-        query = query.filter(AgentModel.is_enabled == is_enabled)
-        
+
     query = query.order_by(AgentModel.modified_at.desc())
     
     total = query.count()
@@ -576,7 +580,7 @@ async def get_all_agents(
 
 # -------------------- GET BY ID --------------------
 
-#made for admin to get any agent
+
 @router.get(
     "by-id/{agent_id}",
     response_model=AgentRead,
@@ -707,6 +711,11 @@ async def update_agent(
             raise HTTPException(
                 status_code=400,
                 detail=f"Voice '{agent_in.voice}' not found or not synced with ElevenLabs. Run: python populate_elevenlabs_data.py",
+            )
+        if voice.is_enabled == False:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Voice '{agent_in.voice}' is disabled",
             )
         agent.agent_voice = voice.id
         el_update_params["voice_id"] = voice.elevenlabs_voice_id

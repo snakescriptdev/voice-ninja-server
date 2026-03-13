@@ -52,24 +52,30 @@ security = HTTPBearer()
 router = APIRouter(prefix="/api/v2/user-dashboard", tags=["User Dashboard"], dependencies=[Depends(security)])
 
 
-
+# ──────────────────────────────────────────────────────────────────────────────
+# Active-like statuses (kept in sync with feature_access.py / subscriptions.py)
+# ──────────────────────────────────────────────────────────────────────────────
+# authenticated is included so the dashboard shows the correct plan immediately
+# after checkout, before the subscription.charged webhook fires.
+_ACTIVE_LIKE = (
+    SubscriptionStatusEnum.active,
+    SubscriptionStatusEnum.paused,
+    SubscriptionStatusEnum.authenticated,
+)
 
 
 @router.get("/agents-data", status_code=status.HTTP_200_OK,openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_agents_data(skip: int = 0, limit: int = 3, current_user: str = Depends(get_current_user)):
-    # try fetching the no of agents user has created
     try:
         count = db.session.query(AgentModel).filter(
             AgentModel.user_id == current_user.id,
             AgentModel.is_enabled.is_(True)
             ).count()
-        # now we need to fetch agents data
         agents = db.session.query(AgentModel).filter(
             AgentModel.user_id == current_user.id,
             AgentModel.is_enabled.is_(True)
             ).order_by(AgentModel.created_at.desc()).offset(skip).limit(limit).all()
         
-        #prepare page metadata
         total_pages = ceil(count / limit)
         current_page = skip // limit + 1
         return PaginatedResponse(
@@ -93,12 +99,10 @@ def get_phone_numbers(skip: int = 0, limit: int = 3, current_user: str = Depends
         count = db.session.query(PhoneNumberService).filter(
             PhoneNumberService.user_id == current_user.id
             ).count()
-        # now we need to fetch phone numbers data
         phone_numbers = db.session.query(PhoneNumberService).filter(
             PhoneNumberService.user_id == current_user.id
             ).order_by(PhoneNumberService.created_at.desc()).offset(skip).limit(limit).all()
         
-        #prepare page metadata
         total_pages = ceil(count / limit)
         current_page = skip // limit + 1
         return PaginatedResponse(
@@ -161,16 +165,14 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
     try:
         first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
 
-        # 1. Overall stats (All-time)
         total_calls = db.session.query(func.count(ConversationsModel.id)).filter(
             ConversationsModel.user_id == current_user.id
         ).scalar() or 0
         
         avg_duration = (db.session.query(func.avg(ConversationsModel.duration)).filter(
             ConversationsModel.user_id == current_user.id
-        ).scalar() or 0.0)/60 #to fetch in mins
+        ).scalar() or 0.0)/60
 
-        # Change for calls (this month vs last month)
         curr_calls = db.session.query(func.count(ConversationsModel.id)).filter(
             ConversationsModel.user_id == current_user.id,
             ConversationsModel.created_at >= first_day_of_month
@@ -182,7 +184,6 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         ).scalar() or 0
         total_calls_change = calculate_percentage_change(curr_calls, prev_calls)
 
-        # Change for avg duration (this month vs last month)
         curr_avg_dur = db.session.query(func.avg(ConversationsModel.duration)).filter(
             ConversationsModel.user_id == current_user.id,
             ConversationsModel.created_at >= first_day_of_month
@@ -194,7 +195,6 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         ).scalar() or 0.0
         avg_call_duration_change = calculate_percentage_change(curr_avg_dur, prev_avg_dur)
 
-        # 1.1 New Metrics
         coin_used_this_month = db.session.query(func.abs(func.sum(CoinsLedgerModel.coins))).filter(
             CoinsLedgerModel.user_id == current_user.id,
             CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage,
@@ -231,11 +231,9 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         ).scalar() or 0
         active_leads_count_change = calculate_percentage_change(curr_leads, prev_leads)
         
-        # 1.2 Trend Data (Last 7 Days)
         now = datetime.utcnow()
         seven_days_ago = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
 
-        # Helper to get daily counts
         def get_daily_counts(model, user_id_attr, date_attr, value_attr=None, filter_type=None):
             query = db.session.query(
                 func.date(date_attr).label('date'),
@@ -249,9 +247,7 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             
             return {str(r.date): float(r.value) for r in query.group_by(func.date(date_attr)).all()}
 
-        # Call trends
         call_daily = get_daily_counts(ConversationsModel, ConversationsModel.user_id, ConversationsModel.created_at)
-        # Coin trends
         coin_daily = get_daily_counts(
             CoinsLedgerModel, 
             CoinsLedgerModel.user_id, 
@@ -275,7 +271,6 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
                 value=coin_daily.get(day_str, 0)
             ))
 
-        # 2. Hourly distribution
         hourly_data = db.session.query(
             func.extract('hour', ConversationsModel.created_at).label('hour'),
             func.count(ConversationsModel.id).label('count')
@@ -298,7 +293,6 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             ) for h in hourly_data
         ]
         
-        # 3. Agent analytics
         agent_data = db.session.query(
             AgentModel.id.label('agent_id'),
             AgentModel.agent_name,
@@ -319,7 +313,6 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             ) for a in agent_data
         ]
         
-        # 4. Channel distribution
         channel_data = db.session.query(
             ConversationsModel.channel,
             func.count(ConversationsModel.id).label('count')
@@ -363,44 +356,48 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         )
 
 
-
-    
 @router.get("/get-user-subscription", response_model=UserSubscriptionResponse, openapi_extra={"security": [{"BearerAuth": []}]})
 def user_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
+    """
+    Returns the user's current subscription and plan details.
+
+    Priority order:
+      1. active/paused/authenticated with cancel_at_period_end=False
+         (the clean, canonical subscription — includes authenticated so the
+         dashboard reflects the new plan immediately after checkout)
+      2. active/paused/authenticated with cancel_at_period_end=True
+         (update or cancel in-flight — user still has access until period end)
+      3. Most recent row regardless of status
+         (expired/cancelled — show last known plan for display purposes)
+    """
     try:
         logger.info(f"Fetching user subscription for user: {current_user.id}")
 
-        # Priority 1: clean active/paused subscription (not pending cancel or update)
+        # Priority 1: clean active/paused/authenticated subscription
         user_subscription = (
             db.session.query(UserSubscriptionModel)
             .filter(
                 UserSubscriptionModel.user_id == current_user.id,
-                or_(
-                    UserSubscriptionModel.status == SubscriptionStatusEnum.active,
-                    UserSubscriptionModel.status == SubscriptionStatusEnum.paused,
-                ),
+                UserSubscriptionModel.status.in_(_ACTIVE_LIKE),
                 UserSubscriptionModel.cancel_at_period_end == False,
             )
             .order_by(UserSubscriptionModel.created_at.desc())
             .first()
         )
 
-        # Priority 2: active/paused but cancel or update is in-flight
+        # Priority 2: active/paused/authenticated but cancel or update in-flight
         if not user_subscription:
             user_subscription = (
                 db.session.query(UserSubscriptionModel)
                 .filter(
                     UserSubscriptionModel.user_id == current_user.id,
-                    or_(
-                        UserSubscriptionModel.status == SubscriptionStatusEnum.active,
-                        UserSubscriptionModel.status == SubscriptionStatusEnum.paused,
-                    ),
+                    UserSubscriptionModel.status.in_(_ACTIVE_LIKE),
                 )
                 .order_by(UserSubscriptionModel.created_at.desc())
                 .first()
             )
 
-        # Priority 3: last resort — show most recent regardless of status (expired/cancelled)
+        # Priority 3: last resort — most recent regardless of status
         if not user_subscription:
             user_subscription = (
                 db.session.query(UserSubscriptionModel)
@@ -458,10 +455,8 @@ def user_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)
 @router.get("/coin-usage", response_model=UserCoinUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(get_current_user)):
     try:
-        # 1. Get current balance
         balance = get_user_coin_balance(current_user.id)
         
-        # 2. Get this month's usage
         now = datetime.utcnow()
         first_day_of_month = datetime(now.year, now.month, 1)
         
@@ -526,7 +521,6 @@ def get_coin_buckets(
 
         reference_ids = [item.reference_id for item in buckets_query if item.reference_id]
 
-        # Fetch subscriptions FIRST
         subscriptions = (
             db.session.query(UserSubscriptionModel)
             .filter(UserSubscriptionModel.id.in_(reference_ids))
@@ -534,7 +528,6 @@ def get_coin_buckets(
         )
         subscription_map = {s.id: s for s in subscriptions}
 
-        # Fetch payments
         payments = (
             db.session.query(PaymentModel)
             .filter(PaymentModel.id.in_(reference_ids))
@@ -542,7 +535,6 @@ def get_coin_buckets(
         )
         payment_map = {p.id: p for p in payments}
 
-        # Extract bundle ids
         bundle_ids = []
         for p in payments:
             metadata = p.metadata_json or {}
@@ -562,36 +554,30 @@ def get_coin_buckets(
         now = datetime.utcnow()
 
         for item in buckets_query:
-
             source_name = "Coins"
 
-            # ✅ PRIORITY 1 — Subscription
             sub = subscription_map.get(item.reference_id)
             if sub and sub.plan:
                 source_name = f"{sub.plan.display_name} Subscription"
-
-            # ✅ PRIORITY 2 — Bundle purchase
             else:
                 payment = payment_map.get(item.reference_id)
-
                 if payment and payment.payment_type == PaymentTypeEnum.coin_purchase:
                     metadata = payment.metadata_json or {}
                     bundle_id = metadata.get("bundle_id")
                     bundle = bundle_map.get(bundle_id)
-
                     if bundle:
                         source_name = bundle.name
 
-            status = None
+            bucket_status = None
             if item.expiry_at and now <= item.expiry_at <= now + timedelta(days=7):
-                status = "expiring soon"
+                bucket_status = "expiring soon"
 
             buckets.append(
                 CoinBucketItem(
                     source=source_name,
                     amount=item.remaining_coins,
                     expiry_date=item.expiry_at,
-                    status=status
+                    status=bucket_status
                 )
             )
 
@@ -620,7 +606,6 @@ def get_usage_history(
     try:
         skip = (page - 1) * size
 
-        # Fetch usage (debit) transactions
         base_query = db.session.query(CoinsLedgerModel).filter(
             CoinsLedgerModel.user_id == current_user.id,
             CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage
@@ -630,14 +615,9 @@ def get_usage_history(
 
         history_query = base_query.order_by(CoinsLedgerModel.created_at.desc()).offset(skip).limit(size).all()
         
-        # We need agent names for the records. Reference ID in debit_usage is often the conversation ID.
-        # However, the ledger doesn't always have direct agent link. 
-        # But we can try to look it up if reference_type is available or just list the action.
-        
         history = []
         for item in history_query:
             agent_name = "System"
-            # Try to find agent if this was a conversation
             if item.reference_type == "conversation" and item.reference_id:
                 conv = db.session.query(ConversationsModel).filter(ConversationsModel.id == item.reference_id).first()
                 if conv and conv.agent:
@@ -690,7 +670,6 @@ def get_billing_history(
 
         payments = base_query.order_by(PaymentModel.created_at.desc()).offset(skip).limit(size).all()
         
-        # Pre-fetch plans and bundles for descriptions
         plans = {p.id: p.display_name for p in db.session.query(PlanModel).all()}
         from app_v2.databases.models import CoinPackageModel
         bundles = {b.id: b.name for b in db.session.query(CoinPackageModel).all()}
@@ -739,7 +718,6 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
         now = datetime.utcnow()
         last_24h = now - timedelta(hours=24)
         
-        # API Metrics
         total_api_calls_this_month = db.session.query(func.count(APICallLogModel.id)).filter(
             APICallLogModel.user_id == current_user.id,
             APICallLogModel.created_at >= first_day_of_month
@@ -785,7 +763,6 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
                 method = api["method"],
                 description = api["description"],
                 swagger_link = str(request.base_url)+api["swagger_link"]
-
             ) for api in api_list
         ]
             
