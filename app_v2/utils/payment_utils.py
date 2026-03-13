@@ -6,25 +6,14 @@ from app_v2.schemas.enum_types import BillingPeriodEnum
 import requests
 from app_v2.core.logger import setup_logger
 from requests.auth import HTTPBasicAuth
+from app_v2.schemas.enum_types import BillingPeriodEnum
 from typing import List, Dict, Any
 import hmac
 import hashlib
 logger = setup_logger(__name__)
+import datetime
 
-# RAZORPAY_WEBHOOK_SECRET = "74e376355beeaa08d3297918c1eac2679fb40307515e545f6e77fbba48f17a78"
-# WEBHOOK_SUBSCRIPTION_EVENTS= [
-#     "subscription.authenticated",
-#     "subscription.activated",
-#     "subscription.charged",
-#     "subscription.completed",
-#     "subscription.updated",
-#     "subscription.pending",
-#     "subscription.halted",
-#     "subscription.cancelled",
-#     "subscription.paused",
-#     "subscription.resumed"
-# ]
-# ALERT_EMAIL = "vikram@snakescript.com"
+
 
 class BasePaymentProvider(ABC):
     @abstractmethod
@@ -32,7 +21,7 @@ class BasePaymentProvider(ABC):
         pass
 
     @abstractmethod
-    def create_subscription(self, plan_id: str, total_count: int = 12, quantity: int = 1, start_at: Optional[int] = None, expire_by: Optional[int] = None, notes: Optional[Dict] = None) -> Dict[str, Any]:
+    def create_subscription(self, plan_id: str, total_count: int = 12, quantity: int = 1, start_at: Optional[int] = None, expire_by: Optional[int] = None, notes: Optional[Dict] = None, customer_id: Optional[str] = None) -> Dict[str, Any]:
         pass
 
     @abstractmethod
@@ -52,7 +41,7 @@ class BasePaymentProvider(ABC):
         pass
 
     @abstractmethod
-    def update_subscription(self, subscription_id: str, plan_id: str, offer_id: Optional[str] = None) -> Dict[str, Any]:
+    def update_subscription(self, subscription_id: str, plan_id: str, billing_period: BillingPeriodEnum, offer_id: Optional[str] = None, start_at: Optional[int] = None) -> Dict[str, Any]:
         pass
 
     @abstractmethod
@@ -65,6 +54,14 @@ class BasePaymentProvider(ABC):
 
     @abstractmethod
     def get_subscription_invoices(self, subscription_id: str) -> List[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def get_order_invoices(self, order_id: str) -> List[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    def get_subscription_details(self, subscription_id: str) -> Dict[str, Any]:
         pass
 
 class RazorpayProvider(BasePaymentProvider):
@@ -102,13 +99,15 @@ class RazorpayProvider(BasePaymentProvider):
         except Exception as e:
             raise Exception(f"Razorpay plan creation failed: {str(e)}")
 
-    def create_subscription(self, plan_id: str, total_count: int = 12, quantity: int = 1, start_at: Optional[int] = None, expire_by: Optional[int] = None, notes: Optional[Dict] = None) -> Dict[str, Any]:
+    def create_subscription(self, plan_id: str, total_count: int = 12, quantity: int = 1, start_at: Optional[int] = None, expire_by: Optional[int] = None, notes: Optional[Dict] = None, customer_id: Optional[str] = None) -> Dict[str, Any]:
         data = {
             "plan_id": plan_id,
             "total_count": total_count,
             "quantity": quantity,
             "customer_notify": 1,
         }
+        if customer_id:
+            data["customer_id"] = customer_id
         if start_at:
             data["start_at"] = start_at
         if expire_by:
@@ -181,25 +180,64 @@ class RazorpayProvider(BasePaymentProvider):
             logger.error(f"Razorpay subscription cancellation failed: {str(e)}")
             raise Exception(f"Failed to cancel subscription: {str(e)}")
 
-    def update_subscription(self, subscription_id: str, plan_id: str, offer_id: Optional[str] = None) -> Dict[str, Any]:
+    def update_subscription(
+        self,
+        subscription_id: str,
+        new_plan_id: str,
+        billing_period: BillingPeriodEnum,
+        offer_id: Optional[str] = None,
+        start_at: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Plan change flow:
+          1. Cancel the existing subscription at cycle end.
+          2. Create a new subscription on the new plan.
+
+        FIX 4: If step 1 succeeds but step 2 fails we log a CRITICAL alert
+        with the cancelled subscription_id.  Razorpay cancellations cannot be
+        rolled back via API, so ops must manually re-create the subscription.
+        """
+        logger.info(f"update_subscription | creating new sub on plan {new_plan_id}")
+
+        # create new subscription
+        payload: Dict[str, Any] = {"plan_id": new_plan_id}
+
+        # total_count: 1 for annual, 12 for monthly
+        payload["total_count"] = 1 if billing_period == BillingPeriodEnum.annual else 12
+
+        if start_at:
+            payload["start_at"] = int(start_at)
+
+        if offer_id:
+            payload["offer_id"] = offer_id
+
         try:
-            data = {"plan_id": plan_id}
-            if offer_id:
-                data["offer_id"] = offer_id
-            response = self.client.subscription.update(subscription_id, data)
-            return response
+            new_subscription = self.client.subscription.create(payload)
         except Exception as e:
-            logger.error(f"Razorpay subscription update failed: {str(e)}")
-            raise Exception(f"Failed to update subscription: {str(e)}")
+            logger.error(f"update_subscription: new subscription creation failed | error={e}")
+            raise Exception(f"Failed to create new subscription: {e}")
+
+        logger.info(f"update_subscription | new sub created: {new_subscription['id']}")
+
+        return {
+            "new_subscription": new_subscription
+        }
 
     def pause_subscription(self, subscription_id: str, pause_at: str = "now") -> Dict[str, Any]:
         try:
-            # pause_at can be 'now' or a timestamp
-            response = self.client.subscription.pause(subscription_id, {"pause_at": pause_at})
-            return response
+            return self.client.subscription.pause(subscription_id, {"pause_at": pause_at})
         except Exception as e:
-            logger.error(f"Razorpay subscription pause failed: {str(e)}")
-            raise Exception(f"Failed to pause subscription: {str(e)}")
+            logger.error(f"Razorpay subscription pause failed: {e}")
+            raise Exception(f"Failed to pause subscription: {e}")
+    
+    def pause_subscription(self, subscription_id: str, pause_at: str = "now") -> Dict[str, Any]:
+            try:
+                # pause_at can be 'now' or a timestamp
+                response = self.client.subscription.pause(subscription_id, {"pause_at": pause_at})
+                return response
+            except Exception as e:
+                logger.error(f"Razorpay subscription pause failed: {str(e)}")
+                raise Exception(f"Failed to pause subscription: {str(e)}")
 
     def resume_subscription(self, subscription_id: str, resume_at: str = "now") -> Dict[str, Any]:
         try:
@@ -219,81 +257,22 @@ class RazorpayProvider(BasePaymentProvider):
             logger.error(f"Razorpay invoice fetch failed: {str(e)}")
             raise Exception(f"Failed to fetch invoices: {str(e)}")
 
-    def create_subscription_webhook(
-        self,
-        account_id: str,
-        url: str,
-        secret: str,
-        alert_email: str,
-        events: List[str],
-    ) -> Dict[str, Any]:
+    def get_order_invoices(self, order_id: str) -> List[Dict[str, Any]]:
+        try:
+            # Fetch invoices filtered by order_id
+            response = self.client.invoice.all({"order_id": order_id})
+            return response.get("items", [])
+        except Exception as e:
+            logger.error(f"Razorpay order invoice fetch failed: {str(e)}")
+            raise Exception(f"Failed to fetch order invoices: {str(e)}")
 
-            endpoint = f"{self.base_url}/v2/accounts/{account_id}/webhooks"
-
-            payload = {
-                "url": url,
-                "alert_email": alert_email,
-                "secret": secret,
-                "events": events,
-            }
-
-            logger.info(
-                "Creating Razorpay webhook | account_id=%s | url=%s | events=%s",
-                account_id,
-                url,
-                events,
-            )
-
-            try:
-                response = requests.post(
-                    endpoint,
-                    auth=HTTPBasicAuth(
-                        VoiceSettings.RAZOR_KEY_ID,
-                        VoiceSettings.RAZOR_KEY_SECRET,
-                    ),
-                    json=payload,
-                    timeout=15,
-                )
-
-                logger.debug(
-                    "Razorpay webhook response | status_code=%s | body=%s",
-                    response.status_code,
-                    response.text,
-                )
-
-                if response.status_code not in [200, 201]:
-                    logger.error(
-                        "Webhook creation failed | status=%s | response=%s",
-                        response.status_code,
-                        response.text,
-                    )
-                    raise Exception(
-                        f"Webhook creation failed: {response.status_code} - {response.text}"
-                    )
-
-                webhook_data = response.json()
-
-                logger.info(
-                    "Webhook created successfully | webhook_id=%s",
-                    webhook_data.get("id"),
-                )
-
-                return {
-                    "webhook_id": webhook_data.get("id"),
-                    "provider_metadata": webhook_data,
-                }
-
-            except requests.exceptions.Timeout:
-                logger.exception("Razorpay webhook creation timeout")
-                raise Exception("Razorpay webhook request timed out")
-
-            except requests.exceptions.RequestException as e:
-                logger.exception("Razorpay webhook request error")
-                raise Exception(f"Razorpay webhook request failed: {str(e)}")
-
-            except Exception as e:
-                logger.exception("Unexpected error during webhook creation")
-                raise
+    def get_subscription_details(self, subscription_id: str) -> Dict[str, Any]:
+        try:
+            subscription = self.client.subscription.fetch(subscription_id)
+            return subscription
+        except Exception as e:
+            logger.error(f"Razorpay subscription fetch failed: {str(e)}")
+            raise Exception(f"Failed to fetch subscription details: {str(e)}")
 
 
 class PaymentProviderFactory:
