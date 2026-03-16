@@ -25,21 +25,21 @@ Make sure virtual environment is activated
 
 Execute the script using Python:
 
-python admin_utility.py <command> [options]
+python manage_admin.py <command> [options]
 🛠 Available Commands
 1️⃣ Create or Promote Admin
 
 Creates a new admin user or promotes an existing user to admin.
 
 Command
-python admin_utility.py create --email <email> --name <name> --phone <phone>
+python manage_admin.py create --email <email> --name <name> --phone <phone>
 Parameters
 Argument	Required	Description
 --email	Yes	Email of the admin
 --name	No	Name of the admin
 --phone	No	Phone number
 Example
-python admin_utility.py create --email admin@example.com --name "John Doe" --phone 9876543210
+python manage_admin.py create --email admin@example.com --name "John Doe" --phone 9876543210
 Behavior
 
 If the user already exists:
@@ -69,13 +69,13 @@ has_otp_auth = True
 Updates the admin status of an existing user.
 
 Command
-python admin_utility.py update --email <email> --admin <true/false>
+python manage_admin.py update --email <email> --admin <true/false>
 Parameters
 Argument	Required	Description
 --email	Yes	User email
 --admin	Yes	true or false
 Example
-python admin_utility.py update --email user@example.com --admin false
+python manage_admin.py update --email user@example.com --admin false
 Behavior
 
 Updates is_admin field
@@ -89,7 +89,7 @@ If user not found → prints error message
 Lists all users where is_admin = True.
 
 Command
-python admin_utility.py list
+python manage_admin.py list
 Example Output
 Existing Administrators:
 --------------------------------------------------
