@@ -36,7 +36,7 @@ def validate_unique_features(features):
 @router.get("/coin-bundles", response_model=List[CoinBundleResponse])
 def list_coin_bundles():
     try:
-        bundles = db.session.query(CoinPackageModel).order_by(CoinPackageModel.created_at.desc()).all()
+        bundles = db.session.query(CoinPackageModel).filter(CoinPackageModel.is_deleted==False).order_by(CoinPackageModel.created_at.desc()).all()
         return bundles
     except Exception as e:
         logger.error(f"Error listing coin bundles: {str(e)}")
@@ -76,8 +76,10 @@ def delete_bundle(bundle_id:int):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Coin bundle not found"
             )
-        db.session.delete(bundle)
+        bundle.is_deleted=True
+        db.session.add(bundle)
         db.session.commit()
+        db.session.refresh(bundle)
         return
     except HTTPException:
         raise
