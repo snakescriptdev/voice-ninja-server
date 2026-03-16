@@ -853,6 +853,7 @@ class CoinPackageModel(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     validity_days: Mapped[int] = mapped_column(Integer,nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False,server_default="false")
 
 class AddOnCoinOrderModel(Base):
     __tablename__ = "addon_coin_orders"
