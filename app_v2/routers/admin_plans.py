@@ -92,9 +92,13 @@ def delete_bundle(bundle_id:int):
 @router.post("", response_model=PlanResponse, status_code=status.HTTP_201_CREATED,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def create_plan(plan_data: PlanCreate):
     try:
-        #if display name exists raise error
-        if db.session.query(PlanModel).filter(PlanModel.display_name == plan_data.display_name).first():
-            raise HTTPException(status_code=400, detail="Display name already exists")
+        #check display name is unique
+        if db.session.query(PlanModel).filter(PlanModel.display_name == plan_data.display_name,
+        PlanModel.is_deleted==False).first():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Plan with this display name already exists"
+            )
         validate_unique_features(plan_data.features)
         # 1. Create plan in database
         new_plan = PlanModel(
@@ -165,8 +169,9 @@ def list_plans():
                 PlanModel.is_deleted== False
             )
             .options(
-                joinedload(PlanModel.features),
-                joinedload(PlanModel.providers)
+                joinedload(PlanModel.features)
+            ).order_by(
+                PlanModel.created_at.desc()
             )
             .all()
         )
