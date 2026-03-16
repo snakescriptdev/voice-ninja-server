@@ -372,13 +372,13 @@ def check_can_enable_resource(user_id: int, feature_key: str):
         # Use loose lookup so access is preserved during plan-change checkout
         # window and during the authenticated→charged webhook window.
         subscription = _get_any_active_subscription(user_id=user_id)
-        logger.info(f"Subscription: {subscription.id, subscription.plan_id}")
 
         if not subscription:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Active subscription required.",
             )
+        logger.info(f"Subscription: {subscription.id, subscription.plan_id}")
 
         feature = (
             db.session.query(PlanFeatureModel)
