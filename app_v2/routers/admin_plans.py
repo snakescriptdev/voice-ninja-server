@@ -177,7 +177,7 @@ def list_plans():
             )
             .all()
         )
-        return plans
+        return [PlanResponse.model_validate(p) for p in plans]
     except Exception as e:
         logger.error(f"Error listing plans: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -218,18 +218,22 @@ def list_plans_status_wise():
 
 @router.get("/{plan_id}", response_model=PlanResponse,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_plan(plan_id: int):
-    plan = (
-        db.session.query(PlanModel)
-        .options(
-            joinedload(PlanModel.features),
-            joinedload(PlanModel.providers)
+    try:
+        plan = (
+            db.session.query(PlanModel)
+            .options(
+                joinedload(PlanModel.features),
+                joinedload(PlanModel.providers)
+            )
+            .filter(PlanModel.id == plan_id,PlanModel.is_deleted==False)
+            .first()
         )
-        .filter(PlanModel.id == plan_id,PlanModel.is_deleted==False)
-        .first()
-    )
-    if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    return plan
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        return PlanResponse.model_validate(plan)
+    except Exception as e:
+        logger.error(f"Error getting plan: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/{plan_id}", response_model=PlanResponse,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def update_plan(plan_id: int, plan_update: PlanUpdate):
