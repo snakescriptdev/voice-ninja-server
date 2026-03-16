@@ -36,7 +36,7 @@ def validate_unique_features(features):
 @router.get("/coin-bundles", response_model=List[CoinBundleResponse])
 def list_coin_bundles():
     try:
-        bundles = db.session.query(CoinPackageModel).order_by(CoinPackageModel.created_at.desc()).all()
+        bundles = db.session.query(CoinPackageModel).filter(CoinPackageModel.is_deleted==False).order_by(CoinPackageModel.created_at.desc()).all()
         return bundles
     except Exception as e:
         logger.error(f"Error listing coin bundles: {str(e)}")
@@ -76,8 +76,10 @@ def delete_bundle(bundle_id:int):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Coin bundle not found"
             )
-        db.session.delete(bundle)
+        bundle.is_deleted=True
+        db.session.add(bundle)
         db.session.commit()
+        db.session.refresh(bundle)
         return
     except HTTPException:
         raise
@@ -175,7 +177,7 @@ def list_plans():
             )
             .all()
         )
-        return plans
+        return [PlanResponse.model_validate(p) for p in plans]
     except Exception as e:
         logger.error(f"Error listing plans: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -216,18 +218,22 @@ def list_plans_status_wise():
 
 @router.get("/{plan_id}", response_model=PlanResponse,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_plan(plan_id: int):
-    plan = (
-        db.session.query(PlanModel)
-        .options(
-            joinedload(PlanModel.features),
-            joinedload(PlanModel.providers)
+    try:
+        plan = (
+            db.session.query(PlanModel)
+            .options(
+                joinedload(PlanModel.features),
+                joinedload(PlanModel.providers)
+            )
+            .filter(PlanModel.id == plan_id,PlanModel.is_deleted==False)
+            .first()
         )
-        .filter(PlanModel.id == plan_id,PlanModel.is_deleted==False)
-        .first()
-    )
-    if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    return plan
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+        return PlanResponse.model_validate(plan)
+    except Exception as e:
+        logger.error(f"Error getting plan: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.put("/{plan_id}", response_model=PlanResponse,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def update_plan(plan_id: int, plan_update: PlanUpdate):
