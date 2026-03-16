@@ -8,6 +8,8 @@ from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.utils.api_key_utils import generate_client_id, generate_client_secret, hash_secret
 from sqlalchemy.exc import SQLAlchemyError
 from app_v2.core.logger import setup_logger
+from app_v2.utils.feature_access import RequireFeature
+from app_v2.schemas.enum_types import PlanFeatureEnum
 
 logger = setup_logger(__name__)
 
@@ -21,7 +23,8 @@ router = APIRouter(
 @router.post(
     "/",
     response_model=APIKeyFullResponse,
-    status_code=status.HTTP_201_CREATED,openapi_extra={"security":[{"BearerAuth":[]}]}
+    status_code=status.HTTP_201_CREATED,openapi_extra={"security":[{"BearerAuth":[]}]},
+    dependencies=[Depends(RequireFeature(PlanFeatureEnum.api_access))]
 )
 async def create_api_key(
     key_in: APIKeyCreate,
