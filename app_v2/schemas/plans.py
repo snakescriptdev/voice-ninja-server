@@ -23,9 +23,11 @@ class PlanFeatureCreate(PlanFeatureBase):
     pass
 
 
-class PlanFeatureResponse(PlanFeatureBase):
+class PlanFeatureResponse(BaseModel):
     id: int
     plan_id: int
+    feature_key:str
+    limit: Optional[int] = None
 
     class Config:
         from_attributes = True
