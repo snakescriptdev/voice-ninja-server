@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime
 from app_v2.schemas.pagination import PaginatedResponse
@@ -32,8 +32,8 @@ class UserCountOverviewResponse(BaseModel):
 
 class CoinBundleCreate(BaseModel):
     name: str
-    coins: int
-    price: float
+    coins: int = Field(...,gt=0)
+    price: float = Field(...,gt=0)
     currency: Optional[str] = "INR"
     validity_days: Optional[int] = None
 

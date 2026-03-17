@@ -13,12 +13,15 @@ from app_v2.schemas.function_schema import (
     FunctionCreateSchema,
     FunctionUpdateSchema,
     FunctionRead,
-    ApiSchema
+    ApiSchema,
+    PrimitiveField
 )
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs import ElevenLabsAgent
 from app_v2.utils.crypto_utils import encrypt_data
+from sqlalchemy.orm import joinedload
+from app_v2.schemas.function_schema import HttpMethod
 
 logger = setup_logger(__name__)
 
@@ -30,6 +33,55 @@ router = APIRouter(
 security = HTTPBearer()
 
 # -------------------- CREATE --------------------
+
+from app_v2.databases.models import FunctionModel
+from app_v2.utils.crypto_utils import decrypt_data
+
+
+def function_to_read(f: FunctionModel) -> FunctionRead:
+
+    db_config = f.api_endpoint_url
+
+    decrypted_headers = {}
+
+    if db_config and db_config.headers:
+        sensitive_keys = {"authorization", "x-api-key", "api-key", "token"}
+
+        for k, v in db_config.headers.items():
+            if k.lower() in sensitive_keys:
+                try:
+                    decrypted_headers[k] = decrypt_data(v)
+                except Exception:
+                    decrypted_headers[k] = v
+            else:
+                decrypted_headers[k] = v
+
+    api_schema = None
+
+    if db_config:
+        api_schema = ApiSchema(
+            url=db_config.endpoint_url,
+            method=db_config.http_method,
+            request_headers=decrypted_headers,
+            path_params_schema=(
+                {k: PrimitiveField(**v) for k, v in db_config.path_params.items()}
+                if db_config.path_params else None
+            ),
+            query_params_schema=db_config.query_params,
+            request_body_schema=db_config.body_schema,
+            response_variables=db_config.response_variables,
+            content_type="application/json" if db_config.body_schema else None,
+        )
+
+    return FunctionRead(
+        id=f.id,
+        name=f.name,
+        description=f.description,
+        elevenlabs_tool_id=f.elevenlabs_tool_id,
+        created_at=f.created_at,
+        modified_at=f.modified_at,
+        api_config=api_schema
+    )
 
 @router.post(
     "/",
@@ -123,7 +175,7 @@ async def create_function(
         db.session.commit()
         db.session.refresh(new_function)
         
-        return FunctionRead.model_validate(new_function)
+        return function_to_read(new_function)
         
     except Exception as db_error:
         db.session.rollback()
@@ -160,14 +212,14 @@ async def get_all_functions(
     
     query = db.session.query(FunctionModel).filter(
         FunctionModel.user_id == current_user.id
-    ).order_by(FunctionModel.modified_at.desc())
+    ).options(joinedload(FunctionModel.api_endpoint_url)).order_by(FunctionModel.modified_at.desc())
     
     total = query.count()
     pages = math.ceil(total / size)
     
     functions = query.offset(skip).limit(size).all()
     
-    items = [FunctionRead.model_validate(f) for f in functions]
+    items = [function_to_read(f) for f in functions]
     
     return PaginatedResponse(
         total=total,
@@ -192,7 +244,7 @@ async def get_function(
     function = db.session.query(FunctionModel).filter(
         FunctionModel.id == function_id,
         FunctionModel.user_id == current_user.id
-    ).first()
+    ).options(joinedload(FunctionModel.api_endpoint_url)).first()
     
     if not function:
         raise HTTPException(
@@ -200,7 +252,7 @@ async def get_function(
             detail="Function not found"
         )
         
-    return FunctionRead.model_validate(function)
+    return function_to_read(function)
 
 # -------------------- UPDATE --------------------
 
@@ -226,101 +278,121 @@ async def update_function(
             detail="Function not found"
         )
 
-    # 1. Prepare ElevenLabs Update if needed
-    el_update = False
+    # 0. Name Uniqueness Check (if changed)
+    if function_in.name != function.name:
+        existing = db.session.query(FunctionModel).filter(
+            FunctionModel.name == function_in.name,
+            FunctionModel.user_id == current_user.id,
+            FunctionModel.id != function_id
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Function with name '{function_in.name}' already exists"
+            )
+
+    # 1. Prepare ElevenLabs Update
     el_params = {}
-    
-    if function_in.name is not None:
-        function.name = function_in.name
-        el_params["name"] = function_in.name
-        el_update = True
-        
-    if function_in.description is not None:
-        function.description = function_in.description
-        el_params["description"] = function_in.description
-        el_update = True
-        
-    # Allow top-level response_variables update
+    sensitive_keys = {"authorization", "x-api-key", "api-key", "token"}
+
+    # name & description are required — assign directly
+    function.name = function_in.name
+    el_params["name"] = function_in.name
+
+    function.description = function_in.description
+    el_params["description"] = function_in.description
+
+    # Allow top-level response_variables update (still optional)
     if function_in.response_variables is not None:
         if not function.api_endpoint_url:
             function.api_endpoint_url = FunctionApiConfig(function_id=function_id)
             db.session.add(function.api_endpoint_url)
         function.api_endpoint_url.response_variables = function_in.response_variables
-        
-    if function_in.api_config is not None:
-        api_config = function.api_endpoint_url
-        if not api_config:
-            api_config = FunctionApiConfig(function_id=function_id)
-            db.session.add(api_config)
-            
-        # Update fields only if provided
-        if function_in.api_config.url:
-            api_config.endpoint_url = function_in.api_config.url
-        if function_in.api_config.method:
-            api_config.http_method = function_in.api_config.method
-            
-        if function_in.api_config.request_headers is not None:
-            headers = function_in.api_config.request_headers
-            sensitive_keys = {"authorization", "x-api-key", "api-key", "token"}
-            encrypted_headers = {}
-            for k, v in headers.items():
-                if k.lower() in sensitive_keys:
-                    encrypted_headers[k] = encrypt_data(v)
-                else:
-                    encrypted_headers[k] = v
-            api_config.headers = encrypted_headers
 
-        if function_in.api_config.path_params_schema is not None:
-            api_config.path_params = {k: v.model_dump(exclude_none=True) for k, v in function_in.api_config.path_params_schema.items()}
-        if function_in.api_config.query_params_schema is not None:
-            api_config.query_params = function_in.api_config.query_params_schema.model_dump(exclude_none=True)
-        if function_in.api_config.request_body_schema is not None:
-            api_config.body_schema = function_in.api_config.request_body_schema.model_dump()
-        if function_in.api_config.response_variables is not None:
-            api_config.response_variables = function_in.api_config.response_variables
+    # api_config is required — no None check needed
+    api_config = function.api_endpoint_url
+    if not api_config:
+        api_config = FunctionApiConfig(function_id=function_id)
+        db.session.add(api_config)
+        function.api_endpoint_url = api_config
 
-        # Decrypt auth-related headers for ElevenLabs sync
-        headers_to_sync = api_config.headers or {}
-        decrypted_headers = {}
-        for k, v in headers_to_sync.items():
+    # url is required inside api_config — assign directly
+    api_config.endpoint_url = function_in.api_config.url
+
+    # All other api_config fields remain optional
+    if function_in.api_config.method:
+        api_config.http_method = function_in.api_config.method
+        # Clear body_schema if method is changed to GET or DELETE as they don't support it
+        if function_in.api_config.method in {HttpMethod.GET, HttpMethod.DELETE}:
+            api_config.body_schema = None
+
+    if function_in.api_config.request_headers is not None:
+        headers = function_in.api_config.request_headers
+        encrypted_headers = {}
+        for k, v in headers.items():
             if k.lower() in sensitive_keys:
-                try:
-                    decrypted_headers[k] = decrypt_data(v)
-                except Exception:
-                    decrypted_headers[k] = v
+                encrypted_headers[k] = encrypt_data(v)
             else:
-                decrypted_headers[k] = v
+                encrypted_headers[k] = v
+        api_config.headers = encrypted_headers
 
-        # Merged data for ElevenLabs
-        api_config_data = {
-            "url": api_config.endpoint_url,
-            "method": api_config.http_method,
-            "request_headers": decrypted_headers,
-            "path_params_schema": api_config.path_params,
-            "query_params_schema": api_config.query_params,
-            "request_body_schema": api_config.body_schema,
-            "response_variables": api_config.response_variables,
-            "content_type": "application/json" if api_config.body_schema else None,
+    if function_in.api_config.path_params_schema is not None:
+        api_config.path_params = {
+            k: v.model_dump(exclude_none=True)
+            for k, v in function_in.api_config.path_params_schema.items()
         }
-        
-        # Validate merged config via ApiSchema before sending to EL
+    if function_in.api_config.query_params_schema is not None:
+        api_config.query_params = function_in.api_config.query_params_schema.model_dump(exclude_none=True)
+    if function_in.api_config.request_body_schema is not None:
+        api_config.body_schema = function_in.api_config.request_body_schema.model_dump()
+    if function_in.api_config.response_variables is not None:
+        api_config.response_variables = function_in.api_config.response_variables
+
+    # Decrypt auth-related headers for ElevenLabs sync
+    headers_to_sync = api_config.headers or {}
+    decrypted_headers = {}
+    for k, v in headers_to_sync.items():
+        if k.lower() in sensitive_keys:
+            try:
+                decrypted_headers[k] = decrypt_data(v)
+            except Exception:
+                decrypted_headers[k] = v
+        else:
+            decrypted_headers[k] = v
+
+    # Build merged config for ElevenLabs
+    api_config_data = {
+        "url": api_config.endpoint_url,
+        "method": api_config.http_method,
+        "request_headers": decrypted_headers,
+        "path_params_schema": api_config.path_params,
+        "query_params_schema": api_config.query_params,
+        "request_body_schema": api_config.body_schema,
+        "response_variables": api_config.response_variables,
+        "content_type": "application/json" if api_config.body_schema else None,
+    }
+
+    try:
         el_params["api_schema"] = ApiSchema(**api_config_data)
-        el_update = True
+    except Exception as ve:
+        logger.error(f"Validation error building ApiSchema for ElevenLabs: {ve}")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Invalid configuration after merge: {str(ve)}"
+        )
 
     # 2. Sync with ElevenLabs
-    if el_update and function.elevenlabs_tool_id:
+    if function.elevenlabs_tool_id:
         el_client = ElevenLabsAgent()
         try:
-            logger.info(f"Updating ElevenLabs tool concurrently: {function.elevenlabs_tool_id}")
+            logger.info(f"Updating ElevenLabs tool: {function.elevenlabs_tool_id}")
             el_response = el_client.update_tool(
                 tool_id=function.elevenlabs_tool_id,
                 **el_params
             )
-            
+
             if not el_response.status:
                 logger.error(f"❌ ElevenLabs tool update failed: {el_response.error_message}")
-                # Optional: Decide if we should rollback DB or just warn
-                # For consistency, let's rollback if name or description failed in EL
                 db.session.rollback()
                 raise HTTPException(
                     status_code=status.HTTP_424_FAILED_DEPENDENCY,
@@ -341,7 +413,7 @@ async def update_function(
         db.session.commit()
         db.session.refresh(function)
         return FunctionRead.model_validate(function)
-        
+
     except Exception as e:
         db.session.rollback()
         logger.exception("Error updating function")
