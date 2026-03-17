@@ -136,6 +136,16 @@ class ApiSchema(BaseModel):
                 )
 
         # ---------------------------
+        # KEY OVERLAP VALIDATION
+        # ---------------------------
+        if self.path_params_schema and self.query_params_schema:
+            path_keys = set(self.path_params_schema.keys())
+            query_keys = set(self.query_params_schema.properties.keys())
+            overlap = path_keys.intersection(query_keys)
+            if overlap:
+                raise ValueError(f"Path and query parameter keys cannot be same: {overlap}")
+
+        # ---------------------------
         # BODY + CONTENT TYPE VALIDATION
         # ---------------------------
         if self.method in {HttpMethod.POST, HttpMethod.PUT, HttpMethod.PATCH}:
