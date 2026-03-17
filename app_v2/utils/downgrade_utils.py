@@ -147,6 +147,7 @@ def compute_downgrade_preview(
           "new_limit": 2,
           "current_usage": 4,
           "will_disable_count": 2,
+          "affected_resource_names": ["Agent A", "Agent B"],
           "message": "2 of your 4 agents will be auto-disabled (fewest calls first)"
         },
         ...
@@ -165,6 +166,10 @@ def compute_downgrade_preview(
         current_usage = _get_current_count(user_id, feature_key, session)
         will_disable = max(0, current_usage - new_limit)
 
+        resource_names = []
+        if will_disable > 0:
+            resource_names = _get_affected_resource_names(user_id, feature_key, new_limit, session)
+
         message = _build_preview_message(feature_key, current_usage, new_limit, will_disable)
 
         affected[feature_key] = {
@@ -172,6 +177,7 @@ def compute_downgrade_preview(
             "new_limit": new_limit,
             "current_usage": current_usage,
             "will_disable_count": will_disable,
+            "affected_resource_names": resource_names,
             "message": message,
         }
 
@@ -179,6 +185,101 @@ def compute_downgrade_preview(
         "is_downgrade": True,
         "affected_features": affected,
     }
+
+
+def _get_affected_resource_names(user_id: int, feature_key: str, new_limit: int, session: Session) -> List[str]:
+    """
+    Identifies which specific resources will be disabled/affected based on enforcement logic.
+    Returns names (or identifiers) of those resources.
+    """
+    if feature_key == "ai_voice_agents":
+        conv_count_sub = (
+            session.query(
+                ConversationsModel.agent_id,
+                func.count(ConversationsModel.id).label("conv_count"),
+            )
+            .group_by(ConversationsModel.agent_id)
+            .subquery()
+        )
+        enabled_agents = (
+            session.query(AgentModel)
+            .outerjoin(conv_count_sub, AgentModel.id == conv_count_sub.c.agent_id)
+            .filter(AgentModel.user_id == user_id, AgentModel.is_enabled == True)
+            .order_by(
+                func.coalesce(conv_count_sub.c.conv_count, 0).asc(),
+                AgentModel.created_at.asc(),
+            )
+            .all()
+        )
+        total = len(enabled_agents)
+        if total > new_limit:
+            to_disable = enabled_agents[: total - new_limit]
+            return [a.name for a in to_disable]
+
+    elif feature_key == "web_voice_agent":
+        lead_count_sub = (
+            session.query(
+                WebAgentLeadModel.web_agent_id,
+                func.count(WebAgentLeadModel.id).label("lead_count"),
+            )
+            .group_by(WebAgentLeadModel.web_agent_id)
+            .subquery()
+        )
+        enabled_web_agents = (
+            session.query(WebAgentModel)
+            .outerjoin(lead_count_sub, WebAgentModel.id == lead_count_sub.c.web_agent_id)
+            .filter(WebAgentModel.user_id == user_id, WebAgentModel.is_enabled == True)
+            .order_by(
+                func.coalesce(lead_count_sub.c.lead_count, 0).asc(),
+                WebAgentModel.created_at.asc(),
+            )
+            .all()
+        )
+        total = len(enabled_web_agents)
+        if total > new_limit:
+            to_disable = enabled_web_agents[: total - new_limit]
+            return [wa.name for wa in to_disable]
+
+    elif feature_key == "phone_numbers":
+        all_phones = (
+            session.query(PhoneNumberService)
+            .filter(PhoneNumberService.user_id == user_id)
+            .order_by(
+                (PhoneNumberService.status == PhoneNumberAssignStatus.assigned).asc(),
+                PhoneNumberService.created_at.asc(),
+            )
+            .all()
+        )
+        total = len(all_phones)
+        if total > new_limit:
+            to_unassign = all_phones[: total - new_limit]
+            return [p.phone_number for p in to_unassign]
+
+    elif feature_key == "custom_voice_cloning":
+        agent_count_sub = (
+            session.query(
+                AgentModel.agent_voice,
+                func.count(AgentModel.id).label("agent_count"),
+            )
+            .group_by(AgentModel.agent_voice)
+            .subquery()
+        )
+        custom_voices = (
+            session.query(VoiceModel)
+            .outerjoin(agent_count_sub, VoiceModel.id == agent_count_sub.c.agent_voice)
+            .filter(VoiceModel.user_id == user_id, VoiceModel.is_custom_voice == True)
+            .order_by(
+                func.coalesce(agent_count_sub.c.agent_count, 0).asc(),
+                VoiceModel.created_at.asc(),
+            )
+            .all()
+        )
+        total = len(custom_voices)
+        if total > new_limit:
+            to_detach = custom_voices[: total - new_limit]
+            return [v.name or f"Voice {v.id}" for v in to_detach]
+
+    return []
 
 
 def _get_current_count(user_id: int, feature_key: str, session: Session) -> int:
