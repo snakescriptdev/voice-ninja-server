@@ -329,16 +329,9 @@ class ElevenLabsAgent(BaseElevenLabs):
     def get_agent_tools(self, agent_id: str) -> ElevenLabsResponse:
         """
         Get all tools attached to an agent.
-        
-        Args:
-            agent_id: ElevenLabs agent ID
-            
-        Returns:
-            ElevenLabsResponse with list of tools
         """
         logger.info(f"Fetching tools for agent: {agent_id}")
         
-        # Get agent and extract tools from conversation config
         agent_response = self.get_agent(agent_id)
         if not agent_response.status:
             return agent_response
@@ -349,37 +342,76 @@ class ElevenLabsAgent(BaseElevenLabs):
         logger.info(f"✅ Agent {agent_id} has {len(tool_ids)} tools")
         return ElevenLabsResponse(status=True, data={"tool_ids": tool_ids})
 
-    def create_tool(
-    self,
-    name: str,
-    description: str,
-    api_schema: ApiSchema,
-) -> ElevenLabsResponse:
+    def get_tool(self, tool_id: str) -> ElevenLabsResponse:
         """
-        Create a webhook tool in ElevenLabs ConvAI.
-
-        Args:
-            name: Tool name
-            description: Tool description
-            api_schema: 
-
-        Returns:
-            ElevenLabsResponse containing created tool data
+        Get tool details by tool_id.
         """
+        logger.info(f"Fetching ElevenLabs tool: {tool_id}")
+        response = self._get(f"/convai/tools/{tool_id}")
+        if response.status:
+            logger.info(f"✅ Tool fetched: {tool_id}")
+        else:
+            logger.error(f"Failed to fetch tool: {response.error_message}")
+        return response
 
-        logger.info(f"Creating ElevenLabs tool: {name}")
+    def _build_tool_payload(
+        self,
+        name: str,
+        description: str,
+        api_schema: ApiSchema,
+    ) -> dict:
+        """
+        Build a robust flat payload for ElevenLabs webhook tools.
+        The 'webhook' in error locs refers to the model type, not a nested key.
+        Handles removal of empty property dicts to satisfy EL validator.
+        """
+        
+        # Serialize api_schema
+        serialized_api = {
+            "url": api_schema.url,
+            "method": api_schema.method.value if hasattr(api_schema.method, 'value') else api_schema.method,
+            "request_headers": api_schema.request_headers or {},
+            "content_type": api_schema.content_type.value if hasattr(api_schema.content_type, 'value') else (api_schema.content_type or "application/json"),
+        }
+        
+        # Omit empty schemas because EL validator rejects empty properties
+        # Path params schema
+        if api_schema.path_params_schema:
+            serialized_api["path_params_schema"] = api_schema.path_params_schema
+            
+        # Query params schema - check properties
+        if api_schema.query_params_schema:
+            qp_dump = api_schema.query_params_schema.model_dump(exclude_none=True)
+            if qp_dump.get("properties"):
+                serialized_api["query_params_schema"] = qp_dump
+        
+        # Request body schema - check properties
+        if api_schema.request_body_schema:
+            rb_dump = api_schema.request_body_schema.model_dump(exclude_none=True)
+            if rb_dump.get("properties"):
+                 serialized_api["request_body_schema"] = rb_dump
 
-        payload = {
+        return {
             "tool_config": {
                 "type": "webhook",
                 "name": name,
                 "description": description,
-                "api_schema": api_schema.model_dump(
-                    exclude_none=True
-                ),
+                "api_schema": serialized_api
             }
         }
 
+    def create_tool(
+        self,
+        name: str,
+        description: str,
+        api_schema: ApiSchema,
+    ) -> ElevenLabsResponse:
+        """
+        Create a webhook tool in ElevenLabs ConvAI.
+        """
+        logger.info(f"Creating ElevenLabs tool: {name}")
+
+        payload = self._build_tool_payload(name, description, api_schema)
         response = self._post("/convai/tools", data=payload)
 
         if response.status:
@@ -416,41 +448,17 @@ class ElevenLabsAgent(BaseElevenLabs):
     def update_tool(
         self,
         tool_id: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        api_schema: Optional[ApiSchema] = None,
+        name: str,
+        description: str,
+        api_schema: ApiSchema,
     ) -> ElevenLabsResponse:
         """
-        Update a tool in ElevenLabs ConvAI.
-
-        Args:
-            tool_id: ElevenLabs tool ID
-            name: New tool name
-            description: New tool description
-            api_schema: New API schema
-
-        Returns:
-            ElevenLabsResponse
+        Update a tool in ElevenLabs ConvAI using PATCH.
+        Expects mandatory fields to reconstruct a clean nested payload.
         """
         logger.info(f"Updating ElevenLabs tool: {tool_id}")
 
-        tool_config = {
-            "type": "webhook"
-        }
-        if name:
-            tool_config["name"] = name
-        if description:
-            tool_config["description"] = description
-        if api_schema:
-            tool_config["api_schema"] = api_schema.model_dump(exclude_none=True)
-
-        if not tool_config:
-            return ElevenLabsResponse(status=False, error_message="No update data provided")
-
-        payload = {"tool_config": tool_config}
-        
-        # Note: ElevenLabs might use PATCH or PUT for tool update. 
-        # Checking local knowledge/docs, it's often PATCH for partial updates.
+        payload = self._build_tool_payload(name, description, api_schema)
         response = self._patch(f"/convai/tools/{tool_id}", data=payload)
 
         if response.status:
