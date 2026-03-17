@@ -377,7 +377,10 @@ class ElevenLabsAgent(BaseElevenLabs):
         # Omit empty schemas because EL validator rejects empty properties
         # Path params schema
         if api_schema.path_params_schema:
-            serialized_api["path_params_schema"] = api_schema.path_params_schema
+            serialized_api["path_params_schema"] = {
+                k: v.model_dump() if hasattr(v, "model_dump") else v 
+                for k, v in api_schema.path_params_schema.items()
+            }
             
         # Query params schema - check properties
         if api_schema.query_params_schema:
