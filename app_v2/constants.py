@@ -55,7 +55,7 @@ MSG_PROFILE_RETRIEVED = 'Profile retrieved successfully'
 MSG_INVALID_DATA = 'Invalid data provided'
 
 # OTP Configuration
-OTP_EXPIRY_MINUTES = 10
+OTP_EXPIRY_MINUTES = 5
 OTP_LENGTH = 6
 
 # Delivery Methods
