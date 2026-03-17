@@ -56,7 +56,7 @@ from app_v2.utils.public_auth import get_public_api_user
 from app_v2.utils.crypto_utils import encrypt_data, decrypt_data
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.rate_limit import track_and_limit_api, log_public_api_call
-from app_v2.utils.feature_access import RequireFeature
+from app_v2.utils.feature_access import RequireFeaturePublic
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.utils.elevenlabs import ElevenLabsKB
 from app_v2.utils.scraping_utils import scrape_webpage_title
