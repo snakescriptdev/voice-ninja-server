@@ -6,7 +6,7 @@ Production-grade Razorpay webhook handler.
 Status transition map:
   subscription.activated  → authenticated   (mandate confirmed, not yet charged)
   subscription.charged    → active          (money captured — SOLE place for this)
-  subscription.completed  → expired
+  subscription.completed  → completed
   subscription.pending    → pending         (renewal charge failed, will retry)
   subscription.halted     → halted          (all retries exhausted)
   subscription.cancelled  → cancelled
@@ -534,7 +534,7 @@ def _sub_completed(
     """All billing cycles exhausted – subscription naturally ends."""
     if sub is None:
         return
-    sub.status = SubscriptionStatusEnum.expired
+    sub.status = SubscriptionStatusEnum.completed
     sub.cancel_at_period_end = True
     logger.info(f"subscription.completed | sub={sub.id}")
 
