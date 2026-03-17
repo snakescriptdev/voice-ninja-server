@@ -51,11 +51,12 @@ from app_v2.schemas.knowledge_base_schema import (
     KnowledgeBaseBind
 )
 from app_v2.schemas.pagination import PaginatedResponse
-from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum
+from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum
 from app_v2.utils.public_auth import get_public_api_user
 from app_v2.utils.crypto_utils import encrypt_data, decrypt_data
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.rate_limit import track_and_limit_api, log_public_api_call
+from app_v2.utils.feature_access import RequireFeature
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.utils.elevenlabs import ElevenLabsKB
 from app_v2.utils.scraping_utils import scrape_webpage_title
@@ -106,7 +107,7 @@ class PublicAPIRoute(APIRoute):
 router = APIRouter(
     prefix="/api/v2/public",
     tags=["public-api"],
-    dependencies=[Depends(get_public_api_user)],
+    dependencies=[Depends(get_public_api_user), Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))],
     route_class=PublicAPIRoute
 )
 
