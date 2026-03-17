@@ -111,12 +111,7 @@ class ApiSchema(BaseModel):
 
     model_config = {"extra": "forbid"}
 
-    # -------------------------------------------------
-    # Cross-field validation
-    # -------------------------------------------------
-
-    @model_validator(mode="after")
-    def validate_schema_rules(self):
+    def _validate_schema_rules(self):
         placeholders = set(re.findall(r"{(.*?)}", self.url))
 
         # ---------------------------
@@ -159,6 +154,14 @@ class ApiSchema(BaseModel):
                 raise ValueError(f"{self.method} does not allow content_type")
 
         return self
+
+    # -------------------------------------------------
+    # Cross-field validation
+    # -------------------------------------------------
+
+    @model_validator(mode="after")
+    def validate_schema_rules(self):
+        return self._validate_schema_rules()
 
 
 # -------------------------------------------------
@@ -223,7 +226,7 @@ class FunctionCreateSchema(BaseModel):
 
 
 class ApiUpdateSchema(BaseModel):
-    url: Optional[str] = None
+    url: str
     method: Optional[HttpMethod] = None
     request_headers: Optional[Dict[str, str]] = None
     path_params_schema: Optional[Dict[str, PrimitiveField]] = None
@@ -234,11 +237,23 @@ class ApiUpdateSchema(BaseModel):
 
     model_config = {"extra": "forbid"}
 
+    @field_validator("url")
+    @classmethod
+    def validate_url(cls, v: str) -> str:
+        return ApiSchema.validate_url(v)
+
+    @model_validator(mode="after")
+    def validate_schema_rules(self):
+        # We can reuse the logic by temporarily creating an ApiSchema if needed, 
+        # but better to just share the method logic. 
+        # Since self has same attributes as ApiSchema (or compatible), it works.
+        return ApiSchema._validate_schema_rules(self)
+
 
 class FunctionUpdateSchema(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = Field(None, min_length=10)
-    api_config: Optional[ApiUpdateSchema] = None
+    name: str
+    description: str = Field(..., min_length=10)
+    api_config: ApiUpdateSchema
     response_variables: Optional[Dict[str, str]] = None # Allow top-level update too
 
 
@@ -246,7 +261,7 @@ class FunctionRead(BaseModel):
     id: int
     name: str
     description: str
-    api_config: ApiSchema 
+    api_config: Optional[ApiSchema] = None
     elevenlabs_tool_id: Optional[str] = None
     created_at: datetime
     modified_at: datetime
