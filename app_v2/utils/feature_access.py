@@ -19,6 +19,7 @@ from app_v2.databases.models import (
 from app_v2.schemas.enum_types import SubscriptionStatusEnum, PhoneNumberAssignStatus
 from app_v2.core.logger import setup_logger
 from app_v2.utils.jwt_utils import get_current_user
+from app_v2.utils.public_auth import get_public_api_user
 
 
 logger = setup_logger(__name__)
@@ -450,5 +451,14 @@ class RequireFeature:
         self.feature_key = feature_key
 
     def __call__(self, current_user: UnifiedAuthModel = Depends(get_current_user)):
+        check_feature_limit_and_usage(current_user.id, self.feature_key)
+        return current_user
+class RequireFeaturePublic:
+    """FastAPI Dependency for requiring a feature and checking limits (API Key-based)."""
+
+    def __init__(self, feature_key: str):
+        self.feature_key = feature_key
+
+    def __call__(self, current_user: UnifiedAuthModel = Depends(get_public_api_user)):
         check_feature_limit_and_usage(current_user.id, self.feature_key)
         return current_user

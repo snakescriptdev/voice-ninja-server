@@ -5,7 +5,9 @@ from app_v2.databases.models import ActivityLogModel, APIDailyUsageModel, APICal
 from sqlalchemy import func
 from app_v2.utils.activity_logger import log_activity
 
-RATE_LIMIT_RPM = 60 # 60 requests per minute
+from app_v2.utils.feature_access import get_feature_limit
+
+RATE_LIMIT_RPM_DEFAULT = 60 # Default 60 requests per minute
 
 def track_and_limit_api(user_id: int):
     """
@@ -14,6 +16,10 @@ def track_and_limit_api(user_id: int):
     now = datetime.utcnow()
     one_minute_ago = now - timedelta(minutes=1)
     today = now.date()
+
+    # Fetch dynamic rate limit from plan
+    plan_limit = get_feature_limit(user_id, "api_access")
+    rate_limit_rpm = int(plan_limit) if plan_limit is not None else RATE_LIMIT_RPM_DEFAULT
 
     with db():
         # 1. Enforce Rate Limit (RPM)
@@ -24,10 +30,10 @@ def track_and_limit_api(user_id: int):
             ActivityLogModel.created_at >= one_minute_ago
         ).scalar()
 
-        if recent_hits >= RATE_LIMIT_RPM:
+        if recent_hits >= rate_limit_rpm:
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=f"Rate limit exceeded. Maximum {RATE_LIMIT_RPM} requests per minute."
+                detail=f"Rate limit exceeded. Maximum {rate_limit_rpm} requests per minute."
             )
 
         # 2. Log activity
