@@ -11,6 +11,8 @@ from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
 from app_v2.utils.payment_utils import PaymentProviderFactory
 
+from app_v2.utils.coin_utils import admin_adjust_coins, get_user_coin_balance
+
 security = HTTPBearer()
 logger = setup_logger(__name__)
 router = APIRouter(prefix="/api/v2/admin/user-management", tags=["Admin"],dependencies=[Depends(security),Depends(is_admin)])
@@ -201,4 +203,42 @@ def suspend_user(user_id:int,request:SuspendUserRequest):
         db.session.rollback()
         logger.error(f"Error suspending user: {str(e)}")
         raise HTTPException(status_code=500,detail=str(e))
+
+@router.post("/users/{user_id}/adjust-coins", openapi_extra={"security": [{"BearerAuth": []}]})
+def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
+    """
+    Adjust user coins (add or deduct) by admin.
+    Positive amount adds coins, negative amount deducts coins.
+    """
+    try:
+        user = (db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.id == user_id,
+            UnifiedAuthModel.is_admin.is_(False)
+        ).first())
+        
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="User not found"
+            )
+        
+        success = admin_adjust_coins(
+            user_id=user_id,
+            amount=request.amount,
+            reason=request.reason
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to adjust coins. Check if user has sufficient balance for deduction."
+            )
+            
+        return {"message": "Coins adjusted successfully", "new_balance": get_user_coin_balance(user_id)}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error adjusting coins for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
