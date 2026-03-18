@@ -288,7 +288,7 @@ def check_feature_limit_and_usage(user_id: int, feature_key: str):
             f"limit={feature.limit}"
         )
 
-        if current_usage >= feature.limit:
+        if feature_key != "knowledge_base" and current_usage >= feature.limit:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(

@@ -458,6 +458,17 @@ def verify_subscription(
                     f"user={current_user.id} | summary={downgrade_summary}"
                 )
 
+                # Sync affected agents with ElevenLabs
+                if "knowledge_base" in downgrade_summary:
+                    agent_ids = downgrade_summary["knowledge_base"].get("agent_ids_to_sync", [])
+                    from app_v2.routers.knowledge_base import sync_agent_kb
+                    for aid in agent_ids:
+                        try:
+                            sync_agent_kb(aid)
+                            logger.info(f"verify_subscription | synced agent={aid} with ElevenLabs after KB downgrade")
+                        except Exception as se:
+                            logger.error(f"verify_subscription | failed to sync agent={aid} | error={se}")
+
             db.session.flush()
 
         else:
