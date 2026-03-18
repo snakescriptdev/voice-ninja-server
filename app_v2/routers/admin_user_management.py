@@ -153,7 +153,7 @@ def list_users_managed(
         logger.error(f"Error listing users managed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.post("users/{user_id}/suspend",openapi_extra={"security":[{"BearerAuth":[]}]})
+@router.post("/users/{user_id}/suspend",openapi_extra={"security":[{"BearerAuth":[]}]})
 def suspend_user(user_id:int,request:SuspendUserRequest):
     try:
         user= (db.session.query(UnifiedAuthModel).filter(
@@ -224,7 +224,7 @@ def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
         
         success = admin_adjust_coins(
             user_id=user_id,
-            amount=request.amount,
+            amount=request.coins,
             reason=request.reason
         )
         

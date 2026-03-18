@@ -409,7 +409,7 @@ def verify_subscription(
             subscription = UserSubscriptionModel(
                 user_id=current_user.id,
                 plan_id=plan.id,
-                status=SubscriptionStatusEnum.authenticated,
+                status=SubscriptionStatusEnum.active,
                 current_period_start=current_start,
                 current_period_end=current_end,
                 cancel_at_period_end=False,
@@ -480,9 +480,7 @@ def verify_subscription(
             subscription = UserSubscriptionModel(
                 user_id=current_user.id,
                 plan_id=plan.id,
-                # authenticated — NOT active.
-                # subscription.charged webhook will promote to active + credit coins.
-                status=SubscriptionStatusEnum.authenticated,
+                status=SubscriptionStatusEnum.active,
                 current_period_start=current_start,
                 current_period_end=current_end,
                 cancel_at_period_end=False,
@@ -493,11 +491,7 @@ def verify_subscription(
             db.session.add(subscription)
             db.session.flush()
 
-        # ── Persist payment record ────────────────────────────────────────────
-        # We record the payment here as 'success' because the signature verified,
-        # but the canonical source of truth for billing is the webhook.
-        # NOTE: _sub_charged checks for an existing CoinsLedgerModel entry before
-        # crediting coins, so this PaymentModel will NOT block coin credits.
+        # ── Persist payment record & Credit Coins ─────────────────────────────
         existing_payment = (
             db.session.query(PaymentModel)
             .filter(PaymentModel.provider_payment_id == data.razorpay_payment_id)
@@ -530,16 +524,33 @@ def verify_subscription(
             except Exception as inv_err:
                 logger.warning(f"Could not fetch invoice: {inv_err}")
 
-        # NOTE: Coins are NOT credited here.
-        # The subscription.charged webhook is the sole place that credits coins,
-        # ensuring coins are only issued after actual money capture.
+            # ── Credit coins ──────────────────────────────────────────────────
+            # Credit coins immediately after successful payment verification.
+            if not plan.carry_forward_coins:
+                reset_unused_subscription_coins(subscription.user_id)
+
+            current_balance = get_user_coin_balance(subscription.user_id)
+            new_balance = current_balance + plan.coins_included
+
+            ledger_entry = CoinsLedgerModel(
+                user_id=subscription.user_id,
+                transaction_type=CoinTransactionTypeEnum.credit_subscription,
+                coins=plan.coins_included,
+                remaining_coins=plan.coins_included,
+                expiry_at=current_end,
+                reference_type="payment",
+                reference_id=payment.id,
+                balance_after=new_balance,
+            )
+            db.session.add(ledger_entry)
+            logger.info(f"verify_subscription | coins credited | user={subscription.user_id} | coins={plan.coins_included}")
 
         db.session.commit()
 
         msg = (
-            "Plan change authenticated. Awaiting charge confirmation."
+            "Plan change activated successfully."
             if is_plan_change
-            else "Subscription authenticated. Awaiting first charge confirmation."
+            else "Subscription activated successfully."
         )
         return {
             "message": msg,
