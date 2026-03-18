@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     MAIL_USERNAME: str = os.getenv("MAIL_USERNAME")
     MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD")
     MAIL_FROM: str = os.getenv("MAIL_FROM")
+    MAIL_PORT: int = os.getenv("MAIL_PORT")
+    MAIL_SERVER: str = os.getenv("MAIL_SERVER")
     
     # Twilio Configuration
     TWILIO_ACCOUNT_SID: str = os.getenv("TWILIO_ACCOUNT_SID")

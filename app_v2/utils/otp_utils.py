@@ -5,6 +5,7 @@ import os
 from datetime import timedelta
 from twilio.rest import Client
 from app_v2.core.logger import setup_logger
+from app_v2.utils.email_service import send_email_async
 
 logger = setup_logger(__name__)
 
@@ -30,18 +31,6 @@ def normalize_phone(phone: str) -> str:
 async def send_otp_email(email: str, otp: str):
     """Send OTP via email"""
     try:
-        from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
-        
-        conf = ConnectionConfig(
-            MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
-            MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
-            MAIL_FROM=os.getenv("MAIL_FROM"),
-            MAIL_PORT=587,
-            MAIL_SERVER="smtp.gmail.com",
-            MAIL_STARTTLS=True,
-            MAIL_SSL_TLS=False,
-            USE_CREDENTIALS=True
-        )
         
         html = f"""
         <div style="font-family: Arial; max-width: 600px; margin: 0 auto; padding: 20px;">
@@ -54,16 +43,7 @@ async def send_otp_email(email: str, otp: str):
             <p style="color: #666;">This code expires in 10 minutes.</p>
         </div>
         """
-        
-        message = MessageSchema(
-            subject="Your Login Code",
-            recipients=[email],
-            body=html,
-            subtype=MessageType.html
-        )
-        
-        fm = FastMail(conf)
-        await fm.send_message(message)
+        await send_email_async("Your Login Code", [email], html)
         logger.info(f"Email sent successfully to {email}")
         return True
     except Exception as e:

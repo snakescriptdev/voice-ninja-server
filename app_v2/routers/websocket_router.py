@@ -19,6 +19,9 @@ from app_v2.databases.models import ConversationsModel,UnifiedAuthModel
 from app_v2.schemas.enum_types import ChannelEnum, CallStatusEnum
 from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.feature_access import RequireFeature, check_feature_limit_and_usage, get_feature_limit, get_feature_usage
+from app_v2.utils.email_service import send_low_coins_email
+from app_v2.core.config import VoiceSettings
+from app_v2.utils.coin_utils import get_user_coin_balance
 logger = setup_logger(__name__)
 
 router = APIRouter(
@@ -378,6 +381,40 @@ async def websocket_test_agent(
 
                     db.session.commit()
                     db.session.refresh(conversation_data)
+
+                    # Prepare data for low coins alert
+                    user_email = None
+                    user_first_name = None
+                    user_display_name = "User"
+                    usage_alerts_enabled = False
+                    current_balance = 0
+                    
+                    try:
+                        # Re-fetch user in the current session
+                        current_user = db.session.query(UnifiedAuthModel).get(user_id)
+                        if current_user:
+                            user_email = current_user.email
+                            user_first_name = current_user.first_name
+                            user_display_name = current_user.first_name or current_user.name or "User"
+                            if current_user.notification_settings:
+                                usage_alerts_enabled = current_user.notification_settings.useage_alerts
+                        
+                        current_balance = get_user_coin_balance(user_id)
+                    except Exception as db_err:
+                        logger.error("Error fetching user settings for low coins alert: %s", str(db_err))
+
+                    # Send low coins email outside session operations
+                    if usage_alerts_enabled and current_balance <= 1000 and user_email:
+                        try:
+                            await send_low_coins_email(
+                                user_email=user_email,
+                                current_coins=current_balance,
+                                base_url=VoiceSettings.FRONTEND_URL,
+                                user_name=user_display_name
+                            )
+                            logger.info("Sent low coins email to %s (balance: %s)", user_email, current_balance)
+                        except Exception as email_err:
+                            logger.error("Failed to send low coins email: %s", str(email_err))
 
                 logger.info(
                     f"✅ Conversation {conversation_id} stored successfully "
