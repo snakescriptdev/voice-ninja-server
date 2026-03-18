@@ -37,7 +37,7 @@ UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-MAX_FILE_SIZE = 10 * 1024 * 1024 # 10 MB
+MAX_FILE_SIZE_IN_MB = 20 
 ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt"}
 
 def sync_agent_kb(agent_id: int):
@@ -87,21 +87,11 @@ async def upload_files(
         limit = get_feature_limit(user_id, "knowledge_base") # in MB
         current_usage = get_feature_usage(user_id, "knowledge_base") # in MB
         
-        uploaded_entries = []
         with db():
-            total_new_size_mb = 0
-            for file in files:
-                file.file.seek(0, 2)
-                size = file.file.tell()
-                file.file.seek(0)
-                total_new_size_mb += (size / (1024 * 1024))
-
-            if limit is not None and (current_usage + total_new_size_mb) > limit:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Knowledge base storage limit exceeded. Limit: {limit}MB, Current: {current_usage:.2f}MB, New: {total_new_size_mb:.2f}MB"
-                )
-
+            uploaded_entries = []
+            # Plan-based limit per file (in MB)
+            plan_limit_mb = limit if limit is not None else MAX_FILE_SIZE_IN_MB # Fallback to 10MB if no limit set
+            
             for file in files:
                 # validation logic
                 _, ext = os.path.splitext(file.filename)
@@ -112,8 +102,17 @@ async def upload_files(
                 file_size = file.file.tell()
                 file.file.seek(0)
                 
-                if file_size > MAX_FILE_SIZE:
-                     raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds 10MB limit")
+                file_size_mb = file_size / (1024 * 1024)
+
+                # enforce plan limit and hard cap
+                if plan_limit_mb is not None and file_size_mb > plan_limit_mb:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Your current plan does not support files larger than {plan_limit_mb}MB."
+                    )
+
+                if file_size_mb > MAX_FILE_SIZE_IN_MB:
+                     raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds system 20MB hard limit.")
                 
                 if file_size == 0:
                     raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
