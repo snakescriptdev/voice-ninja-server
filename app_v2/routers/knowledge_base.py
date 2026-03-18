@@ -19,7 +19,7 @@ from app_v2.schemas.knowledge_base_schema import (
     KnowledgeBaseTextUpdate,
     KnowledgeBaseBind
 )
-from app_v2.utils.jwt_utils import HTTPBearer,get_current_user
+from app_v2.utils.jwt_utils import HTTPBearer,require_active_user
 from app_v2.utils.feature_access import RequireFeature, get_feature_limit, get_feature_usage
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs import ElevenLabsKB, ElevenLabsAgent
@@ -276,7 +276,7 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
 async def get_all_knowledge_base(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         if page < 1:
@@ -321,7 +321,7 @@ async def get_agent_knowledge_base(
     agent_id: int,
     skip: int = 0,
     limit: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -374,7 +374,7 @@ async def get_agent_knowledge_base(
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT, openapi_extra={"security": [{"BearerAuth": []}]})
 async def delete_knowledge_base_item(
     kb_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -429,7 +429,7 @@ async def delete_knowledge_base_item(
 async def update_file_knowledge_base(
     kb_id: int,
     update_data: KnowledgeBaseFileUpdate,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -466,7 +466,7 @@ async def update_file_knowledge_base(
 async def update_url_knowledge_base(
     kb_id: int,
     update_data: KnowledgeBaseURLUpdate,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -522,7 +522,7 @@ async def update_url_knowledge_base(
 async def update_text_knowledge_base(
     kb_id: int,
     update_data: KnowledgeBaseTextUpdate,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -576,7 +576,7 @@ async def update_text_knowledge_base(
 @router.post("/bind", status_code=status.HTTP_200_OK, openapi_extra={"security": [{"BearerAuth": []}]})
 async def bind_knowledge_base(
     request: KnowledgeBaseBind,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -627,7 +627,7 @@ async def bind_knowledge_base(
 @router.post("/unbind", status_code=status.HTTP_200_OK, openapi_extra={"security": [{"BearerAuth": []}]})
 async def unbind_knowledge_base(
     request: KnowledgeBaseBind,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
