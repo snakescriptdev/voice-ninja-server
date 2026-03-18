@@ -45,6 +45,8 @@ from app_v2.databases.models import (
     ConversationsModel,
     PlanFeatureModel,
     PlanModel,
+    KnowledgeBaseModel,
+    AgentKnowledgeBaseBridge,
 )
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 from app_v2.core.logger import setup_logger
@@ -52,7 +54,7 @@ from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Feature keys that have count-based (not usage-based) limits
+# Feature keys that have count-based or per-item limits
 # ──────────────────────────────────────────────────────────────────────────────
 
 COUNT_BASED_FEATURES = {
@@ -60,6 +62,7 @@ COUNT_BASED_FEATURES = {
     "web_voice_agent",
     "phone_numbers",
     "custom_voice_cloning",
+    "knowledge_base",
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -163,8 +166,27 @@ def compute_downgrade_preview(
 
     for feature_key, limits in diff.items():
         new_limit: int = limits["new_limit"]
-        current_usage = _get_current_count(user_id, feature_key, session)
-        will_disable = max(0, current_usage - new_limit)
+        
+        if feature_key == "knowledge_base":
+            # For KB, usage is total files, but will_disable is files > limit
+            total_files = (
+                session.query(func.count(KnowledgeBaseModel.id))
+                .filter(KnowledgeBaseModel.user_id == user_id)
+                .scalar() or 0
+            ) 
+            over_limit_count = (
+                session.query(func.count(KnowledgeBaseModel.id))
+                .filter(
+                    KnowledgeBaseModel.user_id == user_id,
+                    KnowledgeBaseModel.file_size > new_limit * 1024 # MB to KB
+                )
+                .scalar() or 0
+            )
+            current_usage = total_files
+            will_disable = over_limit_count
+        else:
+            current_usage = _get_current_count(user_id, feature_key, session)
+            will_disable = max(0, current_usage - new_limit)
 
         resource_names = []
         if will_disable > 0:
@@ -279,6 +301,17 @@ def _get_affected_resource_names(user_id: int, feature_key: str, new_limit: int,
             to_detach = custom_voices[: total - new_limit]
             return [v.name or f"Voice {v.id}" for v in to_detach]
 
+    elif feature_key == "knowledge_base":
+        over_limit_kbs = (
+            session.query(KnowledgeBaseModel)
+            .filter(
+                KnowledgeBaseModel.user_id == user_id,
+                KnowledgeBaseModel.file_size > new_limit * 1024
+            )
+            .all()
+        )
+        return [kb.title or f"File {kb.id}" for kb in over_limit_kbs]
+
     return []
 
 
@@ -317,6 +350,12 @@ def _get_current_count(user_id: int, feature_key: str, session: Session) -> int:
             )
             .scalar() or 0
         )
+    elif feature_key == "knowledge_base":
+        return (
+            session.query(func.count(KnowledgeBaseModel.id))
+            .filter(KnowledgeBaseModel.user_id == user_id)
+            .scalar() or 0
+        )
     return 0
 
 
@@ -342,6 +381,10 @@ def _build_preview_message(
         "custom_voice_cloning": (
             f"{will_disable} of your {current_usage} custom voices will be detached from agents "
             f"(voices with no agents first, then oldest). You will keep {new_limit}."
+        ),
+        "knowledge_base": (
+            f"{will_disable} of your {current_usage} knowledge base files exceed your new plan's "
+            f"per-file limit of {new_limit}MB and will be auto-unbound from agents."
         ),
     }
     return messages.get(
@@ -409,6 +452,10 @@ def enforce_downgrade_for_user(
         elif feature_key == "custom_voice_cloning":
             result = _enforce_custom_voices(user_id, new_limit, session)
             summary["custom_voice_cloning"] = result
+
+        elif feature_key == "knowledge_base":
+            result = _enforce_kb_size_limits(user_id, new_limit, session)
+            summary["knowledge_base"] = result
 
     logger.info(
         f"enforce_downgrade_for_user | user={user_id} | summary={summary}"
@@ -771,3 +818,52 @@ def _get_system_default_voice(session: Session) -> Optional[VoiceModel]:
     )
 
     return fallback
+
+
+def _enforce_kb_size_limits(
+    user_id: int,
+    new_limit_mb: int,
+    session: Session,
+) -> Dict[str, Any]:
+    """
+    Unbind KB files that exceed the new MB limit.
+    DB stores file_size in KB.
+    """
+    limit_kb = new_limit_mb * 1024
+
+    over_limit_kbs = (
+        session.query(KnowledgeBaseModel)
+        .filter(
+            KnowledgeBaseModel.user_id == user_id,
+            KnowledgeBaseModel.file_size > limit_kb
+        )
+        .all()
+    )
+
+    if not over_limit_kbs:
+        return {"unbound_kb_ids": [], "agent_ids_to_sync": []}
+
+    kb_ids = [kb.id for kb in over_limit_kbs]
+
+    # Find all bridges for these KBs
+    bridges = (
+        session.query(AgentKnowledgeBaseBridge)
+        .filter(AgentKnowledgeBaseBridge.kb_id.in_(kb_ids))
+        .all()
+    )
+
+    agent_ids_to_sync = list(set([b.agent_id for b in bridges]))
+
+    # Deleting bridge records auto-unbinds them from agents in DB
+    for bridge in bridges:
+        session.delete(bridge)
+
+    logger.info(
+        f"_enforce_kb_size_limits | user={user_id} | "
+        f"unbound_kb_ids={kb_ids} | agent_ids_to_sync={agent_ids_to_sync}"
+    )
+
+    return {
+        "unbound_kb_ids": kb_ids,
+        "agent_ids_to_sync": agent_ids_to_sync,
+    }
