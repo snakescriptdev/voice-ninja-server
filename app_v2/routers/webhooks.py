@@ -736,7 +736,8 @@ def _order_payment_captured(
     )
 
     if addon_order is None:
-        notes: Dict = payment_entity.get("notes", {})
+        raw_notes = payment_entity.get("notes")
+        notes: Dict = raw_notes if isinstance(raw_notes, dict) else {}
         if notes.get("type") == "addon_purchase":
             logger.error(
                 f"payment.captured: addon_order not found for order {rzp_order_id}"
@@ -885,7 +886,8 @@ def _order_payment_failed(
 
     # ── Case 2: Subscription payment failure ──────────────────────────────────
     # FIX: Try multiple resolution strategies to find the user_id robustly.
-    notes: Dict = payment_entity.get("notes", {}) or {}
+    raw_notes = payment_entity.get("notes")
+    notes: Dict = raw_notes if isinstance(raw_notes, dict) else {}
     rzp_subscription_id: str = notes.get("subscription_id", "")
 
     user_id: int | None = None

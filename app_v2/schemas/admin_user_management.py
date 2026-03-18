@@ -26,5 +26,5 @@ class SuspendUserRequest(BaseModel):
 
 class AdjustUserCoinRequest(BaseModel):
 
-    amount:int
+    coins:int
     reason:str
