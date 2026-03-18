@@ -451,6 +451,11 @@ class RequireFeature:
         self.feature_key = feature_key
 
     def __call__(self, current_user: UnifiedAuthModel = Depends(get_current_user)):
+        if current_user.is_suspended:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account has been suspended. Please contact support for assistance.",
+            )
         check_feature_limit_and_usage(current_user.id, self.feature_key)
         return current_user
 class RequireFeaturePublic:

@@ -67,7 +67,7 @@ Migration notes:
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
 from sqlalchemy import or_
-from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.databases.models import (
     UnifiedAuthModel, PlanModel, UserSubscriptionModel,
     PaymentModel, PlanProviderModel, CoinsLedgerModel,
@@ -176,7 +176,7 @@ def _calc_period_end(plan: PlanModel, start: datetime) -> datetime:
 )
 def create_subscription(
     data: SubscriptionCreate,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Initiate a brand-new Razorpay subscription (first-time or after expiry/cancel).
@@ -262,7 +262,7 @@ def create_subscription(
 )
 def verify_subscription(
     data: SubscriptionVerifyRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Called by the frontend after Razorpay checkout completes.
@@ -553,7 +553,7 @@ def verify_subscription(
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
 def cancel_pending_update(
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Abort an in-progress plan-change checkout.
@@ -623,7 +623,7 @@ def cancel_pending_update(
 )
 def cancel_subscription(
     data: SubscriptionCancelRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Cancel the user's active subscription.
@@ -677,7 +677,7 @@ def cancel_subscription(
 )
 def update_subscription(
     data: SubscriptionUpdateRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Initiate a plan change.
@@ -830,7 +830,7 @@ def update_subscription(
 )
 def downgrade_preview(
     plan_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Returns a dry-run summary of what will be auto-disabled if the user
@@ -874,7 +874,7 @@ def downgrade_preview(
 )
 def pause_subscription(
     data: SubscriptionPauseRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     try:
         subscription = _get_current_subscription(current_user.id)
@@ -904,7 +904,7 @@ def pause_subscription(
     dependencies=[Depends(security)],
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-def resume_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
+def resume_subscription(current_user: UnifiedAuthModel = Depends(require_active_user())):
     try:
         subscription = (
             db.session.query(UserSubscriptionModel)
@@ -946,7 +946,7 @@ def resume_subscription(current_user: UnifiedAuthModel = Depends(get_current_use
     dependencies=[Depends(security)],
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-def fetch_invoices(current_user: UnifiedAuthModel = Depends(get_current_user)):
+def fetch_invoices(current_user: UnifiedAuthModel = Depends(require_active_user())):
     try:
         subscriptions = (
             db.session.query(UserSubscriptionModel)

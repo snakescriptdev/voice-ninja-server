@@ -9,6 +9,7 @@ from app_v2.schemas.admin_user_management import UserManagementStats, UserManage
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
+from app_v2.utils.payment_utils import PaymentProviderFactory
 
 security = HTTPBearer()
 logger = setup_logger(__name__)
@@ -153,20 +154,45 @@ def list_users_managed(
 @router.post("users/{user_id}/suspend",openapi_extra={"security":[{"BearerAuth":[]}]})
 def suspend_user(user_id:int,request:SuspendUserRequest):
     try:
-        query = (db.session.query(UnifiedAuthModel).filter(
-            UnifiedAuthModel.id == user_id,
-            UnifiedAuthModel.is_admin.is_(False)
+        user= (db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.id == user_id
         ).first())
-        if not query:
+        if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail= "user not found"
             )
-        query.is_suspended = request.is_suspended
-        db.session.add(query)
+        user.is_suspended = request.is_suspended
+        if request.is_suspended:
+            #disable agents for the user and pause subscription.
+            web_agents = user.web_agents
+            for agent in web_agents:
+                agent.is_enabled = False
+            #pause subscription for user
+            subscriptions= user.subscriptions
+            for subscription in subscriptions:
+                if subscription.status == SubscriptionStatusEnum.active:
+                    provider = subscription.provider
+                    subscription_provider =PaymentProviderFactory.get_provider(provider)
+                    #pause subscription
+                    subscription_provider.pause_subscription(subscription.provider_subscription_id)
+                    logger.info(f"Subscription paused for user {user_id}")
+        else:
+            #resume subscription for user
+            subscriptions= user.subscriptions
+            for subscription in subscriptions:
+                if subscription.status == SubscriptionStatusEnum.paused:
+                    provider = subscription.provider
+                    subscription_provider =PaymentProviderFactory.get_provider(provider)
+                    #resume subscription
+                    subscription_provider.resume_subscription(subscription.provider_subscription_id)
+                    logger.info(f"Subscription resumed for user {user_id}")
+        db.session.add(user)
         db.session.commit()
-        db.session.refresh(query)
+        db.session.refresh(user)
         return {"message":f"User {'suspended' if request.is_suspended else 'unsuspend'} successfully"}
+    except HTTPException:
+        raise
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error suspending user: {str(e)}")

@@ -10,7 +10,7 @@ from app_v2.utils.llm_utils import generate_system_prompt_async
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.utils.feature_access import check_can_enable_resource
 
-from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.jwt_utils import HTTPBearer,require_active_user
 from app_v2.databases.models import (
     AdminTokenModel,
     VoiceTraitsModel,
@@ -528,7 +528,7 @@ async def get_all_agents(
     size: int = 20,
     name: Optional[str] = None,
     voice: Optional[str] = None,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     if page < 1:
         page = 1
@@ -624,7 +624,7 @@ async def get_agent_by_id(
 async def update_agent(
     agent_id: int,
     agent_in: AgentUpdate,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     agent = (
         db.session.query(AgentModel)
@@ -922,7 +922,7 @@ async def update_agent(
 )
 async def delete_agent(
     agent_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     agent = (
         db.session.query(AgentModel)
