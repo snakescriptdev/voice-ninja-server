@@ -19,3 +19,11 @@ class UserManagementListItem(BaseModel):
 
     class Config:
         from_attributes = True
+
+class SuspendUserRequest(BaseModel):
+    is_suspended:bool
+
+class AdjustUserCoinRequest(BaseModel):
+
+    amount:int
+    reason:str
