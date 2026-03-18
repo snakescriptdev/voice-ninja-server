@@ -139,7 +139,7 @@ class UnifiedAuthModel(Base):
     has_google_auth = Column(Boolean, default=False)
     google_user_id = Column(String, nullable=True, default="")
     is_suspended = Column(Boolean, default=False,server_default="false")
-    
+    suspension_reason = Column(String, nullable=True)
     last_login = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())

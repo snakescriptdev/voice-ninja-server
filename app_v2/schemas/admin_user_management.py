@@ -22,6 +22,7 @@ class UserManagementListItem(BaseModel):
 
 class SuspendUserRequest(BaseModel):
     is_suspended:bool
+    reason: Optional[str]
 
 class AdjustUserCoinRequest(BaseModel):
 
