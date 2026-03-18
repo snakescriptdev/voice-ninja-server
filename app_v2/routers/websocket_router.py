@@ -15,7 +15,7 @@ from app_v2.utils.jwt_utils import SECRET_KEY, ALGORITHM
 from jose import jwt, JWTError
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
-from app_v2.databases.models import ConversationsModel
+from app_v2.databases.models import ConversationsModel,UnifiedAuthModel
 from app_v2.schemas.enum_types import ChannelEnum, CallStatusEnum
 from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.feature_access import RequireFeature, check_feature_limit_and_usage, get_feature_limit, get_feature_usage
@@ -96,7 +96,30 @@ async def websocket_test_agent(
         )
         logger.error(f"Invalid token for user {user_id}")
         return
-
+    try:
+        user = UnifiedAuthModel.get_by_id(user_id)
+        if user.is_suspended:
+            await websocket.send_json({
+                "type": "error",
+                "message": "User is suspended. Call disconnected."
+            })
+            await websocket.close(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="User is suspended"
+            )
+            logger.error(f"User is suspended for user {user_id}")
+            return
+    except Exception as e:
+        await websocket.send_json({
+            "type": "error",
+            "message": "User not found. Call disconnected."
+        })
+        await websocket.close(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="User not found"
+        )
+        logger.error(f"User not found for user {user_id}")
+        return
     # 2. Verify agent ownership
     with db():
         agent = (

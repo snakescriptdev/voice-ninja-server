@@ -2,7 +2,7 @@
 This file has CRUD routes defined for the voice 
 """
 from fastapi import HTTPException, APIRouter, status, Depends, Form, UploadFile, File
-from app_v2.utils.jwt_utils import HTTPBearer, get_current_user
+from app_v2.utils.jwt_utils import HTTPBearer, require_active_user
 from app_v2.utils.feature_access import RequireFeature
 from app_v2.utils.downgrade_utils import _get_system_default_voice
 from fastapi_sqlalchemy import db
@@ -66,7 +66,7 @@ async def get_all_voices(
     synced_only: bool = True,
     name: Optional[str] = None,
     gender: Optional[GenderEnum] = None,
-    current_user: UnifiedAuthModel = Depends(get_current_user)):
+    current_user: UnifiedAuthModel = Depends(require_active_user())):
     try:
         filters = [
             or_(
@@ -115,7 +115,7 @@ async def get_all_voices(
 
 
 @router.get("/voice/by-id/{id}", response_model=VoiceRead, status_code=status.HTTP_200_OK, openapi_extra={"security":[{"BearerAuth":[]}]})
-async def get_voice_by_id(id: int, current_user: UnifiedAuthModel = Depends(get_current_user)):
+async def get_voice_by_id(id: int, current_user: UnifiedAuthModel = Depends(require_active_user())):
     try:
         voice = db.session.query(VoiceModel).options(selectinload(VoiceModel.traits)).filter(
             and_(
@@ -253,7 +253,7 @@ async def create_voice(
 @router.delete("/voice/{voice_id}", status_code=status.HTTP_204_NO_CONTENT, openapi_extra={"security": [{"BearerAuth": []}]})
 async def delete_voice(
     voice_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -305,7 +305,7 @@ async def delete_voice(
 async def update_voice(
     voice_id: int,
     voice_update: VoiceUpdate,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -374,7 +374,7 @@ async def update_voice(
 )
 async def preview_voice(
     voice_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """
     Preview a voice by fetching its ElevenLabs Sample
