@@ -13,7 +13,7 @@ Key changes vs original:
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
-from app_v2.utils.jwt_utils import get_current_user, HTTPBearer,is_admin
+from app_v2.utils.jwt_utils import require_active_user, HTTPBearer,is_admin
 from app_v2.databases.models import (
     UnifiedAuthModel, CoinPackageModel, PaymentModel,
     CoinsLedgerModel, AddOnCoinOrderModel, CoinUsageSettingsModel,
@@ -56,7 +56,7 @@ async def get_addon_purchase_demo():
 )
 def create_coin_order(
     data: OrderCreateRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Create a Razorpay order for an add-on coin bundle and persist a pending
@@ -123,7 +123,7 @@ def create_coin_order(
 )
 def verify_coin_payment(
     data: OrderVerifyRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Called by the frontend after the user completes checkout.

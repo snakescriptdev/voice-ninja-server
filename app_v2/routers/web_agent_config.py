@@ -13,7 +13,7 @@ from sqlalchemy.exc import NoResultFound
 from app_v2.utils.activity_logger import log_activity
 import uuid
 from fastapi import Depends
-from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.utils.feature_access import RequireFeature, check_can_enable_resource
 from app_v2.core.logger import setup_logger
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
@@ -33,7 +33,7 @@ router = APIRouter(
 
 
 @router.get("/web-agents", response_model=list[WebAgentListResponse], openapi_extra={"security": [{"BearerAuth": []}]})
-def list_web_agents(request: Request, user=Depends(get_current_user)):
+def list_web_agents(request: Request, user=Depends(require_active_user())):
     web_agents = db.session.query(WebAgentModel).filter(WebAgentModel.user_id == user.id).order_by(WebAgentModel.created_at.desc()).all()
     base_url = str(request.base_url).rstrip("/")
     return [
@@ -100,7 +100,7 @@ def create_web_agent(request: Request, config: WebAgentConfig, user=Depends(Requ
 
 
 @router.get("/web-agents/{public_id}", response_model=WebAgentConfigResponse,openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_web_agent(request: Request, public_id: str, user=Depends(get_current_user)):
+def get_web_agent(request: Request, public_id: str, user=Depends(require_active_user())):
   web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
   if not web_agent or web_agent.user_id != user.id:
     raise HTTPException(status_code=404, detail="WebAgent not found or not owned by user")
@@ -142,7 +142,7 @@ def update_web_agent(
     request: Request,
     public_id: str,
     config: WebAgentConfigUpdate = Body(...),
-    user=Depends(get_current_user),
+    user=Depends(require_active_user()),
 ):
     # Fetch WebAgent
     web_agent = (
@@ -265,7 +265,7 @@ def update_web_agent(
     )
 
 @router.delete("/web-agents/{public_id}",openapi_extra={"security":[{"BearerAuth":[]}]})
-def delete_web_agent(public_id: str, user=Depends(get_current_user)):
+def delete_web_agent(public_id: str, user=Depends(require_active_user())):
   web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
   if not web_agent or web_agent.user_id != user.id:
     raise HTTPException(status_code=404, detail="WebAgent not found or not owned by user")
