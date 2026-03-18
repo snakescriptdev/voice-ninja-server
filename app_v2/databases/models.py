@@ -138,6 +138,7 @@ class UnifiedAuthModel(Base):
     # Google OAuth fields
     has_google_auth = Column(Boolean, default=False)
     google_user_id = Column(String, nullable=True, default="")
+    is_suspended = Column(Boolean, default=False,server_default="false")
     
     last_login = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())

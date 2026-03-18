@@ -132,3 +132,13 @@ def is_admin(
         )
 
     return current_user
+
+def require_active_user(allow_suspended:bool = False):
+    def dependency(current_user: UnifiedAuthModel= Depends(get_current_user)):
+        if not allow_suspended and current_user.is_suspended:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account suspended"
+            )
+        return current_user
+    return dependency
