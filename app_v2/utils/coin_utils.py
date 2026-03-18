@@ -28,7 +28,7 @@ def get_user_coin_balance(user_id: int) -> int:
         logger.error(f"Failed to get coin balance for user {user_id}: {e}")
         return 0
 
-def deduct_coins(user_id: int, amount: float | int, reference_type: str = None, reference_id: int = None, commit: bool = True) -> bool:
+def deduct_coins(user_id: int, amount: float | int, reference_type: str = None, reference_id: int = None, commit: bool = True, transaction_type: CoinTransactionTypeEnum = CoinTransactionTypeEnum.debit_usage) -> bool:
     """
     Deducts coins from the user's ledger using FIFO logic on valid credit batches.
     amount is treated as the raw coin count.
@@ -76,7 +76,7 @@ def deduct_coins(user_id: int, amount: float | int, reference_type: str = None, 
         current_balance = total_available - coin_amount
         ledger_entry = CoinsLedgerModel(
             user_id=user_id,
-            transaction_type=CoinTransactionTypeEnum.debit_usage,
+            transaction_type=transaction_type,
             coins=-coin_amount,
             reference_type=reference_type,
             reference_id=reference_id,
@@ -190,3 +190,52 @@ def run_expiry_check():
     except Exception as e:
         logger.error(f"Failed to run global expiry check: {e}")
         db.session.rollback()
+
+
+def admin_adjust_coins(user_id: int, amount: int, reason: str, commit: bool = True) -> bool:
+    """
+    Adjusts user coins (add or deduct) from admin management.
+    amount > 0 adds coins (credit), amount < 0 deducts coins (debit).
+    Must be called within an active db() session block.
+    """
+    if amount == 0:
+        return True
+    
+    try:
+        now = datetime.utcnow()
+        current_balance = get_user_coin_balance(user_id)
+        
+        if amount > 0:
+            # Credit logic
+            ledger_entry = CoinsLedgerModel(
+                user_id=user_id,
+                transaction_type=CoinTransactionTypeEnum.admin_adjustment,
+                coins=amount,
+                remaining_coins=amount,
+                reference_type="admin_adjustment",
+                reference_id=None,
+                balance_after=current_balance + amount,
+                created_at=now
+            )
+            db.session.add(ledger_entry)
+            if commit:
+                db.session.commit()
+            logger.info(f"Admin added {amount} coins to user {user_id}. Reason: {reason}")
+            return True
+        else:
+            # Debit logic (negative amount)
+            # Reuse logic from deduct_coins but with admin_adjustment type
+            return deduct_coins(
+                user_id=user_id, 
+                amount=abs(amount), 
+                reference_type="admin_adjustment", 
+                commit=commit, 
+                transaction_type=CoinTransactionTypeEnum.admin_adjustment
+            )
+
+    except Exception as e:
+        import traceback
+        logger.error(f"Failed admin coin adjustment for user {user_id}: {e}\n{traceback.format_exc()}")
+        if commit:
+            db.session.rollback()
+        return False
