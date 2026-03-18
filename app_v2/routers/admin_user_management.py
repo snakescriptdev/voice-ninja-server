@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime
 from app_v2.databases.models import UnifiedAuthModel, UserSubscriptionModel, PlanModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, SubscriptionStatusEnum
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
-from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem
+from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
@@ -149,3 +149,26 @@ def list_users_managed(
     except Exception as e:
         logger.error(f"Error listing users managed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("users/{user_id}/suspend",openapi_extra={"security":[{"BearerAuth":[]}]})
+def suspend_user(user_id:int,request:SuspendUserRequest):
+    try:
+        query = (db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.id == user_id,
+            UnifiedAuthModel.is_admin.is_(False)
+        ).first())
+        if not query:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail= "user not found"
+            )
+        query.is_suspended = request.is_suspended
+        db.session.add(query)
+        db.session.commit()
+        db.session.refresh(query)
+        return {"message":f"User {'suspended' if request.is_suspended else 'unsuspend'} successfully"}
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error suspending user: {str(e)}")
+        raise HTTPException(status_code=500,detail=str(e))
+
