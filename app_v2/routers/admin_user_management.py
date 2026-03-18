@@ -155,7 +155,8 @@ def list_users_managed(
 def suspend_user(user_id:int,request:SuspendUserRequest):
     try:
         user= (db.session.query(UnifiedAuthModel).filter(
-            UnifiedAuthModel.id == user_id
+            UnifiedAuthModel.id == user_id,
+            UnifiedAuthModel.is_admin.is_(False)
         ).first())
         if not user:
             raise HTTPException(
@@ -164,6 +165,8 @@ def suspend_user(user_id:int,request:SuspendUserRequest):
             )
         user.is_suspended = request.is_suspended
         if request.is_suspended:
+            if request.reason:
+                user.suspension_reason = request.reason
             #disable agents for the user and pause subscription.
             web_agents = user.web_agents
             for agent in web_agents:
@@ -178,6 +181,7 @@ def suspend_user(user_id:int,request:SuspendUserRequest):
                     subscription_provider.pause_subscription(subscription.provider_subscription_id)
                     logger.info(f"Subscription paused for user {user_id}")
         else:
+            user.suspension_reason = None
             #resume subscription for user
             subscriptions= user.subscriptions
             for subscription in subscriptions:
