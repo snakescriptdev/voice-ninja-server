@@ -25,6 +25,8 @@ from sqlalchemy.exc import NoResultFound
 import uuid
 from fastapi import Depends
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.core.config import VoiceSettings
+from app_v2.utils.email_service import send_conversation_notification_email, send_low_coins_email
 from app_v2.core.logger import setup_logger
 from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.feature_access import (
@@ -918,6 +920,60 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
                                     db.session.add(lead)
                                     db.session.commit()
                                     logger.info("Linked lead %s to conversation %s", lead_id, new_conv.id)
+                            
+                            # Prepare data for email notifications
+                            owner_email = None
+                            owner_name = "User"
+                            email_notifications_enabled = False
+                            usage_alerts_enabled = False
+                            lead_name = "Anonymous"
+                            
+                            try:
+                                owner = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.id == user_id).first()
+                                if owner:
+                                    owner_email = owner.email
+                                    owner_name = owner.first_name or owner.name or "User"
+                                    if owner.notification_settings:
+                                        email_notifications_enabled = owner.notification_settings.email_notifications
+                                        usage_alerts_enabled = owner.notification_settings.useage_alerts
+                                
+                                if lead_id:
+                                    lead = db.session.query(WebAgentLeadModel).get(lead_id)
+                                    if lead and lead.name:
+                                        lead_name = lead.name
+                            except Exception as db_err:
+                                logger.error("Error fetching notification settings: %s", str(db_err))
+
+                            # Send emails outside (or after) session operations to avoid lazy load issues
+                            if owner_email and email_notifications_enabled:
+                                try:
+                                    await send_conversation_notification_email(
+                                        company_email=owner_email,
+                                        agent_name=web_agent_name,
+                                        conversation_id=str(new_conv.id),
+                                        base_url=VoiceSettings.FRONTEND_URL,
+                                        user_name=lead_name,
+                                        summary=metadata.get("transcript_summary"),
+                                        occurred_at=datetime.now()
+                                    )
+                                    logger.info("Sent conversation notification email to %s", owner_email)
+                                except Exception as email_err:
+                                    logger.error("Failed to send conversation email: %s", str(email_err))
+
+                            if owner_email and usage_alerts_enabled:
+                                try:
+                                    from app_v2.utils.coin_utils import get_user_coin_balance
+                                    current_balance = get_user_coin_balance(user_id)
+                                    if current_balance <= 1000:
+                                        await send_low_coins_email(
+                                            user_email=owner_email,
+                                            current_coins=current_balance,
+                                            base_url=VoiceSettings.FRONTEND_URL,
+                                            user_name=owner_name
+                                        )
+                                        logger.info("Sent low coins email to %s (balance: %s)", owner_email, current_balance)
+                                except Exception as email_err:
+                                    logger.error("Failed to send low coins email: %s", str(email_err))
                 except Exception:
                     logger.error("Error saving conversation: %s", traceback.format_exc())
 
