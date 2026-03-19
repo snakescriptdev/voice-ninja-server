@@ -141,7 +141,10 @@ async def get_profile(current_user = Depends(get_current_user)):
                     "last_name": user.last_name,
                     "address": user.address,
                     "role": "admin" if user.is_admin else "user",
-                    "status": "suspended" if user.is_suspended else "active",
+                    "user_status": {
+                        "current_status": "suspended" if user.is_suspended else "active",
+                        "reason": user.suspension_reason
+                    },
                     "is_new_user": (
                         (user.last_login - user.created_at).total_seconds() < 300 
                         if user.last_login and user.created_at else False
@@ -368,7 +371,10 @@ async def update_profile(
                     "first_name": user.first_name,
                     "last_name": user.last_name,
                     "address": user.address,
-                    "status": "suspended" if user.is_suspended else "active",
+                    "user_status": {
+                        "current_status": "suspended" if user.is_suspended else "active",
+                        "reason": user.suspension_reason
+                    },
                     "feature_limits": get_all_feature_limits(user.id)
                 }
             }
