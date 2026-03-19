@@ -357,7 +357,7 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
 
 
 @router.get("/get-user-subscription", response_model=UserSubscriptionResponse, openapi_extra={"security": [{"BearerAuth": []}]})
-def user_subscription(current_user: UnifiedAuthModel = Depends(require_active_user())):
+def user_subscription(current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True))):
     """
     Returns the user's current subscription and plan details.
 
