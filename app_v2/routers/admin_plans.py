@@ -235,38 +235,70 @@ def get_plan(plan_id: int):
         logger.error(f"Error getting plan: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.put("/{plan_id}", response_model=PlanResponse,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
+@router.put(
+    "/{plan_id}",
+    response_model=PlanResponse,
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
 def update_plan(plan_id: int, plan_update: PlanUpdate):
-    plan = db.session.query(PlanModel).filter(PlanModel.id == plan_id,PlanModel.is_deleted==False).first()
-    if not plan:
-        raise HTTPException(status_code=404, detail="Plan not found")
-    
+
     try:
+        plan = db.session.query(PlanModel).filter(
+            PlanModel.id == plan_id,
+            PlanModel.is_deleted == False
+        ).first()
+
+        if not plan:
+            raise HTTPException(status_code=404, detail="Plan not found")
+
         update_data = plan_update.dict(exclude_unset=True)
+
+        # 🔹 Handle features safely
         if "features" in update_data:
             validate_unique_features(update_data["features"])
-            # Delete old features and add new ones
-            db.session.query(PlanFeatureModel).filter(PlanFeatureModel.plan_id == plan_id).delete()
+
+            # ORM-safe delete (NO bulk delete)
+            old_features = db.session.query(PlanFeatureModel).filter(
+                PlanFeatureModel.plan_id == plan_id
+            ).all()
+
+            for feature in old_features:
+                db.session.delete(feature)
+
+            # Add new features
             for feature in update_data["features"]:
                 new_feature = PlanFeatureModel(
                     plan_id=plan_id,
                     **feature
                 )
                 db.session.add(new_feature)
+
             del update_data["features"]
 
+        # 🔹 Update remaining fields
         for key, value in update_data.items():
             setattr(plan, key, value)
-            
+
+        # 🔥 Flush before commit (catches DB errors early)
+        db.session.flush()
+
         db.session.commit()
-        db.session.refresh(plan)
+
         return plan
+
     except HTTPException:
+        db.session.rollback()
         raise
+
     except Exception as e:
         db.session.rollback()
-        logger.error(f"Error updating plan: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Error updating plan: {str(e)}", exc_info=True)
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update plan"
+        )
 
 @router.delete("/{plan_id}", status_code=status.HTTP_204_NO_CONTENT,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def delete_plan(plan_id: int):
