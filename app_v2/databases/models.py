@@ -886,6 +886,7 @@ class CoinUsageSettingsModel(Base):
     phone_number_purchase_cost: Mapped[int] = mapped_column(Integer, default=500)
     elevenlabs_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     static_conversation_cost: Mapped[int] = mapped_column(Integer, default=0)
+    cost_per_minute_in_coins: Mapped[int] = mapped_column(Integer,server_default="0")
     
     # Singleton guard: only one row can have this value
     singleton_guard: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
