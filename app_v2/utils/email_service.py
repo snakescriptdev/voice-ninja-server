@@ -123,3 +123,53 @@ async def send_low_coins_email(
 
     except Exception as e:
         logger.error(f"Failed to send low coins email: {str(e)}")
+
+
+async def send_coin_expiry_alert_email(
+    user_email: str,
+    expiring_coins: int,
+    expiry_date: str,
+    base_url: str,
+    user_name: str | None = None,
+):
+    try:
+        subject = "⏳ Your Coins are Expiring Soon!"
+
+        recharge_link = f"{base_url}/billing-wallet"
+
+        body = f"""
+        <h2>Coin Expiry Alert ⏳</h2>
+
+        <p>Hi {user_name or "User"},</p>
+
+        <p>This is a friendly reminder that some of your coins will expire soon.</p>
+
+        <p>
+        <strong>Expiring Coins:</strong> {expiring_coins} <br/>
+        <strong>Expiry Date:</strong> {expiry_date} <br/>
+        </p>
+
+        <p>
+        Use your coins before they expire, or recharge to extend your usage and keep building.
+        </p>
+
+        <br/>
+
+        <a href="{recharge_link}" 
+           style="padding:10px 15px; background:#e91e63; color:white; text-decoration:none;">
+           Recharge Now
+        </a>
+
+        <br/><br/>
+
+        <p>Thanks,<br/>Voice Ninja Team</p>
+        """
+
+        await send_email_async(
+            subject=subject,
+            recipients=[user_email],
+            body=body
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to send coin expiry alert email: {str(e)}")
