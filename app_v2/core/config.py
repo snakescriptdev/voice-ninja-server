@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 24 * 60  #1d 
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15 #minutes
     
     # Database Configuration
     DB_URL: str
