@@ -285,6 +285,8 @@ def update_coin_usage_settings(data: CoinUsageSettingsUpdate):
                 settings.elevenlabs_multiplier = data.elevenlabs_multiplier
             if data.static_conversation_cost is not None:
                 settings.static_conversation_cost = data.static_conversation_cost
+            if data.cost_per_minute_in_coins is not None:
+                settings.cost_per_minute_in_coins = data.cost_per_minute_in_coins
             db.session.commit()
             db.session.refresh(settings)
             return settings
