@@ -83,6 +83,7 @@ def list_users_managed(
             UnifiedAuthModel.id.label("user_id"),
             UnifiedAuthModel.name.label("username"),
             UnifiedAuthModel.email,
+            UnifiedAuthModel.is_suspended,
             PlanModel.display_name.label("plan_name"),
             PlanModel.id.label("plan_id"),
             func.coalesce(coins_subquery.c.balance, 0).label("balance_coins"),
@@ -135,7 +136,8 @@ def list_users_managed(
                 balance_coins=int(r.balance_coins),
                 no_of_agents=r.no_of_agents,
                 no_of_phones=r.no_of_phones,
-                last_active=format_time_ago(r.last_active) if r.last_active else "long time ago"
+                last_active=format_time_ago(r.last_active) if r.last_active else "long time ago",
+                is_suspended=r.is_suspended
             ) for r in results
         ]
 

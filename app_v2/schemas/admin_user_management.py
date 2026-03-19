@@ -16,6 +16,7 @@ class UserManagementListItem(BaseModel):
     no_of_agents: int
     no_of_phones: int
     last_active: Optional[str]
+    is_suspended:bool
 
     class Config:
         from_attributes = True

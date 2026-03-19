@@ -721,7 +721,6 @@ async def refresh_token(request: RefreshTokenRequest):
             'role': 'admin' if unified_user.is_admin else 'user'
         }
         access_token = create_access_token(data=token_data)
-        new_refresh_token = create_refresh_token(unified_user.id)
 
         return {
             'status': STATUS_SUCCESS,
@@ -729,7 +728,7 @@ async def refresh_token(request: RefreshTokenRequest):
             'message': 'Token refreshed successfully',
             'data': {
                 'access_token': access_token,
-                'refresh_token': new_refresh_token,
+                'refresh_token': request.refresh_token,
                 'user': {
                     'id': unified_user.id,
                     'email': unified_user.email,
