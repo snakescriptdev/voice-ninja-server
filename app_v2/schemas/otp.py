@@ -168,3 +168,16 @@ class ErrorResponse(BaseModel):
         description='Optional additional error data'
     )
 
+
+class RefreshTokenRequest(BaseModel):
+    """Request schema for refreshing an access token.
+    
+    Attributes:
+        refresh_token: The refresh token issued during login.
+    """
+    refresh_token: str = Field(
+        ...,
+        description='Refresh token for issuing a new access token',
+        min_length=1
+    )
+
