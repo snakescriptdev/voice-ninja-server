@@ -2,8 +2,8 @@ from fastapi import APIRouter, HTTPException, status, Depends, Query
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, desc, select
 from typing import List, Optional
-from datetime import datetime
-from app_v2.databases.models import UnifiedAuthModel, UserSubscriptionModel, PlanModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, SubscriptionStatusEnum
+from datetime import datetime, timedelta
+from app_v2.databases.models import UnifiedAuthModel, UserSubscriptionModel, PlanModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, SubscriptionStatusEnum
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
 from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest
 from app_v2.schemas.pagination import PaginatedResponse
@@ -78,6 +78,27 @@ def list_users_managed(
             func.max(ActivityLogModel.created_at).label("last_active")
         ).group_by(ActivityLogModel.user_id).subquery()
 
+        now = datetime.utcnow()
+        month_ago = now - timedelta(days=30)
+        week_ago  = now - timedelta(days=7)
+
+        calls_total_subquery = db.session.query(
+            APICallLogModel.user_id,
+            func.count(APICallLogModel.id).label("calls_total")
+        ).group_by(APICallLogModel.user_id).subquery()
+
+        calls_monthly_subquery = db.session.query(
+            APICallLogModel.user_id,
+            func.count(APICallLogModel.id).label("calls_monthly")
+        ).filter(APICallLogModel.created_at >= month_ago)\
+         .group_by(APICallLogModel.user_id).subquery()
+
+        calls_weekly_subquery = db.session.query(
+            APICallLogModel.user_id,
+            func.count(APICallLogModel.id).label("calls_weekly")
+        ).filter(APICallLogModel.created_at >= week_ago)\
+         .group_by(APICallLogModel.user_id).subquery()
+
         # Main query
         query = db.session.query(
             UnifiedAuthModel.id.label("user_id"),
@@ -92,14 +113,20 @@ def list_users_managed(
             func.greatest(
                 UnifiedAuthModel.last_login,
                 last_active_subquery.c.last_active
-            ).label("last_active")
+            ).label("last_active"),
+            func.coalesce(calls_total_subquery.c.calls_total, 0).label("calls_total"),
+            func.coalesce(calls_monthly_subquery.c.calls_monthly, 0).label("calls_monthly"),
+            func.coalesce(calls_weekly_subquery.c.calls_weekly, 0).label("calls_weekly"),
         ).filter(UnifiedAuthModel.is_admin.is_(False))\
          .outerjoin(UserSubscriptionModel, (UnifiedAuthModel.id == UserSubscriptionModel.user_id) & (UserSubscriptionModel.status == SubscriptionStatusEnum.active))\
          .outerjoin(PlanModel, UserSubscriptionModel.plan_id == PlanModel.id)\
          .outerjoin(agent_subquery, UnifiedAuthModel.id == agent_subquery.c.user_id)\
          .outerjoin(phone_subquery, UnifiedAuthModel.id == phone_subquery.c.user_id)\
          .outerjoin(coins_subquery, UnifiedAuthModel.id == coins_subquery.c.user_id)\
-         .outerjoin(last_active_subquery, UnifiedAuthModel.id == last_active_subquery.c.user_id)
+         .outerjoin(last_active_subquery, UnifiedAuthModel.id == last_active_subquery.c.user_id)\
+         .outerjoin(calls_total_subquery, UnifiedAuthModel.id == calls_total_subquery.c.user_id)\
+         .outerjoin(calls_monthly_subquery, UnifiedAuthModel.id == calls_monthly_subquery.c.user_id)\
+         .outerjoin(calls_weekly_subquery, UnifiedAuthModel.id == calls_weekly_subquery.c.user_id)
 
         # Search
         if search:
@@ -137,7 +164,10 @@ def list_users_managed(
                 no_of_agents=r.no_of_agents,
                 no_of_phones=r.no_of_phones,
                 last_active=format_time_ago(r.last_active) if r.last_active else "long time ago",
-                is_suspended=r.is_suspended
+                is_suspended=r.is_suspended,
+                api_calls_total=r.calls_total,
+                api_calls_monthly=r.calls_monthly,
+                api_calls_weekly=r.calls_weekly,
             ) for r in results
         ]
 
