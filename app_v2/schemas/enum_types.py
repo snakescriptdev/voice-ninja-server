@@ -120,6 +120,7 @@ class CoinTransactionTypeEnum(str, Enum):
     refund = "refund"
     expired = "expired"
     carry_forward_reset = "carry_forward_reset"
+    admin_adjustment = "admin_adjustment"
 
 class PlanFeatureEnum(str,Enum):
     ai_voice_agents = "ai_voice_agents"

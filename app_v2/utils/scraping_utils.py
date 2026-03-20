@@ -32,7 +32,7 @@ def scrape_webpage_title(url: str) -> str:
         else:
             raise HTTPException(
                 status_code=400,
-                detail=f"Failed to fetch URL. HTTP {status_code}."
+                detail=f"Failed to fetch URL. HTTP {status_code}. Scraping is blocked by the website."
             )
 
     except requests.exceptions.Timeout:

@@ -75,7 +75,7 @@ class PlanCreate(PlanBase):
 
 class PlanUpdate(BaseModel):
     display_name: Optional[str] = None
-    price: Optional[float] = Field(default=None, ge=0)
+    price: Optional[float] = Field(default=None, gt=0)
     currency: Optional[str] = None
     description: Optional[str] = None
     coins_included: Optional[int] = Field(default=None, ge=0)

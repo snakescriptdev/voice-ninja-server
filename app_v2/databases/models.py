@@ -138,7 +138,8 @@ class UnifiedAuthModel(Base):
     # Google OAuth fields
     has_google_auth = Column(Boolean, default=False)
     google_user_id = Column(String, nullable=True, default="")
-    
+    is_suspended = Column(Boolean, default=False,server_default="false")
+    suspension_reason = Column(String, nullable=True)
     last_login = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
@@ -885,6 +886,7 @@ class CoinUsageSettingsModel(Base):
     phone_number_purchase_cost: Mapped[int] = mapped_column(Integer, default=500)
     elevenlabs_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
     static_conversation_cost: Mapped[int] = mapped_column(Integer, default=0)
+    cost_per_minute_in_coins: Mapped[int] = mapped_column(Integer,server_default="0")
     
     # Singleton guard: only one row can have this value
     singleton_guard: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
@@ -986,3 +988,27 @@ class WebhookEventLogModel(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class EmailSubscriberModel(Base):
+    """
+    Stores email addresses collected from the public landing page.
+    Each row represents one subscriber opt-in.
+    """
+    __tablename__ = "email_subscribers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+
+    # Human-readable source tag, e.g. "landing_page", "blog_footer"
+    source: Mapped[str | None] = mapped_column(String(100), nullable=True, default="landing_page")
+
+    # Unique token used in unsubscribe links (avoids exposing the email)
+    unsubscribe_token: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, default=lambda: str(uuid.uuid4()).replace("-", "")
+    )
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    subscribed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

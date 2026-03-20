@@ -471,7 +471,7 @@ def _sub_charged(
                         old_plan_id, sub.plan_id, db.session
                     )
                     if downgrade_diff:
-                        enforce_downgrade_for_user(
+                        summary = enforce_downgrade_for_user(
                             user_id=sub.user_id,
                             old_plan_id=old_plan_id,
                             new_plan_id=sub.plan_id,
@@ -479,8 +479,19 @@ def _sub_charged(
                         )
                         logger.info(
                             f"subscription.charged | downgrade enforced via webhook | "
-                            f"user={sub.user_id} | old_plan={old_plan_id} → new_plan={sub.plan_id}"
+                            f"user={sub.user_id} | old_plan={old_plan_id} → new_plan={sub.plan_id} | summary={summary}"
                         )
+
+                        # Sync affected agents with ElevenLabs
+                        if "knowledge_base" in summary:
+                            agent_ids = summary["knowledge_base"].get("agent_ids_to_sync", [])
+                            from app_v2.routers.knowledge_base import sync_agent_kb
+                            for aid in agent_ids:
+                                try:
+                                    sync_agent_kb(aid)
+                                    logger.info(f"subscription.charged | synced agent={aid} with ElevenLabs after KB downgrade")
+                                except Exception as se:
+                                    logger.error(f"subscription.charged | failed to sync agent={aid} | error={se}")
                 except Exception as dge:
                     logger.error(
                         f"subscription.charged | downgrade enforcement failed | "
@@ -725,7 +736,8 @@ def _order_payment_captured(
     )
 
     if addon_order is None:
-        notes: Dict = payment_entity.get("notes", {})
+        raw_notes = payment_entity.get("notes")
+        notes: Dict = raw_notes if isinstance(raw_notes, dict) else {}
         if notes.get("type") == "addon_purchase":
             logger.error(
                 f"payment.captured: addon_order not found for order {rzp_order_id}"
@@ -874,7 +886,8 @@ def _order_payment_failed(
 
     # ── Case 2: Subscription payment failure ──────────────────────────────────
     # FIX: Try multiple resolution strategies to find the user_id robustly.
-    notes: Dict = payment_entity.get("notes", {}) or {}
+    raw_notes = payment_entity.get("notes")
+    notes: Dict = raw_notes if isinstance(raw_notes, dict) else {}
     rzp_subscription_id: str = notes.get("subscription_id", "")
 
     user_id: int | None = None

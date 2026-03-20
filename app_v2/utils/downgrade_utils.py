@@ -45,6 +45,8 @@ from app_v2.databases.models import (
     ConversationsModel,
     PlanFeatureModel,
     PlanModel,
+    KnowledgeBaseModel,
+    AgentKnowledgeBaseBridge,
 )
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 from app_v2.core.logger import setup_logger
@@ -52,7 +54,7 @@ from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Feature keys that have count-based (not usage-based) limits
+# Feature keys that have count-based or per-item limits
 # ──────────────────────────────────────────────────────────────────────────────
 
 COUNT_BASED_FEATURES = {
@@ -60,6 +62,7 @@ COUNT_BASED_FEATURES = {
     "web_voice_agent",
     "phone_numbers",
     "custom_voice_cloning",
+    "knowledge_base",
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -105,22 +108,43 @@ def compute_downgrade_diff(
         f.feature_key: f.limit for f in new_features
     }
 
+    # Only features the OLD plan actually has can be downgraded.
+    # If a feature is not in the old plan, the user never had it — skip.
+    # Iterate over old plan's count-based features only.
+    old_keys = set(old_map.keys())
+    new_keys = set(new_map.keys())
+
     diff: Dict[str, Dict[str, Any]] = {}
 
     for feature_key in COUNT_BASED_FEATURES:
-        old_limit = old_map.get(feature_key)  # None = unlimited
-        new_limit = new_map.get(feature_key)  # None = unlimited or not in plan
+        # Rule 1: If NOT in the current (old) plan — skip. Can't downgrade what you don't have.
+        if feature_key not in old_keys:
+            continue
 
-        # Skip if new plan is also unlimited
+        old_limit = old_map[feature_key]  # None = unlimited in old plan
+
+        # Rule 2: If feature is present in old plan but ABSENT from new plan —
+        # that is definitely a downgrade (feature being removed entirely).
+        if feature_key not in new_keys:
+            diff[feature_key] = {
+                "old_limit": old_limit,
+                "new_limit": 0,          # 0 = feature removed from new plan
+                "feature_removed": True,
+            }
+            continue
+
+        new_limit = new_map[feature_key]  # None = unlimited in new plan
+
+        # Rule 3: New plan is also unlimited — no downgrade.
         if new_limit is None:
             continue
 
-        # Include if old was unlimited but new is limited (downgrade)
-        # or if new limit is strictly less than old limit
+        # Rule 4: Old was unlimited but new is now limited, OR new limit < old limit.
         if old_limit is None or new_limit < old_limit:
             diff[feature_key] = {
-                "old_limit": old_limit,   # None means was unlimited
+                "old_limit": old_limit,
                 "new_limit": new_limit,
+                "feature_removed": False,
             }
 
     return diff
@@ -163,18 +187,42 @@ def compute_downgrade_preview(
 
     for feature_key, limits in diff.items():
         new_limit: int = limits["new_limit"]
-        current_usage = _get_current_count(user_id, feature_key, session)
-        will_disable = max(0, current_usage - new_limit)
+        feature_removed: bool = limits.get("feature_removed", False)
 
-        resource_names = []
-        if will_disable > 0:
-            resource_names = _get_affected_resource_names(user_id, feature_key, new_limit, session)
+        if feature_removed:
+            # Feature gone entirely — all current resources are affected
+            current_usage = _get_current_count(user_id, feature_key, session)
+            will_disable = current_usage
+            resource_names = _get_affected_resource_names(user_id, feature_key, 0, session) if will_disable > 0 else []
+        elif feature_key == "knowledge_base":
+            # For KB, usage is total files, but will_disable is files > limit
+            total_files = (
+                session.query(func.count(KnowledgeBaseModel.id))
+                .filter(KnowledgeBaseModel.user_id == user_id)
+                .scalar() or 0
+            )
+            over_limit_count = (
+                session.query(func.count(KnowledgeBaseModel.id))
+                .filter(
+                    KnowledgeBaseModel.user_id == user_id,
+                    KnowledgeBaseModel.file_size > new_limit * 1024  # MB to KB
+                )
+                .scalar() or 0
+            )
+            current_usage = total_files
+            will_disable = over_limit_count
+            resource_names = _get_affected_resource_names(user_id, feature_key, new_limit, session) if will_disable > 0 else []
+        else:
+            current_usage = _get_current_count(user_id, feature_key, session)
+            will_disable = max(0, current_usage - new_limit)
+            resource_names = _get_affected_resource_names(user_id, feature_key, new_limit, session) if will_disable > 0 else []
 
-        message = _build_preview_message(feature_key, current_usage, new_limit, will_disable)
+        message = _build_preview_message(feature_key, current_usage, new_limit, will_disable, feature_removed)
 
         affected[feature_key] = {
             "old_limit": limits["old_limit"],
-            "new_limit": new_limit,
+            "new_limit": new_limit if not feature_removed else None,
+            "feature_removed": feature_removed,
             "current_usage": current_usage,
             "will_disable_count": will_disable,
             "affected_resource_names": resource_names,
@@ -279,6 +327,25 @@ def _get_affected_resource_names(user_id: int, feature_key: str, new_limit: int,
             to_detach = custom_voices[: total - new_limit]
             return [v.name or f"Voice {v.id}" for v in to_detach]
 
+    elif feature_key == "knowledge_base":
+        if new_limit == 0:
+            # Feature removed entirely — all KB files are affected
+            all_kbs = (
+                session.query(KnowledgeBaseModel)
+                .filter(KnowledgeBaseModel.user_id == user_id)
+                .all()
+            )
+            return [kb.title or f"File {kb.id}" for kb in all_kbs]
+        over_limit_kbs = (
+            session.query(KnowledgeBaseModel)
+            .filter(
+                KnowledgeBaseModel.user_id == user_id,
+                KnowledgeBaseModel.file_size > new_limit * 1024
+            )
+            .all()
+        )
+        return [kb.title or f"File {kb.id}" for kb in over_limit_kbs]
+
     return []
 
 
@@ -317,6 +384,12 @@ def _get_current_count(user_id: int, feature_key: str, session: Session) -> int:
             )
             .scalar() or 0
         )
+    elif feature_key == "knowledge_base":
+        return (
+            session.query(func.count(KnowledgeBaseModel.id))
+            .filter(KnowledgeBaseModel.user_id == user_id)
+            .scalar() or 0
+        )
     return 0
 
 
@@ -325,28 +398,122 @@ def _build_preview_message(
     current_usage: int,
     new_limit: int,
     will_disable: int,
+    feature_removed: bool = False,
 ) -> str:
-    messages = {
+    """
+    Builds a human-readable description of what will happen
+    for each feature that is being restricted in the new plan.
+    """
+    # ── Feature completely removed from new plan ────────────────────────────────
+    if feature_removed:
+        if current_usage == 0:
+            removed_no_usage = {
+                "ai_voice_agents": "The new plan does not include AI voice agents. You have none currently, so no immediate impact.",
+                "web_voice_agent": "The new plan does not include web agents. You have none currently, so no immediate impact.",
+                "phone_numbers": "The new plan does not include phone numbers. You have none currently, so no immediate impact.",
+                "custom_voice_cloning": "The new plan does not include custom voice cloning. You have none currently, so no immediate impact.",
+                "knowledge_base": "The new plan does not include knowledge bases. You have none currently, so no immediate impact.",
+            }
+            return removed_no_usage.get(
+                feature_key,
+                "This feature is not included in the new plan but you have no resources using it.",
+            )
+        removed_with_usage = {
+            "ai_voice_agents": (
+                f"The new plan does not include AI voice agents. "
+                f"All {current_usage} of your active agent(s) will be automatically disabled."
+            ),
+            "web_voice_agent": (
+                f"The new plan does not include web agents. "
+                f"All {current_usage} of your active web agent(s) will be automatically disabled."
+            ),
+            "phone_numbers": (
+                f"The new plan does not include phone numbers. "
+                f"All {current_usage} of your phone number(s) will be unassigned from agents."
+            ),
+            "custom_voice_cloning": (
+                f"The new plan does not include custom voice cloning. "
+                f"All {current_usage} of your custom voice(s) will be detached from agents. "
+                f"Voices are NOT deleted — you can re-attach them if you upgrade."
+            ),
+            "knowledge_base": (
+                f"The new plan does not include knowledge bases. "
+                f"All {current_usage} of your knowledge base file(s) will be unbound from agents."
+            ),
+        }
+        return removed_with_usage.get(
+            feature_key,
+            f"This feature is not included in the new plan. All {current_usage} resource(s) will be affected.",
+        )
+
+    # ── Feature present but limit reduced ─────────────────────────────────────
+    if will_disable == 0:
+        # User is within the new limit already — no action needed
+        safe_messages = {
+            "ai_voice_agents": (
+                f"Your new plan allows up to {new_limit} active AI voice agent(s). "
+                f"You currently have {current_usage} — no agents will be disabled."
+            ),
+            "web_voice_agent": (
+                f"Your new plan allows up to {new_limit} active web agent(s). "
+                f"You currently have {current_usage} — no web agents will be disabled."
+            ),
+            "phone_numbers": (
+                f"Your new plan allows up to {new_limit} phone number(s). "
+                f"You currently have {current_usage} — no numbers will be unassigned."
+            ),
+            "custom_voice_cloning": (
+                f"Your new plan allows up to {new_limit} custom voice(s). "
+                f"You currently have {current_usage} — no voices will be detached."
+            ),
+            "knowledge_base": (
+                f"Your new plan sets a per-file limit of {new_limit}MB. "
+                f"You currently have {current_usage} file(s) — none exceed the new limit."
+            ),
+        }
+        return safe_messages.get(
+            feature_key,
+            f"You are within the new plan's limits for this feature — no action needed.",
+        )
+
+    # User exceeds the new limit — resources will be auto-adjusted
+    action_messages = {
         "ai_voice_agents": (
-            f"{will_disable} of your {current_usage} active agents will be auto-disabled "
-            f"(fewest calls first, then oldest). You will keep {new_limit}."
+            f"Your new plan only allows {new_limit} active AI voice agent(s), but you currently "
+            f"have {current_usage}. {will_disable} agent(s) will be automatically disabled "
+            f"(those with the fewest calls are disabled first). "
+            f"You will keep your {new_limit} most-used agent(s) active."
         ),
         "web_voice_agent": (
-            f"{will_disable} of your {current_usage} active web agents will be auto-disabled "
-            f"(fewest leads first, then oldest). You will keep {new_limit}."
+            f"Your new plan only allows {new_limit} active web agent(s), but you currently "
+            f"have {current_usage}. {will_disable} web agent(s) will be automatically disabled "
+            f"(those with the fewest leads are disabled first). "
+            f"You will keep your {new_limit} most-used web agent(s) active."
         ),
         "phone_numbers": (
-            f"{will_disable} of your {current_usage} phone numbers will be unassigned from agents "
-            f"(unassigned numbers first, then oldest). You will keep {new_limit} assigned."
+            f"Your new plan only allows {new_limit} phone number(s), but you currently "
+            f"have {current_usage}. {will_disable} phone number(s) will be automatically "
+            f"unassigned from agents (unassigned numbers are removed first, then oldest). "
+            f"You will keep {new_limit} assigned number(s)."
         ),
         "custom_voice_cloning": (
-            f"{will_disable} of your {current_usage} custom voices will be detached from agents "
-            f"(voices with no agents first, then oldest). You will keep {new_limit}."
+            f"Your new plan only allows {new_limit} custom voice(s), but you currently "
+            f"have {current_usage}. {will_disable} custom voice(s) will be automatically "
+            f"detached from any agents using them (voices attached to no agents are removed "
+            f"first). Detached voices are NOT deleted — you can re-attach them if you upgrade. "
+            f"Affected agents will fall back to the system default voice."
+        ),
+        "knowledge_base": (
+            f"Your new plan enforces a {new_limit}MB per-file limit. {will_disable} of your "
+            f"{current_usage} knowledge base file(s) exceed this limit and will be automatically "
+            f"unbound from all agents. The files themselves are not deleted — you can manage "
+            f"them after the plan change."
         ),
     }
-    return messages.get(
+    return action_messages.get(
         feature_key,
-        f"{will_disable} resources will be affected by this downgrade.",
+        f"{will_disable} of your {current_usage} resource(s) exceed the new plan's "
+        f"limit of {new_limit} and will be automatically adjusted.",
     )
 
 
@@ -409,6 +576,10 @@ def enforce_downgrade_for_user(
         elif feature_key == "custom_voice_cloning":
             result = _enforce_custom_voices(user_id, new_limit, session)
             summary["custom_voice_cloning"] = result
+
+        elif feature_key == "knowledge_base":
+            result = _enforce_kb_size_limits(user_id, new_limit, session)
+            summary["knowledge_base"] = result
 
     logger.info(
         f"enforce_downgrade_for_user | user={user_id} | summary={summary}"
@@ -771,3 +942,52 @@ def _get_system_default_voice(session: Session) -> Optional[VoiceModel]:
     )
 
     return fallback
+
+
+def _enforce_kb_size_limits(
+    user_id: int,
+    new_limit_mb: int,
+    session: Session,
+) -> Dict[str, Any]:
+    """
+    Unbind KB files that exceed the new MB limit.
+    DB stores file_size in KB.
+    """
+    limit_kb = new_limit_mb * 1024
+
+    over_limit_kbs = (
+        session.query(KnowledgeBaseModel)
+        .filter(
+            KnowledgeBaseModel.user_id == user_id,
+            KnowledgeBaseModel.file_size > limit_kb
+        )
+        .all()
+    )
+
+    if not over_limit_kbs:
+        return {"unbound_kb_ids": [], "agent_ids_to_sync": []}
+
+    kb_ids = [kb.id for kb in over_limit_kbs]
+
+    # Find all bridges for these KBs
+    bridges = (
+        session.query(AgentKnowledgeBaseBridge)
+        .filter(AgentKnowledgeBaseBridge.kb_id.in_(kb_ids))
+        .all()
+    )
+
+    agent_ids_to_sync = list(set([b.agent_id for b in bridges]))
+
+    # Deleting bridge records auto-unbinds them from agents in DB
+    for bridge in bridges:
+        session.delete(bridge)
+
+    logger.info(
+        f"_enforce_kb_size_limits | user={user_id} | "
+        f"unbound_kb_ids={kb_ids} | agent_ids_to_sync={agent_ids_to_sync}"
+    )
+
+    return {
+        "unbound_kb_ids": kb_ids,
+        "agent_ids_to_sync": agent_ids_to_sync,
+    }
