@@ -132,6 +132,7 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 			"duration": seconds_to_timer(conv.duration),
 			"messages": conv.message_count,
 			"channel": conv.channel.name if conv.channel else None,
+			"cost": conv.cost
 		},
 		"call_info": {
 			"agent": getattr(conv.agent, "agent_name", None),
