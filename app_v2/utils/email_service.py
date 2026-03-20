@@ -173,3 +173,49 @@ async def send_coin_expiry_alert_email(
 
     except Exception as e:
         logger.error(f"Failed to send coin expiry alert email: {str(e)}")
+
+
+async def send_welcome_subscription_email(user_email: str, unsubscribe_token: str, base_url: str):
+    try:
+        subject = "Welcome to Voice Ninja! 🚀"
+        
+        # Ensure the link uses https instead of wss (handle URL object as well as string)
+        base_url_str = str(base_url)
+        if base_url_str and not base_url_str.endswith("/"):
+            base_url_str += "/"
+            
+        http_base_url = base_url_str.replace("wss://", "https://") if base_url_str else ""
+        unsubscribe_link = f"{http_base_url}api/v2/unsubscribe/{unsubscribe_token}"
+
+        body = f"""
+        <h2>Thanks for Subscribing! 🚀</h2>
+
+        <p>Hi there,</p>
+
+        <p>Thank you for subscribing to Voice Ninja product updates. We're thrilled to have you with us!</p>
+
+        <p>
+        You'll be the first to know about our new features, updates, and exclusive insights.
+        </p>
+
+        <p>
+        Stay tuned for more exciting news coming your way!
+        </p>
+
+        <br/>
+
+        <p>Best regards,<br/>The Voice Ninja Team</p>
+        <hr/>
+        <p style="font-size: 12px; color: #777;">
+            If you didn't mean to subscribe, you can <a href="{unsubscribe_link}">unsubscribe here</a>.
+        </p>
+        """
+
+        await send_email_async(
+            subject=subject,
+            recipients=[user_email],
+            body=body
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to send welcome subscription email to {user_email}: {str(e)}")

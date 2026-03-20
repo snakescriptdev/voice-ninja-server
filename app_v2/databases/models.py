@@ -988,3 +988,27 @@ class WebhookEventLogModel(Base):
     processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+
+
+class EmailSubscriberModel(Base):
+    """
+    Stores email addresses collected from the public landing page.
+    Each row represents one subscriber opt-in.
+    """
+    __tablename__ = "email_subscribers"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+
+    # Human-readable source tag, e.g. "landing_page", "blog_footer"
+    source: Mapped[str | None] = mapped_column(String(100), nullable=True, default="landing_page")
+
+    # Unique token used in unsubscribe links (avoids exposing the email)
+    unsubscribe_token: Mapped[str] = mapped_column(
+        String(64), unique=True, nullable=False, default=lambda: str(uuid.uuid4()).replace("-", "")
+    )
+
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    subscribed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
