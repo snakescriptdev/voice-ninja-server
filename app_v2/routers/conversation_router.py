@@ -73,6 +73,7 @@ def list_user_conversations(
 				"messages": conv.message_count,
 				"call_status": conv.call_status.name if conv.call_status else None,
 				"lead_name": getattr(conv.lead, "name", None) if conv.lead else None,
+				"cost": conv.cost
 			})
 
 		return {
