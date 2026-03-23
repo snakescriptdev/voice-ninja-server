@@ -262,7 +262,7 @@ def _get_affected_resource_names(user_id: int, feature_key: str, new_limit: int,
         total = len(enabled_agents)
         if total > new_limit:
             to_disable = enabled_agents[: total - new_limit]
-            return [a.name for a in to_disable]
+            return [a.agent_name for a in to_disable]
 
     elif feature_key == "web_voice_agent":
         lead_count_sub = (
@@ -286,7 +286,7 @@ def _get_affected_resource_names(user_id: int, feature_key: str, new_limit: int,
         total = len(enabled_web_agents)
         if total > new_limit:
             to_disable = enabled_web_agents[: total - new_limit]
-            return [wa.name for wa in to_disable]
+            return [wa.web_agent_name for wa in to_disable]
 
     elif feature_key == "phone_numbers":
         all_phones = (
@@ -325,7 +325,7 @@ def _get_affected_resource_names(user_id: int, feature_key: str, new_limit: int,
         total = len(custom_voices)
         if total > new_limit:
             to_detach = custom_voices[: total - new_limit]
-            return [v.name or f"Voice {v.id}" for v in to_detach]
+            return [v.voice_name or f"Voice {v.id}" for v in to_detach]
 
     elif feature_key == "knowledge_base":
         if new_limit == 0:
