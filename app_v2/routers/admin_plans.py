@@ -254,6 +254,15 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
 
         update_data = plan_update.dict(exclude_unset=True)
 
+        # 🔹 Restrict immutable fields
+        immutable_fields = ["price", "currency", "billing_period"]
+        restricted_keys = [key for key in immutable_fields if key in update_data]
+        if restricted_keys:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Fields {restricted_keys} cannot be updated once a plan is created."
+            )
+
         # 🔹 Handle features safely
         if "features" in update_data:
             validate_unique_features(update_data["features"])
