@@ -19,7 +19,7 @@ from app_v2.schemas.knowledge_base_schema import (
     KnowledgeBaseTextUpdate,
     KnowledgeBaseBind
 )
-from app_v2.utils.jwt_utils import HTTPBearer,get_current_user
+from app_v2.utils.jwt_utils import HTTPBearer,require_active_user
 from app_v2.utils.feature_access import RequireFeature, get_feature_limit, get_feature_usage
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs import ElevenLabsKB, ElevenLabsAgent
@@ -37,7 +37,7 @@ UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-MAX_FILE_SIZE = 10 * 1024 * 1024 # 10 MB
+MAX_FILE_SIZE_IN_MB = 20 
 ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt"}
 
 def sync_agent_kb(agent_id: int):
@@ -87,21 +87,11 @@ async def upload_files(
         limit = get_feature_limit(user_id, "knowledge_base") # in MB
         current_usage = get_feature_usage(user_id, "knowledge_base") # in MB
         
-        uploaded_entries = []
         with db():
-            total_new_size_mb = 0
-            for file in files:
-                file.file.seek(0, 2)
-                size = file.file.tell()
-                file.file.seek(0)
-                total_new_size_mb += (size / (1024 * 1024))
-
-            if limit is not None and (current_usage + total_new_size_mb) > limit:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"Knowledge base storage limit exceeded. Limit: {limit}MB, Current: {current_usage:.2f}MB, New: {total_new_size_mb:.2f}MB"
-                )
-
+            uploaded_entries = []
+            # Plan-based limit per file (in MB)
+            plan_limit_mb = limit if limit is not None else MAX_FILE_SIZE_IN_MB # Fallback to 10MB if no limit set
+            
             for file in files:
                 # validation logic
                 _, ext = os.path.splitext(file.filename)
@@ -112,8 +102,17 @@ async def upload_files(
                 file_size = file.file.tell()
                 file.file.seek(0)
                 
-                if file_size > MAX_FILE_SIZE:
-                     raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds 10MB limit")
+                file_size_mb = file_size / (1024 * 1024)
+
+                # enforce plan limit and hard cap
+                if plan_limit_mb is not None and file_size_mb > plan_limit_mb:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Your current plan does not support files larger than {plan_limit_mb}MB."
+                    )
+
+                if file_size_mb > MAX_FILE_SIZE_IN_MB:
+                     raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds system 20MB hard limit.")
                 
                 if file_size == 0:
                     raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
@@ -276,7 +275,7 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
 async def get_all_knowledge_base(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         if page < 1:
@@ -321,7 +320,7 @@ async def get_agent_knowledge_base(
     agent_id: int,
     skip: int = 0,
     limit: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -374,7 +373,7 @@ async def get_agent_knowledge_base(
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT, openapi_extra={"security": [{"BearerAuth": []}]})
 async def delete_knowledge_base_item(
     kb_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -429,7 +428,7 @@ async def delete_knowledge_base_item(
 async def update_file_knowledge_base(
     kb_id: int,
     update_data: KnowledgeBaseFileUpdate,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -466,7 +465,7 @@ async def update_file_knowledge_base(
 async def update_url_knowledge_base(
     kb_id: int,
     update_data: KnowledgeBaseURLUpdate,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -522,7 +521,7 @@ async def update_url_knowledge_base(
 async def update_text_knowledge_base(
     kb_id: int,
     update_data: KnowledgeBaseTextUpdate,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -576,7 +575,7 @@ async def update_text_knowledge_base(
 @router.post("/bind", status_code=status.HTTP_200_OK, openapi_extra={"security": [{"BearerAuth": []}]})
 async def bind_knowledge_base(
     request: KnowledgeBaseBind,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():
@@ -627,7 +626,7 @@ async def bind_knowledge_base(
 @router.post("/unbind", status_code=status.HTTP_200_OK, openapi_extra={"security": [{"BearerAuth": []}]})
 async def unbind_knowledge_base(
     request: KnowledgeBaseBind,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         with db():

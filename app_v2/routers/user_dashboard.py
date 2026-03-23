@@ -4,7 +4,7 @@ import os
 from fastapi.requests import Request
 from fastapi_sqlalchemy import db
 from datetime import datetime, timedelta
-from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.utils.feature_access import RequireFeature
 from app_v2.databases.models import (
     UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, 
@@ -65,7 +65,7 @@ _ACTIVE_LIKE = (
 
 
 @router.get("/agents-data", status_code=status.HTTP_200_OK,openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_agents_data(skip: int = 0, limit: int = 3, current_user: str = Depends(get_current_user)):
+def get_agents_data(skip: int = 0, limit: int = 3, current_user: str = Depends(require_active_user())):
     try:
         count = db.session.query(AgentModel).filter(
             AgentModel.user_id == current_user.id,
@@ -94,7 +94,7 @@ def get_agents_data(skip: int = 0, limit: int = 3, current_user: str = Depends(g
         
 
 @router.get("/phone-numbers", status_code=status.HTTP_200_OK,openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_phone_numbers(skip: int = 0, limit: int = 3, current_user: str = Depends(get_current_user)):
+def get_phone_numbers(skip: int = 0, limit: int = 3, current_user: str = Depends(require_active_user())):
     try:
         count = db.session.query(PhoneNumberService).filter(
             PhoneNumberService.user_id == current_user.id
@@ -123,7 +123,7 @@ def get_phone_numbers(skip: int = 0, limit: int = 3, current_user: str = Depends
 def get_global_activities(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         skip = (page - 1) * size
@@ -357,7 +357,7 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
 
 
 @router.get("/get-user-subscription", response_model=UserSubscriptionResponse, openapi_extra={"security": [{"BearerAuth": []}]})
-def user_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
+def user_subscription(current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True))):
     """
     Returns the user's current subscription and plan details.
 
@@ -453,7 +453,7 @@ def user_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)
         )
 
 @router.get("/coin-usage", response_model=UserCoinUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(get_current_user)):
+def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(require_active_user())):
     try:
         balance = get_user_coin_balance(current_user.id)
         
@@ -481,7 +481,7 @@ def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(get_current_use
 def get_coin_buckets(
     page: int = 1,
     size: int = 10,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     try:
         skip = (page - 1) * size
@@ -600,7 +600,7 @@ def get_coin_buckets(
 def get_usage_history(
     page: int = 1,
     size: int = 10,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """Details coin usage transactions."""
     try:
@@ -656,7 +656,7 @@ def get_usage_history(
 def get_billing_history(
     page: int = 1,
     size: int = 10,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """Lists past payments and billing events."""
     try:
@@ -710,7 +710,7 @@ def get_billing_history(
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/public-api/usage", response_model=PublicAPIUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depends(get_current_user)):
+def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depends(require_active_user())):
     """Returns public API usage metrics and last 7 days for bar graph."""
     try:
         first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
@@ -782,7 +782,7 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
 def get_user_api_logs(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """Returns detailed public API call logs for the user."""
     try:

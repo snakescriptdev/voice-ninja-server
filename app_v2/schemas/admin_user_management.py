@@ -16,6 +16,19 @@ class UserManagementListItem(BaseModel):
     no_of_agents: int
     no_of_phones: int
     last_active: Optional[str]
+    is_suspended: bool
+    api_calls_total: int
+    api_calls_monthly: int
+    api_calls_weekly: int
 
     class Config:
         from_attributes = True
+
+class SuspendUserRequest(BaseModel):
+    is_suspended:bool
+    reason: Optional[str]
+
+class AdjustUserCoinRequest(BaseModel):
+
+    coins:int
+    reason:str

@@ -2,11 +2,14 @@ import sys
 import os
 from datetime import datetime
 from sqlalchemy import text
+from dotenv import load_dotenv
+import os 
 
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+load_dotenv(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.env')))
 
-from main import app 
+# from main import app 
 
 def run_expiry():
     """

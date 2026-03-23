@@ -29,7 +29,7 @@ class HTTPBearer(FastAPIHTTPBearer):
 SECRET_KEY = VoiceSettings.SECRET_KEY
 ALGORITHM = VoiceSettings.ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = VoiceSettings.ACCESS_TOKEN_EXPIRE_MINUTES
-REFRESH_TOKEN_EXPIRE_DAYS = 30  # 30 days
+REFRESH_TOKEN_EXPIRE_DAYS = 7
 
 def create_access_token(data: dict, expires_delta: timedelta = None):
     """Create access token"""
@@ -132,3 +132,13 @@ def is_admin(
         )
 
     return current_user
+
+def require_active_user(allow_suspended:bool = False):
+    def dependency(current_user: UnifiedAuthModel= Depends(get_current_user)):
+        if not allow_suspended and current_user.is_suspended:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User account suspended"
+            )
+        return current_user
+    return dependency
