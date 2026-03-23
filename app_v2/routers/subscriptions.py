@@ -89,6 +89,8 @@ from app_v2.utils.coin_utils import get_user_coin_balance, reset_unused_subscrip
 from fastapi.responses import HTMLResponse
 import os
 from app_v2.utils.time_utils import convert_to_unix_timestamp
+from app_v2.schemas.enum_types import ScheduledDowngradeTriggerEnum
+
 
 logger = setup_logger(__name__)
 security = HTTPBearer()
@@ -421,11 +423,11 @@ def verify_subscription(
             db.session.add(subscription)
             db.session.flush()
 
-            # ── Downgrade enforcement ─────────────────────────────────────────
-            # Run enforcement immediately so users can't exploit the window
-            # between verify and the charged webhook.
+            # ── Deferred Downgrade enforcement ────────────────────────────────
+            # Instead of enforcing immediately, we schedule it for the end of the
+            # current billing cycle.
             from app_v2.utils.downgrade_utils import (
-                enforce_downgrade_for_user,
+                schedule_downgrade_for_user,
                 compute_downgrade_diff,
             )
             from app_v2.utils.activity_logger import log_activity
@@ -433,42 +435,40 @@ def verify_subscription(
             downgrade_diff = compute_downgrade_diff(old_plan_id, plan.id, db.session)
 
             if downgrade_diff:
-                downgrade_summary = enforce_downgrade_for_user(
+                scheduled_downgrade = schedule_downgrade_for_user(
                     user_id=current_user.id,
                     old_plan_id=old_plan_id,
                     new_plan_id=plan.id,
+                    subscription_id=subscription.id,
+                    scheduled_for=old_subscription.current_period_end,
+                    trigger_source=ScheduledDowngradeTriggerEnum.plan_change,
                     session=db.session,
                 )
+                
                 log_activity(
                     user_id=current_user.id,
-                    event_type="subscription_downgrade_enforcement",
+                    event_type="subscription_downgrade_scheduled",
                     description=(
-                        f"Plan downgraded from {old_plan_id} to {plan.id}. "
-                        f"Resources auto-disabled per policy."
+                        f"Plan downgrade scheduled from {old_plan_id} to {plan.id} "
+                        f"on {old_subscription.current_period_end.strftime('%Y-%m-%d')}."
                     ),
                     metadata={
                         "old_plan_id": old_plan_id,
                         "new_plan_id": plan.id,
+                        "scheduled_for": old_subscription.current_period_end.isoformat(),
                         "diff": downgrade_diff,
-                        "disabled": downgrade_summary,
                     },
                 )
                 logger.info(
-                    f"verify_subscription | downgrade enforced | "
-                    f"user={current_user.id} | summary={downgrade_summary}"
+                    f"verify_subscription | downgrade scheduled | "
+                    f"user={current_user.id} | scheduled_for={old_subscription.current_period_end}"
                 )
-
-                # Sync affected agents with ElevenLabs
-                if "knowledge_base" in downgrade_summary:
-                    agent_ids = downgrade_summary["knowledge_base"].get("agent_ids_to_sync", [])
-                    from app_v2.routers.knowledge_base import sync_agent_kb
-                    for aid in agent_ids:
-                        try:
-                            sync_agent_kb(aid)
-                            logger.info(f"verify_subscription | synced agent={aid} with ElevenLabs after KB downgrade")
-                        except Exception as se:
-                            logger.error(f"verify_subscription | failed to sync agent={aid} | error={se}")
-
+                
+                # We return the diff in downgrade_summary so frontend can still show what WILL happen
+                downgrade_summary = {
+                    "scheduled_for": old_subscription.current_period_end.strftime('%Y-%m-%d'),
+                    "affected_features": downgrade_diff
+                }
             db.session.flush()
 
         else:
@@ -490,6 +490,10 @@ def verify_subscription(
             )
             db.session.add(subscription)
             db.session.flush()
+
+            # ── Cancel any pending downgrades — user is on a new plan now ─────
+            from app_v2.utils.downgrade_utils import cancel_scheduled_downgrade_for_user
+            cancel_scheduled_downgrade_for_user(current_user.id, db.session)
 
         # ── Persist payment record & Credit Coins ─────────────────────────────
         existing_payment = (
@@ -548,9 +552,9 @@ def verify_subscription(
         db.session.commit()
 
         msg = (
-            "Plan change activated successfully."
-            if is_plan_change
-            else "Subscription activated successfully."
+            f"Plan change activated. Downgrade will be enforced on {old_subscription.current_period_end.strftime('%Y-%m-%d')}."
+            if is_plan_change and downgrade_summary
+            else ("Plan change activated successfully." if is_plan_change else "Subscription activated successfully.")
         )
         return {
             "message": msg,
@@ -876,6 +880,12 @@ def downgrade_preview(
             new_plan_id=plan_id,
             session=db.session,
         )
+        
+        if preview.get("is_downgrade"):
+            # Inform about deferred enforcement
+            preview["message"] = f"Downgrade will be enforced on {subscription.current_period_end.strftime('%Y-%m-%d')}."
+            preview["enforcement_date"] = subscription.current_period_end.strftime('%Y-%m-%d')
+            
         return preview
 
     except HTTPException:
