@@ -271,17 +271,32 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
             old_features = db.session.query(PlanFeatureModel).filter(
                 PlanFeatureModel.plan_id == plan_id
             ).all()
+            
+            # Keep a copy for downgrade comparison
+            old_features_copy = [PlanFeatureModel(feature_key=f.feature_key, limit=f.limit) for f in old_features]
 
             for feature in old_features:
                 db.session.delete(feature)
+            db.session.flush()
 
             # Add new features
+            new_features_list = []
             for feature in update_data["features"]:
                 new_feature = PlanFeatureModel(
                     plan_id=plan_id,
                     **feature
                 )
                 db.session.add(new_feature)
+                new_features_list.append(new_feature)
+
+            # Trigger scheduled downgrades for plan change
+            from app_v2.utils.downgrade_utils import schedule_downgrade_for_plan_change
+            schedule_downgrade_for_plan_change(
+                plan_id=plan_id,
+                old_features=old_features_copy,
+                new_features=new_features_list,
+                session=db.session
+            )
 
             del update_data["features"]
 

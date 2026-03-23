@@ -465,36 +465,31 @@ def _sub_charged(
                 try:
                     from app_v2.utils.downgrade_utils import (
                         compute_downgrade_diff,
-                        enforce_downgrade_for_user,
+                        schedule_downgrade_for_user,
                     )
+                    from app_v2.schemas.enum_types import ScheduledDowngradeTriggerEnum
+                    
                     downgrade_diff = compute_downgrade_diff(
                         old_plan_id, sub.plan_id, db.session
                     )
                     if downgrade_diff:
-                        summary = enforce_downgrade_for_user(
+                        # Schedule for end of the cycle just started
+                        scheduled_downgrade = schedule_downgrade_for_user(
                             user_id=sub.user_id,
                             old_plan_id=old_plan_id,
                             new_plan_id=sub.plan_id,
+                            subscription_id=sub.id,
+                            scheduled_for=sub.current_period_end,
+                            trigger_source=ScheduledDowngradeTriggerEnum.plan_change,
                             session=db.session,
                         )
                         logger.info(
-                            f"subscription.charged | downgrade enforced via webhook | "
-                            f"user={sub.user_id} | old_plan={old_plan_id} → new_plan={sub.plan_id} | summary={summary}"
+                            f"subscription.charged | downgrade scheduled via webhook | "
+                            f"user={sub.user_id} | scheduled_for={sub.current_period_end}"
                         )
-
-                        # Sync affected agents with ElevenLabs
-                        if "knowledge_base" in summary:
-                            agent_ids = summary["knowledge_base"].get("agent_ids_to_sync", [])
-                            from app_v2.routers.knowledge_base import sync_agent_kb
-                            for aid in agent_ids:
-                                try:
-                                    sync_agent_kb(aid)
-                                    logger.info(f"subscription.charged | synced agent={aid} with ElevenLabs after KB downgrade")
-                                except Exception as se:
-                                    logger.error(f"subscription.charged | failed to sync agent={aid} | error={se}")
                 except Exception as dge:
                     logger.error(
-                        f"subscription.charged | downgrade enforcement failed | "
+                        f"subscription.charged | downgrade scheduling failed | "
                         f"user={sub.user_id} | error={dge}"
                     )
         sub.next_plan_id = None
