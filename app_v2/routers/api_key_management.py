@@ -4,7 +4,7 @@ from typing import List
 
 from app_v2.databases.models import APIKeyModel, UnifiedAuthModel
 from app_v2.schemas.api_key_schema import APIKeyCreate, APIKeyResponse, APIKeyFullResponse
-from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.utils.api_key_utils import generate_client_id, generate_client_secret, hash_secret
 from sqlalchemy.exc import SQLAlchemyError
 from app_v2.core.logger import setup_logger
@@ -28,7 +28,7 @@ router = APIRouter(
 )
 async def create_api_key(
     key_in: APIKeyCreate,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """Generate a new API key for the user."""
     try:
@@ -91,7 +91,7 @@ async def create_api_key(
     openapi_extra={"security": [{"BearerAuth": []}]}
 )
 async def list_api_keys(
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """List all API keys belonging to the current user."""
     try:
@@ -131,7 +131,7 @@ async def list_api_keys(
     status_code=status.HTTP_204_NO_CONTENT,openapi_extra={"security": [{"BearerAuth": []}]})
 async def delete_api_key(
     key_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user)
+    current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """Revoke/Delete an API key."""
     try:

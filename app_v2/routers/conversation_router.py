@@ -9,7 +9,7 @@ from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.activity_logger import log_activity
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
 import io
-from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 
 
 security = HTTPBearer()
@@ -25,7 +25,7 @@ def list_user_conversations(
 	date_after: Optional[date] = Query(None),
 	date_before: Optional[date] = Query(None),
 	call_status: Optional[CallStatusEnum] = Query(None),
-	current_user: UnifiedAuthModel = Depends(get_current_user)
+	current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
 	with db():
 		q = (
@@ -73,6 +73,7 @@ def list_user_conversations(
 				"messages": conv.message_count,
 				"call_status": conv.call_status.name if conv.call_status else None,
 				"lead_name": getattr(conv.lead, "name", None) if conv.lead else None,
+				"cost": conv.cost
 			})
 
 		return {
@@ -85,7 +86,7 @@ def list_user_conversations(
 # 2. Get conversation audio (by internal id)
 
 @router.get("/{conversation_id}/audio",openapi_extra={"security":[{"BearerAuth": []}]})
-def get_conversation_audio(conversation_id: int,current_user:UnifiedAuthModel= Depends(get_current_user)):
+def get_conversation_audio(conversation_id: int,current_user:UnifiedAuthModel= Depends(require_active_user())):
 	with db():
 		conv = db.session.query(ConversationsModel).filter(ConversationsModel.id == conversation_id, ConversationsModel.user_id==current_user.id).first()
 		if not conv or not conv.elevenlabs_conv_id:
@@ -105,7 +106,7 @@ def get_conversation_audio(conversation_id: int,current_user:UnifiedAuthModel= D
 
 # 3. Get conversation details (db + 11labs transcript)
 @router.get("/{conversation_id}/details",openapi_extra={"security":[{"BearerAuth": []}]})
-def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel = Depends(get_current_user)):
+def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel = Depends(require_active_user())):
 	with db():
 		conv = db.session.query(ConversationsModel).options(
 			joinedload(ConversationsModel.agent),
@@ -132,6 +133,7 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 			"duration": seconds_to_timer(conv.duration),
 			"messages": conv.message_count,
 			"channel": conv.channel.name if conv.channel else None,
+			"cost": conv.cost
 		},
 		"call_info": {
 			"agent": getattr(conv.agent, "agent_name", None),
@@ -149,7 +151,7 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 
 # 4. Delete conversation (atomic: 11labs + db)
 @router.delete("/{conversation_id}",openapi_extra={"security":[{"BearerAuth": []}]})
-def delete_conversation(conversation_id: int,current_user= Depends(get_current_user)):
+def delete_conversation(conversation_id: int,current_user= Depends(require_active_user())):
 	with db():
 		conv = db.session.query(ConversationsModel).filter(ConversationsModel.id == conversation_id,ConversationsModel.user_id==current_user.id).first()
 		if not conv or not conv.elevenlabs_conv_id:
