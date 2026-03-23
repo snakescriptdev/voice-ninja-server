@@ -20,6 +20,7 @@ class UserManagementListItem(BaseModel):
     api_calls_total: int
     api_calls_monthly: int
     api_calls_weekly: int
+    no_of_voices: int
 
     class Config:
         from_attributes = True
