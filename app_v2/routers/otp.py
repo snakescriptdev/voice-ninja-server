@@ -25,6 +25,7 @@ from app_v2.utils.otp_utils import (
 from app_v2.utils.jwt_utils import (
     create_access_token,
     create_refresh_token,
+    verify_refresh_token,
 )
 
 from app_v2.constants import (
@@ -61,6 +62,7 @@ from app_v2.schemas.otp import (
     VerifyOTPRequest,
     VerifyOTPResponse,
     ErrorResponse,
+    RefreshTokenRequest,
 )
 
 router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
@@ -641,5 +643,113 @@ async def resend_otp(request: ResendOTPRequest):
                 "status": STATUS_FAILED,
                 "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
                 "message": MSG_FAILED_TO_SEND_OTP
+            }
+        )
+
+
+@router.post(
+    '/refresh',
+    status_code=status.HTTP_200_OK,
+    summary='Refresh Token',
+    description='Obtain a new access token using a valid refresh token',
+    responses={
+        200: {
+            'description': 'Token refreshed successfully',
+            'content': {
+                'application/json': {
+                    'example': {
+                        'status': 'success',
+                        'status_code': 200,
+                        'message': 'Token refreshed successfully',
+                        'data': {
+                            'access_token': 'new_jwt_token',
+                            'refresh_token': 'new_refresh_token'
+                        }
+                    }
+                }
+            }
+        },
+        401: {
+            'description': 'Unauthorized - invalid or expired refresh token'
+        }
+    }
+)
+async def refresh_token(request: RefreshTokenRequest):
+    """Refresh an access token.
+
+    Validates the provided refresh token and issues a new access token
+    and a new refresh token if valid.
+    """
+    try:
+        user_id = verify_refresh_token(request.refresh_token)
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_401_UNAUTHORIZED,
+                    "message": "Invalid or expired refresh token"
+                }
+            )
+
+        unified_user = UnifiedAuthModel.get_by_id(user_id)
+        if not unified_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_401_UNAUTHORIZED,
+                    "message": MSG_USER_NOT_FOUND
+                }
+            )
+
+        if unified_user.is_suspended:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": 403,
+                    "message": "User account suspended"
+                }
+            )
+
+        # Create new tokens
+        token_data = {
+            'user_id': unified_user.id,
+            'email': unified_user.email,
+            'phone': unified_user.phone,
+            'role': 'admin' if unified_user.is_admin else 'user'
+        }
+        access_token = create_access_token(data=token_data)
+
+        return {
+            'status': STATUS_SUCCESS,
+            'status_code': HTTP_200_OK,
+            'message': 'Token refreshed successfully',
+            'data': {
+                'access_token': access_token,
+                'refresh_token': request.refresh_token,
+                'user': {
+                    'id': unified_user.id,
+                    'email': unified_user.email,
+                    'phone': unified_user.phone,
+                    'name': unified_user.name,
+                    'first_name': unified_user.first_name,
+                    'last_name': unified_user.last_name,
+                    'role': 'admin' if unified_user.is_admin else 'user'
+                }
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'Error in refresh_token: {e}', exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": STATUS_FAILED,
+                "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": 'Failed to refresh token'
             }
         )

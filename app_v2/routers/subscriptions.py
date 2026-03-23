@@ -67,7 +67,7 @@ Migration notes:
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
 from sqlalchemy import or_
-from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.databases.models import (
     UnifiedAuthModel, PlanModel, UserSubscriptionModel,
     PaymentModel, PlanProviderModel, CoinsLedgerModel,
@@ -176,7 +176,7 @@ def _calc_period_end(plan: PlanModel, start: datetime) -> datetime:
 )
 def create_subscription(
     data: SubscriptionCreate,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Initiate a brand-new Razorpay subscription (first-time or after expiry/cancel).
@@ -262,7 +262,7 @@ def create_subscription(
 )
 def verify_subscription(
     data: SubscriptionVerifyRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Called by the frontend after Razorpay checkout completes.
@@ -409,7 +409,7 @@ def verify_subscription(
             subscription = UserSubscriptionModel(
                 user_id=current_user.id,
                 plan_id=plan.id,
-                status=SubscriptionStatusEnum.authenticated,
+                status=SubscriptionStatusEnum.active,
                 current_period_start=current_start,
                 current_period_end=current_end,
                 cancel_at_period_end=False,
@@ -458,6 +458,17 @@ def verify_subscription(
                     f"user={current_user.id} | summary={downgrade_summary}"
                 )
 
+                # Sync affected agents with ElevenLabs
+                if "knowledge_base" in downgrade_summary:
+                    agent_ids = downgrade_summary["knowledge_base"].get("agent_ids_to_sync", [])
+                    from app_v2.routers.knowledge_base import sync_agent_kb
+                    for aid in agent_ids:
+                        try:
+                            sync_agent_kb(aid)
+                            logger.info(f"verify_subscription | synced agent={aid} with ElevenLabs after KB downgrade")
+                        except Exception as se:
+                            logger.error(f"verify_subscription | failed to sync agent={aid} | error={se}")
+
             db.session.flush()
 
         else:
@@ -469,9 +480,7 @@ def verify_subscription(
             subscription = UserSubscriptionModel(
                 user_id=current_user.id,
                 plan_id=plan.id,
-                # authenticated — NOT active.
-                # subscription.charged webhook will promote to active + credit coins.
-                status=SubscriptionStatusEnum.authenticated,
+                status=SubscriptionStatusEnum.active,
                 current_period_start=current_start,
                 current_period_end=current_end,
                 cancel_at_period_end=False,
@@ -482,11 +491,7 @@ def verify_subscription(
             db.session.add(subscription)
             db.session.flush()
 
-        # ── Persist payment record ────────────────────────────────────────────
-        # We record the payment here as 'success' because the signature verified,
-        # but the canonical source of truth for billing is the webhook.
-        # NOTE: _sub_charged checks for an existing CoinsLedgerModel entry before
-        # crediting coins, so this PaymentModel will NOT block coin credits.
+        # ── Persist payment record & Credit Coins ─────────────────────────────
         existing_payment = (
             db.session.query(PaymentModel)
             .filter(PaymentModel.provider_payment_id == data.razorpay_payment_id)
@@ -519,16 +524,33 @@ def verify_subscription(
             except Exception as inv_err:
                 logger.warning(f"Could not fetch invoice: {inv_err}")
 
-        # NOTE: Coins are NOT credited here.
-        # The subscription.charged webhook is the sole place that credits coins,
-        # ensuring coins are only issued after actual money capture.
+            # ── Credit coins ──────────────────────────────────────────────────
+            # Credit coins immediately after successful payment verification.
+            if not plan.carry_forward_coins:
+                reset_unused_subscription_coins(subscription.user_id)
+
+            current_balance = get_user_coin_balance(subscription.user_id)
+            new_balance = current_balance + plan.coins_included
+
+            ledger_entry = CoinsLedgerModel(
+                user_id=subscription.user_id,
+                transaction_type=CoinTransactionTypeEnum.credit_subscription,
+                coins=plan.coins_included,
+                remaining_coins=plan.coins_included,
+                expiry_at=current_end,
+                reference_type="payment",
+                reference_id=payment.id,
+                balance_after=new_balance,
+            )
+            db.session.add(ledger_entry)
+            logger.info(f"verify_subscription | coins credited | user={subscription.user_id} | coins={plan.coins_included}")
 
         db.session.commit()
 
         msg = (
-            "Plan change authenticated. Awaiting charge confirmation."
+            "Plan change activated successfully."
             if is_plan_change
-            else "Subscription authenticated. Awaiting first charge confirmation."
+            else "Subscription activated successfully."
         )
         return {
             "message": msg,
@@ -553,7 +575,7 @@ def verify_subscription(
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
 def cancel_pending_update(
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Abort an in-progress plan-change checkout.
@@ -623,7 +645,7 @@ def cancel_pending_update(
 )
 def cancel_subscription(
     data: SubscriptionCancelRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Cancel the user's active subscription.
@@ -677,7 +699,7 @@ def cancel_subscription(
 )
 def update_subscription(
     data: SubscriptionUpdateRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Initiate a plan change.
@@ -830,7 +852,7 @@ def update_subscription(
 )
 def downgrade_preview(
     plan_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
     Returns a dry-run summary of what will be auto-disabled if the user
@@ -874,7 +896,7 @@ def downgrade_preview(
 )
 def pause_subscription(
     data: SubscriptionPauseRequest,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     try:
         subscription = _get_current_subscription(current_user.id)
@@ -904,7 +926,7 @@ def pause_subscription(
     dependencies=[Depends(security)],
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-def resume_subscription(current_user: UnifiedAuthModel = Depends(get_current_user)):
+def resume_subscription(current_user: UnifiedAuthModel = Depends(require_active_user())):
     try:
         subscription = (
             db.session.query(UserSubscriptionModel)
@@ -946,7 +968,7 @@ def resume_subscription(current_user: UnifiedAuthModel = Depends(get_current_use
     dependencies=[Depends(security)],
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-def fetch_invoices(current_user: UnifiedAuthModel = Depends(get_current_user)):
+def fetch_invoices(current_user: UnifiedAuthModel = Depends(require_active_user())):
     try:
         subscriptions = (
             db.session.query(UserSubscriptionModel)
