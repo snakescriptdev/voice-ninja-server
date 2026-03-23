@@ -3,7 +3,7 @@ from fastapi_sqlalchemy import db
 from typing import List
 import math
 
-from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
+from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.databases.models import (
     FunctionModel,
     FunctionApiConfig,
@@ -92,7 +92,7 @@ def function_to_read(f: FunctionModel) -> FunctionRead:
 )
 async def create_function(
     function_in: FunctionCreateSchema,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     user_id = current_user.id
     
@@ -204,7 +204,7 @@ async def create_function(
 async def get_all_functions(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     if page < 1:
         page = 1
@@ -239,7 +239,7 @@ async def get_all_functions(
 )
 async def get_function(
     function_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     function = db.session.query(FunctionModel).filter(
         FunctionModel.id == function_id,
@@ -265,7 +265,7 @@ async def get_function(
 async def update_function(
     function_id: int,
     function_in: FunctionUpdateSchema,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     function = db.session.query(FunctionModel).filter(
         FunctionModel.id == function_id,
@@ -432,7 +432,7 @@ async def update_function(
 )
 async def delete_function(
     function_id: int,
-    current_user: UnifiedAuthModel = Depends(get_current_user),
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     function = db.session.query(FunctionModel).filter(
         FunctionModel.id == function_id,
