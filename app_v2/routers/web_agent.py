@@ -456,6 +456,10 @@ def _persist_web_conversation(
     """
     Saves conversation, deducts coins, links lead if present.
     Must be called inside db() context.
+
+    force=True is passed to deduct_coins so that if the call cost exceeded
+    the user's balance (overdraft), the full cost is still recorded and the
+    balance goes negative rather than silently skipping the deduction.
     """
     calculated_cost = _calculate_cost(float(metadata.get("cost") or 0))
     call_status = CallStatusEnum.success if metadata.get("call_successful") else CallStatusEnum.failed
@@ -481,6 +485,7 @@ def _persist_web_conversation(
             reference_type="conversation",
             reference_id=record.id,
             commit=False,
+            force=True,  # call already happened — always deduct full cost
         )
 
     db.session.commit()
