@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
-from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, BillingPeriodEnum, PlanIconEnum, PaymentProviderEnum, SubscriptionStatusEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum
+from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, BillingPeriodEnum, PlanIconEnum, PaymentProviderEnum, SubscriptionStatusEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, ScheduledDowngradeStatusEnum, ScheduledDowngradeTriggerEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -157,6 +157,7 @@ class UnifiedAuthModel(Base):
     coins_ledger = relationship("CoinsLedgerModel", back_populates="user",cascade="all, delete-orphan")
     api_keys = relationship("APIKeyModel", back_populates="user", cascade="all, delete-orphan")
     api_usage = relationship("APIDailyUsageModel", back_populates="user", cascade="all, delete-orphan")
+    scheduled_downgrades = relationship("ScheduledDowngradeModel", back_populates="user", cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -1012,3 +1013,25 @@ class EmailSubscriberModel(Base):
 
     subscribed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+class ScheduledDowngradeModel(Base):
+    __tablename__ = "scheduled_downgrades"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("unified_auth.id"), nullable=False, index=True)
+    old_plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plans.id"), nullable=False)
+    new_plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plans.id"), nullable=False)
+    subscription_id: Mapped[int] = mapped_column(Integer, ForeignKey("user_subscriptions.id"), nullable=False)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    status: Mapped[ScheduledDowngradeStatusEnum] = mapped_column(
+        Enum(ScheduledDowngradeStatusEnum), default=ScheduledDowngradeStatusEnum.pending, nullable=False, index=True
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    trigger_source: Mapped[ScheduledDowngradeTriggerEnum] = mapped_column(
+        Enum(ScheduledDowngradeTriggerEnum), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+    # Relationships
+    user = relationship("UnifiedAuthModel", back_populates="scheduled_downgrades")

@@ -131,3 +131,13 @@ class PlanFeatureEnum(str,Enum):
     api_access = "api_access"
     analytics_dashboard= "analytics_dashboard"
     custom_voice_cloning= "custom_voice_cloning"
+
+class ScheduledDowngradeStatusEnum(str, Enum):
+    pending = "pending"
+    completed = "completed"
+    failed = "failed"
+    cancelled = "cancelled"
+
+class ScheduledDowngradeTriggerEnum(str, Enum):
+    plan_change = "plan_change"
+    admin_edit = "admin_edit"

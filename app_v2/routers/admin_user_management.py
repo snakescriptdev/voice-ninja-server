@@ -3,7 +3,7 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, desc, select
 from typing import List, Optional
 from datetime import datetime, timedelta
-from app_v2.databases.models import UnifiedAuthModel, UserSubscriptionModel, PlanModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, SubscriptionStatusEnum
+from app_v2.databases.models import UnifiedAuthModel, UserSubscriptionModel, PlanModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, SubscriptionStatusEnum
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
 from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest
 from app_v2.schemas.pagination import PaginatedResponse
@@ -73,6 +73,11 @@ def list_users_managed(
             func.sum(CoinsLedgerModel.remaining_coins).label("balance")
         ).group_by(CoinsLedgerModel.user_id).subquery()
 
+        voice_subquery = db.session.query(
+            VoiceModel.user_id,
+            func.count(VoiceModel.id).label("voice_count")
+        ).filter(VoiceModel.is_custom_voice.is_(True)).group_by(VoiceModel.user_id).subquery()
+
         last_active_subquery = db.session.query(
             ActivityLogModel.user_id,
             func.max(ActivityLogModel.created_at).label("last_active")
@@ -117,6 +122,7 @@ def list_users_managed(
             func.coalesce(calls_total_subquery.c.calls_total, 0).label("calls_total"),
             func.coalesce(calls_monthly_subquery.c.calls_monthly, 0).label("calls_monthly"),
             func.coalesce(calls_weekly_subquery.c.calls_weekly, 0).label("calls_weekly"),
+            func.coalesce(voice_subquery.c.voice_count, 0).label("no_of_voices"),
         ).filter(UnifiedAuthModel.is_admin.is_(False))\
          .outerjoin(UserSubscriptionModel, (UnifiedAuthModel.id == UserSubscriptionModel.user_id) & (UserSubscriptionModel.status == SubscriptionStatusEnum.active))\
          .outerjoin(PlanModel, UserSubscriptionModel.plan_id == PlanModel.id)\
@@ -126,7 +132,8 @@ def list_users_managed(
          .outerjoin(last_active_subquery, UnifiedAuthModel.id == last_active_subquery.c.user_id)\
          .outerjoin(calls_total_subquery, UnifiedAuthModel.id == calls_total_subquery.c.user_id)\
          .outerjoin(calls_monthly_subquery, UnifiedAuthModel.id == calls_monthly_subquery.c.user_id)\
-         .outerjoin(calls_weekly_subquery, UnifiedAuthModel.id == calls_weekly_subquery.c.user_id)
+         .outerjoin(calls_weekly_subquery, UnifiedAuthModel.id == calls_weekly_subquery.c.user_id)\
+         .outerjoin(voice_subquery, UnifiedAuthModel.id == voice_subquery.c.user_id)
 
         # Search
         if search:
@@ -168,6 +175,7 @@ def list_users_managed(
                 api_calls_total=r.calls_total,
                 api_calls_monthly=r.calls_monthly,
                 api_calls_weekly=r.calls_weekly,
+                no_of_voices=r.no_of_voices,
             ) for r in results
         ]
 
@@ -257,7 +265,8 @@ def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
         success = admin_adjust_coins(
             user_id=user_id,
             amount=request.coins,
-            reason=request.reason
+            reason=request.reason,
+            validity_days=request.validity
         )
         
         if not success:

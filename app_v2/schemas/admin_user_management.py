@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 
@@ -20,6 +20,7 @@ class UserManagementListItem(BaseModel):
     api_calls_total: int
     api_calls_monthly: int
     api_calls_weekly: int
+    no_of_voices: int
 
     class Config:
         from_attributes = True
@@ -32,3 +33,4 @@ class AdjustUserCoinRequest(BaseModel):
 
     coins:int
     reason:str
+    validity: Optional[int] = Field(gt=0,default=None)
