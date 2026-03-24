@@ -102,7 +102,8 @@ def deduct_coins(
 
         # 3. Create debit entry — coins and balance_after reflect the full requested
         #    amount, going negative in the overdraft case.
-        balance_after = total_available - coin_amount
+        current_balance = get_user_coin_balance(user_id)
+        balance_after = current_balance - coin_amount 
         ledger_entry = CoinsLedgerModel(
             user_id=user_id,
             transaction_type=transaction_type,
