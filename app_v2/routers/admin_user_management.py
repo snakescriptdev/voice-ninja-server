@@ -265,7 +265,8 @@ def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
         success = admin_adjust_coins(
             user_id=user_id,
             amount=request.coins,
-            reason=request.reason
+            reason=request.reason,
+            validity_days=request.validity
         )
         
         if not success:
