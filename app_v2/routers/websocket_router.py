@@ -260,9 +260,6 @@ async def check_user_limits(
         await websocket.send_json({"type": "error", "message": message})
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=reason)
 
-    # Single db() block — get_user_coin_balance, _get_minimum_call_balance
-    # (via CoinUsageSettingsModel.get_settings), and check_feature_limit_and_usage
-    # all need an active session.
     with db():
         user_balance = get_user_coin_balance(user_id)
         sufficient, minimum_required = _has_sufficient_coins(user_balance)
@@ -470,7 +467,13 @@ def _persist_conversation(
     metadata: dict,
     conversation_id: str,
 ) -> ConversationsModel:
-    """Saves conversation record and deducts coins. Must be called inside db()."""
+    """
+    Saves conversation record and deducts coins. Must be called inside db().
+
+    force=True is passed to deduct_coins so that if the call cost exceeded
+    the user's balance (overdraft), the full cost is still recorded and the
+    balance goes negative rather than silently skipping the deduction.
+    """
     calculated_cost = _calculate_cost(float(metadata.get("cost") or 0))
     call_status = CallStatusEnum.success if metadata.get("call_successful") else CallStatusEnum.failed
 
@@ -495,6 +498,7 @@ def _persist_conversation(
             reference_type="conversation",
             reference_id=record.id,
             commit=False,
+            force=True,  # call already happened — always deduct full cost
         )
 
     db.session.commit()
