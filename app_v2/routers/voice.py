@@ -205,6 +205,16 @@ async def create_voice(
                     os.remove(file_path)
                 error_msg = clone_response.error_message or "Failed to clone voice in ElevenLabs"
                 logger.error(f"❌ Voice cloning failed: {error_msg}")
+                
+                # Check for specific "voice_limit_reached" error from ElevenLabs
+                if "voice_limit_reached" in error_msg:
+                    raise HTTPException(
+                        status_code=424,
+                        detail={
+                            "message": f"Failed to clone voice: {error_msg}",
+                        }
+                    )
+                
                 raise HTTPException(
                     status_code=424, 
                     detail=f"Failed to clone voice in ElevenLabs: {error_msg}"

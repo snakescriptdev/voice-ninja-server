@@ -47,10 +47,13 @@ from app_v2.databases.models import (
     PlanModel,
     KnowledgeBaseModel,
     AgentKnowledgeBaseBridge,
+    ScheduledDowngradeModel,
+    UserSubscriptionModel,
 )
-from app_v2.schemas.enum_types import PhoneNumberAssignStatus
+from app_v2.schemas.enum_types import PhoneNumberAssignStatus, ScheduledDowngradeStatusEnum, ScheduledDowngradeTriggerEnum
 from app_v2.core.logger import setup_logger
 
+from datetime import datetime
 logger = setup_logger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -262,7 +265,7 @@ def _get_affected_resource_names(user_id: int, feature_key: str, new_limit: int,
         total = len(enabled_agents)
         if total > new_limit:
             to_disable = enabled_agents[: total - new_limit]
-            return [a.name for a in to_disable]
+            return [a.agent_name for a in to_disable]
 
     elif feature_key == "web_voice_agent":
         lead_count_sub = (
@@ -286,7 +289,7 @@ def _get_affected_resource_names(user_id: int, feature_key: str, new_limit: int,
         total = len(enabled_web_agents)
         if total > new_limit:
             to_disable = enabled_web_agents[: total - new_limit]
-            return [wa.name for wa in to_disable]
+            return [wa.web_agent_name for wa in to_disable]
 
     elif feature_key == "phone_numbers":
         all_phones = (
@@ -325,7 +328,7 @@ def _get_affected_resource_names(user_id: int, feature_key: str, new_limit: int,
         total = len(custom_voices)
         if total > new_limit:
             to_detach = custom_voices[: total - new_limit]
-            return [v.name or f"Voice {v.id}" for v in to_detach]
+            return [v.voice_name or f"Voice {v.id}" for v in to_detach]
 
     elif feature_key == "knowledge_base":
         if new_limit == 0:
@@ -991,3 +994,150 @@ def _enforce_kb_size_limits(
         "unbound_kb_ids": kb_ids,
         "agent_ids_to_sync": agent_ids_to_sync,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Scheduled Downgrade Utilities
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def schedule_downgrade_for_user(
+    user_id: int,
+    old_plan_id: int,
+    new_plan_id: int,
+    subscription_id: int,
+    scheduled_for: datetime,
+    trigger_source: ScheduledDowngradeTriggerEnum,
+    session: Session,
+) -> ScheduledDowngradeModel:
+    """
+    Schedules a downgrade enforcement for later. If a pending downgrade
+    already exists for this user, it updates it instead of creating a duplicate.
+    """
+    existing_pending = (
+        session.query(ScheduledDowngradeModel)
+        .filter(
+            ScheduledDowngradeModel.user_id == user_id,
+            ScheduledDowngradeModel.status == ScheduledDowngradeStatusEnum.pending
+        )
+        .first()
+    )
+
+    if existing_pending:
+        logger.info(
+            f"schedule_downgrade_for_user | updating existing pending downgrade for "
+            f"user={user_id} | old_plan={old_plan_id} -> new_plan={new_plan_id}"
+        )
+        existing_pending.old_plan_id = old_plan_id
+        existing_pending.new_plan_id = new_plan_id
+        existing_pending.subscription_id = subscription_id
+        existing_pending.scheduled_for = scheduled_for
+        existing_pending.trigger_source = trigger_source
+        existing_pending.created_at = datetime.utcnow() # Reset timestamp? Or keep? Reset for now.
+        return existing_pending
+
+    new_downgrade = ScheduledDowngradeModel(
+        user_id=user_id,
+        old_plan_id=old_plan_id,
+        new_plan_id=new_plan_id,
+        subscription_id=subscription_id,
+        scheduled_for=scheduled_for,
+        trigger_source=trigger_source,
+        status=ScheduledDowngradeStatusEnum.pending,
+    )
+    session.add(new_downgrade)
+    logger.info(
+        f"schedule_downgrade_for_user | created new pending downgrade for user={user_id} "
+        f"| scheduled_for={scheduled_for}"
+    )
+    return new_downgrade
+
+
+def cancel_scheduled_downgrade_for_user(
+    user_id: int,
+    session: Session,
+):
+    """
+    Cancels any pending scheduled downgrades for a user.
+    Used when admin increases limits back or user upgrades.
+    """
+    pending_downgrades = (
+        session.query(ScheduledDowngradeModel)
+        .filter(
+            ScheduledDowngradeModel.user_id == user_id,
+            ScheduledDowngradeModel.status == ScheduledDowngradeStatusEnum.pending
+        )
+        .all()
+    )
+
+    for dg in pending_downgrades:
+        dg.status = ScheduledDowngradeStatusEnum.cancelled
+        logger.info(f"cancel_scheduled_downgrade_for_user | user={user_id} | id={dg.id} marked cancelled")
+
+
+def schedule_downgrade_for_plan_change(
+    plan_id: int,
+    old_features: List[PlanFeatureModel],
+    new_features: List[PlanFeatureModel],
+    session: Session,
+):
+    """
+    Handles bulk scheduling/cancelling of downgrades when an admin updates a plan's features.
+    
+    1. Compares limits.
+    2. Finds all active subscribers of the plan.
+    3. For each subscriber, checks current usage against new limits.
+    4. Schedules downgrade if over limit, cancels if now within limit.
+    """
+    # Build maps for limits
+    old_map = {f.feature_key: f.limit for f in old_features}
+    new_map = {f.feature_key: f.limit for f in new_features}
+    
+    # Detected feature keys that were actually reduced or removed
+    downgraded_keys = []
+    for f_key in COUNT_BASED_FEATURES:
+        if f_key not in old_map:
+            continue
+        old_limit = old_map[f_key]
+        new_limit = new_map.get(f_key, 0) if f_key in new_map else 0
+        
+        # Reduced: old was unlimited (None) and new is limited, or new < old
+        if (old_limit is None and new_limit is not None) or (new_limit is not None and old_limit is not None and new_limit < old_limit):
+            downgraded_keys.append(f_key)
+        elif f_key not in new_map:
+            downgraded_keys.append(f_key)
+
+    # Find all active subscribers of this plan
+    from app_v2.schemas.enum_types import SubscriptionStatusEnum
+    subscribers = (
+        session.query(UserSubscriptionModel)
+        .filter(
+            UserSubscriptionModel.plan_id == plan_id,
+            UserSubscriptionModel.status == SubscriptionStatusEnum.active
+        )
+        .all()
+    )
+
+    for sub in subscribers:
+        is_over_limit = False
+        for f_key in downgraded_keys:
+            new_limit = new_map.get(f_key, 0)
+            current_usage = _get_current_count(sub.user_id, f_key, session)
+            if current_usage > new_limit:
+                is_over_limit = True
+                break
+        
+        if is_over_limit:
+            # Plan change from admin edit — schedule for end of current cycle
+            schedule_downgrade_for_user(
+                user_id=sub.user_id,
+                old_plan_id=plan_id,
+                new_plan_id=plan_id, # Target is same plan, just with new reduced features
+                subscription_id=sub.id,
+                scheduled_for=sub.current_period_end,
+                trigger_source=ScheduledDowngradeTriggerEnum.admin_edit,
+                session=session,
+            )
+        else:
+            # User is now within limits (maybe admin increased it back)
+            cancel_scheduled_downgrade_for_user(sub.user_id, session)
