@@ -33,3 +33,4 @@ class AdjustUserCoinRequest(BaseModel):
 
     coins:int
     reason:str
+    validity: Optional[int] = None

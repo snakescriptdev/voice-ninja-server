@@ -192,10 +192,11 @@ def run_expiry_check():
         db.session.rollback()
 
 
-def admin_adjust_coins(user_id: int, amount: int, reason: str, commit: bool = True) -> bool:
+def admin_adjust_coins(user_id: int, amount: int, reason: str, validity_days: int | None = None, commit: bool = True) -> bool:
     """
     Adjusts user coins (add or deduct) from admin management.
     amount > 0 adds coins (credit), amount < 0 deducts coins (debit).
+    validity_days: Number of days before coins expire (only for credits).
     Must be called within an active db() session block.
     """
     if amount == 0:
@@ -207,11 +208,16 @@ def admin_adjust_coins(user_id: int, amount: int, reason: str, commit: bool = Tr
         
         if amount > 0:
             # Credit logic
+            expiry_at = None
+            if validity_days:
+                expiry_at = now + timedelta(days=validity_days)
+
             ledger_entry = CoinsLedgerModel(
                 user_id=user_id,
                 transaction_type=CoinTransactionTypeEnum.admin_adjustment,
                 coins=amount,
                 remaining_coins=amount,
+                expiry_at=expiry_at,
                 reference_type="admin_adjustment",
                 reference_id=None,
                 balance_after=current_balance + amount,
@@ -220,7 +226,7 @@ def admin_adjust_coins(user_id: int, amount: int, reason: str, commit: bool = Tr
             db.session.add(ledger_entry)
             if commit:
                 db.session.commit()
-            logger.info(f"Admin added {amount} coins to user {user_id}. Reason: {reason}")
+            logger.info(f"Admin added {amount} coins to user {user_id}. Validity: {validity_days} days. Reason: {reason}")
             return True
         else:
             # Debit logic (negative amount)
