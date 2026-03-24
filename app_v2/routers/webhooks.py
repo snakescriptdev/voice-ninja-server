@@ -3,39 +3,42 @@ razorpay_webhook.py
 ────────────────────────────────────────────────────────────────────────────────
 Production-grade Razorpay webhook handler.
 
-Status transition map:
-  subscription.activated  → authenticated   (mandate confirmed, not yet charged)
-  subscription.charged    → active          (money captured — SOLE place for this)
+Status transition map (immediate subscriptions only):
+  subscription.activated  → active   (NOT authenticated — immediate subs only)
+  subscription.charged    → active   (money captured — SOLE place for promotion)
   subscription.completed  → completed
-  subscription.pending    → pending         (renewal charge failed, will retry)
-  subscription.halted     → halted          (all retries exhausted)
+  subscription.pending    → pending
+  subscription.halted     → halted
   subscription.cancelled  → cancelled
   subscription.paused     → paused
   subscription.resumed    → active
 
+Race-condition design:
+  subscription.charged is self-healing:
+    • If no DB row exists yet (webhook beat verify()), it creates one via
+      _upsert_subscription_row() and credits coins.
+    • If a row already exists (verify() ran first), it updates it to active
+      and credits coins only if not already credited.
+
+  subscription.activated NEVER creates rows:
+    • Creating rows in activated caused the duplicate-row bug (activated and
+      verify() both created rows, wrong one won the ordering tiebreaker).
+    • For immediate subscriptions activated fires right before or after charged.
+      charged is always the authoritative handler.
+
+  Both verify() and _sub_charged use _upsert_subscription_row() so whichever
+  arrives first wins and the other safely updates in place.
+
 Coin credit:
-  Coins are credited ONLY inside _sub_charged.
-  No other handler (including _sub_activated) credits coins.
-  This guarantees coins are issued only after real money capture.
+  Coins are credited in verify() (immediate, on payment confirmation) AND
+  guarded in _sub_charged (in case webhook arrives before verify commits).
+  The ledger idempotency check in both places prevents double-credit regardless
+  of ordering.
 
 Covered events:
   Subscription: activated, charged, completed, updated, pending,
                 halted, cancelled, paused, resumed
   Order/payment: payment.captured, payment.failed, order.paid
-
-Design decisions:
-  1. HMAC-SHA256 signature verification on every request (raw body).
-  2. Idempotent handlers – every event checked against DB before acting.
-  3. All DB mutations in a single transaction; on failure the transaction is
-     rolled back and 200 is still returned so Razorpay does NOT retry.
-  4. Coin credit uses FIFO-aware helpers.
-  5. WebhookEventLogModel written FIRST so even a crash leaves an audit trail.
-
-Fixes applied (vs original):
-  - _sub_cancelled: early-return guard when already cancelled (idempotent + log).
-  - _sub_charged: narrowed idempotency check so verify()-created PaymentModel
-    rows don't block coin credits.
-  - payment.failed handler: robust user-id resolution for subscription failures.
 """
 
 import hashlib
@@ -117,10 +120,15 @@ def _verify_webhook_signature(raw_body: bytes, rzp_signature: str) -> bool:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _ts_to_dt(ts: int | None) -> datetime | None:
-    """Convert a Unix timestamp (int) to a naive UTC datetime."""
     if ts is None:
         return None
     return datetime.utcfromtimestamp(ts)
+
+
+def _calc_period_end(plan: PlanModel, start: datetime) -> datetime:
+    if plan.billing_period.value == "annual":
+        return start + timedelta(days=365)
+    return start + timedelta(days=30)
 
 
 def _log_event(
@@ -153,19 +161,77 @@ def _mark_log(
 
 def _resolve_sub_by_rzp_id(rzp_subscription_id: str) -> "UserSubscriptionModel | None":
     """
-    Look up the internal subscription row by Razorpay subscription id.
+    Look up subscription row by Razorpay subscription id across ALL statuses.
 
-    Searches ALL rows regardless of status so that:
-      - subscription.cancelled for an already-cancelled row (e.g. after a plan
-        change) is handled idempotently rather than silently dropped.
-      - subscription.charged for a newly-created row (verify PATH B) is found
-        even before status is promoted to active.
+    Searching all statuses ensures:
+      - subscription.cancelled for an already-cancelled row is handled idempotently.
+      - subscription.charged for a newly-created row is found even before
+        verify() has promoted status to active.
     """
     return (
         db.session.query(UserSubscriptionModel)
         .filter(UserSubscriptionModel.provider_subscription_id == rzp_subscription_id)
         .first()
     )
+
+
+def _upsert_subscription_row(
+    *,
+    rzp_subscription_id: str,
+    user_id: int,
+    plan: PlanModel,
+    current_start: datetime,
+    current_end: datetime,
+    extra_fields: dict = None,
+) -> "UserSubscriptionModel":
+    """
+    Find an existing row by provider_subscription_id and update it to active,
+    OR create a fresh row if none exists.
+
+    Shared between verify() and _sub_charged so whichever arrives first wins,
+    and the other safely updates in place without creating duplicates.
+    """
+    sub = _resolve_sub_by_rzp_id(rzp_subscription_id)
+
+    if sub is not None:
+        logger.info(
+            f"_upsert_subscription_row: found existing row id={sub.id} for "
+            f"rzp_id={rzp_subscription_id} — updating to active"
+        )
+        sub.status = SubscriptionStatusEnum.active
+        sub.plan_id = plan.id
+        sub.current_period_start = current_start
+        sub.current_period_end = current_end
+        sub.cancel_at_period_end = False
+        sub.pending_provider_subscription_id = None
+        sub.next_plan_id = None
+        if extra_fields:
+            for k, v in extra_fields.items():
+                setattr(sub, k, v)
+    else:
+        logger.info(
+            f"_upsert_subscription_row: creating new row for "
+            f"rzp_id={rzp_subscription_id} user={user_id} plan={plan.id}"
+        )
+        kwargs = dict(
+            user_id=user_id,
+            plan_id=plan.id,
+            status=SubscriptionStatusEnum.active,
+            current_period_start=current_start,
+            current_period_end=current_end,
+            cancel_at_period_end=False,
+            provider="razorpay",
+            provider_subscription_id=rzp_subscription_id,
+            pending_provider_subscription_id=None,
+            next_plan_id=None,
+        )
+        if extra_fields:
+            kwargs.update(extra_fields)
+        sub = UserSubscriptionModel(**kwargs)
+        db.session.add(sub)
+
+    db.session.flush()
+    return sub
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -251,7 +317,7 @@ async def razorpay_webhook(request: Request):
         logger.exception(
             f"Razorpay webhook handler failed | event={event_type} | id={event_id} | error={exc}"
         )
-        # Do NOT re-raise – return 200 so Razorpay doesn't retry infinitely.
+        # Do NOT re-raise — return 200 so Razorpay doesn't retry infinitely.
 
     return {"status": "ok"}
 
@@ -278,7 +344,6 @@ def _handle_subscription_event(
         _mark_log(log, "failed", "missing razorpay subscription id")
         return
 
-    # Resolve internal subscription row (may not exist yet for .activated)
     sub: UserSubscriptionModel | None = _resolve_sub_by_rzp_id(rzp_subscription_id)
 
     handler_map = {
@@ -311,60 +376,43 @@ def _sub_activated(
     log: "WebhookEventLogModel",
 ) -> None:
     """
-    subscription.activated fires when the subscription mandate is authenticated
-    and the first payment is authorised (but not yet captured/charged).
+    subscription.activated fires when the mandate is confirmed and the first
+    payment is authorised.
 
-    Status → authenticated  (NOT active).
-    Coins are NOT credited here — that happens exclusively in _sub_charged.
+    For IMMEDIATE subscriptions (our only supported mode), activated fires
+    at roughly the same time as charged. We treat it as a soft confirmation:
 
-    Two cases:
-      • sub is None  : webhook beat verify() — create a skeleton row.
-      • sub exists   : verify() already created the row — just confirm status.
+      • If the row already exists and is active → no-op (charged already ran).
+      • If the row already exists and is not active → set to active.
+      • If no row exists → DO NOT create one. charged will create it.
+        Creating a row here caused the duplicate-row race condition where
+        activated and verify() both inserted rows and the wrong one won
+        the created_at ordering tiebreaker.
     """
     if sub is None:
-        # Webhook beat the verify endpoint — create skeleton row.
-        notes: Dict = sub_data.get("notes", {})
-        user_id = int(notes.get("user_id", 0))
-        plan_id = int(notes.get("plan_id", 0))
-        if not user_id or not plan_id:
-            logger.error("subscription.activated: cannot resolve user/plan from notes")
-            _mark_log(log, "failed", "missing user_id or plan_id in notes")
-            return
-
-        plan = db.session.query(PlanModel).filter(PlanModel.id == plan_id).first()
-        if not plan:
-            _mark_log(log, "failed", f"plan {plan_id} not found")
-            return
-
-        current_start = _ts_to_dt(sub_data.get("current_start")) or datetime.utcnow()
-        current_end = (
-            _ts_to_dt(sub_data.get("current_end")) or _calc_period_end(plan, current_start)
+        # Do NOT create a skeleton row here.
+        # subscription.charged will create the row (self-healing) if verify()
+        # hasn't committed yet. Creating it here produces duplicate rows.
+        logger.info(
+            f"subscription.activated: no DB row yet for rzp_id={sub_data.get('id')} "
+            f"— skipping row creation (subscription.charged will handle it)"
         )
+        return
 
-        sub = UserSubscriptionModel(
-            user_id=user_id,
-            plan_id=plan_id,
-            # authenticated — NOT active. _sub_charged will promote to active.
-            status=SubscriptionStatusEnum.authenticated,
-            current_period_start=current_start,
-            current_period_end=current_end,
-            cancel_at_period_end=False,
-            provider="razorpay",
-            provider_subscription_id=sub_data["id"],
-            subscription_metadata={"customer_id": sub_data.get("customer_id", "")},
+    # Row exists — ensure it's active. Guard against downgrading from active.
+    if sub.status not in (SubscriptionStatusEnum.active, SubscriptionStatusEnum.paused):
+        sub.status = SubscriptionStatusEnum.active
+        logger.info(
+            f"subscription.activated | rzp_id={sub_data['id']} | "
+            f"status promoted to active"
         )
-        db.session.add(sub)
-        db.session.flush()
-        # Do NOT credit coins here — _sub_charged handles that.
     else:
-        # Subscription already exists (verify() ran first) — confirm authenticated.
-        # Only set to authenticated if not already active (avoid downgrade from active
-        # if subscription.activated fires after subscription.charged in rare ordering).
-        if sub.status not in (SubscriptionStatusEnum.active, SubscriptionStatusEnum.paused):
-            sub.status = SubscriptionStatusEnum.authenticated
-        sub.cancel_at_period_end = False
+        logger.info(
+            f"subscription.activated | rzp_id={sub_data['id']} | "
+            f"already {sub.status} — no status change"
+        )
 
-    logger.info(f"subscription.activated | rzp_id={sub_data['id']} | status=authenticated")
+    sub.cancel_at_period_end = False
 
 
 def _sub_charged(
@@ -377,36 +425,52 @@ def _sub_charged(
     subscription.charged fires each billing cycle after a successful charge.
 
     This is THE canonical place to:
-      • Promote status to  active.
-      • Credit coins for the cycle.
+      • Upsert the subscription row to active (self-healing if verify() hasn't
+        committed yet — webhook beat verify race).
+      • Credit coins for the cycle (guarded by ledger idempotency check so
+        verify()-credited coins are never doubled).
       • Record the payment.
 
-    It handles both first-charge (from authenticated) and recurring charges.
-
-    Idempotency note:
-      verify() may have already created a PaymentModel for this payment_id.
-      We check for a ledger entry tied to that payment before crediting coins —
-      not just for the PaymentModel — so verify()-created rows don't block us.
+    Handles both first-charge and recurring charges.
     """
-    if sub is None:
-        logger.error(f"subscription.charged: subscription not found for {sub_data.get('id')}")
-        _mark_log(log, "failed", "subscription not found")
-        return
-
-    plan: PlanModel = (
-        db.session.query(PlanModel).filter(PlanModel.id == sub.plan_id).first()
-    )
-    if not plan:
-        _mark_log(log, "failed", f"plan {sub.plan_id} not found")
-        return
-
     rzp_payment_id: str = payment_data.get("id", "")
     amount: float = float(payment_data.get("amount", 0)) / 100.0
     currency: str = payment_data.get("currency", "INR")
 
-    payment = None
+    new_start = _ts_to_dt(sub_data.get("current_start")) or datetime.utcnow()
 
-    # Idempotency: check if we already processed this payment (coins credited)
+    # ── Resolve plan ──────────────────────────────────────────────────────────
+    # If sub already exists, use its plan_id (handles plan-change path).
+    # If not, resolve from notes (webhook-beat-verify path).
+    plan: PlanModel | None = None
+    user_id: int | None = None
+
+    if sub is not None:
+        plan = db.session.query(PlanModel).filter(PlanModel.id == sub.plan_id).first()
+        user_id = sub.user_id
+    else:
+        notes: Dict = sub_data.get("notes", {}) or {}
+        user_id = int(notes.get("user_id", 0)) or None
+        plan_id = int(notes.get("plan_id", 0)) or None
+        if user_id and plan_id:
+            plan = db.session.query(PlanModel).filter(PlanModel.id == plan_id).first()
+
+    if not plan or not user_id:
+        logger.error(
+            f"subscription.charged: cannot resolve plan/user for "
+            f"rzp_id={sub_data.get('id')} sub={'exists' if sub else 'missing'}"
+        )
+        _mark_log(log, "failed", "cannot resolve plan or user_id")
+        return
+
+    new_end = _ts_to_dt(sub_data.get("current_end")) or _calc_period_end(plan, new_start)
+
+    # ── Idempotency: check if coins already credited for this payment ─────────
+    # verify() may have already created a PaymentModel AND credited coins.
+    # Only skip entirely if a ledger entry exists — not just a PaymentModel.
+    payment: PaymentModel | None = None
+    coins_already_credited = False
+
     if rzp_payment_id:
         existing_payment = (
             db.session.query(PaymentModel)
@@ -414,8 +478,6 @@ def _sub_charged(
             .first()
         )
         if existing_payment:
-            # verify() may have created the PaymentModel but NEVER credits coins.
-            # Only skip if a ledger entry already exists for this specific payment.
             existing_ledger = (
                 db.session.query(CoinsLedgerModel)
                 .filter(
@@ -426,28 +488,36 @@ def _sub_charged(
             )
             if existing_ledger:
                 logger.info(
-                    f"subscription.charged | payment={rzp_payment_id} already has ledger entry – skipping"
+                    f"subscription.charged | payment={rzp_payment_id} already has "
+                    f"ledger entry — coins already credited, skipping"
                 )
-                return
+                coins_already_credited = True
+                # Still upsert the row to active in case verify() didn't commit yet.
+                payment = existing_payment
+            else:
+                logger.info(
+                    f"subscription.charged | payment={rzp_payment_id} exists but "
+                    f"no coins credited yet — proceeding"
+                )
+                payment = existing_payment
 
-            logger.info(
-                f"subscription.charged | payment={rzp_payment_id} exists but no coins credited yet – proceeding"
-            )
-            payment = existing_payment
+    # ── Upsert subscription row to active ─────────────────────────────────────
+    # Self-healing: creates the row if verify() hasn't committed yet.
+    # Updates in place if verify() already created it.
+    sub = _upsert_subscription_row(
+        rzp_subscription_id=sub_data["id"],
+        user_id=user_id,
+        plan=plan,
+        current_start=new_start,
+        current_end=new_end,
+        extra_fields={
+            "subscription_metadata": {"customer_id": sub_data.get("customer_id", "")}
+        } if sub is None else None,
+    )
 
-    # Update subscription period
-    new_start = _ts_to_dt(sub_data.get("current_start")) or datetime.utcnow()
-    new_end = _ts_to_dt(sub_data.get("current_end")) or _calc_period_end(plan, new_start)
-
-    # ── Promote to active ─────────────────────────────────────────────────────
-    # This is the ONLY place status transitions to active.
-    sub.status = SubscriptionStatusEnum.active
-    sub.cancel_at_period_end = False
-    sub.current_period_start = new_start
-    sub.current_period_end = new_end
-
-    # Handle pending plan change safety-net: if next_plan_id still set (normally
-    # cleared by verify), swap it now so the webhook is self-healing.
+    # Handle pending plan change safety-net: if next_plan_id still set
+    # (normally cleared by verify), swap the plan now so the webhook is
+    # self-healing for missed verify() calls.
     if sub.next_plan_id:
         next_plan = (
             db.session.query(PlanModel).filter(PlanModel.id == sub.next_plan_id).first()
@@ -468,13 +538,12 @@ def _sub_charged(
                         schedule_downgrade_for_user,
                     )
                     from app_v2.schemas.enum_types import ScheduledDowngradeTriggerEnum
-                    
+
                     downgrade_diff = compute_downgrade_diff(
                         old_plan_id, sub.plan_id, db.session
                     )
                     if downgrade_diff:
-                        # Schedule for end of the cycle just started
-                        scheduled_downgrade = schedule_downgrade_for_user(
+                        schedule_downgrade_for_user(
                             user_id=sub.user_id,
                             old_plan_id=old_plan_id,
                             new_plan_id=sub.plan_id,
@@ -494,8 +563,8 @@ def _sub_charged(
                     )
         sub.next_plan_id = None
 
-    # ── Record payment ────────────────────────────────────────────────────────
-    if not payment:
+    # ── Record payment if not already recorded ────────────────────────────────
+    if payment is None and rzp_payment_id:
         payment = PaymentModel(
             user_id=sub.user_id,
             amount=amount,
@@ -513,21 +582,18 @@ def _sub_charged(
         )
         db.session.add(payment)
         db.session.flush()
-    else:
-        # Payment exists (from verify) — ensure it's marked success
+    elif payment is not None:
+        # Payment exists (from verify) — ensure it's marked success.
         payment.status = PaymentStatusEnum.success
-        payment.provider_payment_id = rzp_payment_id
-        db.session.add(payment)
         db.session.flush()
 
-    # ── Credit coins ──────────────────────────────────────────────────────────
-    # This is the ONLY place coins are credited for subscriptions.
-    # Guarded by the narrowed idempotency check above.
-    _credit_subscription_coins(sub, plan, payment, new_end)
+    # ── Credit coins (only if not already credited) ───────────────────────────
+    if not coins_already_credited and payment is not None:
+        _credit_subscription_coins(sub, plan, payment, new_end)
 
     logger.info(
         f"subscription.charged | sub={sub.id} | payment={rzp_payment_id} | "
-        f"plan={plan.id} | coins={plan.coins_included} | status→active"
+        f"plan={plan.id} | status=active | coins_credited={not coins_already_credited}"
     )
 
 
@@ -537,7 +603,6 @@ def _sub_completed(
     payment_data: Dict,
     log: "WebhookEventLogModel",
 ) -> None:
-    """All billing cycles exhausted – subscription naturally ends."""
     if sub is None:
         return
     sub.status = SubscriptionStatusEnum.completed
@@ -551,7 +616,6 @@ def _sub_updated(
     payment_data: Dict,
     log: "WebhookEventLogModel",
 ) -> None:
-    """Razorpay subscription updated (e.g. quantity change). Sync metadata."""
     if sub is None:
         return
     if sub.subscription_metadata is None:
@@ -567,10 +631,8 @@ def _sub_pending(
     log: "WebhookEventLogModel",
 ) -> None:
     """
-    subscription.pending fires when a renewal charge attempt fails but
-    Razorpay will retry.  The subscription moves to 'pending'.
-
-    Access remains restricted until subscription.charged fires.
+    Renewal charge failed — Razorpay will retry.
+    Access remains until subscription.charged fires (or halted if all retries fail).
     """
     if sub is None:
         return
@@ -598,7 +660,6 @@ def _sub_halted(
     payment_data: Dict,
     log: "WebhookEventLogModel",
 ) -> None:
-    """All retry attempts exhausted. Access should be revoked."""
     if sub is None:
         return
 
@@ -625,29 +686,19 @@ def _sub_cancelled(
     log: "WebhookEventLogModel",
 ) -> None:
     """
-    subscription.cancelled fires when a subscription is cancelled on Razorpay.
-
-    This includes:
-      • User-initiated cancel via /cancel endpoint.
-      • System-initiated cancel during plan-change verify() (old sub).
-
-    Both cases are handled idempotently — if the row is already cancelled
-    (e.g. verify() already set it), we log and return without error.
+    subscription.cancelled fires for both user-initiated and system-initiated
+    (plan-change verify()) cancellations. Both are handled idempotently.
     """
     if sub is None:
-        # Row not found — this can happen if verify() cancelled the old Razorpay
-        # sub and the webhook arrives after the DB row was already cleaned up,
-        # or if the event is for a sub we never tracked. Either way it's safe.
         logger.info(
             f"subscription.cancelled: no DB row found for rzp_id={sub_data.get('id')} "
-            f"– already handled or unknown subscription"
+            f"— already handled or unknown subscription"
         )
         return
 
-    # FIX: idempotency guard — verify() already marks old sub as cancelled
     if sub.status == SubscriptionStatusEnum.cancelled:
         logger.info(
-            f"subscription.cancelled: sub={sub.id} already cancelled – skipping (idempotent)"
+            f"subscription.cancelled: sub={sub.id} already cancelled — skipping (idempotent)"
         )
         return
 
@@ -681,7 +732,7 @@ def _sub_resumed(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Order / payment event handlers  (add-on coin purchases + subscription failures)
+# Order / payment event handlers
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _handle_order_event(
@@ -714,7 +765,6 @@ def _order_payment_captured(
         _mark_log(log, "failed", "missing order_id in payment entity")
         return
 
-    # Idempotency
     existing = (
         db.session.query(PaymentModel)
         .filter(PaymentModel.provider_payment_id == rzp_payment_id)
@@ -811,7 +861,7 @@ def _order_payment_failed(
     log: "WebhookEventLogModel",
 ) -> None:
     """
-    payment.failed fires for BOTH addon coin purchases and subscription charges.
+    payment.failed fires for both addon coin purchases and subscription charges.
 
     Addon purchase   → payment_entity.order_id is populated
     Subscription     → payment_entity.order_id is null/empty;
@@ -821,7 +871,6 @@ def _order_payment_failed(
     rzp_order_id: str = payment_entity.get("order_id", "") or order_entity.get("id", "")
     invoice_id: str = payment_entity.get("invoice_id", "")
 
-    # Global idempotency
     if rzp_payment_id:
         already = (
             db.session.query(PaymentModel)
@@ -880,7 +929,6 @@ def _order_payment_failed(
         return
 
     # ── Case 2: Subscription payment failure ──────────────────────────────────
-    # FIX: Try multiple resolution strategies to find the user_id robustly.
     raw_notes = payment_entity.get("notes")
     notes: Dict = raw_notes if isinstance(raw_notes, dict) else {}
     rzp_subscription_id: str = notes.get("subscription_id", "")
@@ -888,13 +936,11 @@ def _order_payment_failed(
     user_id: int | None = None
     sub: UserSubscriptionModel | None = None
 
-    # Strategy A: resolve via subscription id in notes
     if rzp_subscription_id:
         sub = _resolve_sub_by_rzp_id(rzp_subscription_id)
         if sub:
             user_id = sub.user_id
 
-    # Strategy B: resolve via invoice_id → find any payment with that order_id
     if user_id is None and invoice_id:
         ref_payment = (
             db.session.query(PaymentModel)
@@ -955,7 +1001,6 @@ def _order_paid(
     order_entity: Dict,
     log: "WebhookEventLogModel",
 ) -> None:
-    """order.paid: already handled by payment.captured; log for completeness."""
     rzp_order_id: str = order_entity.get("id", "")
     logger.info(f"order.paid | order={rzp_order_id} – already handled by payment.captured")
 
@@ -963,13 +1008,6 @@ def _order_paid(
 # ──────────────────────────────────────────────────────────────────────────────
 # Shared helpers
 # ──────────────────────────────────────────────────────────────────────────────
-
-def _calc_period_end(plan: PlanModel, start: datetime) -> datetime:
-    """Fallback period-end calculation when Razorpay doesn't provide timestamps."""
-    if plan.billing_period.value == "annual":
-        return start + timedelta(days=365)
-    return start + timedelta(days=30)
-
 
 def _record_subscription_failed_payment(
     sub: UserSubscriptionModel,
@@ -979,7 +1017,7 @@ def _record_subscription_failed_payment(
 ) -> None:
     """
     Write a failed PaymentModel for a subscription retry attempt.
-    Skips silently if that payment_id was already recorded (idempotent).
+    Idempotent — skips silently if that payment_id was already recorded.
     """
     rzp_payment_id: str = payment_data.get("id", "")
     if not rzp_payment_id:
@@ -991,9 +1029,7 @@ def _record_subscription_failed_payment(
         .first()
     )
     if existing:
-        logger.info(
-            f"{context}: payment {rzp_payment_id} already recorded – skipping"
-        )
+        logger.info(f"{context}: payment {rzp_payment_id} already recorded – skipping")
         return
 
     amount: float = float(payment_data.get("amount", 0)) / 100.0
@@ -1031,9 +1067,7 @@ def _credit_subscription_coins(
     payment: PaymentModel,
     period_end: datetime,
 ) -> None:
-    """
-    Credit subscription coins to the user's ledger.
-    """
+    """Credit subscription coins. Called from both verify() and _sub_charged."""
     if not plan.carry_forward_coins:
         reset_unused_subscription_coins(sub.user_id)
 
