@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 from datetime import datetime
 
@@ -33,4 +33,4 @@ class AdjustUserCoinRequest(BaseModel):
 
     coins:int
     reason:str
-    validity: Optional[int] = None
+    validity: Optional[int] = Field(gt=0,default=None)
