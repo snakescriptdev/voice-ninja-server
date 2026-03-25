@@ -14,6 +14,7 @@ from fastapi_sqlalchemy import DBSessionMiddleware, db
 from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
+from app_v2.core.exceptions import get_readable_message
 from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router,  web_agent_router,websocket_router,conversation_router,web_agent_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_plans, subscription_router, admin_user_management, payment_insights_router, api_key_management, public_api,public_websocket_router,webhooks
 from app_v2.routers.email_subscription import public_router as email_subscription_public_router, admin_router as email_subscription_admin_router
 from app_v2.utils.jwt_utils import HTTPBearer
@@ -43,41 +44,23 @@ def custom_docs():
 # Global exception handler for Pydantic validation errors
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """Handle Pydantic validation errors and return consistent error format."""
     errors = exc.errors()
-    if errors:
-        # Build a list of field errors
-        field_errors = []
-        for err in errors:
-            loc = err.get('loc', [])
-            field = loc[-1] if loc else None
-            msg = err.get('msg', 'Invalid value')
-            if field:
-                # Clean up message for required fields
-                if msg.lower().startswith('field required'):
-                    field_errors.append(f"Missing required field: '{field}'")
-                elif msg.lower().startswith('none is not an allowed value'):
-                    field_errors.append(f"Field '{field}' cannot be null")
-                else:
-                    field_errors.append(f"Field '{field}': {msg}")
-            else:
-                field_errors.append(msg)
-        error_msg = "; ".join(field_errors)
-        return JSONResponse(
-            status_code=400,
-            content={
-                "detail": {
-                    "message": error_msg,
-                    "status": "failed",
-                    "status_code": 400
-                }
-            }
-        )
+
+    field_errors = []
+
+    for err in errors:
+        loc = err.get("loc", [])
+        field = loc[-1] if loc else "field"
+        msg = err.get("msg", "Invalid value")
+
+        readable_msg = get_readable_message(field, msg)
+        field_errors.append(readable_msg)
+
     return JSONResponse(
         status_code=400,
         content={
             "detail": {
-                "message": "Validation error",
+                "message": "; ".join(field_errors),
                 "status": "failed",
                 "status_code": 400
             }
@@ -87,29 +70,24 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 # Global exception handler to ensure consistent error response structure
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    """Handle all HTTPExceptions and ensure consistent error response format."""
-    # If detail is already a dict with the expected structure, use it
+
     if isinstance(exc.detail, dict):
-        # Check if it has the expected keys
-        if "message" in exc.detail and "status" in exc.detail and "status_code" in exc.detail:
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": exc.detail}
-            )
-        # If it's a dict but not in the expected format, wrap it
-        elif "status" in exc.detail and "message" in exc.detail:
-            # It's in the old format without nested detail
-            return JSONResponse(
-                status_code=exc.status_code,
-                content={"detail": exc.detail}
-            )
-    
-    # If detail is a string or other format, convert it to the expected structure
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "detail": {
+                    "message": exc.detail.get("message", "Something went wrong"),
+                    "status": exc.detail.get("status", "failed"),
+                    "status_code": exc.status_code
+                }
+            }
+        )
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "detail": {
-                "message": str(exc.detail) if not isinstance(exc.detail, dict) else exc.detail.get("message", "An error occurred"),
+                "message": str(exc.detail),
                 "status": "failed",
                 "status_code": exc.status_code
             }
