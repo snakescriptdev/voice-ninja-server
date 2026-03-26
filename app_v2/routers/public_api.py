@@ -9,7 +9,7 @@ import math
 import uuid
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app_v2.databases.models import (
     AgentModel, 
@@ -863,7 +863,7 @@ async def create_kb_file_public(
             if file_size > MAX_FILE_SIZE:
                 raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds 10MB limit")
 
-            file_path = os.path.join(UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now().timestamp()}_{file.filename}")
+            file_path = os.path.join(UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
             with open(file_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
 
