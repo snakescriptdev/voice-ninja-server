@@ -315,15 +315,7 @@ async def update_profile(
             )
 
         # Update the user
-        update_data = {}
-        if request.first_name is not None:
-            update_data['first_name'] = request.first_name
-        if request.last_name is not None:
-            update_data['last_name'] = request.last_name
-        if request.phone is not None:
-            update_data['phone'] = request.phone
-        if request.address is not None:
-            update_data['address'] = request.address
+        update_data = request.model_dump(exclude_unset=True)
 
         updated_user = UnifiedAuthModel.update(current_user.id, **update_data)
         if not updated_user:

@@ -4,6 +4,7 @@ from app_v2.databases.models import CoinsLedgerModel, CoinTransactionTypeEnum
 from app_v2.core.logger import setup_logger
 from sqlalchemy import or_
 from datetime import datetime, timedelta
+import math
 
 logger = setup_logger(__name__)
 
@@ -51,17 +52,16 @@ def deduct_coins(
 
     Must be called within an active db() session block.
     """
-    coin_amount = int(amount)
-
-    if coin_amount <= 0:
-        if amount > 0:  # If it was a small float > 0, deduct at least 1 coin
-            coin_amount = 1
-        else:
-            logger.info(f"Skipping deduction for 0 or negative amount: {amount}")
-            return True
+    # if amount is 0 or negative, return True
+    if amount <= 0:
+        return True
+    # convert amount to integer
+    coin_amount = math.ceil(amount)
 
     try:
         now = datetime.utcnow()
+        #expire the coins which are expired as cleanup 
+        expire_user_coins(user_id)
         # 1. Fetch valid credit batches FIFO with row-level locking
         batches = db.session.query(CoinsLedgerModel).filter(
             CoinsLedgerModel.user_id == user_id,
@@ -71,6 +71,15 @@ def deduct_coins(
                 CoinsLedgerModel.expiry_at > now
             )
         ).order_by(CoinsLedgerModel.created_at.asc()).with_for_update().all()
+        #latest balance row
+        latest_balance_row = (
+            db.session.query(CoinsLedgerModel.balance_after)
+            .filter(CoinsLedgerModel.user_id == user_id)
+            .order_by(CoinsLedgerModel.created_at.desc())
+            .with_for_update()
+            .first()
+        )
+        current_balance = latest_balance_row[0] if latest_balance_row else 0
 
         total_available = sum(b.remaining_coins for b in batches)
 
@@ -88,21 +97,17 @@ def deduct_coins(
                 f"debt={coin_amount - total_available}"
             )
 
-        # 2. Drain all available credit batches to 0
-        remaining_to_deduct = total_available
+        # 2. Drain all available credit batches to 0 only in case of overdraft not in noraml case so it should be min(total_available,coin_amount) 
+        remaining_to_deduct = min(total_available,coin_amount)
         for batch in batches:
             if remaining_to_deduct <= 0:
                 break
-            if batch.remaining_coins >= remaining_to_deduct:
-                batch.remaining_coins -= remaining_to_deduct
-                remaining_to_deduct = 0
-            else:
-                remaining_to_deduct -= batch.remaining_coins
-                batch.remaining_coins = 0
+            deduct_from_batch = min(batch.remaining_coins, remaining_to_deduct)
+            batch.remaining_coins -= deduct_from_batch
+            remaining_to_deduct -= deduct_from_batch
 
         # 3. Create debit entry — coins and balance_after reflect the full requested
         #    amount, going negative in the overdraft case.
-        current_balance = get_user_coin_balance(user_id)
         balance_after = current_balance - coin_amount 
         ledger_entry = CoinsLedgerModel(
             user_id=user_id,
@@ -149,15 +154,17 @@ def reset_unused_subscription_coins(user_id: int):
 
         if total_reset > 0:
             current_balance = get_user_coin_balance(user_id)
+            balance_after = current_balance - total_reset
             ledger_entry = CoinsLedgerModel(
                 user_id=user_id,
                 transaction_type=CoinTransactionTypeEnum.carry_forward_reset,
                 coins=-total_reset,
                 reference_type="carry_forward_reset",
-                balance_after=current_balance,
+                balance_after=balance_after,
                 remaining_coins=0,
             )
             db.session.add(ledger_entry)
+            db.session.commit()
             logger.info(
                 f"Reset {total_reset} subscription coins for user {user_id} "
                 f"due to non-carry-forward policy."
@@ -181,7 +188,7 @@ def expire_user_coins(user_id: int):
             CoinsLedgerModel.remaining_coins > 0,
             CoinsLedgerModel.expiry_at != None,
             CoinsLedgerModel.expiry_at <= now
-        ).all()
+        ).with_for_update().all() #with_for_update is used to lock the rows so that no other transaction can modify them
 
         total_expired = 0
         for batch in expired_batches:
