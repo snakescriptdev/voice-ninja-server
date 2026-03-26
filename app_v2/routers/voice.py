@@ -11,7 +11,7 @@ from app_v2.schemas.voice_schema import VoiceRead, VoiceUpdate
 from app_v2.schemas.enum_types import GenderEnum
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import or_, and_
 from dataclasses import dataclass
 from sqlalchemy.orm import selectinload
@@ -166,7 +166,7 @@ async def create_voice(
         if file_size > MAX_FILE_SIZE:
              raise HTTPException(status_code=400, detail="File size exceeds 10MB limit")
 
-        file_path = os.path.join(UPLOAD_DIR, f"{current_user.id}_{datetime.now().timestamp()}_{file.filename}")
+        file_path = os.path.join(UPLOAD_DIR, f"{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
         
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)

@@ -1,6 +1,6 @@
 from fastapi import HTTPException, status
 from fastapi_sqlalchemy import db
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from app_v2.databases.models import ActivityLogModel, APIDailyUsageModel, APICallLogModel
 from sqlalchemy import func
 from app_v2.utils.activity_logger import log_activity
@@ -13,7 +13,7 @@ def track_and_limit_api(user_id: int):
     """
     Track API usage and enforce rate limits.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     one_minute_ago = now - timedelta(minutes=1)
     today = now.date()
 
