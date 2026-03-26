@@ -53,7 +53,7 @@ from app_v2.databases.models import (
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus, ScheduledDowngradeStatusEnum, ScheduledDowngradeTriggerEnum
 from app_v2.core.logger import setup_logger
 
-from datetime import datetime
+from datetime import datetime, timezone
 logger = setup_logger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1033,7 +1033,7 @@ def schedule_downgrade_for_user(
         existing_pending.subscription_id = subscription_id
         existing_pending.scheduled_for = scheduled_for
         existing_pending.trigger_source = trigger_source
-        existing_pending.created_at = datetime.utcnow() # Reset timestamp? Or keep? Reset for now.
+        existing_pending.created_at = datetime.now(timezone.utc) # Reset timestamp? Or keep? Reset for now.
         return existing_pending
 
     new_downgrade = ScheduledDowngradeModel(
