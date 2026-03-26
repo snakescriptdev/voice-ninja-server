@@ -83,7 +83,7 @@ def get_agents_data(skip: int = 0, limit: int = 3, current_user: str = Depends(r
             page=current_page,
             size=limit,
             pages=total_pages,
-            items=[UserDashboardAgentResponse(id=agent.id, agent_name=agent.agent_name, is_enabled=agent.is_enabled) for agent in agents]
+            items=[UserDashboardAgentResponse(id=agent.id, agent_name=agent.agent_name, is_enabled=agent.is_enabled, calls=len(agent.conversations)) for agent in agents]
         )
     except Exception as e:
         logger.error(f"error while fetching the agents data: {e}")
