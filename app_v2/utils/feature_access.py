@@ -2,7 +2,7 @@ from fastapi import HTTPException, status, Depends
 from typing import Optional, Callable, Dict
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_
-from datetime import datetime
+from datetime import datetime, timezone
 from app_v2.databases.models import (
     UnifiedAuthModel,
     UserSubscriptionModel,
@@ -202,7 +202,7 @@ def get_monthly_minutes_usage(user_id: int) -> float:
     DB stores duration in seconds.
     Counts only conversations in the current calendar month.
     """
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     start_of_month = datetime(now.year, now.month, 1)
 
     total_seconds = (

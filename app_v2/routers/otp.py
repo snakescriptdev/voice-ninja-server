@@ -5,7 +5,7 @@ This module provides endpoints for OTP-based authentication:
 - Verify OTP: Verify OTP and complete login
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Union
 
 from fastapi import APIRouter, Request, HTTPException, status
@@ -202,7 +202,7 @@ async def request_otp(request: RequestOTPRequest):
 
         # Generate OTP
         otp = generate_otp()
-        otp_expires = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+        otp_expires = datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)
 
         # Save OTP to unified user
         UnifiedAuthModel.update(
@@ -384,7 +384,7 @@ async def verify_otp(
             )
 
         # Check if OTP expired
-        if not unified_user.otp_expires_at or datetime.now() > unified_user.otp_expires_at:
+        if not unified_user.otp_expires_at or datetime.now(timezone.utc) > unified_user.otp_expires_at:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -401,7 +401,7 @@ async def verify_otp(
             otp_code='',
             otp_expires_at=None,
             is_verified=True,
-            last_login=datetime.now()
+            last_login=datetime.now(timezone.utc)
         )
         
         # Also update old model for backward compatibility
@@ -412,7 +412,7 @@ async def verify_otp(
                 otp_code='',
                 otp_expires_at=None,
                 is_verified=True,
-                last_login=datetime.now()
+                last_login=datetime.now(timezone.utc)
             )
             
 
@@ -433,7 +433,7 @@ async def verify_otp(
             'phone': unified_user.phone,
             'name': unified_user.name,
             'is_authenticated': True,
-            'created_at': datetime.now().timestamp()
+            'created_at': datetime.now(timezone.utc).timestamp()
         }
 
         return {
@@ -574,7 +574,7 @@ async def resend_otp(request: ResendOTPRequest):
             )
 
         # Check if user has an active OTP (not expired)
-        if not unified_user.otp_code or not unified_user.otp_expires_at or datetime.now() > unified_user.otp_expires_at:
+        if not unified_user.otp_code or not unified_user.otp_expires_at or datetime.now(timezone.utc) > unified_user.otp_expires_at:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
@@ -586,7 +586,7 @@ async def resend_otp(request: ResendOTPRequest):
 
         # Generate new OTP
         otp = generate_otp()
-        otp_expires = datetime.now() + timedelta(minutes=OTP_EXPIRY_MINUTES)
+        otp_expires = datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRY_MINUTES)
 
         # Update OTP in unified database
         UnifiedAuthModel.update(
@@ -723,22 +723,10 @@ async def refresh_token(request: RefreshTokenRequest):
         access_token = create_access_token(data=token_data)
 
         return {
-            'status': STATUS_SUCCESS,
             'status_code': HTTP_200_OK,
             'message': 'Token refreshed successfully',
-            'data': {
-                'access_token': access_token,
-                'refresh_token': request.refresh_token,
-                'user': {
-                    'id': unified_user.id,
-                    'email': unified_user.email,
-                    'phone': unified_user.phone,
-                    'name': unified_user.name,
-                    'first_name': unified_user.first_name,
-                    'last_name': unified_user.last_name,
-                    'role': 'admin' if unified_user.is_admin else 'user'
-                }
-            }
+            'access_token': access_token,
+            'refresh_token': request.refresh_token
         }
 
     except HTTPException:

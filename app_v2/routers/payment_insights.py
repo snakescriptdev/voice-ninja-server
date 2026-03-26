@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, desc, and_
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import List
 
 from app_v2.utils.jwt_utils import HTTPBearer,is_admin
@@ -28,7 +28,7 @@ def get_payment_insights():
         first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
 
         # Time ranges
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         seven_days_ago = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         # 1. Basic Metrics

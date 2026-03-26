@@ -1,7 +1,7 @@
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = setup_logger(__name__)
 
@@ -41,7 +41,7 @@ async def send_conversation_notification_email(
 ):
     try:
         # fallback time
-        occurred_at = occurred_at or datetime.utcnow()
+        occurred_at = occurred_at or datetime.now(timezone.utc)
 
         # conversation link
         conversation_link = f"{base_url}/conversations/{conversation_id}"

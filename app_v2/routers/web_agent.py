@@ -15,7 +15,7 @@ import base64
 import os
 import traceback
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -178,7 +178,7 @@ async def fetch_and_validate_web_agent(
             elevenlabs_agent_id=web_agent.agent.elevenlabs_agent_id,
             initial_usage=get_feature_usage(user_id, "monthly_minutes"),
             minute_limit=get_feature_limit(user_id, "monthly_minutes"),
-            call_start_time=datetime.now(),
+            call_start_time=datetime.now(timezone.utc),
         )
 
 
@@ -215,7 +215,7 @@ class BrowserAudioInterface:
         self._send({
             "type": "audio_interface_ready",
             "message": "Audio interface is now active",
-            "ts": datetime.utcnow().isoformat(),
+            "ts": datetime.now(timezone.utc).isoformat(),
         })
 
     def stop(self) -> None:
@@ -229,7 +229,7 @@ class BrowserAudioInterface:
             "channels": 1,
             "format": "pcm_s16le",
             "data_b64": base64.b64encode(audio).decode("ascii"),
-            "ts": datetime.utcnow().isoformat(),
+            "ts": datetime.now(timezone.utc).isoformat(),
         })
 
     def interrupt(self) -> None:
@@ -269,7 +269,7 @@ def _make_on_agent_response(websocket: WebSocket, loop: asyncio.AbstractEventLoo
                     websocket.send_json({
                         "type": "agent_response",
                         "text": text,
-                        "ts": datetime.utcnow().isoformat(),
+                        "ts": datetime.now(timezone.utc).isoformat(),
                     }),
                     loop,
                 )
@@ -286,7 +286,7 @@ def _make_on_user_transcript(websocket: WebSocket, loop: asyncio.AbstractEventLo
                     websocket.send_json({
                         "type": "user_transcript",
                         "text": text,
-                        "ts": datetime.utcnow().isoformat(),
+                        "ts": datetime.now(timezone.utc).isoformat(),
                     }),
                     loop,
                 )
@@ -321,7 +321,7 @@ async def _start_elevenlabs_conversation(
         return None
 
     loop = asyncio.get_running_loop()
-    call_id = f"web_{ctx.agent_id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    call_id = f"web_{ctx.agent_id}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
 
     try:
         el_client = ElevenLabs(api_key=api_key)
@@ -345,7 +345,7 @@ async def _start_elevenlabs_conversation(
         await websocket.send_json({
             "type": "conversation_ready",
             "message": "Conversation ready",
-            "ts": datetime.utcnow().isoformat(),
+            "ts": datetime.now(timezone.utc).isoformat(),
         })
         return conversation
     except Exception as e:
@@ -357,7 +357,7 @@ async def _start_elevenlabs_conversation(
 def _is_minute_limit_exceeded(ctx: WebAgentContext) -> bool:
     if ctx.minute_limit is None:
         return False
-    elapsed = (datetime.now() - ctx.call_start_time).total_seconds() / 60
+    elapsed = (datetime.now(timezone.utc) - ctx.call_start_time).total_seconds() / 60
     return (ctx.initial_usage + elapsed) >= ctx.minute_limit
 
 
@@ -371,7 +371,7 @@ async def run_web_agent_session(
     Returns the ElevenLabs conversation_id (or None) after session ends.
     """
     loop = asyncio.get_running_loop()
-    call_id = f"web_{ctx.agent_id}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}"
+    call_id = f"web_{ctx.agent_id}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
     audio_if = BrowserAudioInterface(websocket, loop, call_id)
 
     conversation = None
@@ -547,7 +547,7 @@ async def maybe_send_notifications(
                 base_url=VoiceSettings.FRONTEND_URL,
                 user_name=lead_name,
                 summary=metadata.get("transcript_summary"),
-                occurred_at=datetime.now(),
+                occurred_at=datetime.now(timezone.utc),
             )
             logger.info("Conversation notification sent to %s", notif.email)
         except Exception:

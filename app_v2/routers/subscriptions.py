@@ -87,7 +87,7 @@ from app_v2.schemas.enum_types import (
 from app_v2.utils.payment_utils import PaymentProviderFactory
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from app_v2.utils.coin_utils import get_user_coin_balance, reset_unused_subscription_coins
 from fastapi.responses import HTMLResponse
 import os
@@ -417,7 +417,7 @@ def verify_subscription(
             raise HTTPException(status_code=404, detail="Plan not found")
 
         # ── 1c. Fetch period dates from Razorpay ──────────────────────────────
-        current_start = datetime.utcnow()
+        current_start = datetime.now(timezone.utc)
         current_end = _calc_period_end(plan, current_start)
         try:
             rzp_sub = rzp_provider.get_subscription_details(data.razorpay_subscription_id)
