@@ -26,7 +26,7 @@ from app_v2.schemas.enum_types import (
 from app_v2.utils.payment_utils import PaymentProviderFactory
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.schemas.admin_settings import CoinUsageSettingsResponse, CoinUsageSettingsUpdate
 from fastapi.responses import HTMLResponse
@@ -76,7 +76,7 @@ def create_coin_order(
         order = rzp_provider.create_order(
             amount=bundle.price,
             currency=bundle.currency,
-            receipt=f"recp_addon_{current_user.id}_{int(datetime.utcnow().timestamp())}",
+            receipt=f"recp_addon_{current_user.id}_{int(datetime.now(timezone.utc).timestamp())}",
             notes={
                 "user_id": str(current_user.id),
                 "bundle_id": str(bundle.id),
@@ -224,7 +224,7 @@ def verify_coin_payment(
 
         expiry_date = None
         if bundle.validity_days is not None:
-            expiry_date = datetime.utcnow() + timedelta(days=bundle.validity_days)
+            expiry_date = datetime.now(timezone.utc) + timedelta(days=bundle.validity_days)
 
         ledger_entry = CoinsLedgerModel(
             user_id=current_user.id,

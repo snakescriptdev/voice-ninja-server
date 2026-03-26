@@ -45,7 +45,7 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request, status
@@ -156,7 +156,7 @@ def _mark_log(
 ) -> None:
     log.status = status
     log.error_message = error
-    log.processed_at = datetime.utcnow()
+    log.processed_at = datetime.now(timezone.utc)
 
 
 def _resolve_sub_by_rzp_id(rzp_subscription_id: str) -> "UserSubscriptionModel | None":
@@ -437,7 +437,7 @@ def _sub_charged(
     amount: float = float(payment_data.get("amount", 0)) / 100.0
     currency: str = payment_data.get("currency", "INR")
 
-    new_start = _ts_to_dt(sub_data.get("current_start")) or datetime.utcnow()
+    new_start = _ts_to_dt(sub_data.get("current_start")) or datetime.now(timezone.utc)
 
     # ── Resolve plan ──────────────────────────────────────────────────────────
     # If sub already exists, use its plan_id (handles plan-change path).
@@ -831,7 +831,7 @@ def _order_payment_captured(
 
     expiry_date = None
     if bundle.validity_days is not None:
-        expiry_date = datetime.utcnow() + timedelta(days=bundle.validity_days)
+        expiry_date = datetime.now(timezone.utc) + timedelta(days=bundle.validity_days)
 
     ledger_entry = CoinsLedgerModel(
         user_id=addon_order.user_id,
