@@ -18,7 +18,7 @@ import json
 import os
 import traceback
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import aiohttp
@@ -349,7 +349,7 @@ async def browser_to_elevenlabs(
     try:
         while True:
             if chunk_count % 10 == 0:
-                elapsed_min = (datetime.now() - ctx.call_start_time).total_seconds() / 60
+                elapsed_min = (datetime.now(timezone.utc) - ctx.call_start_time).total_seconds() / 60
                 if ctx.minute_limit is not None and (ctx.initial_usage + elapsed_min) >= ctx.minute_limit:
                     logger.warning(f"Auto-disconnect user {ctx.user_id}: monthly minutes limit")
                     await websocket.send_json({"type": "error", "message": "Monthly minutes limit reached."})
@@ -617,7 +617,7 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
         elevenlabs_agent_id=agent_result.elevenlabs_agent_id,
         minute_limit=limits.minute_limit,
         initial_usage=limits.initial_usage,
-        call_start_time=datetime.now(),
+        call_start_time=datetime.now(timezone.utc),
     )
 
     # ── 5. Log start ──────────────────────────────────────────────────────────

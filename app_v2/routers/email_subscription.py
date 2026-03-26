@@ -10,7 +10,7 @@ Admin endpoints (admin only):
   DELETE /api/v2/admin/subscribers/{subscriber_id} → hard-delete a subscriber record
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status, BackgroundTasks, Request
@@ -80,7 +80,7 @@ def subscribe(body: EmailSubscribeRequest, request: Request, background_tasks: B
             # Re-activate
             existing.is_active = True
             existing.source = body.source or "landing_page"
-            existing.subscribed_at = datetime.utcnow()
+            existing.subscribed_at = datetime.now(timezone.utc)
             existing.unsubscribed_at = None
             db.session.commit()
             logger.info("Re-subscribed: %s", email)
@@ -156,7 +156,7 @@ def unsubscribe_by_token(token: str):
             return EmailUnsubscribeResponse(message="You have been unsubscribed.")
 
         subscriber.is_active = False
-        subscriber.unsubscribed_at = datetime.utcnow()
+        subscriber.unsubscribed_at = datetime.now(timezone.utc)
         db.session.commit()
         logger.info("Unsubscribed via token: email=%s", subscriber.email)
 

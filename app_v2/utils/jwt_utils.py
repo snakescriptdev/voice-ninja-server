@@ -1,5 +1,5 @@
 from jose import jwt, JWTError
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from fastapi import HTTPException, Header, Depends, Request, status
 from fastapi.security import HTTPBearer as FastAPIHTTPBearer, HTTPAuthorizationCredentials
 from fastapi.security.http import HTTPAuthorizationCredentials
@@ -34,13 +34,13 @@ REFRESH_TOKEN_EXPIRE_DAYS = 7
 def create_access_token(data: dict, expires_delta: timedelta = None):
     """Create access token"""
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
     to_encode.update({"exp": expire, "type": "access"})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def create_refresh_token(user_id: int) -> str:
     """Create refresh token as JWT"""
-    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode = {
         "user_id": user_id,
         "exp": expire,

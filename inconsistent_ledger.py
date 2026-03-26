@@ -12,8 +12,17 @@ from app_v2.core.config import VoiceSettings
 from app_v2.databases.models import CoinsLedgerModel
 
 
-def rebuild_user_ledger(user_id, session):
-    # Fetch all entries in correct deterministic order
+from collections import deque
+from sqlalchemy import select
+
+def rebuild_user_ledger(user_id, session, allow_negative=True, flush_batch=500):
+    """
+    Rebuilds ledger with:
+    - Correct FIFO consumption
+    - Proper negative balance handling (deficit recovery)
+    - Safe handling of corrupted/null data
+    """
+
     entries = session.execute(
         select(CoinsLedgerModel)
         .where(CoinsLedgerModel.user_id == user_id)
@@ -24,26 +33,59 @@ def rebuild_user_ledger(user_id, session):
     ).scalars().all()
 
     running_balance = 0
-
-    # FIFO queue → (entry_id, remaining_coins_ref)
     fifo_queue = deque()
+    processed = 0
 
     for entry in entries:
         coins = entry.coins or 0
 
-        # --- CREDIT ---
-        if coins > 0:
-            entry.remaining_coins = coins
-            fifo_queue.append(entry)
+        # --- NORMALIZE BAD DATA ---
+        if coins == 0:
+            entry.remaining_coins = 0
 
-        # --- DEBIT ---
+        # =========================
+        # ➕ CREDIT
+        # =========================
+        elif coins > 0:
+            remaining = coins
+
+            # --- DEFICIT RECOVERY ---
+            if running_balance < 0:
+                adjust = min(remaining, abs(running_balance))
+                running_balance += adjust
+                remaining -= adjust
+
+            # Only push to FIFO if something is actually usable
+            if remaining > 0:
+                entry.remaining_coins = remaining
+                fifo_queue.append(entry)
+            else:
+                entry.remaining_coins = 0
+
+        # =========================
+        # ➖ DEBIT
+        # =========================
         elif coins < 0:
             to_deduct = abs(coins)
 
+            # --- OPTIONAL HARD STOP ---
+            if not allow_negative:
+                total_available = sum(
+                    (e.remaining_coins or 0) for e in fifo_queue
+                )
+                if to_deduct > total_available:
+                    raise Exception(
+                        f"Insufficient balance for user {user_id}"
+                    )
+
+            # --- FIFO DEDUCTION ---
             while to_deduct > 0 and fifo_queue:
                 credit_entry = fifo_queue[0]
+                available = credit_entry.remaining_coins or 0
 
-                available = credit_entry.remaining_coins
+                if available <= 0:
+                    fifo_queue.popleft()
+                    continue
 
                 if available <= to_deduct:
                     to_deduct -= available
@@ -53,17 +95,28 @@ def rebuild_user_ledger(user_id, session):
                     credit_entry.remaining_coins -= to_deduct
                     to_deduct = 0
 
-            # If still left → overdraft (negative balance case)
-            # remaining_coins already 0 for debit entries
+            # If still left → deficit (negative balance)
             entry.remaining_coins = 0
 
-        # --- UPDATE BALANCE ---
+            if to_deduct > 0:
+                running_balance -= to_deduct  # track deficit
+
+        # =========================
+        # 📊 UPDATE BALANCE
+        # =========================
         running_balance += coins
         entry.balance_after = running_balance
 
         session.add(entry)
+        processed += 1
 
-    print(f"✔ Rebuilt user {user_id}")
+        # --- BATCH FLUSH (PERFORMANCE) ---
+        if processed % flush_batch == 0:
+            session.flush()
+
+    session.flush()
+
+    print(f"✔ Rebuilt user {user_id} | Final balance: {running_balance}")
 
 
 def rebuild_all_users(session):

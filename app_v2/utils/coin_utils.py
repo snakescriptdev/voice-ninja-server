@@ -3,7 +3,7 @@ from sqlalchemy import func
 from app_v2.databases.models import CoinsLedgerModel, CoinTransactionTypeEnum
 from app_v2.core.logger import setup_logger
 from sqlalchemy import or_
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 import math
 
 logger = setup_logger(__name__)
@@ -23,7 +23,7 @@ def get_user_coin_balance(user_id: int) -> int:
         latest = (
             db.session.query(CoinsLedgerModel.balance_after)
             .filter(CoinsLedgerModel.user_id == user_id)
-            .order_by(CoinsLedgerModel.created_at.desc())
+            .order_by(CoinsLedgerModel.created_at.desc(),CoinsLedgerModel.id.desc())
             .first()
         )
         return latest[0] if latest else 0
@@ -59,7 +59,7 @@ def deduct_coins(
     coin_amount = math.ceil(amount)
 
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         #expire the coins which are expired as cleanup 
         expire_user_coins(user_id)
         # 1. Fetch valid credit batches FIFO with row-level locking
@@ -182,7 +182,7 @@ def expire_user_coins(user_id: int):
     Zeros them out and creates 'expired' ledger entries.
     """
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired_batches = db.session.query(CoinsLedgerModel).filter(
             CoinsLedgerModel.user_id == user_id,
             CoinsLedgerModel.remaining_coins > 0,
@@ -197,15 +197,17 @@ def expire_user_coins(user_id: int):
 
         if total_expired > 0:
             current_balance = get_user_coin_balance(user_id)
+            balance_after =current_balance - total_expired
             ledger_entry = CoinsLedgerModel(
                 user_id=user_id,
                 transaction_type=CoinTransactionTypeEnum.expired,
                 coins=-total_expired,
                 reference_type="expiry",
-                balance_after=current_balance,
+                balance_after=balance_after,
                 remaining_coins=0,
             )
             db.session.add(ledger_entry)
+            db.session.commit()
             logger.info(f"Expired {total_expired} coins for user {user_id}.")
             return total_expired
         return 0
@@ -219,7 +221,7 @@ def run_expiry_check():
     Global expiry check for all users. Ideally run via a background task.
     """
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         expired_users = db.session.query(CoinsLedgerModel.user_id).filter(
             CoinsLedgerModel.remaining_coins > 0,
             CoinsLedgerModel.expiry_at != None,
@@ -253,9 +255,10 @@ def admin_adjust_coins(
         return True
 
     try:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         current_balance = get_user_coin_balance(user_id)
-
+        if  amount<0 and current_balance<abs(amount):
+            return False
         if amount > 0:
             expiry_at = None
             if validity_days:

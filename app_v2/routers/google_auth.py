@@ -7,7 +7,7 @@ This module provides endpoints for Google OAuth authentication:
 
 import os
 import secrets
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Union
 from urllib.parse import urlencode
 
@@ -215,7 +215,7 @@ async def google_callback(code: str, http_request: Request):
         
         if unified_user:
             # User exists - add Google auth if not already added
-            update_data = {"last_login": datetime.now()}
+            update_data = {"last_login": datetime.now(timezone.utc)}
             if not unified_user.has_google_auth:
                 update_data.update({
                     "has_google_auth": True,
@@ -239,7 +239,7 @@ async def google_callback(code: str, http_request: Request):
             
             if unified_user:
                 # User exists with this Google ID
-                UnifiedAuthModel.update(unified_user.id, last_login=datetime.now())
+                UnifiedAuthModel.update(unified_user.id, last_login=datetime.now(timezone.utc))
                 user_created = False
                 user_id = unified_user.id
                 user_email = unified_user.email
@@ -255,7 +255,7 @@ async def google_callback(code: str, http_request: Request):
                     google_user_id=google_user_id,
                     is_verified=True,
                     tokens=20,
-                    last_login=datetime.now()
+                    last_login=datetime.now(timezone.utc)
                 )
 
                 # Create default notification settings
@@ -300,10 +300,10 @@ async def google_callback(code: str, http_request: Request):
             )
             
             # Update old user last login
-            UserModel.update(old_user.id, last_login=datetime.now())
+            UserModel.update(old_user.id, last_login=datetime.now(timezone.utc))
         else:
             # Update existing user last login and username if missing
-            update_kwargs = {"last_login": datetime.now()}
+            update_kwargs = {"last_login": datetime.now(timezone.utc)}
             old_user_record = UserModel.get_by_id(oauth_record.user_id)
             if old_user_record and not old_user_record.username:
                 update_kwargs["username"] = google_email
@@ -333,7 +333,7 @@ async def google_callback(code: str, http_request: Request):
                 'role': 'admin' if user_is_admin else 'user',
                 'is_new_user': user_created
             },
-            'expires_at': datetime.now() + timedelta(minutes=5),
+            'expires_at': datetime.now(timezone.utc) + timedelta(minutes=5),
             'used': False
         }
         
@@ -492,7 +492,7 @@ async def exchange_auth_code(request: Request):
             )
         
         # Check if code has expired
-        if datetime.now() > code_data['expires_at']:
+        if datetime.now(timezone.utc) > code_data['expires_at']:
             del auth_code_store[code]  # Clean up
             raise HTTPException(
                 status_code=HTTP_400_BAD_REQUEST,
