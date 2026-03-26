@@ -9,6 +9,7 @@ class UserDashboardAgentResponse(BaseModel):
     id: int
     agent_name: str
     is_enabled: bool
+    calls: int
 
 
 class UserDashboardPhoneNumberResponse(BaseModel):
