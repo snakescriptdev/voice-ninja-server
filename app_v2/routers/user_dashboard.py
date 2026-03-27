@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 import os
 from fastapi.requests import Request
 from fastapi_sqlalchemy import db
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.utils.feature_access import RequireFeature
 from app_v2.databases.models import (
@@ -83,7 +83,7 @@ def get_agents_data(skip: int = 0, limit: int = 3, current_user: str = Depends(r
             page=current_page,
             size=limit,
             pages=total_pages,
-            items=[UserDashboardAgentResponse(id=agent.id, agent_name=agent.agent_name, is_enabled=agent.is_enabled) for agent in agents]
+            items=[UserDashboardAgentResponse(id=agent.id, agent_name=agent.agent_name, is_enabled=agent.is_enabled, calls=len(agent.conversations)) for agent in agents]
         )
     except Exception as e:
         logger.error(f"error while fetching the agents data: {e}")
@@ -231,7 +231,7 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         ).scalar() or 0
         active_leads_count_change = calculate_percentage_change(curr_leads, prev_leads)
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         seven_days_ago = (now - timedelta(days=6)).replace(hour=0, minute=0, second=0, microsecond=0)
 
         def get_daily_counts(model, user_id_attr, date_attr, value_attr=None, filter_type=None):
@@ -457,7 +457,7 @@ def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(require_active_
     try:
         balance = get_user_coin_balance(current_user.id)
         
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         first_day_of_month = datetime(now.year, now.month, 1)
         
         usage = db.session.query(func.abs(func.sum(CoinsLedgerModel.coins))).filter(
@@ -485,7 +485,7 @@ def get_coin_buckets(
 ):
     try:
         skip = (page - 1) * size
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         base_query = db.session.query(CoinsLedgerModel).filter(
             CoinsLedgerModel.user_id == current_user.id,
@@ -551,7 +551,7 @@ def get_coin_buckets(
         bundle_map = {b.id: b for b in bundles}
 
         buckets = []
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
 
         for item in buckets_query:
             source_name = "Coins"
@@ -715,7 +715,7 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
     try:
         first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         last_24h = now - timedelta(hours=24)
         
         total_api_calls_this_month = db.session.query(func.count(APICallLogModel.id)).filter(

@@ -1,8 +1,11 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def format_time_ago(dt: datetime) -> str:
-    now = datetime.utcnow()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    
+    now = datetime.now(timezone.utc)
     diff = now - dt
 
     if diff.days > 365:
@@ -25,6 +28,6 @@ def format_time_ago(dt: datetime) -> str:
     return "just now"
 
 def convert_to_unix_timestamp(dt: datetime) -> int:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
     return int(dt.timestamp())
-
-print(convert_to_unix_timestamp(datetime.now()))
