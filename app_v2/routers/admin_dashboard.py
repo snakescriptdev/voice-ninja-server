@@ -163,7 +163,7 @@ def get_revenue_graph():
     Monthly revenue for the last 6 months.
     """
     try:
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         year = now.year
         month = now.month
         # Calculate 5 months ago to get a total of 6 months including current

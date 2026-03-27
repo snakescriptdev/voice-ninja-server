@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Query
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, desc, select
 from typing import List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from app_v2.databases.models import UnifiedAuthModel, UserSubscriptionModel, PlanModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, SubscriptionStatusEnum
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
 from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest
@@ -68,10 +68,19 @@ def list_users_managed(
             func.count(PhoneNumberService.id).label("phone_count")
         ).group_by(PhoneNumberService.user_id).subquery()
 
-        coins_subquery = db.session.query(
-            CoinsLedgerModel.user_id,
-            func.sum(CoinsLedgerModel.remaining_coins).label("balance")
-        ).group_by(CoinsLedgerModel.user_id).subquery()
+        coins_subquery = (
+            db.session.query(
+                CoinsLedgerModel.user_id,
+                CoinsLedgerModel.balance_after.label("balance")
+            )
+            .distinct(CoinsLedgerModel.user_id)
+            .order_by(
+                CoinsLedgerModel.user_id,
+                CoinsLedgerModel.created_at.desc(),
+                CoinsLedgerModel.id.desc()
+            )
+            .subquery()
+        )
 
         voice_subquery = db.session.query(
             VoiceModel.user_id,
@@ -83,7 +92,7 @@ def list_users_managed(
             func.max(ActivityLogModel.created_at).label("last_active")
         ).group_by(ActivityLogModel.user_id).subquery()
 
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         month_ago = now - timedelta(days=30)
         week_ago  = now - timedelta(days=7)
 

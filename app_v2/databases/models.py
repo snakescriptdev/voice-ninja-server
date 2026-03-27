@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 import bcrypt
 import os
-from datetime import datetime
+from datetime import datetime, timezone, timezone
 from app_v2.core.config import VoiceSettings
 import uuid
 
@@ -33,10 +33,10 @@ class UserModel(Base):
     address = Column(String, nullable=True, default="")
     is_verified = Column(Boolean, nullable=True, default=False)
     otp_code = Column(String, nullable=True, default="")
-    otp_expires_at = Column(DateTime, nullable=True)
-    last_login = Column(DateTime, nullable=True, default=func.now())
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    otp_expires_at = Column(DateTime(timezone=True), nullable=True)
+    last_login = Column(DateTime(timezone=True), nullable=True, default=func.now())
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
     tokens = Column(Integer, nullable=True, default=0)
     is_admin = Column(Boolean, default=False)
     
@@ -80,8 +80,8 @@ class OAuthProviderModel(Base):
     provider = Column(String, nullable=False)
     provider_user_id = Column(String, nullable=False)
     email = Column(String, nullable=False)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
     
     user = relationship("UserModel", backref="oauth_providers")
     
@@ -133,16 +133,16 @@ class UnifiedAuthModel(Base):
     # OTP authentication fields
     has_otp_auth = Column(Boolean, default=False)
     otp_code = Column(String, nullable=True, default="")
-    otp_expires_at = Column(DateTime, nullable=True)
+    otp_expires_at = Column(DateTime(timezone=True), nullable=True)
     
     # Google OAuth fields
     has_google_auth = Column(Boolean, default=False)
     google_user_id = Column(String, nullable=True, default="")
     is_suspended = Column(Boolean, default=False,server_default="false")
     suspension_reason = Column(String, nullable=True)
-    last_login = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=func.now())
-    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    last_login = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
     agents = relationship("AgentModel", back_populates="user")
     voices = relationship("VoiceModel", back_populates="user")
@@ -229,8 +229,8 @@ class VoiceModel(Base):
     id = Column(Integer, primary_key=True, index=True)
     voice_name = Column(String, nullable=False)
     is_custom_voice = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    modified_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     user_id = Column(Integer, ForeignKey("unified_auth.id"), nullable=True)
     elevenlabs_voice_id = Column(String, nullable=True)
     has_sample_audio = Column(Boolean,nullable=True)
@@ -255,8 +255,8 @@ class AgentModel(Base):
     user_id : Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"))
     agent_voice : Mapped[int] = mapped_column(Integer, ForeignKey("custom_voices.id"))
     elevenlabs_agent_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
-    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     built_in_tools: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True, default={})
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True,server_default="true")
     
@@ -283,8 +283,8 @@ class AIModels(Base):
     id: Mapped[int] = mapped_column(Integer,primary_key=True,index=True,autoincrement=True)
     provider: Mapped[str] = mapped_column(String,nullable=False)
     model_name: Mapped[str] = mapped_column(String,nullable=False,unique=True)
-    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     agent_ai_models =  relationship("AgentAIModelBridge",back_populates="ai_model",cascade="all, delete-orphan")
 
@@ -295,8 +295,8 @@ class LanguageModel(Base):
     id: Mapped[int] = mapped_column(Integer,autoincrement=True,index=True,primary_key=True)
     lang_code: Mapped[str] = mapped_column(String, nullable=False,unique=True)
     language: Mapped[str] = mapped_column(String,nullable=False,unique=True)
-    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     agent_languages = relationship("AgentLanguageBridge",back_populates="language",cascade="all, delete-orphan")
 
@@ -308,8 +308,8 @@ class AgentAIModelBridge(Base):
     id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True,index=True)
     agent_id : Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
     ai_model_id: Mapped[int] = mapped_column(Integer,ForeignKey("ai_models.id"))
-    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     agent = relationship("AgentModel",back_populates="agent_ai_models")
     ai_model = relationship("AIModels",back_populates="agent_ai_models")
@@ -330,8 +330,8 @@ class AgentLanguageBridge(Base):
 
     agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
     lang_id: Mapped[int]  = mapped_column(Integer,ForeignKey("languages.id"))
-    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
                     UniqueConstraint("agent_id","lang_id",name="uq_lang_bridge_agent_id_lang_id"),
@@ -354,8 +354,8 @@ class FunctionModel(Base):
     user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"),nullable=True)
 
     #audit fields
-    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
 
     api_endpoint_url = relationship("FunctionApiConfig",back_populates = "function",cascade= "all, delete-orphan", uselist=False)
@@ -379,8 +379,8 @@ class FunctionApiConfig(Base):
     speak_after_execution: Mapped[bool] = mapped_column(Boolean,default=True)
 
     #audit fields
-    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     function = relationship("FunctionModel",back_populates="api_endpoint_url")
 
@@ -392,8 +392,8 @@ class AgentFunctionBridgeModel(Base):
     function_id: Mapped[int] = mapped_column(Integer,ForeignKey("functions.id"))  
 
     #audit fields
-    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     #relationships
     agent = relationship("AgentModel",back_populates="agent_functions")
@@ -410,8 +410,8 @@ class VariablesModel(Base):
     variable_name: Mapped[str]= mapped_column(String,nullable=False)
     variable_value: Mapped[str] = mapped_column(String,nullable=False)
     agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"))
-    created_at: Mapped[datetime]= mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     agent = relationship("AgentModel",back_populates="variables")
 
@@ -429,8 +429,8 @@ class KnowledgeBaseModel(Base):
     elevenlabs_document_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     rag_index_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     user = relationship("UnifiedAuthModel", back_populates="knowledge_bases")
     agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="knowledge_base",cascade="all, delete-orphan")
@@ -445,8 +445,8 @@ class AgentKnowledgeBaseBridge(Base):
     agent_id: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"),nullable=False)
     kb_id: Mapped[int]= mapped_column(Integer,ForeignKey("knowledge_base.id"),nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     agent = relationship("AgentModel",back_populates="agent_knowledge_bases")
     knowledge_base = relationship("KnowledgeBaseModel",back_populates="agent_knowledge_bases")
@@ -497,8 +497,8 @@ class PhoneNumberService(Base):
     assigned_to: Mapped[int] = mapped_column(Integer,ForeignKey("agents.id"),nullable=True,unique=True)
     status: Mapped[PhoneNumberAssignStatus] = mapped_column(Enum(PhoneNumberAssignStatus),default=PhoneNumberAssignStatus.unassigned,nullable=False)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     monthly_cost: Mapped[float] = mapped_column(Float,nullable=False)
 
@@ -533,7 +533,7 @@ class ConversationsModel(Base):
     phone_number_id: Mapped[int] = mapped_column(Integer,ForeignKey("phone_number_service.id"),nullable=True)
     channel: Mapped[ChannelEnum] = mapped_column(Enum(ChannelEnum),nullable=True)
     transcript_summary: Mapped[str] = mapped_column(String,nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime,default= datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     elevenlabs_conv_id: Mapped[str] = mapped_column(String,nullable=True)
     cost: Mapped[int] = mapped_column(Integer,nullable=True)
     #relationships
@@ -586,7 +586,7 @@ class WebAgentModel(Base):
 
     custom_fields: Mapped[list | None] = mapped_column(MutableList.as_mutable(JSONB), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("UnifiedAuthModel", back_populates="web_agents")
@@ -612,7 +612,7 @@ class WebAgentLeadModel(Base):
 
     custom_data: Mapped[list | None] = mapped_column(MutableList.as_mutable(JSONB))
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     web_agent = relationship("WebAgentModel", back_populates="leads")
     conversation = relationship("ConversationsModel", back_populates="lead")
@@ -627,7 +627,7 @@ class ActivityLogModel(Base):
     description: Mapped[str] = mapped_column(Text)
     metadata_json: Mapped[dict | None] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True) # Renamed to avoid reserved word confusion if any
     
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("UnifiedAuthModel")
 
@@ -665,8 +665,8 @@ class PlanModel(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     is_deleted:Mapped[bool] = mapped_column(Boolean,default=False,server_default="false")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     features = relationship("PlanFeatureModel", back_populates="plan", cascade="all, delete-orphan")
     subscriptions = relationship(
@@ -732,7 +732,7 @@ class PlanProviderModel(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     plan = relationship("PlanModel", back_populates="providers")
 
@@ -753,8 +753,8 @@ class UserSubscriptionModel(Base):
         default=SubscriptionStatusEnum.active
     )
 
-    current_period_start: Mapped[datetime] = mapped_column(DateTime)
-    current_period_end: Mapped[datetime] = mapped_column(DateTime)
+    current_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    current_period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -775,8 +775,8 @@ class UserSubscriptionModel(Base):
     #              ADD COLUMN pending_provider_subscription_id VARCHAR(255);
     pending_provider_subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     user = relationship("UnifiedAuthModel",back_populates="subscriptions")
     plan = relationship("PlanModel", foreign_keys=[plan_id], back_populates="subscriptions")
@@ -809,7 +809,7 @@ class PaymentModel(Base):
     metadata_json: Mapped[dict | None] = mapped_column(MutableDict.as_mutable(JSONB))
     invoice_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("UnifiedAuthModel",back_populates="payments")
     addon_order = relationship("AddOnCoinOrderModel", back_populates="payment", uselist=False)
@@ -835,10 +835,10 @@ class CoinsLedgerModel(Base):
     balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
     
     # New fields for FIFO and Expiry
-    expiry_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    expiry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
     remaining_coins: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=0)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     user = relationship("UnifiedAuthModel",back_populates="coins_ledger")
 
@@ -854,7 +854,7 @@ class CoinPackageModel(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     validity_days: Mapped[int] = mapped_column(Integer,nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     is_deleted: Mapped[bool] = mapped_column(Boolean, default=False,server_default="false")
 
 class AddOnCoinOrderModel(Base):
@@ -873,8 +873,8 @@ class AddOnCoinOrderModel(Base):
     amount: Mapped[float] = mapped_column(Float, nullable=False)
     coins: Mapped[int] = mapped_column(Integer, nullable=False)
     status: Mapped[PaymentStatusEnum] = mapped_column(Enum(PaymentStatusEnum), default=PaymentStatusEnum.pending)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    modified_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     
     user = relationship("UnifiedAuthModel")
     bundle = relationship("CoinPackageModel")
@@ -892,7 +892,7 @@ class CoinUsageSettingsModel(Base):
     # Singleton guard: only one row can have this value
     singleton_guard: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
         UniqueConstraint("singleton_guard", name="uq_coin_usage_settings_singleton"),
@@ -924,7 +924,7 @@ class APIKeyModel(Base):
     client_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
     client_secret_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("UnifiedAuthModel", back_populates="api_keys")
 
@@ -933,7 +933,7 @@ class APIDailyUsageModel(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
-    usage_date: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    usage_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
     hit_count: Mapped[int] = mapped_column(Integer, default=0)
 
     user = relationship("UnifiedAuthModel", back_populates="api_usage")
@@ -951,7 +951,7 @@ class APICallLogModel(Base):
     status_code: Mapped[int] = mapped_column(Integer, nullable=False)
     response_time_ms: Mapped[int] = mapped_column(Integer, nullable=True) # in milliseconds
     coins_used: Mapped[int] = mapped_column(Integer, default=0)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     user = relationship("UnifiedAuthModel")
 
@@ -986,9 +986,9 @@ class WebhookEventLogModel(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Populated when status == "failed"
 
-    processed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
 
 class EmailSubscriberModel(Base):
@@ -1011,8 +1011,8 @@ class EmailSubscriberModel(Base):
 
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    subscribed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    subscribed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 class ScheduledDowngradeModel(Base):
     __tablename__ = "scheduled_downgrades"
@@ -1022,7 +1022,7 @@ class ScheduledDowngradeModel(Base):
     old_plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plans.id"), nullable=False)
     new_plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plans.id"), nullable=False)
     subscription_id: Mapped[int] = mapped_column(Integer, ForeignKey("user_subscriptions.id"), nullable=False)
-    scheduled_for: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
     status: Mapped[ScheduledDowngradeStatusEnum] = mapped_column(
         Enum(ScheduledDowngradeStatusEnum), default=ScheduledDowngradeStatusEnum.pending, nullable=False, index=True
     )
@@ -1030,8 +1030,8 @@ class ScheduledDowngradeModel(Base):
     trigger_source: Mapped[ScheduledDowngradeTriggerEnum] = mapped_column(
         Enum(ScheduledDowngradeTriggerEnum), nullable=False
     )
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     user = relationship("UnifiedAuthModel", back_populates="scheduled_downgrades")

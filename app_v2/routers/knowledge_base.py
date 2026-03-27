@@ -5,7 +5,7 @@ from typing import List
 import os
 import shutil
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from app_v2.schemas.pagination import PaginatedResponse
 import math
 
@@ -117,7 +117,7 @@ async def upload_files(
                 if file_size == 0:
                     raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
 
-                file_path = os.path.join(UPLOAD_DIR, f"{current_user.id}_{datetime.now().timestamp()}_{file.filename}")
+                file_path = os.path.join(UPLOAD_DIR, f"{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
                 
                 with open(file_path, "wb") as buffer:
                     shutil.copyfileobj(file.file, buffer)
