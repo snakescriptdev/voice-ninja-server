@@ -3,7 +3,7 @@ import base64
 import asyncio
 import traceback
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import aiohttp
@@ -98,7 +98,7 @@ async def public_websocket_agent(
     await websocket.send_json({
         "type": "status",
         "message": "Authenticated successfully",
-        "ts": datetime.utcnow().isoformat()
+        "ts": datetime.now(timezone.utc).isoformat()
     })
     logger.info(f"Public WebSocket authenticated for user {user_id}, agent {agent_id}")
 
@@ -110,7 +110,7 @@ async def public_websocket_agent(
     )
 
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={elevenlabs_agent_id}"
-    call_start_time = datetime.now()
+    call_start_time = datetime.now(timezone.utc)
     initial_usage = get_feature_usage(user_id, "monthly_minutes")
     minute_limit = get_feature_limit(user_id, "monthly_minutes")
     conversation_id = None
@@ -132,7 +132,7 @@ async def public_websocket_agent(
                         while True:
                             # Periodically check limit
                             if chunk_count % 10 == 0:
-                                current_call_minutes = (datetime.now() - call_start_time).total_seconds() / 60
+                                current_call_minutes = (datetime.now(timezone.utc) - call_start_time).total_seconds() / 60
                                 if minute_limit is not None and (initial_usage + current_call_minutes) >= minute_limit:
                                     await websocket.send_json({
                                         "type": "error",
@@ -176,7 +176,7 @@ async def public_websocket_agent(
                                         "type": "status",
                                         "message": "Audio interface ready",
                                         "conversation_id": conversation_id,
-                                        "ts": datetime.utcnow().isoformat()
+                                        "ts": datetime.now(timezone.utc).isoformat()
                                     })
 
                                 if etype == "audio":
@@ -191,13 +191,13 @@ async def public_websocket_agent(
                                     await websocket.send_json({
                                         "type": "user_transcript",
                                         "text": data.get("user_transcript_event", {}).get("transcript"),
-                                        "ts": datetime.utcnow().isoformat()
+                                        "ts": datetime.now(timezone.utc).isoformat()
                                     })
                                 elif etype == "agent_response":
                                     await websocket.send_json({
                                         "type": "agent_response",
                                         "text": data.get("agent_response_event", {}).get("agent_response"),
-                                        "ts": datetime.utcnow().isoformat()
+                                        "ts": datetime.now(timezone.utc).isoformat()
                                     })
                                 else:
                                     # Forward all other events
