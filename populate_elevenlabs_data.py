@@ -351,6 +351,64 @@ def remove_default_voices_unsynced(session: Session):
     logger.info("✅ Default voices cleanup complete.")
 
 
+def deduplicate_user_emails(session: Session):
+    """
+    Identify duplicate emails (case-insensitive), keep the oldest record (min ID), 
+    and move all emails to lowercase.
+    """
+    logger.info("\n" + "=" * 60)
+    logger.info("Deduplicating User Emails...")
+    logger.info("=" * 60)
+    
+    # 1. Get all users
+    users = session.query(UnifiedAuthModel).all()
+    
+    # 2. Group by lowercase email
+    email_groups = {}
+    for user in users:
+        if not user.email:
+            continue
+        email_lower = user.email.lower()
+        if email_lower not in email_groups:
+            email_groups[email_lower] = []
+        email_groups[email_lower].append(user)
+    
+    deleted_count = 0
+    updated_count = 0
+    
+    # 3. Identify duplicates and keep oldest
+    for email_lower, user_list in email_groups.items():
+        if len(user_list) > 1:
+            # Sort by ID to keep the oldest (minimum ID)
+            user_list.sort(key=lambda x: x.id)
+            keep_user = user_list[0]
+            to_delete = user_list[1:]
+            
+            logger.info(f"🔍 Found {len(user_list)} records for '{email_lower}': Keeping ID {keep_user.id}, removing IDs {[u.id for u in to_delete]}")
+            
+            for dupe_user in to_delete:
+                session.delete(dupe_user)
+                deleted_count += 1
+                
+            # Ensure the kept user's email is lowercase
+            if keep_user.email != email_lower:
+                keep_user.email = email_lower
+                updated_count += 1
+        else:
+            # 4. Only one user, just ensure the email is lowercase
+            user = user_list[0]
+            if user.email != email_lower:
+                user.email = email_lower
+                updated_count += 1
+                
+    try:
+        session.commit()
+        logger.info(f"✅ Deduplication complete: {deleted_count} duplicates removed, {updated_count} emails lowercased.")
+    except Exception as e:
+        session.rollback()
+        logger.error(f"❌ Error deduplicating emails: {e}")
+        raise
+
 def populate_test_coins(session: Session):
     """
     Populate each user with 25,000 coins for testing purposes.
@@ -498,6 +556,7 @@ def main():
         sync_database_enums(session)
         populate_languages(session)
         populate_ai_models(session)
+        deduplicate_user_emails(session)
         remove_default_voices_unsynced(session)
         populate_elevenlabs_voices(session)
         # populate_test_coins(session)

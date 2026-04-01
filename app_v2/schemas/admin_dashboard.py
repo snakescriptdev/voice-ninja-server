@@ -31,7 +31,7 @@ class UserCountOverviewResponse(BaseModel):
     users: PaginatedResponse[UserDetailItem]
 
 class CoinBundleCreate(BaseModel):
-    name: str
+    name: str = Field(...,max_length=90,min_length=3)
     coins: int = Field(...,gt=0)
     price: float = Field(...,gt=0)
     currency: Optional[str] = "INR"

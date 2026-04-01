@@ -36,11 +36,11 @@ class PlanFeatureResponse(BaseModel):
 # -------------------- Plan Base --------------------
 
 class PlanBase(BaseModel):
-    display_name: str = Field(..., min_length=1)
+    display_name: str = Field(..., min_length=1, max_length=100)
 
     price: float = Field(..., gt=0)
     currency: str = Field(default="INR", min_length=1)
-    description: Optional[str] = None
+    description: Optional[str] = Field(max_length=255)
     coins_included: int = Field(default=0, ge=0)
     carry_forward_coins: bool = False
     billing_period: BillingPeriodEnum
