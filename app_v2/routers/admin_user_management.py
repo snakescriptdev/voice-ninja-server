@@ -278,7 +278,7 @@ def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
             validity_days=request.validity
         )
         
-        if not success:
+        if not success and request.coins < 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Failed to adjust coins. Check if user has sufficient balance for deduction."
