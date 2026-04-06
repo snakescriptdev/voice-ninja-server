@@ -1,5 +1,6 @@
 from fastapi import APIRouter, status, Depends,HTTPException
 from fastapi.responses import HTMLResponse
+from typing import Optional
 import os
 from fastapi.requests import Request
 from fastapi_sqlalchemy import db
@@ -40,7 +41,9 @@ from app_v2.schemas.user_dashboard import (
     UserAPICallLogItem,
     PublicAPIUsageResponse,
     APIUsageDailyItem,
-    APIListItem
+    APIListItem,
+    DashboardLeadItem,
+    DashboardLeadListResponse
 )
 from app_v2.core.logger import setup_logger
 from app_v2.utils.time_utils import format_time_ago
@@ -807,3 +810,58 @@ def get_user_api_logs(
     except Exception as e:
         logger.error(f"Error in get_user_api_logs: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/leads", response_model=DashboardLeadListResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_leads(
+    page: int = 1,
+    size: int = 20,
+    search: Optional[str] = None,
+    current_user: UnifiedAuthModel = Depends(require_active_user())
+):
+    try:
+        skip = (page - 1) * size
+        
+        query = db.session.query(WebAgentLeadModel).join(
+            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        ).filter(
+            WebAgentModel.user_id == current_user.id
+        )
+        
+        if search:
+            term = f"%{search}%"
+            query = query.filter(
+                (WebAgentLeadModel.name.ilike(term)) |
+                (WebAgentLeadModel.email.ilike(term)) |
+                (WebAgentLeadModel.phone.ilike(term))
+            )
+            
+        total = query.count()
+        leads = query.order_by(WebAgentLeadModel.created_at.desc()).offset(skip).limit(size).all()
+        
+        total_pages = ceil(total / size) if size > 0 else 1
+        
+        return DashboardLeadListResponse(
+            total=total,
+            page=page,
+            size=size,
+            pages=total_pages,
+            leads=[
+                DashboardLeadItem(
+                    id=lead.id,
+                    web_agent_id=lead.web_agent_id,
+                    web_agent_name=lead.web_agent.web_agent_name,
+                    name=lead.name,
+                    email=lead.email,
+                    phone=lead.phone,
+                    custom_data=lead.custom_data,
+                    created_at=lead.created_at,
+                    duration=lead.conversation.duration if lead.conversation and lead.conversation.duration else 0
+                ) for lead in leads
+            ]
+        )
+    except Exception as e:
+        logger.error(f"Error in get_user_leads: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch user leads: {str(e)}"
+        )
