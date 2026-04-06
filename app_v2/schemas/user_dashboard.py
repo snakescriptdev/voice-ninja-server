@@ -153,3 +153,21 @@ class PublicAPIUsageResponse(BaseModel):
     avg_api_response_time_24h: float
     daily_usage: List[APIUsageDailyItem]
     api_list: List[APIListItem]
+
+class DashboardLeadItem(BaseModel):
+    id: int
+    web_agent_id: int
+    web_agent_name: str
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    custom_data: Optional[Any] = None
+    created_at: datetime
+    duration: int = 0
+
+class DashboardLeadListResponse(BaseModel):
+    total: int
+    page: int
+    size: int
+    pages: int
+    leads: List[DashboardLeadItem]
