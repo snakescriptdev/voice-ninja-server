@@ -4,10 +4,10 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy import or_
 from datetime import timedelta, date
 from typing import Optional
-from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WebAgentLeadModel
+from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WebAgentLeadModel, CoinsLedgerModel
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.activity_logger import log_activity
-from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
+from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum, CoinTransactionTypeEnum
 import io
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 
@@ -116,6 +116,13 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 			raise HTTPException(status_code=404, detail="Conversation not found")
 		elevenlabs_conv_id = conv.elevenlabs_conv_id
 
+		ledger_entry = db.session.query(CoinsLedgerModel).filter(
+			CoinsLedgerModel.reference_type == "conversation",
+			CoinsLedgerModel.reference_id == conversation_id,
+			CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage
+		).first()
+		display_cost = abs(ledger_entry.coins) if ledger_entry else conv.cost
+
 	el_conv = ElevenLabsConversation()
 	transcript = []
 	if elevenlabs_conv_id:
@@ -133,7 +140,7 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 			"duration": seconds_to_timer(conv.duration),
 			"messages": conv.message_count,
 			"channel": conv.channel.name if conv.channel else None,
-			"cost": conv.cost
+			"cost": display_cost
 		},
 		"call_info": {
 			"agent": getattr(conv.agent, "agent_name", None),

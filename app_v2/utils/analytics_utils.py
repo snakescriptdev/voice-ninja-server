@@ -3,6 +3,8 @@ from typing import Tuple
 
 def calculate_percentage_change(current: float | int, previous: float | int) -> float:
     """Calculates the percentage change between current and previous values."""
+    current = float(current)
+    previous = float(previous)
     if previous == 0:
         return 100.0 if current > 0 else 0.0
     return round(((current - previous) / previous) * 100, 2)

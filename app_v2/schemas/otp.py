@@ -2,7 +2,7 @@
 
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
-
+from app_v2.utils.otp_utils import is_email
 
 class RequestOTPRequest(BaseModel):
     """Request schema for requesting OTP.
@@ -23,6 +23,14 @@ class RequestOTPRequest(BaseModel):
     def validate_username(cls, v: str) -> str:
         """Strip whitespace from username."""
         return v.strip()
+
+    @field_validator('username')
+    @classmethod
+    def validate_username_case(cls, v: str) -> str:
+        """Convert email to lowercase."""
+        if is_email(v):
+            return v.lower()
+        return v
 
 
 class ResendOTPRequest(BaseModel):
@@ -105,6 +113,14 @@ class VerifyOTPRequest(BaseModel):
     def validate_fields(cls, v: str) -> str:
         """Strip whitespace from fields."""
         return v.strip()
+
+    @field_validator('username')
+    @classmethod
+    def validate_username_case(cls, v: str) -> str:
+        """Convert email to lowercase."""
+        if is_email(v):
+            return v.lower()
+        return v
 
 
 class UserInfo(BaseModel):
