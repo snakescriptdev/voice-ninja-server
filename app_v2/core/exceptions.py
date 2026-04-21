@@ -4,6 +4,8 @@ from fastapi import Request
 
 def format_field_name(field: str) -> str:
     """Convert snake_case to readable format."""
+    if isinstance(field, int):
+        return str(field)
     return field.replace("_", " ").capitalize()
 
 

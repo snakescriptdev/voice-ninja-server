@@ -25,7 +25,8 @@ from app_v2.databases.models import (
     TokensToConsume,
     AgentModel,
     UnifiedAuthModel,
-    CoinsLedgerModel
+    CoinsLedgerModel,
+    ConversationsModel
 )
 from app_v2.schemas.enum_types import (
     CoinTransactionTypeEnum,
@@ -351,6 +352,64 @@ def remove_default_voices_unsynced(session: Session):
     logger.info("✅ Default voices cleanup complete.")
 
 
+def deduplicate_user_emails(session: Session):
+    """
+    Identify duplicate emails (case-insensitive), keep the oldest record (min ID), 
+    and move all emails to lowercase.
+    """
+    logger.info("\n" + "=" * 60)
+    logger.info("Deduplicating User Emails...")
+    logger.info("=" * 60)
+    
+    # 1. Get all users
+    users = session.query(UnifiedAuthModel).all()
+    
+    # 2. Group by lowercase email
+    email_groups = {}
+    for user in users:
+        if not user.email:
+            continue
+        email_lower = user.email.lower()
+        if email_lower not in email_groups:
+            email_groups[email_lower] = []
+        email_groups[email_lower].append(user)
+    
+    deleted_count = 0
+    updated_count = 0
+    
+    # 3. Identify duplicates and keep oldest
+    for email_lower, user_list in email_groups.items():
+        if len(user_list) > 1:
+            # Sort by ID to keep the oldest (minimum ID)
+            user_list.sort(key=lambda x: x.id)
+            keep_user = user_list[0]
+            to_delete = user_list[1:]
+            
+            logger.info(f"🔍 Found {len(user_list)} records for '{email_lower}': Keeping ID {keep_user.id}, removing IDs {[u.id for u in to_delete]}")
+            
+            for dupe_user in to_delete:
+                session.delete(dupe_user)
+                deleted_count += 1
+                
+            # Ensure the kept user's email is lowercase
+            if keep_user.email != email_lower:
+                keep_user.email = email_lower
+                updated_count += 1
+        else:
+            # 4. Only one user, just ensure the email is lowercase
+            user = user_list[0]
+            if user.email != email_lower:
+                user.email = email_lower
+                updated_count += 1
+                
+    try:
+        session.commit()
+        logger.info(f"✅ Deduplication complete: {deleted_count} duplicates removed, {updated_count} emails lowercased.")
+    except Exception as e:
+        session.rollback()
+        logger.error(f"❌ Error deduplicating emails: {e}")
+        raise
+
 def populate_test_coins(session: Session):
     """
     Populate each user with 25,000 coins for testing purposes.
@@ -477,6 +536,31 @@ def sync_database_enums(session: Session):
                 # If the type doesn't exist, it might be because migrations haven't run or it's not a native enum
                 logger.warning(f"⚠️ Could not sync enum '{type_name}': {e}")
 
+def _fetch_conversation_credits(conv_id:str):
+    url = f"{BASE_URL}/convai/conversations/{conv_id}"
+    if not ELEVENLABS_API_KEY:
+        logger.warning("ELEVENLABS_API_KEY not set. Skipping.")
+        return
+
+    headers = {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        logger.error(f"Failed to fetch conversation credits: {response.text}")
+        return
+    return response.json().get("metadata").get("cost")
+
+def sync_cost_of_conversations(session: Session):
+    conversations = session.query(ConversationsModel).all()
+    for conversation in conversations:
+        cost = _fetch_conversation_credits(conversation.elevenlabs_conv_id)
+        if cost:
+            conversation.cost = cost
+            session.commit()
+            logger.info(f"✅ Synced cost for conversation {conversation.id}: {cost}")
+
 def main():
     """
     Main function to populate all ElevenLabs data.
@@ -498,9 +582,11 @@ def main():
         sync_database_enums(session)
         populate_languages(session)
         populate_ai_models(session)
+        deduplicate_user_emails(session)
         remove_default_voices_unsynced(session)
         populate_elevenlabs_voices(session)
         # populate_test_coins(session)
+        sync_cost_of_conversations(session)
         
         logger.info("\n" + "✨" * 30)
         logger.info("DATA POPULATION COMPLETE!")

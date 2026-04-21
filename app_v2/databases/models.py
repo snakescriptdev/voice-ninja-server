@@ -177,9 +177,10 @@ class UnifiedAuthModel(Base):
     @classmethod
     def get_by_username(cls, username: str) -> Optional["UnifiedAuthModel"]:
         """Get user by username, email or phone."""
+        username = username.lower()
         with db():
             return db.session.query(cls).filter(
-                (cls.username == username) | (cls.email == username) | (cls.phone == username)
+                (func.lower(cls.username) == username) | (func.lower(cls.email) == username) | (cls.phone == username)
             ).first()
     
     @classmethod
