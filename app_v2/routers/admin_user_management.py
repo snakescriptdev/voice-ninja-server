@@ -117,6 +117,7 @@ def list_users_managed(
         query = db.session.query(
             UnifiedAuthModel.id.label("user_id"),
             UnifiedAuthModel.name.label("username"),
+            UnifiedAuthModel.first_name,
             UnifiedAuthModel.email,
             UnifiedAuthModel.is_suspended,
             PlanModel.display_name.label("plan_name"),
@@ -148,6 +149,7 @@ def list_users_managed(
         if search:
             query = query.filter(
                 or_(
+                    UnifiedAuthModel.first_name.ilike(f"%{search}%"),
                     UnifiedAuthModel.name.ilike(f"%{search}%"),
                     UnifiedAuthModel.email.ilike(f"%{search}%")
                 )
@@ -172,7 +174,7 @@ def list_users_managed(
         items = [
             UserManagementListItem(
                 user_id=r.user_id,
-                username=r.username or "Unknown",
+                username=r.first_name or r.username or "Unknown",
                 email=r.email or "",
                 plan_name=r.plan_name,
                 plan_id=r.plan_id,
@@ -278,7 +280,7 @@ def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
             validity_days=request.validity
         )
         
-        if not success:
+        if not success and request.coins < 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Failed to adjust coins. Check if user has sufficient balance for deduction."

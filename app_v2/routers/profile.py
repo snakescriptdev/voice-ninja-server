@@ -316,6 +316,9 @@ async def update_profile(
 
         # Update the user
         update_data = request.model_dump(exclude_unset=True)
+        
+        # Prevent SQLAlchemy mapping error on relationship
+        update_data.pop("notification_settings", None)
 
         updated_user = UnifiedAuthModel.update(current_user.id, **update_data)
         if not updated_user:
