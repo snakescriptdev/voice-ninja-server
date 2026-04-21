@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field,field_validator
 from typing import List, Optional
 from datetime import datetime
 
@@ -27,10 +27,17 @@ class UserManagementListItem(BaseModel):
 
 class SuspendUserRequest(BaseModel):
     is_suspended:bool
-    reason: Optional[str]
+    reason: Optional[str] = Field(max_length=1000,min_length=3,default=None)
 
 class AdjustUserCoinRequest(BaseModel):
 
     coins:int
-    reason:str
+    reason:str = Field(...,max_length=1000,min_length=3)
     validity: Optional[int] = Field(gt=0,default=None)
+
+    @field_validator("coins")
+    @classmethod
+    def validate_max_coins_to_add(cls,v:int):
+        if v> 100000:
+            raise ValueError("Coins to add cannot be more than 100000")
+        return v

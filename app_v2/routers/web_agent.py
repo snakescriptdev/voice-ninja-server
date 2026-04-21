@@ -461,7 +461,8 @@ def _persist_web_conversation(
     the user's balance (overdraft), the full cost is still recorded and the
     balance goes negative rather than silently skipping the deduction.
     """
-    calculated_cost = _calculate_cost(float(metadata.get("cost") or 0))
+    raw_cost = float(metadata.get("cost") or 0)
+    calculated_cost = _calculate_cost(raw_cost)
     call_status = CallStatusEnum.success if metadata.get("call_successful") else CallStatusEnum.failed
 
     record = ConversationsModel(
@@ -473,7 +474,7 @@ def _persist_web_conversation(
         channel=ChannelEnum.widget,
         transcript_summary=metadata.get("transcript_summary"),
         elevenlabs_conv_id=conv_id,
-        cost=calculated_cost,
+        cost=raw_cost,
     )
     db.session.add(record)
     db.session.flush()
