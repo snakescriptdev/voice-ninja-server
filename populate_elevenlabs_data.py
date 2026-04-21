@@ -25,7 +25,8 @@ from app_v2.databases.models import (
     TokensToConsume,
     AgentModel,
     UnifiedAuthModel,
-    CoinsLedgerModel
+    CoinsLedgerModel,
+    ConversationsModel
 )
 from app_v2.schemas.enum_types import (
     CoinTransactionTypeEnum,
@@ -535,6 +536,31 @@ def sync_database_enums(session: Session):
                 # If the type doesn't exist, it might be because migrations haven't run or it's not a native enum
                 logger.warning(f"⚠️ Could not sync enum '{type_name}': {e}")
 
+def _fetch_conversation_credits(conv_id:str):
+    url = f"{BASE_URL}/convai/conversations/{conv_id}"
+    if not ELEVENLABS_API_KEY:
+        logger.warning("ELEVENLABS_API_KEY not set. Skipping.")
+        return
+
+    headers = {
+        "xi-api-key": ELEVENLABS_API_KEY,
+        "Content-Type": "application/json",
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        logger.error(f"Failed to fetch conversation credits: {response.text}")
+        return
+    return response.json().get("metadata").get("cost")
+
+def sync_cost_of_conversations(session: Session):
+    conversations = session.query(ConversationsModel).all()
+    for conversation in conversations:
+        cost = _fetch_conversation_credits(conversation.elevenlabs_conv_id)
+        if cost:
+            conversation.cost = cost
+            session.commit()
+            logger.info(f"✅ Synced cost for conversation {conversation.id}: {cost}")
+
 def main():
     """
     Main function to populate all ElevenLabs data.
@@ -560,6 +586,7 @@ def main():
         remove_default_voices_unsynced(session)
         populate_elevenlabs_voices(session)
         # populate_test_coins(session)
+        sync_cost_of_conversations(session)
         
         logger.info("\n" + "✨" * 30)
         logger.info("DATA POPULATION COMPLETE!")

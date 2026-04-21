@@ -264,7 +264,7 @@ async def public_websocket_agent(
                     channel=ChannelEnum.api,
                     transcript_summary=metadata.get("transcript_summary"),
                     elevenlabs_conv_id=conversation_id,
-                    cost=calculated_cost
+                    cost=raw_el_cost
                 )
 
                 db.session.add(conversation_data)

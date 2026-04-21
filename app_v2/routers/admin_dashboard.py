@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, status, Depends
 from app_v2.utils.jwt_utils import is_admin,HTTPBearer
 from datetime import datetime
-from typing import List
+from typing import List, Literal
 from app_v2.core.logger import setup_logger
 from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinPackageModel, CoinUsageSettingsModel, PlanModel, UserSubscriptionModel, SubscriptionStatusEnum, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel
 from app_v2.schemas.activity_schema import ActivityLogResponse
@@ -313,15 +313,31 @@ def get_elevenlabs_usage_and_billing():
 
 @router.get("/users-cost", response_model=PaginatedResponse[UserCostItem],dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_users_cost(
+    cost_type: Literal["credits", "coins"] = "credits",
     skip: int = 0, 
     limit: int = 10
 ):
     try:
-        # Aggregate cost per user
-        cost_query = db.session.query(
-            ConversationsModel.user_id,
-            func.sum(ConversationsModel.cost).label("total_cost")
-        ).group_by(ConversationsModel.user_id).subquery()
+        first_day_of_month, _ = get_current_and_previous_month_start()
+        
+        if cost_type == "credits":
+            # Aggregate cost per user
+            cost_query = db.session.query(
+                ConversationsModel.user_id,
+                func.sum(ConversationsModel.cost).label("total_cost")
+            ).filter(
+                ConversationsModel.created_at >= first_day_of_month
+            ).group_by(ConversationsModel.user_id).subquery()
+        else:
+            cost_query = db.session.query(
+                CoinsLedgerModel.user_id,
+                func.sum(func.abs(CoinsLedgerModel.coins)).label("total_cost")
+            ).filter(
+                CoinsLedgerModel.created_at >= first_day_of_month,
+                CoinsLedgerModel.coins < 0
+            ).group_by(CoinsLedgerModel.user_id).subquery()
+
+        total_cost_col = func.coalesce(cost_query.c.total_cost, 0)
 
         # Join with UnifiedAuthModel to get user details
         query = db.session.query(
@@ -329,11 +345,11 @@ def get_users_cost(
             UnifiedAuthModel.name,
             UnifiedAuthModel.username,
             UnifiedAuthModel.email,
-            func.coalesce(cost_query.c.total_cost, 0).label("total_cost")
+            total_cost_col.label("total_cost")
         ).outerjoin(cost_query, UnifiedAuthModel.id == cost_query.c.user_id)
 
         # Order by total_cost DESC
-        query = query.order_by(func.coalesce(cost_query.c.total_cost, 0).desc())
+        query = query.order_by(total_cost_col.desc())
 
         # Total count for pagination
         total_count = query.count()
