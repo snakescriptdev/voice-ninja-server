@@ -58,6 +58,17 @@ def list_user_conversations(
 		total = q.count()
 		conversations = q.offset((page-1)*page_size).limit(page_size).all()
 
+		if conversations:
+			conv_ids = [c.id for c in conversations]
+			ledger_entries = db.session.query(CoinsLedgerModel.reference_id, CoinsLedgerModel.coins).filter(
+				CoinsLedgerModel.reference_type == "conversation",
+				CoinsLedgerModel.reference_id.in_(conv_ids),
+				CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage
+			).all()
+			ledger_cost_map = {entry.reference_id: abs(entry.coins) for entry in ledger_entries}
+		else:
+			ledger_cost_map = {}
+
 		def seconds_to_timer(secs):
 			if not secs:
 				return "0:00"
@@ -65,6 +76,7 @@ def list_user_conversations(
 
 		results = []
 		for conv in conversations:
+			display_cost = ledger_cost_map.get(conv.id, conv.cost)
 			results.append({
 				"id": conv.id,
 				"date": conv.created_at.strftime("%Y-%m-%d"),
@@ -73,7 +85,7 @@ def list_user_conversations(
 				"messages": conv.message_count,
 				"call_status": conv.call_status.name if conv.call_status else None,
 				"lead_name": getattr(conv.lead, "name", None) if conv.lead else None,
-				"cost": conv.cost
+				"cost": display_cost
 			})
 
 		return {
