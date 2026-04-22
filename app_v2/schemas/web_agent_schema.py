@@ -1,4 +1,4 @@
-from pydantic import BaseModel,AnyHttpUrl
+from pydantic import BaseModel,AnyHttpUrl, field_serializer
 from typing import Optional,Literal
 from app_v2.schemas.enum_types import WidgetPosition
 from datetime import datetime
@@ -73,6 +73,9 @@ class WebAgentListResponse(BaseModel):
     created_at: datetime
     agent_name: str
 
+    @field_serializer("created_at")
+    def serialize_datetime(self,dt:datetime):
+        return dt.date()
 
 
 
