@@ -74,7 +74,7 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         voice=agent.voice.voice_name,
         ai_model=ai_model,
         language=language,
-        updated_at=agent.modified_at,
+        updated_at=agent.modified_at.date(),
         elevenlabs_agent_id=agent.elevenlabs_agent_id,
         phone=phone_number,
         knowledgebase = [
