@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
 from typing import List, Optional, Any
 from app_v2.schemas.enum_types import BillingPeriodEnum, CoinTransactionTypeEnum, PaymentStatusEnum
-from datetime import datetime
+from datetime import datetime, date
 from app_v2.schemas.plans import PlanFeatureResponse
 from app_v2.schemas.enum_types import SubscriptionStatusEnum,BillingPeriodEnum,PlanIconEnum
 
@@ -56,8 +56,8 @@ class UserSubscriptionResponse(BaseModel):
     # ---- Subscription fields ----
     subscription_id: int
     status: SubscriptionStatusEnum
-    current_period_start: datetime
-    current_period_end: datetime
+    current_period_start: date
+    current_period_end: date
     cancel_at_period_end: bool
     provider: str
     provider_subscription_id: Optional[str]
@@ -93,6 +93,12 @@ class CoinBucketItem(BaseModel):
     expiry_date: Optional[datetime] = None
     status: Optional[str] = None
 
+    @field_serializer("expiry_date")
+    def serialize_datetime(self,dt:datetime):
+        if dt is not None:
+            return dt.date()
+        return None
+
 class CoinBucketsResponse(BaseModel):
     buckets: List[CoinBucketItem]
     total_available: int
@@ -114,6 +120,10 @@ class BillingHistoryItem(BaseModel):
     currency: str
     status: PaymentStatusEnum
     invoice_url: Optional[str] = None
+
+    @field_serializer("date")
+    def serialize_datetime(self,dt:datetime):
+        return dt.date()
 
 class BillingHistoryResponse(BaseModel):
     history: List[BillingHistoryItem]
@@ -164,6 +174,10 @@ class DashboardLeadItem(BaseModel):
     custom_data: Optional[Any] = None
     created_at: datetime
     duration: int = 0
+
+    @field_serializer("created_at")
+    def serialize_datetime(self,dt:datetime):
+        return dt.date()
 
 class DashboardLeadListResponse(BaseModel):
     total: int

@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict
-from datetime import datetime
+from datetime import datetime, date
 
 from .built_in_tools import BuiltInToolsParams
 
@@ -40,7 +40,7 @@ class AgentRead(BaseModel):
     first_message: str | None
     system_prompt: str
     voice:str
-    updated_at: datetime
+    updated_at: date
     phone: Optional[str] = None
     ai_model: str
     language: str
