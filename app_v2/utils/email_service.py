@@ -219,3 +219,33 @@ async def send_welcome_subscription_email(user_email: str, unsubscribe_token: st
 
     except Exception as e:
         logger.error(f"Failed to send welcome subscription email to {user_email}: {str(e)}")
+
+async def send_email_to_admins(db_session, subject: str, html_body: str):
+    """
+    Sends an email to all users with admin privileges.
+    """
+    try:
+        from app_v2.databases.models import UnifiedAuthModel
+        admins = db_session.query(UnifiedAuthModel).filter(UnifiedAuthModel.is_admin == True).all()
+        admin_emails = [admin.email for admin in admins if admin.email]
+        
+        if admin_emails:
+            await send_email_async(
+                subject=subject,
+                recipients=admin_emails,
+                body=html_body
+            )
+    except Exception as e:
+        logger.error(f"Failed to send email to admins: {str(e)}")
+
+async def send_voice_limit_email_to_admins(db_session, user_identifier: str, user_id: int):
+    """
+    Sends an email to all admins notifying them about voice cloning limit reached.
+    """
+    subject = "Voice Cloning Limit Reached - Action Required"
+    message_body = f"""
+    <h2>Voice Limit Reached Alert</h2>
+    <p>User <b>{user_identifier}</b> (ID: {user_id}) attempted to create a custom cloned voice, but the ElevenLabs limits were reached or the current plan does not support instant voice cloning.</p>
+    <p><strong>Please update your ElevenLabs plan so users can continue cloning voices.</strong></p>
+    """
+    await send_email_to_admins(db_session, subject, message_body)
