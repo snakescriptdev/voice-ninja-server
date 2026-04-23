@@ -206,18 +206,39 @@ async def create_voice(
                 error_msg = clone_response.error_message or "Failed to clone voice in ElevenLabs"
                 logger.error(f"❌ Voice cloning failed: {error_msg}")
                 
+                import json
+                clean_message = None
+                try:
+                    if "{" in error_msg:
+                        json_str = error_msg[error_msg.find("{"):]
+                        parsed_data = json.loads(json_str)
+                        if "detail" in parsed_data and "message" in parsed_data["detail"]:
+                            clean_message = parsed_data["detail"]["message"]
+                except Exception:
+                    pass
+
                 # Check for specific "voice_limit_reached" error from ElevenLabs
                 if "voice_limit_reached" in error_msg:
                     raise HTTPException(
                         status_code=424,
                         detail={
-                            "message": f"Failed to clone voice: {error_msg}",
+                            "message": clean_message or f"Failed to clone voice: {error_msg}",
+                        }
+                    )
+                
+                if "can_not_use_instant_voice_cloning" in error_msg or "paid_plan_required" in error_msg:
+                    raise HTTPException(
+                        status_code=424,
+                        detail={
+                            "message": clean_message or f"Failed to clone voice: {error_msg}",
                         }
                     )
                 
                 raise HTTPException(
                     status_code=424, 
-                    detail=f"Failed to clone voice in ElevenLabs: {error_msg}"
+                    detail={
+                        "message": clean_message or f"Failed to clone voice in ElevenLabs: {error_msg}"
+                    }
                 )
             
             elevenlabs_voice_id = clone_response.data.get("voice_id")
