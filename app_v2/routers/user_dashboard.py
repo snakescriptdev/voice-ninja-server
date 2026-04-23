@@ -421,8 +421,8 @@ def user_subscription(current_user: UnifiedAuthModel = Depends(require_active_us
             # ---- subscription ----
             subscription_id=user_subscription.id,
             status=user_subscription.status,
-            current_period_start=user_subscription.current_period_start,
-            current_period_end=user_subscription.current_period_end,
+            current_period_start=user_subscription.current_period_start.date(),
+            current_period_end=user_subscription.current_period_end.date(),
             cancel_at_period_end=user_subscription.cancel_at_period_end,
             provider=user_subscription.provider,
             provider_subscription_id=user_subscription.provider_subscription_id,

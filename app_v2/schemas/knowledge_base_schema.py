@@ -1,4 +1,4 @@
-from pydantic import BaseModel, HttpUrl
+from pydantic import BaseModel, HttpUrl, field_serializer
 from typing import Optional
 from datetime import datetime
 
@@ -31,6 +31,10 @@ class KnowledgeBaseResponse(BaseModel):
     file_size: Optional[float] = None
     created_at: datetime
     modified_at: datetime
+
+    @field_serializer('created_at', 'modified_at')
+    def serialize_datetime(self, dt: datetime):
+        return dt.date()
 
     class Config:
         from_attributes = True
