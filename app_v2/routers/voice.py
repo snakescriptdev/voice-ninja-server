@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from sqlalchemy.orm import selectinload
 
 from app_v2.databases.models import VoiceModel, UnifiedAuthModel, VoiceTraitsModel,AgentModel
+from app_v2.utils.email_service import send_voice_limit_email_to_admins
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs import ElevenLabsVoice
 from fastapi.responses import Response
@@ -219,6 +220,7 @@ async def create_voice(
 
                 # Check for specific "voice_limit_reached" error from ElevenLabs
                 if "voice_limit_reached" in error_msg:
+                    await send_voice_limit_email_to_admins(db.session, current_user.email or current_user.username or 'Unknown', current_user.id)
                     raise HTTPException(
                         status_code=424,
                         detail={
@@ -227,6 +229,7 @@ async def create_voice(
                     )
                 
                 if "can_not_use_instant_voice_cloning" in error_msg or "paid_plan_required" in error_msg:
+                    await send_voice_limit_email_to_admins(db.session, current_user.email or current_user.username or 'Unknown', current_user.id)
                     raise HTTPException(
                         status_code=424,
                         detail={
@@ -442,4 +445,21 @@ async def preview_voice(
                 "sample_url": voice.audio_file,
                 
             }
+
+
+@router.post("/voice/request", status_code=status.HTTP_200_OK, openapi_extra={"security": [{"BearerAuth": []}]})
+async def request_voice_limit_upgrade(
+    current_user: UnifiedAuthModel = Depends(require_active_user())
+):
+    """
+    Notifies admins that users are trying to clone voices but limits/plan restrictions were reached.
+    """
+    try:
+        with db():
+            user_identifier = current_user.email or current_user.username or 'Unknown'
+            await send_voice_limit_email_to_admins(db.session, user_identifier, current_user.id)
             
+            return {"message": "Admin has been notified successfully."}
+    except Exception as e:
+        logger.error(f"Error notifying admin for voice request: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
