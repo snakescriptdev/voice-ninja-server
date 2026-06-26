@@ -14,6 +14,7 @@ from fastapi_sqlalchemy import db
 from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
 from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
+from app_v2.utils.signup_utils import grant_free_plan_on_signup
 from app_v2.utils.otp_utils import (
     generate_otp,
     is_email,
@@ -167,8 +168,10 @@ async def request_otp(request: RequestOTPRequest):
                 db.session.add(notification_settings)
                 db.session.commit()
 
+            grant_free_plan_on_signup(unified_user.id)
+
             user_created = True
-            
+
             # Also create in old UserModel for backward compatibility
             with db():
                 old_user = UserModel(
