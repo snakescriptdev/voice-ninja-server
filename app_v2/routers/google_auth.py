@@ -20,6 +20,7 @@ from app_v2.core.logger import setup_logger
 from app_v2.core.config import VoiceSettings
 logger = setup_logger(__name__)
 from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
+from app_v2.utils.signup_utils import grant_free_plan_on_signup
 from app_v2.utils.jwt_utils import create_access_token, create_refresh_token
 
 from app_v2.constants import (
@@ -263,6 +264,8 @@ async def google_callback(code: str, http_request: Request):
                     notification_settings = UserNotificationSettings(user_id=unified_user.id)
                     db.session.add(notification_settings)
                     db.session.commit()
+
+                grant_free_plan_on_signup(unified_user.id)
 
                 user_created = True
                 user_id = unified_user.id
