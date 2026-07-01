@@ -463,6 +463,26 @@ def _sub_charged(
         _mark_log(log, "failed", "cannot resolve plan or user_id")
         return
 
+    # If the plan has been deactivated, cancel the Razorpay subscription immediately
+    # so no further renewals occur. We still process this charge since payment was captured.
+    if not plan.is_active:
+        logger.warning(
+            f"subscription.charged: plan {plan.id} is inactive — "
+            f"cancelling Razorpay subscription {sub_data['id']} to prevent future renewals"
+        )
+        try:
+            from app_v2.utils.payment_utils import PaymentProviderFactory as _PPF
+            _PPF.get_provider("razorpay").cancel_subscription(
+                sub_data["id"], cancel_at_cycle_end=True
+            )
+            if sub is not None:
+                sub.cancel_at_period_end = True
+        except Exception as cancel_err:
+            logger.error(
+                f"subscription.charged: failed to cancel inactive-plan subscription "
+                f"{sub_data['id']}: {cancel_err}"
+            )
+
     new_end = _ts_to_dt(sub_data.get("current_end")) or _calc_period_end(plan, new_start)
 
     # ── Idempotency: check if coins already credited for this payment ─────────
