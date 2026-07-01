@@ -16,6 +16,8 @@ class PlanFeatureBase(BaseModel):
     def validate_limit(cls, v):
         if v is not None and v < 0:
             raise ValueError("limit must be >= 0")
+        if v is not None and v > 100000:
+            raise ValueError("limit cannot exceed 100000")
         return v
 
 
@@ -38,10 +40,10 @@ class PlanFeatureResponse(BaseModel):
 class PlanBase(BaseModel):
     display_name: str = Field(..., min_length=1, max_length=100)
 
-    price: float = Field(..., gt=0)
+    price: float = Field(..., ge=1, le=500000)
     currency: str = Field(default="INR", min_length=1)
     description: Optional[str] = Field(max_length=255)
-    coins_included: int = Field(default=0, ge=0)
+    coins_included: int = Field(default=0, ge=0, le=1000000)
     carry_forward_coins: bool = False
     billing_period: BillingPeriodEnum
     icon: PlanIconEnum
@@ -75,10 +77,10 @@ class PlanCreate(PlanBase):
 
 class PlanUpdate(BaseModel):
     display_name: Optional[str] = None
-    price: Optional[float] = Field(default=None, gt=0)
+    price: Optional[float] = Field(default=None, ge=1, le=500000)
     currency: Optional[str] = None
     description: Optional[str] = None
-    coins_included: Optional[int] = Field(default=None, ge=0)
+    coins_included: Optional[int] = Field(default=None, ge=0, le=1000000)
     carry_forward_coins: Optional[bool] = None
     billing_period: Optional[BillingPeriodEnum] = None
     icon: Optional[PlanIconEnum] = None

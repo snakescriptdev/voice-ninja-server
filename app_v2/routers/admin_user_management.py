@@ -50,6 +50,7 @@ def list_users_managed(
     limit: int = Query(10, ge=1),
     search: Optional[str] = None,
     plan_id: Optional[int] = Query(None),
+    is_suspended: Optional[bool] = Query(None),
     sort_order: str = Query("desc", enum=["asc", "desc"])
 ):
     """
@@ -158,6 +159,10 @@ def list_users_managed(
         # Plan Filter
         if plan_id:
             query = query.filter(PlanModel.id == plan_id)
+
+        # Suspended Filter
+        if is_suspended is not None:
+            query = query.filter(UnifiedAuthModel.is_suspended == is_suspended)
 
         # Default Sorting (Last Active)
         order_attr = last_active_subquery.c.last_active

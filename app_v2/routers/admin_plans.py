@@ -4,11 +4,11 @@ from typing import List
 from app_v2.utils.jwt_utils import get_current_user, is_admin,HTTPBearer
 from app_v2.databases.models import UnifiedAuthModel, PlanModel, PlanFeatureModel, PlanProviderModel, CoinPackageModel, UserSubscriptionModel
 from app_v2.schemas.plans import PlanCreate, PlanUpdate, PlanResponse
-from app_v2.schemas.admin_dashboard import CoinBundleCreate, CoinBundleResponse
+from app_v2.schemas.admin_dashboard import CoinBundleCreate, CoinBundleUpdate, CoinBundleResponse
 from app_v2.schemas.enum_types import PaymentProviderEnum, SubscriptionStatusEnum
 from app_v2.utils.payment_utils import PaymentProviderFactory
 from app_v2.core.logger import setup_logger
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from sqlalchemy.orm import joinedload
 
 logger = setup_logger(__name__)
@@ -47,6 +47,14 @@ def list_coin_bundles():
 @router.post("/coin-bundles", response_model=CoinBundleResponse,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def create_coin_bundle(data: CoinBundleCreate):
     try:
+        if db.session.query(CoinPackageModel).filter(
+            func.lower(CoinPackageModel.name) == data.name.lower(),
+            CoinPackageModel.is_deleted == False
+        ).first():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Coin bundle with this name already exists"
+            )
         bundle = CoinPackageModel(
             name=data.name,
             coins=data.coins,
@@ -67,6 +75,53 @@ def create_coin_bundle(data: CoinBundleCreate):
             detail=f"Failed to create coin bundle: {str(e)}"
         )
     
+@router.put("/coin-bundle/{bundle_id}", response_model=CoinBundleResponse, dependencies=[Depends(is_admin)], openapi_extra={"security": [{"BearerAuth": []}]})
+def update_coin_bundle(bundle_id: int, data: CoinBundleUpdate):
+    """
+    Update an existing coin bundle. All fields are optional — only provided fields are updated.
+    """
+    try:
+        bundle = db.session.query(CoinPackageModel).filter(
+            CoinPackageModel.id == bundle_id,
+            CoinPackageModel.is_deleted == False
+        ).first()
+        if not bundle:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Coin bundle not found"
+            )
+
+        update_data = data.model_dump(exclude_unset=True)
+
+        # Check name uniqueness (case-insensitive) if name is being changed
+        if "name" in update_data:
+            conflict = db.session.query(CoinPackageModel).filter(
+                func.lower(CoinPackageModel.name) == update_data["name"].lower(),
+                CoinPackageModel.id != bundle_id,
+                CoinPackageModel.is_deleted == False
+            ).first()
+            if conflict:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Coin bundle with this name already exists"
+                )
+
+        for key, value in update_data.items():
+            setattr(bundle, key, value)
+
+        db.session.commit()
+        db.session.refresh(bundle)
+        return bundle
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Error updating coin bundle: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update coin bundle: {str(e)}"
+        )
+
 @router.delete("/coin-bundle/{bundle_id}",status_code=status.HTTP_204_NO_CONTENT,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def delete_bundle(bundle_id:int):
     try:
@@ -94,14 +149,20 @@ def delete_bundle(bundle_id:int):
 @router.post("", response_model=PlanResponse, status_code=status.HTTP_201_CREATED,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def create_plan(plan_data: PlanCreate):
     try:
-        #check display name is unique
-        if db.session.query(PlanModel).filter(PlanModel.display_name == plan_data.display_name,
+        #check display name is unique (case-insensitive)
+        if db.session.query(PlanModel).filter(func.lower(PlanModel.display_name) == plan_data.display_name.lower(),
         PlanModel.is_deleted==False).first():
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Plan with this display name already exists"
             )
         validate_unique_features(plan_data.features)
+        # If this plan is marked as popular, unmark any existing popular plan
+        if plan_data.mark_as_popular:
+            db.session.query(PlanModel).filter(
+                PlanModel.mark_as_popular == True,
+                PlanModel.is_deleted == False
+            ).update({"mark_as_popular": False}, synchronize_session=False)
         # 1. Create plan in database
         new_plan = PlanModel(
             display_name=plan_data.display_name,
@@ -254,6 +315,19 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
 
         update_data = plan_update.dict(exclude_unset=True)
 
+        # Check display_name uniqueness (case-insensitive) if being updated
+        if "display_name" in update_data:
+            conflict = db.session.query(PlanModel).filter(
+                func.lower(PlanModel.display_name) == update_data["display_name"].lower(),
+                PlanModel.id != plan_id,
+                PlanModel.is_deleted == False
+            ).first()
+            if conflict:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Plan with this display name already exists"
+                )
+
         # 🔹 Restrict immutable fields
         immutable_fields = ["price", "currency", "billing_period"]
         restricted_keys = [key for key in immutable_fields if key in update_data]
@@ -300,9 +374,56 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
 
             del update_data["features"]
 
+        # If marking this plan as popular, unmark any other popular plan first
+        if update_data.get("mark_as_popular") is True:
+            db.session.query(PlanModel).filter(
+                PlanModel.mark_as_popular == True,
+                PlanModel.id != plan_id,
+                PlanModel.is_deleted == False
+            ).update({"mark_as_popular": False}, synchronize_session=False)
+
         # 🔹 Update remaining fields
         for key, value in update_data.items():
             setattr(plan, key, value)
+
+        # When a plan is deactivated, cancel all active/paused subscriptions at period end
+        if update_data.get("is_active") is False:
+            subscriptions = db.session.query(UserSubscriptionModel).filter(
+                UserSubscriptionModel.plan_id == plan_id,
+                or_(
+                    UserSubscriptionModel.status == SubscriptionStatusEnum.active,
+                    UserSubscriptionModel.status == SubscriptionStatusEnum.paused,
+                )
+            ).all()
+
+            for sub in subscriptions:
+                try:
+                    provider_type = None
+                    if sub.provider:
+                        if sub.provider.lower() == "stripe":
+                            provider_type = PaymentProviderEnum.stripe
+                        elif sub.provider.lower() == "razorpay":
+                            provider_type = PaymentProviderEnum.razorpay
+
+                    if not provider_type:
+                        plan_provider = db.session.query(PlanProviderModel).filter(
+                            PlanProviderModel.plan_id == plan_id,
+                            PlanProviderModel.is_active == True
+                        ).first()
+                        if plan_provider:
+                            provider_type = plan_provider.provider
+
+                    if not provider_type:
+                        logger.warning(f"Could not determine provider for subscription {sub.id}, skipping cancellation")
+                        continue
+
+                    provider = PaymentProviderFactory.get_provider(provider_type)
+                    provider.cancel_subscription(sub.provider_subscription_id, cancel_at_cycle_end=True)
+                    sub.cancel_at_period_end = True
+                    db.session.add(sub)
+                    logger.info(f"Scheduled cancellation at period end for subscription {sub.id} (plan {plan_id} deactivated)")
+                except Exception as sub_err:
+                    logger.error(f"Failed to cancel subscription {sub.id} on plan deactivation: {str(sub_err)}")
 
         # 🔥 Flush before commit (catches DB errors early)
         db.session.flush()
