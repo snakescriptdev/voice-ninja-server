@@ -346,7 +346,8 @@ def get_users_cost(
             UnifiedAuthModel.username,
             UnifiedAuthModel.email,
             total_cost_col.label("total_cost")
-        ).outerjoin(cost_query, UnifiedAuthModel.id == cost_query.c.user_id)
+        ).outerjoin(cost_query, UnifiedAuthModel.id == cost_query.c.user_id
+        ).filter(UnifiedAuthModel.is_admin == False)
 
         # Order by total_cost DESC
         query = query.order_by(total_cost_col.desc())

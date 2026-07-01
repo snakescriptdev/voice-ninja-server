@@ -277,7 +277,13 @@ def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
-        
+
+        if user.is_suspended:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This user's account is suspended. Please reactivate the account before adjusting coins."
+            )
+
         success = admin_adjust_coins(
             user_id=user_id,
             amount=request.coins,
