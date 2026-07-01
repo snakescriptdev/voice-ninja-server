@@ -1035,6 +1035,17 @@ def resume_subscription(current_user: UnifiedAuthModel = Depends(require_active_
         if not subscription:
             raise HTTPException(status_code=404, detail="No paused subscription found")
 
+        plan = db.session.query(PlanModel).filter(
+            PlanModel.id == subscription.plan_id,
+            PlanModel.is_active == True,
+            PlanModel.is_deleted == False,
+        ).first()
+        if not plan:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Your plan is no longer active. Please choose a different plan to continue.",
+            )
+
         provider = PaymentProviderFactory.get_provider(subscription.provider)
         provider.resume_subscription(subscription.provider_subscription_id)
 

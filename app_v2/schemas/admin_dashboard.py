@@ -32,10 +32,18 @@ class UserCountOverviewResponse(BaseModel):
 
 class CoinBundleCreate(BaseModel):
     name: str = Field(...,max_length=90,min_length=3)
-    coins: int = Field(...,gt=0)
-    price: float = Field(...,gt=0)
+    coins: int = Field(..., gt=0, le=1000000)
+    price: float = Field(..., ge=1, le=100000)
     currency: Optional[str] = "INR"
     validity_days: Optional[int] = None
+
+class CoinBundleUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=90, min_length=3)
+    coins: Optional[int] = Field(default=None, gt=0, le=1000000)
+    price: Optional[float] = Field(default=None, ge=1, le=100000)
+    currency: Optional[str] = None
+    validity_days: Optional[int] = None
+    is_active: Optional[bool] = None
 
 class CoinBundleResponse(BaseModel):
     id: int
