@@ -32,13 +32,16 @@ class SuspendUserRequest(BaseModel):
     @field_validator("reason", mode="before")
     @classmethod
     def clean_reason(cls, v):
-        if v is None:
+        # Reason is optional: omitting it or sending an empty string both mean
+        # "no reason given" and are accepted. But if something was actually
+        # typed, it must be meaningful — not just spaces, and not too short.
+        if v is None or v == "":
             return None
         stripped = str(v).strip()
         if not stripped:
-            return None
+            raise ValueError("Reason cannot contain only spaces")
         if len(stripped) < 3:
-            raise ValueError("Please provide a reason with at least 3 characters")
+            raise ValueError("Please enter a more descriptive reason")
         return stripped
 
 class AdjustUserCoinRequest(BaseModel):
@@ -54,12 +57,14 @@ class AdjustUserCoinRequest(BaseModel):
             raise ValueError("Please provide a reason for this adjustment")
         stripped = str(v).strip()
         if len(stripped) < 3:
-            raise ValueError("Reason must be at least 3 characters")
+            raise ValueError("Please enter a more descriptive reason")
         return stripped
 
     @field_validator("coins")
     @classmethod
     def validate_max_coins_to_add(cls, v: int):
+        if v == 0:
+            raise ValueError("Please enter the number of coins to add or deduct")
         if v > 100000:
             raise ValueError("Coins to add cannot be more than 100000")
         return v

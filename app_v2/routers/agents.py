@@ -219,7 +219,7 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
 )
 async def create_agent(
     agent_in: AgentCreate,
-    current_user: UnifiedAuthModel = Depends(RequireFeature("ai_voice_agents")),
+    current_user: UnifiedAuthModel = Depends(RequireFeature("ai_voice_agents", allow_coin_fallback=True)),
 ):
     user_id = current_user.id
     
@@ -690,7 +690,7 @@ async def update_agent(
         el_update_params["prompt"] = agent_in.system_prompt
     if agent_in.is_enabled is not None:
         if agent_in.is_enabled == True and agent.is_enabled == False:
-            check_can_enable_resource(current_user.id, "ai_voice_agents")
+            check_can_enable_resource(current_user.id, "ai_voice_agents", allow_coin_fallback=True)
         agent.is_enabled = agent_in.is_enabled
 
     # ---- Voice ----
