@@ -107,7 +107,7 @@ class PublicAPIRoute(APIRoute):
 router = APIRouter(
     prefix="/api/v2/public",
     tags=["public-api"],
-    dependencies=[Depends(get_public_api_user), Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))],
+    dependencies=[Depends(get_public_api_user)],
     route_class=PublicAPIRoute
 )
 
@@ -202,7 +202,7 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
 async def list_agents(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -216,7 +216,7 @@ async def list_agents(
 @router.get("/agents/{agent_id}", response_model=AgentRead)
 async def get_agent(
     agent_id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -230,7 +230,7 @@ async def get_agent(
 @router.post("/agents", response_model=AgentRead, status_code=status.HTTP_201_CREATED)
 async def create_agent(
     agent_in: AgentCreate,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     # Reusing original creation logic from agents.py would be ideal, but for public API 
@@ -344,7 +344,7 @@ async def create_agent(
 async def update_agent_public(
     agent_id: int,
     agent_in: AgentUpdate,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -479,7 +479,7 @@ async def update_agent_public(
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent_public(
     agent_id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -505,7 +505,7 @@ async def list_web_agents(
     request: Request,
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -532,7 +532,7 @@ async def list_web_agents(
 async def get_web_agent(
     public_id: str,
     request: Request,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -547,7 +547,7 @@ async def get_web_agent(
 async def create_web_agent(
     wa_in: WebAgentConfig,
     request: Request,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -582,7 +582,7 @@ async def update_web_agent(
     public_id: str,
     wa_in: WebAgentConfigUpdate,
     request: Request,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -608,7 +608,7 @@ async def update_web_agent(
 @router.delete("/web-agents/{public_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_web_agent(
     public_id: str,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -629,7 +629,7 @@ async def delete_web_agent(
 async def list_languages_public(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -642,7 +642,7 @@ async def list_languages_public(
 @router.get("/languages/{id}", response_model=LanguageRead)
 async def get_language_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -659,7 +659,7 @@ async def get_language_public(
 async def list_voices_public(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -680,7 +680,7 @@ async def list_voices_public(
 @router.get("/voices/{id}", response_model=VoiceRead)
 async def get_voice_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -703,7 +703,7 @@ async def get_voice_public(
 async def list_ai_models_public(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -760,7 +760,7 @@ def sync_agent_kb_logic(agent_id: int):
 async def list_kb_public(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -773,7 +773,7 @@ async def list_kb_public(
 @router.get("/kb/{id}", response_model=KnowledgeBaseResponse)
 async def get_kb_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -787,7 +787,7 @@ async def get_kb_public(
 @router.post("/kb/url", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_kb_url_public(
     request: KnowledgeBaseURLCreate,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     url_str = str(request.url)
@@ -817,7 +817,7 @@ async def create_kb_url_public(
 @router.post("/kb/text", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_kb_text_public(
     request: KnowledgeBaseTextCreate,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -845,7 +845,7 @@ async def create_kb_text_public(
 @router.post("/kb/file", response_model=List[KnowledgeBaseResponse], status_code=status.HTTP_201_CREATED)
 async def create_kb_file_public(
     files: List[UploadFile] = File(...),
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     responses = []
@@ -899,7 +899,7 @@ async def create_kb_file_public(
 @router.delete("/kb/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_kb_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -931,7 +931,7 @@ async def delete_kb_public(
 @router.post("/kb/bind", status_code=status.HTTP_200_OK)
 async def bind_kb_public(
     request: KnowledgeBaseBind,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -959,7 +959,7 @@ async def bind_kb_public(
 @router.get("/ai-models/{id}", response_model=AIModelRead)
 async def get_ai_model_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -1017,7 +1017,7 @@ def function_to_read(f: FunctionModel) -> FunctionRead:
 async def list_functions_public(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -1037,7 +1037,7 @@ async def list_functions_public(
 @router.get("/functions/{id}", response_model=FunctionRead)
 async def get_function_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -1055,7 +1055,7 @@ async def get_function_public(
 @router.post("/functions", response_model=FunctionRead, status_code=status.HTTP_201_CREATED)
 async def create_function_public(
     function_in: FunctionCreateSchema,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     user_id = current_user.id
@@ -1132,7 +1132,7 @@ async def create_function_public(
 async def update_function_public(
     id: int,
     function_in: FunctionUpdateSchema,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -1223,7 +1223,7 @@ async def update_function_public(
 @router.delete("/functions/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_function_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -1246,7 +1246,7 @@ async def delete_function_public(
 @router.post("/functions/bind", status_code=status.HTTP_200_OK)
 async def bind_function_public(
     request: FunctionBind,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     agent_id = request.agent_id
@@ -1276,7 +1276,7 @@ async def bind_function_public(
 @router.post("/functions/unbind", status_code=status.HTTP_200_OK)
 async def unbind_function_public(
     request: FunctionUnbind,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     agent_id = request.agent_id

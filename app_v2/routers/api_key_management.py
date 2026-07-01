@@ -24,7 +24,7 @@ router = APIRouter(
     "/",
     response_model=APIKeyFullResponse,
     status_code=status.HTTP_201_CREATED,openapi_extra={"security":[{"BearerAuth":[]}]},
-    dependencies=[Depends(RequireFeature(PlanFeatureEnum.api_access))]
+    dependencies=[Depends(RequireFeature(PlanFeatureEnum.api_access,allow_coin_fallback=True))]
 )
 async def create_api_key(
     key_in: APIKeyCreate,

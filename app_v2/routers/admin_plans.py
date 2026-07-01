@@ -33,6 +33,66 @@ def validate_unique_features(features):
             detail=f"Duplicate feature keys are not allowed: {list(duplicates)}"
         )
 
+def validate_phone_numbers_match_voice_agents(features):
+    voice_agents_limit = "__unset__"
+    phone_numbers_limit = "__unset__"
+
+    for f in features:
+        key = f.feature_key if hasattr(f, "feature_key") else f["feature_key"]
+        limit = f.limit if hasattr(f, "limit") else f.get("limit")
+
+        if key == "ai_voice_agents":
+            voice_agents_limit = limit
+        elif key == "phone_numbers":
+            phone_numbers_limit = limit
+
+    if voice_agents_limit == "__unset__" or phone_numbers_limit == "__unset__":
+        return
+
+    # None represents "unlimited" - only equal (both unlimited) satisfies phone_numbers <= voice_agents
+    if voice_agents_limit is None or phone_numbers_limit is None:
+        mismatched = voice_agents_limit != phone_numbers_limit
+    else:
+        mismatched = phone_numbers_limit > voice_agents_limit
+
+    if mismatched:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Number of phone numbers allowed ({phone_numbers_limit}) must be less than or equal to "
+                f"number of AI voice agents allowed ({voice_agents_limit})"
+            )
+        )
+
+MIN_API_ACCESS_LIMIT = 5
+
+def validate_api_access_limit(features):
+    for f in features:
+        key = f.feature_key if hasattr(f, "feature_key") else f["feature_key"]
+        if key != "api_access":
+            continue
+
+        limit = f.limit if hasattr(f, "limit") else f.get("limit")
+
+        if limit is None:
+            continue  # unlimited
+
+        if limit == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "API access is enabled but its limit is 0. Remove the API access feature "
+                    "if you want to keep it disabled, or set the limit to at least "
+                    f"{MIN_API_ACCESS_LIMIT}."
+                )
+            )
+
+        if limit < MIN_API_ACCESS_LIMIT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"API access limit must be at least {MIN_API_ACCESS_LIMIT} when the feature is enabled."
+            )
+
 @router.get("/coin-bundles", response_model=List[CoinBundleResponse])
 def list_coin_bundles():
     try:
@@ -74,53 +134,6 @@ def create_coin_bundle(data: CoinBundleCreate):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create coin bundle: {str(e)}"
         )
-    
-@router.put("/coin-bundle/{bundle_id}", response_model=CoinBundleResponse, dependencies=[Depends(is_admin)], openapi_extra={"security": [{"BearerAuth": []}]})
-def update_coin_bundle(bundle_id: int, data: CoinBundleUpdate):
-    """
-    Update an existing coin bundle. All fields are optional — only provided fields are updated.
-    """
-    try:
-        bundle = db.session.query(CoinPackageModel).filter(
-            CoinPackageModel.id == bundle_id,
-            CoinPackageModel.is_deleted == False
-        ).first()
-        if not bundle:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Coin bundle not found"
-            )
-
-        update_data = data.model_dump(exclude_unset=True)
-
-        # Check name uniqueness (case-insensitive) if name is being changed
-        if "name" in update_data:
-            conflict = db.session.query(CoinPackageModel).filter(
-                func.lower(CoinPackageModel.name) == update_data["name"].lower(),
-                CoinPackageModel.id != bundle_id,
-                CoinPackageModel.is_deleted == False
-            ).first()
-            if conflict:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Coin bundle with this name already exists"
-                )
-
-        for key, value in update_data.items():
-            setattr(bundle, key, value)
-
-        db.session.commit()
-        db.session.refresh(bundle)
-        return bundle
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.session.rollback()
-        logger.error(f"Error updating coin bundle: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to update coin bundle: {str(e)}"
-        )
 
 @router.delete("/coin-bundle/{bundle_id}",status_code=status.HTTP_204_NO_CONTENT,dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def delete_bundle(bundle_id:int):
@@ -157,12 +170,19 @@ def create_plan(plan_data: PlanCreate):
                 detail="Plan with this display name already exists"
             )
         validate_unique_features(plan_data.features)
-        # If this plan is marked as popular, unmark any existing popular plan
+        validate_phone_numbers_match_voice_agents(plan_data.features)
+        validate_api_access_limit(plan_data.features)
+        # Only one plan can be marked as popular at a time
         if plan_data.mark_as_popular:
-            db.session.query(PlanModel).filter(
+            existing_popular = db.session.query(PlanModel).filter(
                 PlanModel.mark_as_popular == True,
                 PlanModel.is_deleted == False
-            ).update({"mark_as_popular": False}, synchronize_session=False)
+            ).first()
+            if existing_popular:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Plan '{existing_popular.display_name}' is already marked as popular. Unmark it before marking another plan as popular.",
+                )
         # 1. Create plan in database
         new_plan = PlanModel(
             display_name=plan_data.display_name,
@@ -340,6 +360,8 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
         # 🔹 Handle features safely
         if "features" in update_data:
             validate_unique_features(update_data["features"])
+            validate_phone_numbers_match_voice_agents(update_data["features"])
+            validate_api_access_limit(update_data["features"])
 
             # ORM-safe delete (NO bulk delete)
             old_features = db.session.query(PlanFeatureModel).filter(
@@ -374,13 +396,18 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
 
             del update_data["features"]
 
-        # If marking this plan as popular, unmark any other popular plan first
+        # Only one plan can be marked as popular at a time
         if update_data.get("mark_as_popular") is True:
-            db.session.query(PlanModel).filter(
+            existing_popular = db.session.query(PlanModel).filter(
                 PlanModel.mark_as_popular == True,
                 PlanModel.id != plan_id,
                 PlanModel.is_deleted == False
-            ).update({"mark_as_popular": False}, synchronize_session=False)
+            ).first()
+            if existing_popular:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Plan '{existing_popular.display_name}' is already marked as popular. Unmark it before marking this plan as popular.",
+                )
 
         # 🔹 Update remaining fields
         for key, value in update_data.items():
@@ -420,6 +447,7 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
                     provider = PaymentProviderFactory.get_provider(provider_type)
                     provider.cancel_subscription(sub.provider_subscription_id, cancel_at_cycle_end=True)
                     sub.cancel_at_period_end = True
+                    sub.status = SubscriptionStatusEnum.cancelled
                     db.session.add(sub)
                     logger.info(f"Scheduled cancellation at period end for subscription {sub.id} (plan {plan_id} deactivated)")
                 except Exception as sub_err:
