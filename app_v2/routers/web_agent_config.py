@@ -50,7 +50,7 @@ def list_web_agents(request: Request, user=Depends(require_active_user())):
 
 
 @router.post("/web-agents", response_model=WebAgentConfigResponse,openapi_extra={"security":[{"BearerAuth":[]}]})
-def create_web_agent(request: Request, config: WebAgentConfig, user=Depends(RequireFeature("web_voice_agent"))):
+def create_web_agent(request: Request, config: WebAgentConfig, user=Depends(RequireFeature("web_voice_agent", allow_coin_fallback=True))):
   # Validate agent belongs to user
   agent = db.session.query(AgentModel).filter(AgentModel.id == config.agent_id, AgentModel.user_id == user.id).first()
   if not agent:
@@ -176,7 +176,7 @@ def update_web_agent(
         web_agent.web_agent_name = update_data["web_agent_name"]
     if "is_enabled" in update_data:
         if update_data["is_enabled"] and not web_agent.is_enabled:
-            check_can_enable_resource(user.id, "web_voice_agent")
+            check_can_enable_resource(user.id, "web_voice_agent", allow_coin_fallback=True)
         web_agent.is_enabled = update_data["is_enabled"]
 
     # ------------------ Appearance Update ------------------

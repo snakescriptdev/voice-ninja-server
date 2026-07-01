@@ -43,7 +43,7 @@ class PlanBase(BaseModel):
     price: float = Field(..., ge=1, le=500000)
     currency: str = Field(default="INR", min_length=1)
     description: Optional[str] = Field(max_length=255)
-    coins_included: int = Field(default=0, ge=0, le=1000000)
+    coins_included: int = Field(..., le=1000000)
     carry_forward_coins: bool = False
     billing_period: BillingPeriodEnum
     icon: PlanIconEnum
@@ -67,6 +67,24 @@ class PlanBase(BaseModel):
         return v.strip()
 
 
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v):
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("description cannot be empty or contain only whitespace")
+        return v
+
+
+    @field_validator("coins_included")
+    @classmethod
+    def validate_coins_included(cls, v):
+        if v <= 0:
+            raise ValueError("Coins included must be greater than 0")
+        return v
+
+
 # -------------------- Create --------------------
 
 class PlanCreate(PlanBase):
@@ -80,7 +98,7 @@ class PlanUpdate(BaseModel):
     price: Optional[float] = Field(default=None, ge=1, le=500000)
     currency: Optional[str] = None
     description: Optional[str] = None
-    coins_included: Optional[int] = Field(default=None, ge=0, le=1000000)
+    coins_included: Optional[int] = Field(default=None, le=1000000)
     carry_forward_coins: Optional[bool] = None
     billing_period: Optional[BillingPeriodEnum] = None
     icon: Optional[PlanIconEnum] = None
@@ -103,6 +121,24 @@ class PlanUpdate(BaseModel):
         if v is not None and not v.strip():
             raise ValueError("gradient_color cannot be empty")
         return v.strip() if v else v
+
+
+    @field_validator("description")
+    @classmethod
+    def validate_description(cls, v):
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("description cannot be empty or contain only whitespace")
+        return v
+
+
+    @field_validator("coins_included")
+    @classmethod
+    def validate_coins_included(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError("Coins included must be greater than 0")
+        return v
 
 
 # -------------------- Provider Response --------------------

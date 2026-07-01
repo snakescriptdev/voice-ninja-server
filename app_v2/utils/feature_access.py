@@ -20,6 +20,7 @@ from app_v2.schemas.enum_types import SubscriptionStatusEnum, PhoneNumberAssignS
 from app_v2.core.logger import setup_logger
 from app_v2.utils.jwt_utils import get_current_user
 from app_v2.utils.public_auth import get_public_api_user
+from app_v2.utils.coin_utils import get_user_coin_balance
 
 
 logger = setup_logger(__name__)
@@ -237,18 +238,35 @@ FEATURE_USAGE_HANDLERS: Dict[str, Callable[[int], float]] = {
 # MAIN FEATURE CHECKER
 # ------------------------------------------------------------------
 
-def check_feature_limit_and_usage(user_id: int, feature_key: str):
+def check_feature_limit_and_usage(user_id: int, feature_key: str, allow_coin_fallback: bool = False):
     """
     Check if user has access to a feature and if their usage is within the limit.
 
     Uses the looser _get_any_active_subscription so that feature access is
     preserved during the plan-change checkout window (after /update, before
     /verify) and also during the authenticated→charged webhook window.
+
+    allow_coin_fallback: when True, a user without an active subscription is
+    still let through as long as they hold a positive coin balance — coins
+    let a user pay as they go instead of maintaining a subscription. Plan-
+    based limits obviously don't apply in that case since there is no plan
+    to check against. Defaults to False so most features keep requiring a
+    subscription outright; opt individual call sites in explicitly.
     """
     with db():
         subscription = _get_any_active_subscription(user_id)
 
         if not subscription:
+            if allow_coin_fallback:
+                if get_user_coin_balance(user_id) > 0:
+                    return True
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=(
+                            f"Active subscription or positive coin balance required to access feature: {feature_key}"
+                        ),
+                    )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Active subscription required to access feature: {feature_key}",
@@ -351,7 +369,7 @@ def get_feature_usage(user_id: int, feature_key: str) -> float:
         return usage_handler(user_id)
 
 
-def check_can_enable_resource(user_id: int, feature_key: str):
+def check_can_enable_resource(user_id: int, feature_key: str, allow_coin_fallback: bool = False):
     """
     Called specifically when a user tries to ENABLE an existing resource
     (agent, web agent etc.) that is currently disabled.
@@ -362,12 +380,17 @@ def check_can_enable_resource(user_id: int, feature_key: str):
     This is separate from check_feature_limit_and_usage() which guards
     resource CREATION using total owned count.
 
+    allow_coin_fallback: when True and the user has no active subscription,
+    a positive coin balance lets the enable action through anyway (see
+    check_feature_limit_and_usage for the same convention). Defaults to
+    False; opt individual call sites in explicitly.
+
     Usage:
         # In your agent enable endpoint, before setting is_enabled = True:
-        check_can_enable_resource(current_user.id, "ai_voice_agents")
+        check_can_enable_resource(current_user.id, "ai_voice_agents", allow_coin_fallback=True)
 
         # In your web agent enable endpoint:
-        check_can_enable_resource(current_user.id, "web_voice_agent")
+        check_can_enable_resource(current_user.id, "web_voice_agent", allow_coin_fallback=True)
     """
     with db():
         # Use loose lookup so access is preserved during plan-change checkout
@@ -375,6 +398,17 @@ def check_can_enable_resource(user_id: int, feature_key: str):
         subscription = _get_any_active_subscription(user_id=user_id)
 
         if not subscription:
+            # No plan to check limits against — fall back to coin balance.
+            if allow_coin_fallback:
+                if get_user_coin_balance(user_id) > 0:
+                    return True
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=(
+                            f"Active subscription or positive coin balance required"
+                        ),
+                    )
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Active subscription required.",
@@ -447,8 +481,9 @@ def check_can_enable_resource(user_id: int, feature_key: str):
 class RequireFeature:
     """FastAPI Dependency for requiring a feature and checking limits."""
 
-    def __init__(self, feature_key: str):
+    def __init__(self, feature_key: str, allow_coin_fallback: bool = False):
         self.feature_key = feature_key
+        self.allow_coin_fallback = allow_coin_fallback
 
     def __call__(self, current_user: UnifiedAuthModel = Depends(get_current_user)):
         if current_user.is_suspended:
@@ -456,14 +491,14 @@ class RequireFeature:
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Your account has been suspended. Please contact support for assistance.",
             )
-        check_feature_limit_and_usage(current_user.id, self.feature_key)
+        check_feature_limit_and_usage(current_user.id, self.feature_key, self.allow_coin_fallback)
         return current_user
 class RequireFeaturePublic:
     """FastAPI Dependency for requiring a feature and checking limits (API Key-based)."""
 
-    def __init__(self, feature_key: str):
+    def __init__(self, feature_key: str,allow_coin_fallback: bool = False):
         self.feature_key = feature_key
-
+        self.allow_coin_fallback = allow_coin_fallback
     def __call__(self, current_user: UnifiedAuthModel = Depends(get_public_api_user)):
-        check_feature_limit_and_usage(current_user.id, self.feature_key)
+        check_feature_limit_and_usage(current_user.id, self.feature_key, self.allow_coin_fallback)
         return current_user
