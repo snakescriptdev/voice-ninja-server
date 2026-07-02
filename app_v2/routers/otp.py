@@ -168,8 +168,6 @@ async def request_otp(request: RequestOTPRequest):
                 db.session.add(notification_settings)
                 db.session.commit()
 
-            grant_free_plan_on_signup(unified_user.id)
-
             user_created = True
 
             # Also create in old UserModel for backward compatibility

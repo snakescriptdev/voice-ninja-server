@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from fastapi_sqlalchemy import db
 from app_v2.schemas.agent_config import AgentConfigGenerator, AgentConfigOut
 from app_v2.schemas.pagination import PaginatedResponse
@@ -226,18 +226,18 @@ async def create_agent(
     #removed the name uniqueness constraint may switch in future
 
     # #check for agent existence 
-    # agent_exists = (
-    #     db.session.query(AgentModel).filter(
-    #         AgentModel.agent_name ==agent_in.agent_name,
-    #         AgentModel.user_id == user_id
-    #     ).first()
-    # )
+    agent_exists = (
+        db.session.query(AgentModel).filter(
+            func.lower(AgentModel.agent_name) == agent_in.agent_name.lower(),
+            AgentModel.user_id == user_id
+        ).first()
+    )
 
-    # if agent_exists:
-    #     raise HTTPException(
-    #         status_code= status.HTTP_400_BAD_REQUEST,
-    #         detail= "Agent with this name already exists"
-    #     )
+    if agent_exists:
+        raise HTTPException(
+            status_code= status.HTTP_400_BAD_REQUEST,
+            detail= "Agent with this name already exists"
+        )
 
     # -------------------------------------------------
     # Voice validation: only allow voices that are synced with ElevenLabs

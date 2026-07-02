@@ -265,8 +265,6 @@ async def google_callback(code: str, http_request: Request):
                     db.session.add(notification_settings)
                     db.session.commit()
 
-                grant_free_plan_on_signup(unified_user.id)
-
                 user_created = True
                 user_id = unified_user.id
                 user_email = unified_user.email

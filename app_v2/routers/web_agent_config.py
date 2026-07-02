@@ -6,6 +6,7 @@ from fastapi.responses import Response, HTMLResponse
 
 from fastapi_sqlalchemy import db
 from sqlalchemy.orm import selectinload
+from sqlalchemy import func
 
 from app_v2.databases.models import AgentModel, AgentLanguageBridge, WebAgentModel, UnifiedAuthModel
 from app_v2.schemas.web_agent_schema import WebAgentConfig, WebAgentConfigResponse, WebAgentListResponse, WebAgentConfigUpdate
@@ -57,6 +58,12 @@ def create_web_agent(request: Request, config: WebAgentConfig, user=Depends(Requ
     raise HTTPException(status_code=403, detail="Agent does not belong to user")
   if not agent.is_enabled:
         raise HTTPException(status_code=403,detail="agent is disabled")
+  web_agent = db.session.query(WebAgentModel).filter(
+    WebAgentModel.agent_id == config.agent_id,
+    func.lower(WebAgentModel.web_agent_name) == config.web_agent_name.lower()
+  ).first()
+  if web_agent:
+    raise HTTPException(status_code=400, detail="Web agent with same name already exists for this Voice Agent.")
 
   public_id = str(uuid.uuid4())
   web_agent = WebAgentModel(
