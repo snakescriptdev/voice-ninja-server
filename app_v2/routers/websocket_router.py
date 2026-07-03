@@ -402,7 +402,6 @@ async def browser_to_elevenlabs(
                     return
 
             message = await websocket.receive()
-            print(f'message: {message.get("type")}') #do remove
             if "bytes" in message:
                 chunk_count += 1
                 await el_ws.send_json({"user_audio_chunk": base64.b64encode(message["bytes"]).decode()})
@@ -436,7 +435,6 @@ async def elevenlabs_to_browser(
             if msg.type == aiohttp.WSMsgType.TEXT:
                 data = json.loads(msg.data)
                 etype = data.get("type")
-                print(f'22-> {etype}') #do remove
 
                 if etype == "conversation_initiation_metadata":
                     conversation_id = (
