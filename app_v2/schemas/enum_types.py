@@ -68,7 +68,7 @@ class CallStatusEnum(str,Enum):
     failed = "failed"
 
 class ChannelEnum(str,Enum):
-    chat = "chat"
+    test_voice = "Test voice"
     call= "call"
     widget = "widget"
     api = "api"

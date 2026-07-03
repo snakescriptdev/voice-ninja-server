@@ -18,6 +18,7 @@ from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.feature_access import check_feature_limit_and_usage, get_feature_limit, get_feature_usage
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.core.logger import setup_logger
+from app_v2.routers.websocket_router import check_elevenlabs_credits
 
 logger = setup_logger(__name__)
 
@@ -93,6 +94,11 @@ async def public_websocket_agent(
             await websocket.send_json({"type": "error", "message": str(e), "code": 1008})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Limit reached")
             return
+        
+        has_credits = await check_elevenlabs_credits(websocket, user_id, agent_id)
+        if not has_credits:
+            return
+
 
     # Auth successful
     await websocket.send_json({

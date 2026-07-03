@@ -537,6 +537,7 @@ class ConversationsModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     elevenlabs_conv_id: Mapped[str] = mapped_column(String,nullable=True)
     cost: Mapped[int] = mapped_column(Integer,nullable=True)
+    error_message : Mapped[str] = mapped_column(String,nullable=True)
     #relationships
     agent = relationship("AgentModel",back_populates="conversations")
     user = relationship("UnifiedAuthModel",back_populates="conversations")
