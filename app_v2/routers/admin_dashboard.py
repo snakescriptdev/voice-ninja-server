@@ -12,7 +12,6 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
-from elevenlabs import ElevenLabs
 from app_v2.core.config import VoiceSettings
 from elevenlabs import ElevenLabs
 from datetime import datetime, timezone

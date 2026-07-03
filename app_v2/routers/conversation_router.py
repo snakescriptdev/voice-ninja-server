@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Query, Response,Depends
 from fastapi_sqlalchemy import db
 from sqlalchemy.orm import joinedload
 from sqlalchemy import or_
-from datetime import timedelta, date
+from datetime import date
 from typing import Optional
 from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WebAgentLeadModel, CoinsLedgerModel
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
@@ -71,15 +71,19 @@ def list_user_conversations(
 
 		def seconds_to_timer(secs):
 			if not secs:
-				return "0:00"
-			return str(timedelta(seconds=secs))[:-3] if secs >= 60 else f"0:{secs:02d}"
+				return "00:00:00"
+			secs = int(secs)
+			hours, remainder = divmod(secs, 3600)
+			minutes, seconds = divmod(remainder, 60)
+			return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 		results = []
 		for conv in conversations:
 			display_cost = ledger_cost_map.get(conv.id, conv.cost)
 			results.append({
 				"id": conv.id,
-				"date": conv.created_at.strftime("%Y-%m-%d"),
+				"date": conv.created_at.strftime("%b %d, %Y"),
+				"time": conv.created_at.strftime("%I:%M %p"),
 				"agent_name": getattr(conv.agent, "agent_name", None),
 				"duration": seconds_to_timer(conv.duration),
 				"messages": conv.message_count,
@@ -143,16 +147,20 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 
 	def seconds_to_timer(secs):
 		if not secs:
-			return "0:00"
-		return str(timedelta(seconds=secs))[:-3] if secs >= 60 else f"0:{secs:02d}"
+			return "00:00:00"
+		secs = int(secs)
+		hours, remainder = divmod(secs, 3600)
+		minutes, seconds = divmod(remainder, 60)
+		return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 	return {
 		"conversation_details": {
 			"datetime": conv.created_at.isoformat(),
 			"duration": seconds_to_timer(conv.duration),
 			"messages": conv.message_count,
-			"channel": conv.channel.name if conv.channel else None,
-			"cost": display_cost
+			"channel": conv.channel.value if conv.channel else None,
+			"cost": display_cost,
+            "error_message": conv.error_message
 		},
 		"call_info": {
 			"agent": getattr(conv.agent, "agent_name", None),
