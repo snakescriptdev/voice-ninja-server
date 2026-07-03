@@ -47,7 +47,7 @@ from app_v2.utils.feature_access import (
     get_feature_usage,
 )
 from app_v2.utils.jwt_utils import ALGORITHM, SECRET_KEY
-
+from elevenlabs import ElevenLabs
 logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/api/v2/agent", tags=["websocket"])
@@ -292,6 +292,51 @@ async def check_user_limits(
         minute_limit=minute_limit,
     )
 
+async def check_elevenlabs_credits(
+    websocket: WebSocket,
+    user_id: int,
+    agent_id: int,
+) -> bool:
+    """
+    Checks the ElevenLabs subscription's remaining character credits.
+
+    On low credits or an API error, persists a failed conversation record
+    (for admin visibility), notifies the browser, and closes the socket.
+    """
+    async def _reject() -> None:
+        error_message = "Some error occurred on server, please contact administrator."
+        with db():
+            record = ConversationsModel(
+                agent_id=agent_id,
+                user_id=user_id,
+                call_status=CallStatusEnum.failed,
+                channel=ChannelEnum.chat,
+                error_message = error_message,
+                transcript_summary=error_message,
+            )
+            db.session.add(record)
+            db.session.commit()
+
+        await websocket.send_json({"type": "error", "message": error_message})
+        await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="ElevenLabs credits exhausted")
+
+    try:
+        client = ElevenLabs(api_key=VoiceSettings.ELEVENLABS_API_KEY)
+        subscription = client.user.subscription.get()
+        character_count = getattr(subscription, "character_count", 0)
+        character_limit = getattr(subscription, "character_limit", 0)
+        credits_left = character_limit - character_count
+        if credits_left <= 10:
+            logger.info(f"Credits left: {credits_left}")
+            await _reject()
+            return False
+
+    except Exception as ex:
+        logger.exception(f"check_elevenlabs_credits failed: {str(ex)}")
+        await _reject()
+        return False
+
+    return True
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Activity logging helpers
@@ -357,6 +402,7 @@ async def browser_to_elevenlabs(
                     return
 
             message = await websocket.receive()
+            print(f'message: {message.get("type")}') #do remove
             if "bytes" in message:
                 chunk_count += 1
                 await el_ws.send_json({"user_audio_chunk": base64.b64encode(message["bytes"]).decode()})
@@ -368,8 +414,8 @@ async def browser_to_elevenlabs(
 
     except WebSocketDisconnect:
         logger.info("Browser disconnected (WebSocketDisconnect)")
-    except Exception:
-        logger.error(f"browser_to_elevenlabs error:\n{traceback.format_exc()}")
+    except Exception as e:
+        logger.error(f"{str(e)} : browser_to_elevenlabs error:\n{traceback.format_exc()}")
     finally:
         if not el_ws.closed:
             await el_ws.close()
@@ -386,9 +432,11 @@ async def elevenlabs_to_browser(
     conversation_id: Optional[str] = None
     try:
         async for msg in el_ws:
+            
             if msg.type == aiohttp.WSMsgType.TEXT:
                 data = json.loads(msg.data)
                 etype = data.get("type")
+                print(f'22-> {etype}') #do remove
 
                 if etype == "conversation_initiation_metadata":
                     conversation_id = (
@@ -484,7 +532,7 @@ def _persist_conversation(
         message_count=metadata.get("message_count"),
         duration=metadata.get("duration"),
         call_status=call_status,
-        channel=ChannelEnum.chat,
+        channel=ChannelEnum.test_voice,
         transcript_summary=metadata.get("transcript_summary"),
         elevenlabs_conv_id=conversation_id,
         cost=raw_cost,
@@ -609,6 +657,10 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
     # ── 3. Limits check ───────────────────────────────────────────────────────
     limits = await check_user_limits(websocket, auth.user_id)
     if not limits:
+        return
+    
+    has_credits = await check_elevenlabs_credits(websocket, auth.user_id, agent_id)
+    if not has_credits:
         return
 
     # ── 4. Build call context ─────────────────────────────────────────────────
