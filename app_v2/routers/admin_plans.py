@@ -93,6 +93,37 @@ def validate_api_access_limit(features):
                 detail=f"API access limit must be at least {MIN_API_ACCESS_LIMIT} when the feature is enabled."
             )
 
+MIN_KNOWLEDGE_BASE_LIMIT_MB = 1
+MAX_KNOWLEDGE_BASE_LIMIT_MB = 21
+
+def validate_knowledge_base_limit(features):
+    for f in features:
+        key = f.feature_key if hasattr(f, "feature_key") else f["feature_key"]
+        if key != "knowledge_base":
+            continue
+
+        limit = f.limit if hasattr(f, "limit") else f.get("limit")
+
+        if limit is None:
+            continue  # unlimited
+
+        if limit < MIN_KNOWLEDGE_BASE_LIMIT_MB:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Knowledge base is enabled but its limit is less than "
+                    f"{MIN_KNOWLEDGE_BASE_LIMIT_MB} MB. Remove the knowledge base feature "
+                    "if you want to keep it disabled, or set the limit to at least "
+                    f"{MIN_KNOWLEDGE_BASE_LIMIT_MB} MB."
+                )
+            )
+
+        if limit > MAX_KNOWLEDGE_BASE_LIMIT_MB:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Knowledge base limit cannot exceed {MAX_KNOWLEDGE_BASE_LIMIT_MB} MB."
+            )
+
 @router.get("/coin-bundles", response_model=List[CoinBundleResponse])
 def list_coin_bundles():
     try:
@@ -172,6 +203,7 @@ def create_plan(plan_data: PlanCreate):
         validate_unique_features(plan_data.features)
         validate_phone_numbers_match_voice_agents(plan_data.features)
         validate_api_access_limit(plan_data.features)
+        validate_knowledge_base_limit(plan_data.features)
         # Only one plan can be marked as popular at a time
         if plan_data.mark_as_popular:
             existing_popular = db.session.query(PlanModel).filter(
@@ -362,6 +394,7 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
             validate_unique_features(update_data["features"])
             validate_phone_numbers_match_voice_agents(update_data["features"])
             validate_api_access_limit(update_data["features"])
+            validate_knowledge_base_limit(update_data["features"])
 
             # ORM-safe delete (NO bulk delete)
             old_features = db.session.query(PlanFeatureModel).filter(

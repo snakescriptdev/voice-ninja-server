@@ -133,9 +133,10 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         first_message=agent.first_message,
         system_prompt=agent.system_prompt,
         voice=agent.voice.voice_name,
+        is_enabled=agent.is_enabled,
         ai_model=ai_model,
         language=language,
-        updated_at=agent.modified_at,
+        updated_at=agent.modified_at.date(),
         elevenlabs_agent_id=agent.elevenlabs_agent_id,
         phone=phone_number,
         knowledgebase = [
@@ -792,6 +793,17 @@ async def create_kb_url_public(
     track_and_limit_api(current_user.id)
     url_str = str(request.url)
     with db():
+        existing_url = db.session.query(KnowledgeBaseModel).filter(
+            KnowledgeBaseModel.user_id == current_user.id,
+            KnowledgeBaseModel.kb_type == "url",
+            func.lower(KnowledgeBaseModel.content_path) == url_str.lower()
+        ).first()
+        if existing_url:
+            raise HTTPException(
+                status_code=400,
+                detail="This URL has already been added to your knowledge base."
+            )
+
         kb_client = ElevenLabsKB()
         kb_response = kb_client.add_url_document(url_str)
         if not kb_response.status:
@@ -821,6 +833,17 @@ async def create_kb_text_public(
 ):
     track_and_limit_api(current_user.id)
     with db():
+        existing_text = db.session.query(KnowledgeBaseModel).filter(
+            KnowledgeBaseModel.user_id == current_user.id,
+            KnowledgeBaseModel.kb_type == "text",
+            KnowledgeBaseModel.title == request.title
+        ).first()
+        if existing_text:
+            raise HTTPException(
+                status_code=400,
+                detail="This exact text content has already been added to your knowledge base."
+            )
+
         kb_client = ElevenLabsKB()
         kb_response = kb_client.add_text_document(request.content, request.title)
         if not kb_response.status:
@@ -852,10 +875,27 @@ async def create_kb_file_public(
     
     with db():
         kb_client = ElevenLabsKB()
+        seen_filenames = set()
         for file in files:
             _, ext = os.path.splitext(file.filename)
             if ext.lower() not in ALLOWED_EXTENSIONS:
                 raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
+
+            filename_key = file.filename.lower()
+            if filename_key in seen_filenames:
+                raise HTTPException(status_code=400, detail=f"Duplicate file name '{file.filename}' in this upload request.")
+            seen_filenames.add(filename_key)
+
+            existing_file = db.session.query(KnowledgeBaseModel).filter(
+                KnowledgeBaseModel.user_id == current_user.id,
+                KnowledgeBaseModel.kb_type == "file",
+                func.lower(KnowledgeBaseModel.title) == filename_key
+            ).first()
+            if existing_file:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A file named '{file.filename}' already exists in your knowledge base."
+                )
 
             file.file.seek(0, 2)
             file_size = file.file.tell()
