@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
+from sqlalchemy import func
 from typing import List
 
 from app_v2.databases.models import APIKeyModel, UnifiedAuthModel
@@ -33,6 +34,18 @@ async def create_api_key(
     """Generate a new API key for the user."""
     try:
         logger.info(f"Creating API key for user_id={current_user.id}")
+
+        if key_in.name:
+            with db():
+                existing_key = db.session.query(APIKeyModel).filter(
+                    APIKeyModel.user_id == current_user.id,
+                    func.lower(APIKeyModel.name) == key_in.name.lower()
+                ).first()
+                if existing_key:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"An API key with the name '{existing_key.name}' already exists."
+                    )
 
         client_id = generate_client_id()
         client_secret = generate_client_secret()
