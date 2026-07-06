@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
 from fastapi_sqlalchemy import db
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from typing import List
 import os
@@ -91,12 +92,29 @@ async def upload_files(
             uploaded_entries = []
             # Plan-based limit per file (in MB)
             plan_limit_mb = limit if limit is not None else MAX_FILE_SIZE_IN_MB # Fallback to 10MB if no limit set
-            
+
+            seen_filenames = set()
             for file in files:
                 # validation logic
                 _, ext = os.path.splitext(file.filename)
                 if ext.lower() not in ALLOWED_EXTENSIONS:
                     raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
+
+                filename_key = file.filename.lower()
+                if filename_key in seen_filenames:
+                    raise HTTPException(status_code=400, detail=f"Duplicate file name '{file.filename}' in this upload request.")
+                seen_filenames.add(filename_key)
+
+                existing_file = db.session.query(KnowledgeBaseModel).filter(
+                    KnowledgeBaseModel.user_id == current_user.id,
+                    KnowledgeBaseModel.kb_type == "file",
+                    func.lower(KnowledgeBaseModel.title) == filename_key
+                ).first()
+                if existing_file:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"A file named '{file.filename}' already exists in your knowledge base."
+                    )
 
                 file.file.seek(0, 2)
                 file_size = file.file.tell()
@@ -179,6 +197,17 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
     try:
         url_str = str(request.url)
         with db():
+            existing_url = db.session.query(KnowledgeBaseModel).filter(
+                KnowledgeBaseModel.user_id == current_user.id,
+                KnowledgeBaseModel.kb_type == "url",
+                func.lower(KnowledgeBaseModel.content_path) == url_str.lower()
+            ).first()
+            if existing_url:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This URL has already been added to your knowledge base."
+                )
+
             # ---- ElevenLabs KB Sync ----
             elevenlabs_document_id = None
             rag_index_id = None
@@ -229,6 +258,17 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
 async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthModel = Depends(RequireFeature("knowledge_base"))):
     try:
         with db():
+            existing_text = db.session.query(KnowledgeBaseModel).filter(
+                KnowledgeBaseModel.user_id == current_user.id,
+                KnowledgeBaseModel.kb_type == "text",
+                KnowledgeBaseModel.title == request.title
+            ).first()
+            if existing_text:
+                raise HTTPException(
+                    status_code=400,
+                    detail="This exact text content has already been added to your knowledge base."
+                )
+
             # ---- ElevenLabs KB Sync ----
             elevenlabs_document_id = None
             rag_index_id = None

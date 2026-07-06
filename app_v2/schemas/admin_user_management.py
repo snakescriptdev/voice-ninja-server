@@ -35,7 +35,7 @@ class SuspendUserRequest(BaseModel):
         # Reason is optional: omitting it or sending an empty string both mean
         # "no reason given" and are accepted. But if something was actually
         # typed, it must be meaningful — not just spaces, and not too short.
-        if v is None or v == "": 
+        if v is None or v == "":
             return None
         stripped = str(v).strip()
         if not stripped:
