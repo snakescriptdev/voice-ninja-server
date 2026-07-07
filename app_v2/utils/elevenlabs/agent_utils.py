@@ -87,15 +87,15 @@ class ElevenLabsAgent(BaseElevenLabs):
                 "similarity_boost": 0.8
             },
             "asr": {
-                "provider": "elevenlabs",
+                "provider": "scribe_realtime",
                 "quality": "high",
                 "user_input_audio_format": "pcm_16000",
                 "keywords": []
             },
             "turn": {
-                "turn_timeout": 7.0,
+                "turn_timeout": 1.0,
                 "silence_end_call_timeout": -1.0,
-                "turn_eagerness": "normal"
+                "turn_eagerness": "eager"
             }
         }
 
