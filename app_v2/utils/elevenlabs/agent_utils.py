@@ -94,7 +94,7 @@ class ElevenLabsAgent(BaseElevenLabs):
             },
             "turn": {
                 "turn_timeout": 1.0,
-                "silence_end_call_timeout": -1.0,
+                "silence_end_call_timeout": 60,
                 "turn_eagerness": "eager"
             }
         }
