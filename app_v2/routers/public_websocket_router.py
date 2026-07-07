@@ -169,12 +169,13 @@ async def public_websocket_agent(
 
                 async def elevenlabs_to_browser():
                     nonlocal conversation_id
+                    last_interrupt_id = 0
                     try:
                         async for msg in el_ws:
                             if msg.type == aiohttp.WSMsgType.TEXT:
                                 data = json.loads(msg.data)
                                 etype = data.get("type")
-                                
+
                                 if etype == "conversation_initiation_metadata":
                                     conversation_metadata = data.get("conversation_initiation_metadata_event")
                                     conversation_id = conversation_metadata.get("conversation_id")
@@ -185,8 +186,19 @@ async def public_websocket_agent(
                                         "ts": datetime.now(timezone.utc).isoformat()
                                     })
 
+                                if etype == "interruption":
+                                    last_interrupt_id = int(data.get("interruption_event", {}).get("event_id", 0))
+
                                 if etype == "audio":
-                                    audio_b64 = data.get("audio_event", {}).get("audio_base_64")
+                                    audio_event = data.get("audio_event", {})
+                                    # Audio already in flight when the user barges in keeps
+                                    # arriving after the interruption event — drop anything
+                                    # at or before the last interrupt so stale agent audio
+                                    # doesn't get played back (and bleed into the mic) after
+                                    # the agent was told to stop.
+                                    if int(audio_event.get("event_id", 0)) <= last_interrupt_id:
+                                        continue
+                                    audio_b64 = audio_event.get("audio_base_64")
                                     if audio_b64:
                                         audio_bytes = base64.b64decode(audio_b64)
                                         await websocket.send_bytes(audio_bytes)
@@ -208,11 +220,25 @@ async def public_websocket_agent(
                                 else:
                                     # Forward all other events
                                     await websocket.send_json(data)
-                            
+
                             elif msg.type == aiohttp.WSMsgType.ERROR:
                                 break
                             elif msg.type == aiohttp.WSMsgType.CLOSED:
                                 break
+
+                        # Loop ended because EL's socket closed on its own (e.g. silence
+                        # timeout) rather than this task being cancelled — tell the client
+                        # explicitly instead of just dropping the connection.
+                        try:
+                            await websocket.send_json({
+                                "type": "call_ended",
+                                "message": "The agent ended the call.",
+                                "ts": datetime.now(timezone.utc).isoformat(),
+                            })
+                        except Exception:
+                            pass
+                    except asyncio.CancelledError:
+                        pass
                     except Exception as e:
                         logger.error(f"Error in public_elevenlabs_to_browser: {e}")
                     finally:
@@ -221,12 +247,18 @@ async def public_websocket_agent(
                         except RuntimeError:
                             pass
 
-                # Run both tasks concurrently
-                await asyncio.gather(
-                    browser_to_elevenlabs(),
-                    elevenlabs_to_browser(),
-                    return_exceptions=True
-                )
+                # Run both tasks concurrently; cancel whichever is still going
+                # once the other finishes, so a call ending on either side
+                # (EL hangup or browser disconnect) tears the whole bridge
+                # down promptly instead of leaving the other task hanging.
+                tasks = [
+                    asyncio.create_task(browser_to_elevenlabs(), name="public_browser_task"),
+                    asyncio.create_task(elevenlabs_to_browser(), name="public_elevenlabs_task"),
+                ]
+                _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+                for t in pending:
+                    t.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
 
         except Exception as e:
             logger.error(f"ElevenLabs connection failed: {e}")

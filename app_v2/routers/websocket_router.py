@@ -403,6 +403,9 @@ async def browser_to_elevenlabs(
 
             message = await websocket.receive()
             if "bytes" in message:
+                if el_ws.closed:
+                    logger.info("ElevenLabs socket already closed; stopping browser relay")
+                    break
                 chunk_count += 1
                 await el_ws.send_json({"user_audio_chunk": base64.b64encode(message["bytes"]).decode()})
             elif "text" in message:
@@ -413,6 +416,10 @@ async def browser_to_elevenlabs(
 
     except WebSocketDisconnect:
         logger.info("Browser disconnected (WebSocketDisconnect)")
+    except ConnectionResetError:
+        # ElevenLabs closed its side (e.g. silence timeout) between our
+        # el_ws.closed check and the send — expected race, not an error.
+        logger.info("ElevenLabs connection reset while relaying audio (likely EL-side timeout)")
     except Exception as e:
         logger.error(f"{str(e)} : browser_to_elevenlabs error:\n{traceback.format_exc()}")
     finally:
@@ -472,6 +479,19 @@ async def elevenlabs_to_browser(
                 logger.info(f"ElevenLabs WS closed/errored: {msg.type}")
                 break
 
+        # Reached only when the EL socket ended on its own (silence timeout,
+        # agent hangup, etc.) — not when this task is cancelled because the
+        # browser disconnected first. Tell the browser explicitly instead of
+        # just dropping the connection.
+        try:
+            await websocket.send_json({
+                "type": "call_ended",
+                "message": "The agent ended the call.",
+                "ts": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception:
+            pass
+
     except asyncio.CancelledError:
         pass
     except Exception:
@@ -508,6 +528,14 @@ async def run_bridge(
     for task in pending:
         logger.info(f"Cancelling task: {task.get_name()}")
         task.cancel()
+
+    if pending:
+        # elevenlabs_to_browser() swallows CancelledError and returns the
+        # conversation_id it already captured — but only once it actually
+        # resumes and runs its finally/return path. Without this wait,
+        # cancel() merely schedules that resumption and we'd read the
+        # holder before it's populated, losing the conversation record.
+        await asyncio.wait(pending)
 
     return conversation_id_holder[0]
 
