@@ -66,6 +66,17 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         if agent.phone_number else None
     )
 
+    # Recompute from the live prompt (rather than trusting stored rows as-is)
+    # so agents predating this feature, or any drift between the prompt and
+    # persisted variables, still resolve correctly on read. system__ vars are
+    # excluded — they're ElevenLabs built-ins auto-populated at call time,
+    # never custom variables the user manages.
+    stored_variables = {v.variable_name: v.variable_value for v in agent.variables}
+    variables = {
+        name: stored_variables.get(name, "")
+        for name in extract_prompt_variable_names(agent.system_prompt)
+    }
+
     return AgentRead(
         id=agent.id,
         agent_name=agent.agent_name,
@@ -86,7 +97,7 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
             }
             for bridge in agent.agent_knowledge_bases
         ],
-        variables={var.variable_name: var.variable_value for var in agent.variables},
+        variables=variables,
         tools=[
             {
                 "id": bridge.function.id,
@@ -102,18 +113,22 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
 
 # Matches {{var_name}} placeholders in a prompt. "system__*" placeholders are
 # ElevenLabs built-in variables (e.g. system__time_utc) that are always
-# available without being declared as custom dynamic variables, so they're
-# excluded from extraction.
+# available and auto-populated by ElevenLabs at conversation time — they
+# must NOT be declared in dynamic_variable_placeholders (doing so would
+# submit an empty value that overrides the real runtime value), so they're
+# excluded whenever include_system=False.
 PROMPT_VARIABLE_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
 
 
-def extract_prompt_variable_names(*texts: Optional[str]) -> set[str]:
+def extract_prompt_variable_names(*texts: Optional[str], include_system: bool = False) -> set[str]:
     """Extracts {{var_name}} placeholder names from prompt text(s)."""
     names = set()
     for text in texts:
         if not text:
             continue
         names.update(PROMPT_VARIABLE_PATTERN.findall(text))
+    if include_system:
+        return names
     return {name for name in names if not name.startswith("system__")}
 
 
@@ -884,35 +899,31 @@ async def update_agent(
 
     # ---- Variables Update ----
     # agent.system_prompt was already updated above (if provided), so this
-    # reflects whichever prompt will be live after this request.
-    prompt_var_names = extract_prompt_variable_names(agent.system_prompt)
-
-    if agent_in.variables is not None:
-        merged_variables = dict(agent_in.variables)
-        for var_name in prompt_var_names:
-            merged_variables.setdefault(var_name, "")
-
-        el_update_params["dynamic_variables"] = merged_variables
-
-        # Update DB variables
-        db.session.query(VariablesModel).filter(
-            VariablesModel.agent_id == agent_id
-        ).delete()
-        for key, value in merged_variables.items():
-            db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
-    elif agent_in.system_prompt is not None:
-        # Variables weren't touched explicitly, but the prompt changed —
-        # persist any newly referenced {{placeholders}} without disturbing
-        # values already saved for existing ones.
+    # reflects whichever prompt will be live after this request. The prompt
+    # is the source of truth for which variables exist: whatever
+    # {{placeholder}} names it contains is exactly the variable set that
+    # survives — anything else (even if explicitly re-sent in the payload,
+    # e.g. because the frontend echoed back a stale value it fetched
+    # earlier) gets dropped. Explicit values in agent_in.variables still win
+    # for placeholders that ARE present; existing DB values are the fallback
+    # for ones untouched by this request.
+    if agent_in.variables is not None or agent_in.system_prompt is not None:
+        prompt_var_names = extract_prompt_variable_names(agent.system_prompt)
         existing_variables = {v.variable_name: v.variable_value for v in agent.variables}
-        new_names = prompt_var_names - existing_variables.keys()
-        if new_names:
-            for var_name in new_names:
-                db.session.add(VariablesModel(agent_id=agent_id, variable_name=var_name, variable_value=""))
-            el_update_params["dynamic_variables"] = {
-                **existing_variables,
-                **{name: "" for name in new_names},
-            }
+        explicit_variables = agent_in.variables or {}
+
+        synced_variables = {
+            name: explicit_variables.get(name, existing_variables.get(name, ""))
+            for name in prompt_var_names
+        }
+
+        if synced_variables != existing_variables:
+            db.session.query(VariablesModel).filter(
+                VariablesModel.agent_id == agent_id
+            ).delete()
+            for key, value in synced_variables.items():
+                db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
+            el_update_params["dynamic_variables"] = synced_variables
 
     # ---- Builtin Tools Update ----
     if agent_in.built_in_tools is not None:
