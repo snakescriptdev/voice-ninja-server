@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
@@ -98,6 +99,23 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
 
 
 # -------------------- HELPERS --------------------
+
+# Matches {{var_name}} placeholders in a prompt. "system__*" placeholders are
+# ElevenLabs built-in variables (e.g. system__time_utc) that are always
+# available without being declared as custom dynamic variables, so they're
+# excluded from extraction.
+PROMPT_VARIABLE_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+
+def extract_prompt_variable_names(*texts: Optional[str]) -> set[str]:
+    """Extracts {{var_name}} placeholder names from prompt text(s)."""
+    names = set()
+    for text in texts:
+        if not text:
+            continue
+        names.update(PROMPT_VARIABLE_PATTERN.findall(text))
+    return {name for name in names if not name.startswith("system__")}
+
 
 def transform_built_in_tools(built_in_tools_params, session: Session, user_id: int) -> dict:
     """Transform schema params to ElevenLabs payload structure."""
@@ -398,6 +416,15 @@ async def create_agent(
             el_tool_ids.append(tool.elevenlabs_tool_id)
 
     # -------------------------------------------------
+    # Merge explicit variables with {{var_name}} placeholders found in the
+    # system prompt, so anything referenced there gets persisted even if the
+    # caller didn't declare it explicitly.
+    # -------------------------------------------------
+    merged_variables = dict(agent_in.variables or {})
+    for var_name in extract_prompt_variable_names(agent_in.system_prompt):
+        merged_variables.setdefault(var_name, "")
+
+    # -------------------------------------------------
     # Create agent in ElevenLabs (only after validation)
     # -------------------------------------------------
     elevenlabs_agent_id = None
@@ -417,7 +444,7 @@ async def create_agent(
             llm_model=ai_model.model_name,
             tool_ids=el_tool_ids,
             knowledge_base=el_kb_list,
-            dynamic_variables=agent_in.variables,
+            dynamic_variables=merged_variables,
             built_in_tools=transform_built_in_tools(agent_in.built_in_tools, db.session, user_id)
         )
 
@@ -480,8 +507,8 @@ async def create_agent(
         for tool_id in tool_ids_ordered:
             db.session.add(AgentFunctionBridgeModel(agent_id=new_agent.id, function_id=tool_id))
 
-        # Variables
-        for key, value in (agent_in.variables or {}).items():
+        # Variables (explicit + auto-detected {{placeholders}} from the system prompt)
+        for key, value in merged_variables.items():
             db.session.add(VariablesModel(agent_id=new_agent.id, variable_name=key, variable_value=value))
 
         if phone_record:
@@ -856,15 +883,36 @@ async def update_agent(
             db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=tool_id))
 
     # ---- Variables Update ----
+    # agent.system_prompt was already updated above (if provided), so this
+    # reflects whichever prompt will be live after this request.
+    prompt_var_names = extract_prompt_variable_names(agent.system_prompt)
+
     if agent_in.variables is not None:
-        el_update_params["dynamic_variables"] = agent_in.variables
-        
+        merged_variables = dict(agent_in.variables)
+        for var_name in prompt_var_names:
+            merged_variables.setdefault(var_name, "")
+
+        el_update_params["dynamic_variables"] = merged_variables
+
         # Update DB variables
         db.session.query(VariablesModel).filter(
             VariablesModel.agent_id == agent_id
         ).delete()
-        for key, value in agent_in.variables.items():
+        for key, value in merged_variables.items():
             db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
+    elif agent_in.system_prompt is not None:
+        # Variables weren't touched explicitly, but the prompt changed —
+        # persist any newly referenced {{placeholders}} without disturbing
+        # values already saved for existing ones.
+        existing_variables = {v.variable_name: v.variable_value for v in agent.variables}
+        new_names = prompt_var_names - existing_variables.keys()
+        if new_names:
+            for var_name in new_names:
+                db.session.add(VariablesModel(agent_id=agent_id, variable_name=var_name, variable_value=""))
+            el_update_params["dynamic_variables"] = {
+                **existing_variables,
+                **{name: "" for name in new_names},
+            }
 
     # ---- Builtin Tools Update ----
     if agent_in.built_in_tools is not None:
