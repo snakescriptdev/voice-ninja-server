@@ -427,11 +427,19 @@ async def elevenlabs_to_browser(
     """
     Relays events/audio from ElevenLabs → browser.
     Returns the conversation_id when available.
+
+    Audio chunks are already in flight over the socket at the moment the user
+    barges in, so the `interruption` event alone doesn't stop them from arriving.
+    We track the last interruption's event_id and drop any audio event at or
+    below it (matching the official SDK's own Conversation class), otherwise
+    that stale agent audio gets relayed and played right as the user is
+    speaking — bleeding into the mic and corrupting what ElevenLabs transcribes.
     """
     conversation_id: Optional[str] = None
+    last_interrupt_id = 0
     try:
         async for msg in el_ws:
-            
+
             if msg.type == aiohttp.WSMsgType.TEXT:
                 data = json.loads(msg.data)
                 etype = data.get("type")
@@ -443,8 +451,14 @@ async def elevenlabs_to_browser(
                     )
                     logger.info(f"Conversation ID captured: {conversation_id}")
 
+                if etype == "interruption":
+                    last_interrupt_id = int(data.get("interruption_event", {}).get("event_id", 0))
+
                 if etype == "audio":
-                    audio_b64 = data.get("audio_event", {}).get("audio_base_64")
+                    audio_event = data.get("audio_event", {})
+                    if int(audio_event.get("event_id", 0)) <= last_interrupt_id:
+                        continue
+                    audio_b64 = audio_event.get("audio_base_64")
                     if audio_b64:
                         await websocket.send_bytes(base64.b64decode(audio_b64))
                         data["audio_event"]["audio_base_64"] = "[STRIPPED]"
