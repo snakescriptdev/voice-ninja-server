@@ -51,11 +51,11 @@ async def public_websocket_agent(
     except Exception:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid auth message format")
         return
-
+    
     if auth_msg.get("type") != "auth" or "client_id" not in auth_msg or "client_secret" not in auth_msg:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Auth required: client_id and client_secret")
         return
-
+    
     client_id = auth_msg["client_id"]
     client_secret = auth_msg["client_secret"]
 
@@ -108,12 +108,13 @@ async def public_websocket_agent(
     })
     logger.info(f"Public WebSocket authenticated for user {user_id}, agent {agent_id}")
 
-    log_activity(
-        user_id=user_id,
-        event_type="public_agent_conversation_started",
-        description=f"Started public voice chat for agent: {agent_name}",
-        metadata={"agent_id": agent_id, "agent_name": agent_name, "elevenlabs_agent_id": elevenlabs_agent_id}
-    )
+    with db():
+        log_activity(
+            user_id=user_id,
+            event_type="public_agent_conversation_started",
+            description=f"Started public voice chat for agent: {agent_name}",
+            metadata={"agent_id": agent_id, "agent_name": agent_name, "elevenlabs_agent_id": elevenlabs_agent_id}
+        )
 
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={elevenlabs_agent_id}"
     call_start_time = datetime.now(timezone.utc)
@@ -150,6 +151,9 @@ async def public_websocket_agent(
                             message = await websocket.receive()
                             if message["type"] == "websocket.receive":
                                 if "bytes" in message:
+                                    if el_ws.closed:
+                                        logger.info("ElevenLabs socket already closed; stopping browser relay")
+                                        break
                                     chunk_count += 1
                                     audio_b64 = base64.b64encode(message["bytes"]).decode("utf-8")
                                     await el_ws.send_json({"user_audio_chunk": audio_b64})
@@ -161,6 +165,10 @@ async def public_websocket_agent(
                                 break
                     except WebSocketDisconnect:
                         pass
+                    except ConnectionResetError:
+                        # ElevenLabs closed its side (e.g. silence timeout) between our
+                        # el_ws.closed check and the send — expected race, not an error.
+                        logger.info("ElevenLabs connection reset while relaying audio (likely EL-side timeout)")
                     except Exception as e:
                         logger.error(f"Error in public_browser_to_elevenlabs: {e}")
                     finally:
@@ -267,12 +275,13 @@ async def public_websocket_agent(
 
     # Post-conversation logic
     if conversation_id:
-        log_activity(
-            user_id=user_id,
-            event_type="public_agent_conversation_completed",
-            description=f"Completed public voice chat for agent: {agent_name}",
-            metadata={"agent_id": agent_id, "conversation_id": conversation_id}
-        )
+        with db():
+            log_activity(
+                user_id=user_id,
+                event_type="public_agent_conversation_completed",
+                description=f"Completed public voice chat for agent: {agent_name}",
+                metadata={"agent_id": agent_id, "conversation_id": conversation_id}
+            )
 
         try:
             el_conv = ElevenLabsConversation()
