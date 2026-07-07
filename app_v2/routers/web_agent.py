@@ -309,6 +309,7 @@ async def _start_elevenlabs_conversation(
     ctx: WebAgentContext,
     language: str,
     model: str,
+    el_ended: asyncio.Event,
 ) -> Optional[object]:
     """
     Initialises and starts an ElevenLabs Conversation session.
@@ -347,6 +348,7 @@ async def _start_elevenlabs_conversation(
             config=config,
             callback_agent_response=_make_on_agent_response(websocket, loop),
             callback_user_transcript=_make_on_user_transcript(websocket, loop),
+            callback_end_session=lambda: loop.call_soon_threadsafe(el_ended.set),
         )
         await asyncio.to_thread(conversation.start_session)
         await asyncio.sleep(0.5)
@@ -385,6 +387,7 @@ async def run_web_agent_session(
     conversation = None
     conversation_ready = False
     chunk_count = 0
+    el_ended = asyncio.Event()
 
     while True:
         # Periodic minute-limit check
@@ -398,8 +401,30 @@ async def run_web_agent_session(
             await websocket.close(code=1008)
             break
 
+        # Race the browser message against ElevenLabs ending the session
+        # (e.g. silence_end_call_timeout) — otherwise this loop only ever
+        # wakes up on browser traffic and never notices EL hung up.
+        recv_task = asyncio.create_task(websocket.receive_json())
+        end_task = asyncio.create_task(el_ended.wait())
+        done, pending = await asyncio.wait({recv_task, end_task}, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+
+        if end_task in done:
+            logger.info("ElevenLabs ended call_id=%s — closing browser socket", call_id)
+            try:
+                await websocket.send_json({
+                    "type": "call_ended",
+                    "message": "The agent ended the call.",
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                })
+                await websocket.close(code=1000)
+            except Exception:
+                pass
+            break
+
         try:
-            data = await websocket.receive_json()
+            data = recv_task.result()
         except WebSocketDisconnect:
             break
         except Exception:
@@ -414,6 +439,7 @@ async def run_web_agent_session(
                 ctx=ctx,
                 language=data.get("language", "en"),
                 model=data.get("model", "eleven_turbo_v2"),
+                el_ended=el_ended,
             )
             if conversation is None:
                 break
@@ -434,7 +460,8 @@ async def run_web_agent_session(
     conv_id: Optional[str] = None
     if conversation:
         try:
-            conversation.end_session()
+            if not el_ended.is_set():
+                conversation.end_session()
             conversation.wait_for_session_end()
             conv_id = conversation._conversation_id
             if conv_id:
