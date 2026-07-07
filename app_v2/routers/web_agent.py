@@ -890,9 +890,21 @@ def _build_embed_script(public_id: str) -> str:
               self.queuePlay(Uint8Array.from(atob(msg.data_b64), function(c) { return c.charCodeAt(0); }));
             }
             if (msg.type === 'interruption') { self.stopPlayback(); }
+            if (msg.type === 'call_ended') {
+              self.stopPlayback();
+              self.releaseMic();
+              showStatus(msg.message || 'Call ended by the agent', 5000);
+            }
           } catch (e) {}
         };
-        self.ws.onclose = function() { connected = false; self.stopPlayback(); connecting = false; setState('idle'); showStatus('Disconnected', 3000); };
+        self.ws.onclose = function() {
+          connected = false;
+          self.stopPlayback();
+          self.releaseMic();
+          connecting = false;
+          setState('idle');
+          if (!statusToast.classList.contains('vn-show')) showStatus('Disconnected', 3000);
+        };
         self.ws.onerror = function() { reject(new Error('WebSocket error')); };
       });
     };
@@ -953,10 +965,14 @@ def _build_embed_script(public_id: str) -> str:
       this.isPlaying = false;
     };
 
+    VoiceNinjaClient.prototype.releaseMic = function() {
+      if (this.processor) { try { this.processor.disconnect(); } catch (e) {} this.processor = null; }
+      if (this.mic) { this.mic.getTracks().forEach(function(t) { t.stop(); }); this.mic = null; }
+    };
+
     VoiceNinjaClient.prototype.disconnect = function() {
       this.stopPlayback();
-      if (this.processor) try { this.processor.disconnect(); } catch (e) {}
-      if (this.mic) this.mic.getTracks().forEach(function(t) { t.stop(); });
+      this.releaseMic();
       if (this.ws) this.ws.close();
     };
 
