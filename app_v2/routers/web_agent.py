@@ -238,7 +238,10 @@ class BrowserAudioInterface:
         })
 
     def interrupt(self) -> None:
-        pass
+        self._send({
+            "type": "interruption",
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
 
     def push_user_audio(self, audio: bytes) -> None:
         if self._input_cb and audio:
@@ -859,6 +862,7 @@ def _build_embed_script(public_id: str) -> str:
             if (msg.type === 'audio_chunk' && msg.data_b64) {
               self.queuePlay(Uint8Array.from(atob(msg.data_b64), function(c) { return c.charCodeAt(0); }));
             }
+            if (msg.type === 'interruption') { self.stopPlayback(); }
           } catch (e) {}
         };
         self.ws.onclose = function() { connected = false; self.stopPlayback(); connecting = false; setState('idle'); showStatus('Disconnected', 3000); };
