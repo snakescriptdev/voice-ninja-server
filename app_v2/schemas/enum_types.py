@@ -34,19 +34,17 @@ class ContentTypeEnum(str, Enum):
 
 
 class UseCases(str,Enum):
-    email_assistant = "email_assistant"
-    task_execution = "task_execution"
-    system_assistant = "system_assistant"
     knowledge_lookup = "knowledge_lookup"
     customer_support = "customer_support"
+    healthcare_assistant = "healthcare_assistant"
     custom = "custom"
 
 
 class Capebilites(str,Enum):
-    email_integration = "email_integration"
-    calendar_management = "calendar_management"
     knowledge_base = "knowledge_base"
     api_integration = "api_integration"
+    agent_transfer = "agent_transfer"
+    end_call = "end_call"
 
 class ResponseStyleEnum(str, Enum):
     professional = "professional"
