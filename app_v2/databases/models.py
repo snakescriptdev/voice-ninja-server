@@ -260,7 +260,8 @@ class AgentModel(Base):
     modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     built_in_tools: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True, default={})
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True,server_default="true")
-    
+    timezone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     user = relationship("UnifiedAuthModel",back_populates="agents")
 
     voice = relationship("VoiceModel",back_populates="agents")
