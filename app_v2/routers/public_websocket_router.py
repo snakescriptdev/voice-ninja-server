@@ -95,7 +95,7 @@ async def public_websocket_agent(
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Limit reached")
             return
         
-        has_credits = await check_elevenlabs_credits(websocket, user_id, agent_id)
+        has_credits = await check_elevenlabs_credits(websocket, user_id, agent_id, channel=ChannelEnum.api)
         if not has_credits:
             return
 

@@ -170,7 +170,7 @@ async def fetch_and_validate_web_agent(
             logger.error("Monthly minutes limit for owner %s: %s", user_id, e.detail)
             return None
 
-        has_credits = await check_elevenlabs_credits(websocket, user_id, web_agent.agent_id)
+        has_credits = await check_elevenlabs_credits(websocket, user_id, web_agent.agent_id, channel=ChannelEnum.call)
         if not has_credits:
             return None
 
@@ -361,6 +361,7 @@ async def _start_elevenlabs_conversation(
     except Exception as e:
         logger.exception("ElevenLabs conversation start failed: %s", e)
         await websocket.send_json({"type": "error", "message": str(e)})
+        await websocket.close(code=1011)
         return None
 
 
@@ -872,6 +873,7 @@ def _build_embed_script(public_id: str) -> str:
       this.audioQueue   = [];
       this.isPlaying    = false;
       this.currentSrc   = null;
+      this.stopped      = false;
     }
 
     VoiceNinjaClient.prototype.connect = function() {
@@ -895,6 +897,14 @@ def _build_embed_script(public_id: str) -> str:
               self.releaseMic();
               showStatus(msg.message || 'Call ended by the agent', 5000);
             }
+            if (msg.type === 'error') {
+              connected = false;
+              connecting = false;
+              self.stopPlayback();
+              self.releaseMic();
+              setState('idle');
+              showStatus(msg.message || 'Connection error', 4000);
+            }
           } catch (e) {}
         };
         self.ws.onclose = function() {
@@ -914,7 +924,10 @@ def _build_embed_script(public_id: str) -> str:
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: this.SAMPLE_RATE });
       this.audioContext.resume().then(function() {
         navigator.mediaDevices.getUserMedia({ audio: { sampleRate: self.SAMPLE_RATE, channelCount: 1 } })
-          .then(function(stream) { self.mic = stream; self.startStreaming(); })
+          .then(function(stream) {
+            if (self.stopped) { stream.getTracks().forEach(function(t) { t.stop(); }); return; }
+            self.mic = stream; self.startStreaming();
+          })
           .catch(function() { showStatus('Microphone access denied', 4000); });
       });
     };
@@ -966,6 +979,7 @@ def _build_embed_script(public_id: str) -> str:
     };
 
     VoiceNinjaClient.prototype.releaseMic = function() {
+      this.stopped = true;
       if (this.processor) { try { this.processor.disconnect(); } catch (e) {} this.processor = null; }
       if (this.mic) { this.mic.getTracks().forEach(function(t) { t.stop(); }); this.mic = null; }
     };
