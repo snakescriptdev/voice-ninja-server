@@ -1,9 +1,17 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import Optional, List, Union
 
 class TransferToAgentParams(BaseModel):
     agent_id: str = Field(..., description="The ID of the agent to transfer to")
     condition: str = Field(..., description="The condition that triggers this transfer (e.g., 'User wants to speak to sales')")
+
+    @field_validator("condition")
+    @classmethod
+    def condition_must_not_be_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("condition is required for transfer to agent tool")
+        return value
 
 class TransferToNumberDestination(BaseModel):
     type: str = Field("phone", description="Type of destination (currently only 'phone')")
@@ -25,6 +33,18 @@ class TransferToAgentConfig(ToolConfig):
              [{"agent_id": "agent_xyz123", "condition": "User asks for sales department"}]
         ]
     )
+
+    @model_validator(mode="after")
+    def transfers_must_be_unique(self):
+        seen = set()
+        for t in self.transfers:
+            key = (t.agent_id, t.condition.strip().lower())
+            if key in seen:
+                raise ValueError(
+                    f"Duplicate transfer to agent '{t.agent_id}' with the same condition '{t.condition}'"
+                )
+            seen.add(key)
+        return self
 
 class TransferToNumberConfig(ToolConfig):
     transfers: List[TransferToNumberParams] = Field(

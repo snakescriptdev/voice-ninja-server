@@ -227,6 +227,10 @@ async def get_agent(
         ).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
+
+        from app_v2.routers.agents import prune_stale_agent_transfers
+        prune_stale_agent_transfers(agent, db.session)
+
         return agent_to_read(agent)
 
 @router.post("/agents", response_model=AgentRead, status_code=status.HTTP_201_CREATED)
@@ -448,9 +452,13 @@ async def update_agent_public(
 
         # ---- Built-in Tools Update ----
         if agent_in.built_in_tools is not None:
-            agent.built_in_tools = agent_in.built_in_tools.model_dump()
+            # transform_built_in_tools may drop invalid transfers (e.g. an agent_id
+            # that no longer resolves) from agent_in.built_in_tools in place, so run
+            # it before the model_dump() to keep the persisted config in sync with
+            # what was actually sent to ElevenLabs.
             from app_v2.routers.agents import transform_built_in_tools
-            el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id)
+            el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id, current_agent_id=agent_id)
+            agent.built_in_tools = agent_in.built_in_tools.model_dump()
 
         # ---- Variables Update ----
         if agent_in.variables is not None:
