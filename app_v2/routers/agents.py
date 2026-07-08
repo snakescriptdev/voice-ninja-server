@@ -1152,9 +1152,30 @@ async def delete_agent(
     db.session.commit()
 
 
-@router.post("/config",response_model=AgentConfigOut,status_code=status.HTTP_200_OK)
-async def generate_system_prompt_for_agent(agent_config:AgentConfigGenerator):
+@router.post(
+    "/config",
+    response_model=AgentConfigOut,
+    status_code=status.HTTP_200_OK,
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def generate_system_prompt_for_agent(
+    agent_config: AgentConfigGenerator,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
         try:
+            agent_exists = (
+                db.session.query(AgentModel).filter(
+                    func.lower(AgentModel.agent_name) == agent_config.agent_name.lower(),
+                    AgentModel.user_id == current_user.id
+                ).first()
+            )
+
+            if agent_exists:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Agent with this name already exists"
+                )
+
             system_prompt =  await generate_system_prompt_async(agent_config)
             
             if not system_prompt:

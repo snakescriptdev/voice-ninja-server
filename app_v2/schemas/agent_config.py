@@ -11,7 +11,7 @@ class AgentConfigGenerator(BaseModel):
     main_goal: Optional[str] = Field(description="main goal of agent",max_length=500)
 
     #use cases
-    use_cases: Optional[List[UseCases]] = Field(None,min_length=1,max_length=6,description="list of use cases for agent") #max length can change in future
+    use_cases: Optional[List[UseCases]] = Field(None,min_length=1,max_length=4,description="list of use cases for agent") #max length can change in future
 
     #config
     voice: str
