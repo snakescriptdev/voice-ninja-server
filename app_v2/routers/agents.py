@@ -31,6 +31,7 @@ from app_v2.databases.models import (
     VariablesModel
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
+from app_v2.schemas.built_in_tools import BuiltInToolsParams
 from typing import List, Optional, Any
 from app_v2.utils.activity_logger import log_activity
 from app_v2.core.logger import setup_logger
@@ -143,7 +144,7 @@ def prompt_requires_timezone(prompt: Optional[str]) -> bool:
     return bool(extract_prompt_variable_names(prompt, include_system=True) & TIMEZONE_REQUIRING_VARS)
 
 
-def transform_built_in_tools(built_in_tools_params, session: Session, user_id: int) -> dict:
+def transform_built_in_tools(built_in_tools_params, session: Session, user_id: int, current_agent_id: Optional[int] = None) -> dict:
     """Transform schema params to ElevenLabs payload structure."""
     if not built_in_tools_params:
         return None
@@ -169,10 +170,11 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
         config = built_in_tools_params.transfer_to_agent
         if config.enabled:
             el_transfers = []
+            valid_transfers = []
             for t in config.transfers:
                 transfer_data = t.model_dump()
                 requested_id = str(transfer_data.get("agent_id"))
-                
+
                 # Enforce numeric ID for internal lookups
                 if not requested_id.isdigit():
                     raise HTTPException(
@@ -180,30 +182,49 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
                         detail=f"Agent ID '{requested_id}' must be an internal numeric ID for transfer to agent tool"
                     )
 
+                # An agent can't transfer a call to itself
+                if current_agent_id is not None and int(requested_id) == current_agent_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="An agent cannot be configured to transfer a call to itself"
+                    )
+
                 # Dynamic lookup: find agent by internal ID
                 target_agent = session.query(AgentModel).filter(
                     AgentModel.id == int(requested_id),
                     AgentModel.user_id == user_id
                 ).first()
-                
+
                 if target_agent and target_agent.elevenlabs_agent_id:
                     transfer_data["agent_id"] = target_agent.elevenlabs_agent_id
                     logger.info(f"Resolved agent transfer ID: {requested_id} -> {target_agent.elevenlabs_agent_id}")
                 else:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Agent with internal ID {requested_id} not found or missing ElevenLabs ID"
-                    )
-                
-                el_transfers.append(transfer_data)
+                    logger.info(f"NOT FOUND agent transfer ID: {requested_id}, dropping this transfer")
+                    continue
 
-            el_tools["transfer_to_agent"] = {
-                "name": config.name or "transfer_to_agent",
-                "params": {
-                    "system_tool_type": "transfer_to_agent",
-                    "transfers": el_transfers
+                el_transfers.append(transfer_data)
+                valid_transfers.append(t)
+
+            # Drop invalid transfers from the source config too, so the caller
+            # persists the same set it just sent to ElevenLabs instead of
+            # keeping stale/unresolvable agent_id references in the DB.
+            config.transfers = valid_transfers
+
+            if valid_transfers:
+                el_tools["transfer_to_agent"] = {
+                    "name": config.name or "transfer_to_agent",
+                    "params": {
+                        "system_tool_type": "transfer_to_agent",
+                        "transfers": el_transfers
+                    }
                 }
-            }
+            else:
+                # None of the configured transfers resolved to a real agent —
+                # don't send the tool to ElevenLabs, and mark it disabled in
+                # what gets persisted so the frontend doesn't show transfer to
+                # agent as enabled with nothing to transfer to.
+                logger.info("No valid transfers remain for transfer_to_agent; disabling the tool")
+                config.enabled = False
             
     # Transfer to Number
     if built_in_tools_params.transfer_to_number:
@@ -251,6 +272,66 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
             }
 
     return el_tools if el_tools else None
+
+
+def prune_stale_agent_transfers(agent: AgentModel, session: Session) -> None:
+    """
+    Re-validate agent.built_in_tools.transfer_to_agent on read: drop any transfer
+    whose target agent was deleted (or lost its elevenlabs_agent_id) since this
+    config was last saved, persist the cleaned config, and push the same cleanup
+    to ElevenLabs so a deleted agent can't linger as a transfer target.
+
+    Deliberately self-contained (doesn't call transform_built_in_tools) — that
+    function can raise HTTPException for unrelated reasons (e.g. a stale
+    transfer_to_number phone), which must never surface on a plain read.
+    """
+    tta = (agent.built_in_tools or {}).get("transfer_to_agent")
+    transfers = (tta or {}).get("transfers") or []
+    if not transfers:
+        return
+
+    requested_ids = {str(t.get("agent_id")) for t in transfers if str(t.get("agent_id")).isdigit()}
+    live_ids = set()
+    if requested_ids:
+        live_agents = session.query(AgentModel.id).filter(
+            AgentModel.id.in_([int(rid) for rid in requested_ids]),
+            AgentModel.user_id == agent.user_id,
+            AgentModel.elevenlabs_agent_id.isnot(None),
+            AgentModel.id != agent.id,
+        ).all()
+        live_ids = {str(row.id) for row in live_agents}
+
+    valid_transfers = [t for t in transfers if str(t.get("agent_id")) in live_ids]
+    if len(valid_transfers) == len(transfers):
+        return
+
+    stale_ids = requested_ids - live_ids
+    logger.info(f"Pruning stale transfer_to_agent targets {stale_ids} from agent {agent.id}")
+
+    new_built_in_tools = dict(agent.built_in_tools)
+    new_built_in_tools["transfer_to_agent"] = {
+        **tta,
+        "transfers": valid_transfers,
+        "enabled": tta.get("enabled", False) and bool(valid_transfers),
+    }
+    agent.built_in_tools = new_built_in_tools
+
+    if agent.elevenlabs_agent_id:
+        try:
+            parsed = BuiltInToolsParams(**new_built_in_tools)
+            el_payload = transform_built_in_tools(parsed, session, agent.user_id, current_agent_id=agent.id)
+            el_response = ElevenLabsAgent().update_agent(
+                agent_id=agent.elevenlabs_agent_id,
+                built_in_tools=el_payload,
+            )
+            if not el_response.status:
+                logger.error(
+                    f"Failed to sync pruned transfers to ElevenLabs for agent {agent.id}: {el_response.error_message}"
+                )
+        except Exception:
+            logger.exception(f"Unexpected error syncing pruned transfers to ElevenLabs for agent {agent.id}")
+
+    session.commit()
 
 
 # -------------------- CREATE --------------------
@@ -670,6 +751,8 @@ async def get_agent_by_id(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    prune_stale_agent_transfers(agent, db.session)
+
     return agent_to_read(agent)
 
 
@@ -949,8 +1032,12 @@ async def update_agent(
 
     # ---- Builtin Tools Update ----
     if agent_in.built_in_tools is not None:
+        # transform_built_in_tools may drop invalid transfers (e.g. an agent_id
+        # that no longer resolves) from agent_in.built_in_tools in place, so run
+        # it before the model_dump() to keep the persisted config in sync with
+        # what was actually sent to ElevenLabs.
+        el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id, current_agent_id=agent_id)
         agent.built_in_tools = agent_in.built_in_tools.model_dump()
-        el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id)
 
     # agent.system_prompt/agent.timezone already reflect this request's changes
     # (if any) from the blocks above, so this check covers the effective state.
