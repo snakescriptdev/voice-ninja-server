@@ -102,10 +102,11 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
             {
                 "id": bridge.function.id,
                 "name": bridge.function.name
-            } 
+            }
             for bridge in agent.agent_functions
         ],
-        built_in_tools=agent.built_in_tools
+        built_in_tools=agent.built_in_tools,
+        timezone=agent.timezone
     )
 
 
@@ -130,6 +131,16 @@ def extract_prompt_variable_names(*texts: Optional[str], include_system: bool = 
     if include_system:
         return names
     return {name for name in names if not name.startswith("system__")}
+
+
+# timezone is only required when the prompt actually renders time in it —
+# otherwise ElevenLabs has nothing to localize and the field is optional.
+TIMEZONE_REQUIRING_VARS = {"system__time_utc", "system__time", "system__timezone"}
+
+
+def prompt_requires_timezone(prompt: Optional[str]) -> bool:
+    """True if the prompt references a system time/timezone placeholder, making `timezone` mandatory."""
+    return bool(extract_prompt_variable_names(prompt, include_system=True) & TIMEZONE_REQUIRING_VARS)
 
 
 def transform_built_in_tools(built_in_tools_params, session: Session, user_id: int) -> dict:
@@ -439,6 +450,12 @@ async def create_agent(
     for var_name in extract_prompt_variable_names(agent_in.system_prompt):
         merged_variables.setdefault(var_name, "")
 
+    if prompt_requires_timezone(agent_in.system_prompt) and not agent_in.timezone:
+        raise HTTPException(
+            status_code=400,
+            detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
+        )
+
     # -------------------------------------------------
     # Create agent in ElevenLabs (only after validation)
     # -------------------------------------------------
@@ -460,7 +477,8 @@ async def create_agent(
             tool_ids=el_tool_ids,
             knowledge_base=el_kb_list,
             dynamic_variables=merged_variables,
-            built_in_tools=transform_built_in_tools(agent_in.built_in_tools, db.session, user_id)
+            built_in_tools=transform_built_in_tools(agent_in.built_in_tools, db.session, user_id),
+            timezone=agent_in.timezone
         )
 
         if not el_response.status:
@@ -492,7 +510,8 @@ async def create_agent(
             user_id=user_id,
             agent_voice=voice.id,
             elevenlabs_agent_id=elevenlabs_agent_id,
-            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {}
+            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {},
+            timezone=agent_in.timezone
         )
 
         db.session.add(new_agent)
@@ -734,6 +753,9 @@ async def update_agent(
         if agent_in.is_enabled == True and agent.is_enabled == False:
             check_can_enable_resource(current_user.id, "ai_voice_agents", allow_coin_fallback=True)
         agent.is_enabled = agent_in.is_enabled
+    if agent_in.timezone is not None:
+        agent.timezone = agent_in.timezone
+        el_update_params["timezone"] = agent_in.timezone
 
     # ---- Voice ----
     if agent_in.voice is not None:
@@ -929,6 +951,14 @@ async def update_agent(
     if agent_in.built_in_tools is not None:
         agent.built_in_tools = agent_in.built_in_tools.model_dump()
         el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id)
+
+    # agent.system_prompt/agent.timezone already reflect this request's changes
+    # (if any) from the blocks above, so this check covers the effective state.
+    if prompt_requires_timezone(agent.system_prompt) and not agent.timezone:
+        raise HTTPException(
+            status_code=400,
+            detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
+        )
 
     # ---- Sync with ElevenLabs ----
     if el_update_params and agent.elevenlabs_agent_id:

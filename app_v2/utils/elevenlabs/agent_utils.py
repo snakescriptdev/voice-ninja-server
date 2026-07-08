@@ -37,11 +37,12 @@ class ElevenLabsAgent(BaseElevenLabs):
         tool_ids: Optional[List[str]] = None,
         knowledge_base: Optional[List[Dict[str, str]]] = None,
         dynamic_variables: Optional[Dict[str, Any]] = None,
-        built_in_tools: Optional[Dict[str, Any]] = None
+        built_in_tools: Optional[Dict[str, Any]] = None,
+        timezone: Optional[str] = None
     ) -> ElevenLabsResponse:
         """
         Create a new conversational AI agent in ElevenLabs.
-        
+
         Args:
             name: Agent name
             voice_id: ElevenLabs voice ID to use
@@ -54,12 +55,14 @@ class ElevenLabsAgent(BaseElevenLabs):
             knowledge_base: Optional list of KB documents
             dynamic_variables: Optional dict of dynamic variable placeholders
             built_in_tools: Optional dict of built-in tools configuration
-            
+            timezone: Optional IANA timezone (must be valid for tzinfo), sent to
+                ElevenLabs as conversation_config.agent.prompt.timezone
+
         Returns:
             ElevenLabsResponse with agent_id on success
         """
         logger.info(f"Creating agent: {name} with voice {voice_id}")
-        
+
         # Build conversation config
         conversation_config = {
             "agent": {
@@ -84,7 +87,8 @@ class ElevenLabsAgent(BaseElevenLabs):
                 "optimize_streaming_latency": 3,
                 "stability": 0.5,
                 "speed": 1.0,
-                "similarity_boost": 0.8
+                "similarity_boost": 0.8,
+                "text_normalisation_type": "elevenlabs"
             },
             "asr": {
                 "provider": "scribe_realtime",
@@ -99,13 +103,14 @@ class ElevenLabsAgent(BaseElevenLabs):
             }
         }
 
+        if timezone:
+            conversation_config["agent"]["prompt"]["timezone"] = timezone
+
         if dynamic_variables:
             conversation_config["agent"]["dynamic_variables"] = {
-                "dynamic_variable_placeholders": {
-                    key: value for key, value in dynamic_variables.items()
-                }
+                "dynamic_variable_placeholders": dict(dynamic_variables)
             }
-            
+
         if built_in_tools:
             conversation_config["agent"]["prompt"]["built_in_tools"] = built_in_tools
         
@@ -157,12 +162,13 @@ class ElevenLabsAgent(BaseElevenLabs):
         tool_ids: Optional[List[str]] = None,
         knowledge_base: Optional[List[Dict[str, str]]] = None,
         dynamic_variables: Optional[Dict[str, Any]] = None,
-        built_in_tools: Optional[Dict[str, Any]] = None
+        built_in_tools: Optional[Dict[str, Any]] = None,
+        timezone: Optional[str] = None
     ) -> ElevenLabsResponse:
         """
         Update an existing agent.
         Only non-None parameters will override the current configuration.
-        
+
         Args:
             agent_id: ElevenLabs agent ID
             name: New agent name
@@ -176,7 +182,9 @@ class ElevenLabsAgent(BaseElevenLabs):
             knowledge_base: List of KB documents [{\"id\": \"...\", \"type\": \"file\", \"name\": \"...\"}]
             dynamic_variables: Dynamic variables for the agent
             built_in_tools: Built-in tools configuration
-            
+            timezone: IANA timezone (must be valid for tzinfo), sent to ElevenLabs
+                as conversation_config.agent.prompt.timezone
+
         Returns:
             ElevenLabsResponse with updated agent data
         """
@@ -269,10 +277,18 @@ class ElevenLabsAgent(BaseElevenLabs):
                 current_config["agent"] = {}
             if "dynamic_variables" not in current_config["agent"]:
                  current_config["agent"]["dynamic_variables"] = {}
-            
+
             current_config["agent"]["dynamic_variables"]["dynamic_variable_placeholders"] = {
                  key: value for key, value in dynamic_variables.items()
             } if dynamic_variables else {}
+            config_updated = True
+
+        if timezone is not None:
+            if "agent" not in current_config:
+                current_config["agent"] = {}
+            if "prompt" not in current_config["agent"]:
+                current_config["agent"]["prompt"] = {}
+            current_config["agent"]["prompt"]["timezone"] = timezone
             config_updated = True
 
         if built_in_tools is not None:
