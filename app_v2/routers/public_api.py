@@ -145,10 +145,11 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         ],
         variables={var.variable_name: var.variable_value for var in agent.variables},
         tools=[
-            {"id": bridge.function.id, "name": bridge.function.name} 
+            {"id": bridge.function.id, "name": bridge.function.name}
             for bridge in agent.agent_functions
         ],
-        built_in_tools=agent.built_in_tools
+        built_in_tools=agent.built_in_tools,
+        timezone=agent.timezone
     )
 
 def web_agent_to_response(web_agent: WebAgentModel, request: Request = None) -> WebAgentConfigResponse:
@@ -295,8 +296,14 @@ async def create_agent(
             for tool_id in tool_ids_ordered:
                 el_tool_ids.append(tool_map[tool_id].elevenlabs_tool_id)
 
-        from app_v2.routers.agents import transform_built_in_tools
+        from app_v2.routers.agents import transform_built_in_tools, prompt_requires_timezone
         transformed_built_in = transform_built_in_tools(agent_in.built_in_tools, db.session, user_id)
+
+        if prompt_requires_timezone(agent_in.system_prompt) and not agent_in.timezone:
+            raise HTTPException(
+                status_code=400,
+                detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
+            )
 
         # Create in ElevenLabs
         el_client = ElevenLabsAgent()
@@ -310,7 +317,8 @@ async def create_agent(
             tool_ids=el_tool_ids,
             knowledge_base=el_kb_list,
             dynamic_variables=agent_in.variables,
-            built_in_tools=transformed_built_in
+            built_in_tools=transformed_built_in,
+            timezone=agent_in.timezone
         )
         if not el_response.status:
             raise HTTPException(status_code=424, detail="ElevenLabs failure")
@@ -324,7 +332,8 @@ async def create_agent(
             user_id=user_id,
             agent_voice=voice.id,
             elevenlabs_agent_id=elevenlabs_agent_id,
-            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {}
+            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {},
+            timezone=agent_in.timezone
         )
         db.session.add(new_agent)
         db.session.flush()
@@ -367,6 +376,9 @@ async def update_agent_public(
         if agent_in.first_message is not None:
             agent.first_message = agent_in.first_message
             el_update_params["first_message"] = agent_in.first_message
+        if agent_in.timezone is not None:
+            agent.timezone = agent_in.timezone
+            el_update_params["timezone"] = agent_in.timezone
 
         # ---- Knowledge Base Update ----
         if agent_in.knowledgebase is not None:
@@ -449,6 +461,13 @@ async def update_agent_public(
             ).delete()
             for key, value in agent_in.variables.items():
                 db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
+
+        from app_v2.routers.agents import prompt_requires_timezone
+        if prompt_requires_timezone(agent.system_prompt) and not agent.timezone:
+            raise HTTPException(
+                status_code=400,
+                detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
+            )
 
         # ---- Sync with ElevenLabs ----
         if el_update_params and agent.elevenlabs_agent_id:
