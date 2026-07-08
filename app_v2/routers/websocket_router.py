@@ -296,6 +296,7 @@ async def check_elevenlabs_credits(
     websocket: WebSocket,
     user_id: int,
     agent_id: int,
+    channel: ChannelEnum = ChannelEnum.test_voice,
 ) -> bool:
     """
     Checks the ElevenLabs subscription's remaining character credits.
@@ -310,7 +311,7 @@ async def check_elevenlabs_credits(
                 agent_id=agent_id,
                 user_id=user_id,
                 call_status=CallStatusEnum.failed,
-                channel=ChannelEnum.test_voice,
+                channel=channel,
                 error_message = error_message,
                 transcript_summary=error_message,
             )
