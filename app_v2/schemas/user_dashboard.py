@@ -1,6 +1,6 @@
 from pydantic import BaseModel, field_serializer
 from typing import List, Optional, Any
-from app_v2.schemas.enum_types import BillingPeriodEnum, CoinTransactionTypeEnum, PaymentStatusEnum
+from app_v2.schemas.enum_types import BillingPeriodEnum, CoinTransactionTypeEnum
 from datetime import datetime, date
 from app_v2.schemas.plans import PlanFeatureResponse
 from app_v2.schemas.enum_types import SubscriptionStatusEnum,BillingPeriodEnum,PlanIconEnum
@@ -118,7 +118,10 @@ class BillingHistoryItem(BaseModel):
     description: str
     amount: float
     currency: str
-    status: PaymentStatusEnum
+    # PaymentStatusEnum for actual payments (pending/success/failed/refunded),
+    # plus plain strings for non-payment subscription lifecycle events
+    # (paused/cancelled/cancellation_scheduled) — see SubscriptionBillingEventEnum.
+    status: str
     invoice_url: Optional[str] = None
 
     @field_serializer("date")

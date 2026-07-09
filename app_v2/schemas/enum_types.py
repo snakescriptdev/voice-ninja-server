@@ -131,6 +131,41 @@ class PlanFeatureEnum(str,Enum):
     analytics_dashboard= "analytics_dashboard"
     custom_voice_cloning= "custom_voice_cloning"
 
+
+# Features that are pure on/off gates with no numeric usage tracking behind
+# them (no entry in FEATURE_USAGE_HANDLERS). A "limit" has no meaning for
+# these — enabled always means unlimited, so storing/returning anything but
+# None for them is misleading.
+BOOLEAN_ONLY_PLAN_FEATURES = {PlanFeatureEnum.analytics_dashboard}
+
+
+class SubscriptionBillingEventEnum(str, Enum):
+    """
+    ActivityLogModel.event_type values for subscription lifecycle changes
+    that have no associated PaymentModel row (pause/cancel), but still need
+    to show up in the user's billing history.
+    """
+    paused = "subscription_paused"
+    cancellation_scheduled = "subscription_cancellation_scheduled"
+    cancelled = "subscription_cancelled"
+    cancelled_admin_inactive = "subscription_cancelled_admin_inactive"
+    cancelled_admin_deleted = "subscription_cancelled_admin_deleted"
+
+
+# All event_types billing history should pull in from ActivityLogModel.
+SUBSCRIPTION_BILLING_EVENT_TYPES = {e.value for e in SubscriptionBillingEventEnum}
+
+# Display status shown to the user for each event — kept coarse (paused /
+# cancellation_scheduled / cancelled); the *reason* for admin-triggered
+# cancellations lives in the event's description text instead.
+SUBSCRIPTION_BILLING_EVENT_STATUS_LABELS = {
+    SubscriptionBillingEventEnum.paused.value: "paused",
+    SubscriptionBillingEventEnum.cancellation_scheduled.value: "cancellation_scheduled",
+    SubscriptionBillingEventEnum.cancelled.value: "cancelled",
+    SubscriptionBillingEventEnum.cancelled_admin_inactive.value: "cancelled",
+    SubscriptionBillingEventEnum.cancelled_admin_deleted.value: "cancelled",
+}
+
 class ScheduledDowngradeStatusEnum(str, Enum):
     pending = "pending"
     completed = "completed"
