@@ -238,9 +238,14 @@ def suspend_user(user_id:int,request:SuspendUserRequest):
                     #pause subscription
                     subscription_provider.pause_subscription(subscription.provider_subscription_id)
                     logger.info(f"Subscription paused for user {user_id}")
+                    subscription.status = SubscriptionStatusEnum.paused
         else:
             user.suspension_reason = None
             #resume subscription for user
+            #disable agents for the user and pause subscription.
+            web_agents = user.web_agents
+            for agent in web_agents:
+                agent.is_enabled = True
             subscriptions= user.subscriptions
             for subscription in subscriptions:
                 if subscription.status == SubscriptionStatusEnum.paused:
@@ -249,6 +254,7 @@ def suspend_user(user_id:int,request:SuspendUserRequest):
                     #resume subscription
                     subscription_provider.resume_subscription(subscription.provider_subscription_id)
                     logger.info(f"Subscription resumed for user {user_id}")
+                    subscription.status = SubscriptionStatusEnum.active
         db.session.add(user)
         db.session.commit()
         db.session.refresh(user)

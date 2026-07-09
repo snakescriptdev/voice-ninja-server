@@ -215,15 +215,15 @@ async def get_profile(current_user = Depends(get_current_user)):
                             'value': {
                                 'status': 'failed',
                                 'status_code': 400,
-                                'message': 'First name is required if other fields are provided'
+                                'message': 'First name is required before other fields can be added'
                             }
                         },
                         'invalid_phone': {
-                            'summary': 'Invalid phone number',
+                            'summary': 'Invalid phone number length',
                             'value': {
                                 'status': 'failed',
                                 'status_code': 400,
-                                'message': 'phone: Phone number must be exactly 10 digits'
+                                'message': 'Phone must be between 10 and 15 digits long'
                             }
                         },
                         'phone_not_digits': {
@@ -231,15 +231,15 @@ async def get_profile(current_user = Depends(get_current_user)):
                             'value': {
                                 'status': 'failed',
                                 'status_code': 400,
-                                'message': 'phone: Phone number must contain only digits'
+                                'message': 'Phone must contain only digits (spaces and hyphens are allowed as separators)'
                             }
                         },
                         'invalid_name': {
-                            'summary': 'Name contains numbers',
+                            'summary': 'Name contains numbers or symbols',
                             'value': {
                                 'status': 'failed',
                                 'status_code': 400,
-                                'message': 'first_name: Name must contain only letters, spaces, hyphens, and apostrophes'
+                                'message': 'First name must contain only letters, spaces, hyphens, and apostrophes'
                             }
                         },
                         'name_too_short': {
@@ -247,7 +247,7 @@ async def get_profile(current_user = Depends(get_current_user)):
                             'value': {
                                 'status': 'failed',
                                 'status_code': 400,
-                                'message': 'first_name: Name must be at least 2 characters long'
+                                'message': 'First name must be at least 2 characters long'
                             }
                         },
                         'name_too_long': {
@@ -255,7 +255,23 @@ async def get_profile(current_user = Depends(get_current_user)):
                             'value': {
                                 'status': 'failed',
                                 'status_code': 400,
-                                'message': 'first_name: Name must not exceed 50 characters'
+                                'message': 'First name must not exceed 50 characters'
+                            }
+                        },
+                        'invalid_address': {
+                            'summary': 'Address contains disallowed characters',
+                            'value': {
+                                'status': 'failed',
+                                'status_code': 400,
+                                'message': "Address can only contain letters, numbers, spaces, and , . ' - # / characters"
+                            }
+                        },
+                        'first_last_name_same': {
+                            'summary': 'First name and last name are the same',
+                            'value': {
+                                'status': 'failed',
+                                'status_code': 400,
+                                'message': 'First name and last name cannot be the same'
                             }
                         }
                     }
@@ -303,14 +319,35 @@ async def update_profile(
         ProfileResponse with updated profile data on success.
     """
     try:
-        # Validation: If any field is provided, first_name must be provided
-        if (request.last_name or request.phone or request.address) and not request.first_name:
+        # Validation: a first name must exist (either already on the account, or
+        # provided in this request) before other profile fields can be set.
+        has_first_name = bool(request.first_name) or bool(current_user.first_name)
+        if (request.last_name or request.phone or request.address) and not has_first_name:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "status": STATUS_FAILED,
                     "status_code": HTTP_400_BAD_REQUEST,
-                    "message": "First name is required if other fields are provided"
+                    "message": "First name is required before other fields can be added"
+                }
+            )
+
+        # Validation: first and last name can't be the same, whether both are
+        # being changed in this request or only one is (falling back to the
+        # value already stored on the account for the field not being changed).
+        effective_first_name = request.first_name or current_user.first_name or ""
+        effective_last_name = request.last_name or current_user.last_name or ""
+        if (
+            effective_first_name
+            and effective_last_name
+            and effective_first_name.strip().lower() == effective_last_name.strip().lower()
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_400_BAD_REQUEST,
+                    "message": "First name and last name cannot be the same"
                 }
             )
 
