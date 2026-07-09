@@ -12,11 +12,16 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from fastapi_sqlalchemy import db
 
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
-from app_v2.databases.models import AgentModel, APIKeyModel, ConversationsModel, CallStatusEnum, ChannelEnum, CoinUsageSettingsModel
-from app_v2.utils.coin_utils import deduct_coins, get_user_coin_balance
+from app_v2.databases.models import AgentModel, APIKeyModel, ChannelEnum
+from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.feature_access import check_feature_limit_and_usage, get_feature_limit, get_feature_usage
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
+from app_v2.utils.conversation_lifecycle import (
+    start_conversation,
+    finalize_conversation,
+    mark_conversation_failed,
+)
 from app_v2.core.logger import setup_logger
 from app_v2.routers.websocket_router import check_elevenlabs_credits
 
@@ -115,6 +120,7 @@ async def public_websocket_agent(
             description=f"Started public voice chat for agent: {agent_name}",
             metadata={"agent_id": agent_id, "agent_name": agent_name, "elevenlabs_agent_id": elevenlabs_agent_id}
         )
+        conversation_row_id = start_conversation(user_id, agent_id, ChannelEnum.api)
 
     elevenlabs_ws_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={elevenlabs_agent_id}"
     call_start_time = datetime.now(timezone.utc)
@@ -125,6 +131,8 @@ async def public_websocket_agent(
     async with aiohttp.ClientSession() as session:
         if not ELEVENLABS_API_KEY:
             logger.error("ELEVENLABS_API_KEY is missing!")
+            with db():
+                mark_conversation_failed(conversation_row_id, "Server configuration error: ELEVENLABS_API_KEY missing")
             await websocket.send_json({"type": "error", "message": "Server configuration error", "code": 1011})
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
             return
@@ -270,6 +278,8 @@ async def public_websocket_agent(
 
         except Exception as e:
             logger.error(f"ElevenLabs connection failed: {e}")
+            with db():
+                mark_conversation_failed(conversation_row_id, "Failed to connect to voice engine")
             await websocket.send_json({"type": "error", "message": "Failed to connect to voice engine", "code": 1011})
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
 
@@ -292,47 +302,24 @@ async def public_websocket_agent(
 
             if not metadata:
                 logger.error(f"Metadata extraction failed for public WS conversation {conversation_id}")
+                with db():
+                    mark_conversation_failed(conversation_row_id, "Metadata extraction failed")
                 return
 
-            call_status_enum = CallStatusEnum.success if metadata.get("call_successful") else CallStatusEnum.failed
-
             with db():
-                cost_data = metadata.get("cost")
-                settings = CoinUsageSettingsModel.get_settings()
-                raw_el_cost = float(cost_data) if cost_data else 0
-                calculated_cost = int((raw_el_cost * settings.elevenlabs_multiplier) + settings.static_conversation_cost)
-
-                conversation_data = ConversationsModel(
-                    agent_id=agent_id,
-                    user_id=user_id,
-                    message_count=metadata.get("message_count"),
-                    duration=metadata.get("duration"),
-                    call_status=call_status_enum,
-                    channel=ChannelEnum.api,
-                    transcript_summary=metadata.get("transcript_summary"),
-                    elevenlabs_conv_id=conversation_id,
-                    cost=raw_el_cost
+                conversation_data = finalize_conversation(
+                    conversation_row_id, metadata, conversation_id, reference_type="api_conversation"
                 )
-
-                db.session.add(conversation_data)
-                db.session.flush()
-
-                if calculated_cost > 0:
-                    deduct_coins(
-                        user_id=user_id, 
-                        amount=calculated_cost, 
-                        reference_type="api_conversation", 
-                        reference_id=conversation_data.id, 
-                        commit=False
-                    )
-
-                db.session.commit()
-                db.session.refresh(conversation_data)
 
             logger.info(
                 f"✅ Public Conversation {conversation_id} stored successfully "
-                f"(cost={calculated_cost})"
+                f"(cost={conversation_data.cost})"
             )
 
         except Exception:
             logger.error(f"Error while saving public WS conversation:\n{traceback.format_exc()}")
+            with db():
+                mark_conversation_failed(conversation_row_id, "Failed to save conversation")
+    else:
+        with db():
+            mark_conversation_failed(conversation_row_id, "No conversation ID captured")

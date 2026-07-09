@@ -36,7 +36,12 @@ from app_v2.databases.models import (
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
 from app_v2.schemas.web_agent_schema import WebAgentLeadCreate, WebAgentPublicConfig
 from app_v2.utils.activity_logger import log_activity
-from app_v2.utils.coin_utils import deduct_coins, get_user_coin_balance
+from app_v2.utils.coin_utils import get_user_coin_balance
+from app_v2.utils.conversation_lifecycle import (
+    start_conversation,
+    finalize_conversation,
+    mark_conversation_failed,
+)
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.email_service import send_conversation_notification_email, send_low_coins_email
 from app_v2.utils.feature_access import (
@@ -144,7 +149,11 @@ async def fetch_and_validate_web_agent(
             await _reject_ws(websocket, "Web Agent is disabled")
             return None
 
-        if not web_agent.agent or not web_agent.agent.elevenlabs_agent_id:
+        if not web_agent.agent or not web_agent.agent.is_enabled:
+            await _reject_ws(websocket, "Voice Agent is disabled")
+            return None
+
+        if not web_agent.agent.elevenlabs_agent_id:
             await _reject_ws(websocket, "Agent not configured")
             return None
 
@@ -477,56 +486,17 @@ async def run_web_agent_session(
 # Post-call storage helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _calculate_cost(raw_el_cost: float) -> int:
-    """Must be called inside db() context."""
-    settings = CoinUsageSettingsModel.get_settings()
-    return int((raw_el_cost * settings.elevenlabs_multiplier) + settings.static_conversation_cost)
-
-
 def _persist_web_conversation(
-    ctx: WebAgentContext,
+    conversation_row_id: int,
     metadata: dict,
     conv_id: str,
     lead_id: Optional[int],
 ) -> ConversationsModel:
     """
-    Saves conversation, deducts coins, links lead if present.
-    Must be called inside db() context.
-
-    force=True is passed to deduct_coins so that if the call cost exceeded
-    the user's balance (overdraft), the full cost is still recorded and the
-    balance goes negative rather than silently skipping the deduction.
+    Finalizes the in_progress conversation row created at call start, deducts
+    coins, and links the lead if present. Must be called inside db() context.
     """
-    raw_cost = float(metadata.get("cost") or 0)
-    calculated_cost = _calculate_cost(raw_cost)
-    call_status = CallStatusEnum.success if metadata.get("call_successful") else CallStatusEnum.failed
-
-    record = ConversationsModel(
-        agent_id=ctx.agent_id,
-        user_id=ctx.user_id,
-        message_count=metadata.get("message_count"),
-        duration=metadata.get("duration"),
-        call_status=call_status,
-        channel=ChannelEnum.widget,
-        transcript_summary=metadata.get("transcript_summary"),
-        elevenlabs_conv_id=conv_id,
-        cost=raw_cost,
-    )
-    db.session.add(record)
-    db.session.flush()
-
-    if calculated_cost > 0:
-        deduct_coins(
-            user_id=ctx.user_id,
-            amount=calculated_cost,
-            reference_type="conversation",
-            reference_id=record.id,
-            commit=False,
-            force=True,  # call already happened — always deduct full cost
-        )
-
-    db.session.commit()
-    db.session.refresh(record)
+    record = finalize_conversation(conversation_row_id, metadata, conv_id)
 
     if lead_id:
         lead = db.session.query(WebAgentLeadModel).get(lead_id)
@@ -607,10 +577,12 @@ async def save_web_conversation(
     ctx: WebAgentContext,
     conv_id: str,
     lead_id: Optional[int],
+    conversation_row_id: int,
 ) -> None:
     """
-    Fetches ElevenLabs metadata, persists record, deducts coins,
-    links lead, and dispatches notification emails.
+    Fetches ElevenLabs metadata, finalizes the in_progress conversation row
+    created at call start, deducts coins, links lead, and dispatches
+    notification emails.
     """
     try:
         el_conv = ElevenLabsConversation()
@@ -618,10 +590,12 @@ async def save_web_conversation(
 
         if not metadata:
             logger.error("Metadata extraction failed for conversation %s", conv_id)
+            with db():
+                mark_conversation_failed(conversation_row_id, "Metadata extraction failed")
             return
 
         with db():
-            record = _persist_web_conversation(ctx, metadata, conv_id, lead_id)
+            record = _persist_web_conversation(conversation_row_id, metadata, conv_id, lead_id)
 
         logger.info(
             "Conversation %s saved (duration=%ss, messages=%s, cost=%s)",
@@ -632,6 +606,8 @@ async def save_web_conversation(
 
     except Exception:
         logger.error("save_web_conversation failed:\n%s", traceback.format_exc())
+        with db():
+            mark_conversation_failed(conversation_row_id, "Failed to save conversation")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1162,6 +1138,8 @@ async def preview_page(request: Request, public_id: str):
             raise HTTPException(status_code=404, detail="Web Agent not found")
         if not web_agent.is_enabled:
             return HTMLResponse("<html><body><h1>Web Agent is disabled</h1></body></html>", status_code=403)
+        if not web_agent.agent or not web_agent.agent.is_enabled:
+            return HTMLResponse("<html><body><h1>Voice Agent is disabled</h1></body></html>", status_code=403)
         web_agent_name = web_agent.web_agent_name
 
     base = str(request.base_url).rstrip("/")
@@ -1194,7 +1172,9 @@ async def embed_script(public_id: str):
             return Response("// Web Agent not found.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
         if not web_agent.is_enabled:
             return Response("// Web Agent is disabled.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
-        if not web_agent.agent or not web_agent.agent.elevenlabs_agent_id:
+        if not web_agent.agent or not web_agent.agent.is_enabled:
+            return Response("// Voice Agent is disabled.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+        if not web_agent.agent.elevenlabs_agent_id:
             return Response("// Agent has no ElevenLabs configuration.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
     return Response(
@@ -1228,15 +1208,27 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
     # ── 2. Log start ──────────────────────────────────────────────────────────
     log_web_chat_started(ctx, lead_id)
 
+    with db():
+        conversation_row_id = start_conversation(ctx.user_id, ctx.agent_id, ChannelEnum.widget)
+
     # ── 3. Run session ────────────────────────────────────────────────────────
-    conv_id = await run_web_agent_session(websocket, ctx)
+    failure_reason = None
+    try:
+        conv_id = await run_web_agent_session(websocket, ctx)
+    except Exception:
+        logger.error("run_web_agent_session failed:\n%s", traceback.format_exc())
+        conv_id = None
+        failure_reason = "Web agent session failed"
 
     # ── 4. Log end ────────────────────────────────────────────────────────────
     log_web_chat_ended(ctx, conv_id, lead_id)
 
     # ── 5. Persist & notify ───────────────────────────────────────────────────
     if conv_id:
-        await save_web_conversation(ctx, conv_id, lead_id)
+        await save_web_conversation(ctx, conv_id, lead_id, conversation_row_id)
+    else:
+        with db():
+            mark_conversation_failed(conversation_row_id, failure_reason or "No conversation ID captured")
 
     # ── 6. Close ──────────────────────────────────────────────────────────────
     try:
@@ -1254,6 +1246,8 @@ def get_public_config(public_id: str):
         raise HTTPException(status_code=404, detail="Web Agent not found")
     if not web_agent.is_enabled:
         raise HTTPException(status_code=403, detail="Web Agent is disabled")
+    if not web_agent.agent or not web_agent.agent.is_enabled:
+        raise HTTPException(status_code=403, detail="Voice Agent is disabled")
 
     return WebAgentPublicConfig(
         public_id=web_agent.public_id,
@@ -1282,6 +1276,8 @@ def submit_lead(public_id: str, lead: WebAgentLeadCreate):
         raise HTTPException(status_code=404, detail="Web Agent not found")
     if not web_agent.is_enabled:
         raise HTTPException(status_code=403, detail="Web Agent is disabled")
+    if not web_agent.agent or not web_agent.agent.is_enabled:
+        raise HTTPException(status_code=403, detail="Voice Agent is disabled")
     if not web_agent.enable_prechat:
         raise HTTPException(status_code=400, detail="Pre-chat is not enabled for this agent")
 

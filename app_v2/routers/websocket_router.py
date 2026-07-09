@@ -38,7 +38,12 @@ from app_v2.databases.models import (
 )
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
 from app_v2.utils.activity_logger import log_activity
-from app_v2.utils.coin_utils import deduct_coins, get_user_coin_balance
+from app_v2.utils.coin_utils import get_user_coin_balance
+from app_v2.utils.conversation_lifecycle import (
+    start_conversation,
+    finalize_conversation,
+    mark_conversation_failed,
+)
 from app_v2.utils.email_service import send_low_coins_email
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.feature_access import (
@@ -545,56 +550,6 @@ async def run_bridge(
 # Post-call storage helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _calculate_cost(raw_el_cost: float) -> int:
-    settings = CoinUsageSettingsModel.get_settings()
-    return int((raw_el_cost * settings.elevenlabs_multiplier) + settings.static_conversation_cost)
-
-
-def _persist_conversation(
-    user_id: int,
-    agent_id: int,
-    metadata: dict,
-    conversation_id: str,
-) -> ConversationsModel:
-    """
-    Saves conversation record and deducts coins. Must be called inside db().
-
-    force=True is passed to deduct_coins so that if the call cost exceeded
-    the user's balance (overdraft), the full cost is still recorded and the
-    balance goes negative rather than silently skipping the deduction.
-    """
-    raw_cost = float(metadata.get("cost") or 0)
-    calculated_cost = _calculate_cost(raw_cost)
-    call_status = CallStatusEnum.success if metadata.get("call_successful") else CallStatusEnum.failed
-
-    record = ConversationsModel(
-        agent_id=agent_id,
-        user_id=user_id,
-        message_count=metadata.get("message_count"),
-        duration=metadata.get("duration"),
-        call_status=call_status,
-        channel=ChannelEnum.test_voice,
-        transcript_summary=metadata.get("transcript_summary"),
-        elevenlabs_conv_id=conversation_id,
-        cost=raw_cost,
-    )
-    db.session.add(record)
-    db.session.flush()
-
-    if calculated_cost > 0:
-        deduct_coins(
-            user_id=user_id,
-            amount=calculated_cost,
-            reference_type="conversation",
-            reference_id=record.id,
-            commit=False,
-            force=True,  # call already happened — always deduct full cost
-        )
-
-    db.session.commit()
-    db.session.refresh(record)
-    return record
-
 
 async def maybe_send_low_coins_alert(user_id: int) -> None:
     """Sends low-coins email if user has alerts enabled and balance ≤ 1000."""
@@ -628,10 +583,12 @@ async def save_conversation(
     user_id: int,
     agent_id: int,
     conversation_id: str,
+    conversation_row_id: int,
 ) -> None:
     """
-    Fetches ElevenLabs metadata, persists the conversation record,
-    deducts coins, and triggers low-balance alert if needed.
+    Fetches ElevenLabs metadata, finalizes the in_progress conversation row
+    created at call start, deducts coins, and triggers low-balance alert if
+    needed.
     """
     try:
         el_conv = ElevenLabsConversation()
@@ -639,10 +596,12 @@ async def save_conversation(
 
         if not metadata:
             logger.error(f"Metadata extraction failed for conversation {conversation_id}")
+            with db():
+                mark_conversation_failed(conversation_row_id, "Metadata extraction failed")
             return
 
         with db():
-            record = _persist_conversation(user_id, agent_id, metadata, conversation_id)
+            record = finalize_conversation(conversation_row_id, metadata, conversation_id)
 
         logger.info(
             f"Conversation {conversation_id} saved "
@@ -655,6 +614,8 @@ async def save_conversation(
 
     except Exception:
         logger.error(f"save_conversation failed:\n{traceback.format_exc()}")
+        with db():
+            mark_conversation_failed(conversation_row_id, "Failed to save conversation")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -718,9 +679,14 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
     log_conversation_started(auth.user_id, agent_id, agent_result.agent, agent_result.elevenlabs_agent_id)
     logger.info(f"Bridge starting for agent {agent_id} (EL: {agent_result.elevenlabs_agent_id})")
 
+    with db():
+        conversation_row_id = start_conversation(auth.user_id, agent_id, ChannelEnum.test_voice)
+
     # ── 6. ElevenLabs bridge ──────────────────────────────────────────────────
     if not ELEVENLABS_API_KEY:
         logger.error("ELEVENLABS_API_KEY not set")
+        with db():
+            mark_conversation_failed(conversation_row_id, "Server misconfiguration: ELEVENLABS_API_KEY missing")
         await websocket.send_json({"type": "error", "message": "Server misconfiguration. Call disconnected."})
         await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="ELEVENLABS_API_KEY missing")
         return
@@ -728,10 +694,16 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
     el_url = f"wss://api.elevenlabs.io/v1/convai/conversation?agent_id={agent_result.elevenlabs_agent_id}"
     conversation_id: Optional[str] = None
 
-    async with aiohttp.ClientSession() as session:
-        async with session.ws_connect(el_url, headers={"xi-api-key": ELEVENLABS_API_KEY}) as el_ws:
-            logger.info(f"ElevenLabs WS connected for agent {agent_result.elevenlabs_agent_id}")
-            conversation_id = await run_bridge(websocket, el_ws, ctx)
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(el_url, headers={"xi-api-key": ELEVENLABS_API_KEY}) as el_ws:
+                logger.info(f"ElevenLabs WS connected for agent {agent_result.elevenlabs_agent_id}")
+                conversation_id = await run_bridge(websocket, el_ws, ctx)
+    except Exception:
+        logger.error(f"ElevenLabs bridge failed:\n{traceback.format_exc()}")
+        with db():
+            mark_conversation_failed(conversation_row_id, "Failed to connect to ElevenLabs")
+        return
 
     # ── 7. Log completion ─────────────────────────────────────────────────────
     log_conversation_completed(auth.user_id, agent_id, agent_result.agent, agent_result.elevenlabs_agent_id, conversation_id)
@@ -739,9 +711,11 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
     # ── 8. Persist & alert ────────────────────────────────────────────────────
     if not conversation_id:
         logger.warning("No conversation_id captured — skipping save.")
+        with db():
+            mark_conversation_failed(conversation_row_id, "No conversation ID captured")
         return
 
-    await save_conversation(auth.user_id, agent_id, conversation_id)
+    await save_conversation(auth.user_id, agent_id, conversation_id, conversation_row_id)
 
 
 @router.get("/{agent_id}/test-connection/info", tags=["WebSocket"])
