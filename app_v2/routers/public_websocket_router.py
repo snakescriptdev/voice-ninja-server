@@ -96,6 +96,8 @@ async def public_websocket_agent(
         try:
             check_feature_limit_and_usage(user_id, "monthly_minutes")
         except Exception as e:
+            conversation_row_id = start_conversation(user_id, agent_id, ChannelEnum.api)
+            mark_conversation_failed(conversation_row_id, "Monthly minutes limit reached")
             await websocket.send_json({"type": "error", "message": str(e), "code": 1008})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Limit reached")
             return
@@ -127,6 +129,7 @@ async def public_websocket_agent(
     initial_usage = get_feature_usage(user_id, "monthly_minutes")
     minute_limit = get_feature_limit(user_id, "monthly_minutes")
     conversation_id = None
+    limit_reached = False
 
     async with aiohttp.ClientSession() as session:
         if not ELEVENLABS_API_KEY:
@@ -142,6 +145,7 @@ async def public_websocket_agent(
                 logger.info(f"Connected to ElevenLabs WebSocket for agent {elevenlabs_agent_id}")
                 
                 async def browser_to_elevenlabs():
+                    nonlocal limit_reached
                     chunk_count = 0
                     try:
                         while True:
@@ -149,6 +153,7 @@ async def public_websocket_agent(
                             if chunk_count % 10 == 0:
                                 current_call_minutes = (datetime.now(timezone.utc) - call_start_time).total_seconds() / 60
                                 if minute_limit is not None and (initial_usage + current_call_minutes) >= minute_limit:
+                                    limit_reached = True
                                     await websocket.send_json({
                                         "type": "error",
                                         "message": "Monthly minutes limit reached. Call disconnected."
@@ -283,7 +288,15 @@ async def public_websocket_agent(
             await websocket.send_json({"type": "error", "message": "Failed to connect to voice engine", "code": 1011})
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
 
+    limit_error = "Monthly minutes limit reached" if limit_reached else None
+    if limit_error:
+        logger.warning(f"Call for user {user_id} ended due to monthly minutes limit")
+
     # Post-conversation logic
+    # Even when the monthly limit ended the call, a captured conversation_id
+    # means real EL metadata exists — finalize normally (with the limit note
+    # attached) so transcript/history still shows up, instead of discarding
+    # it via mark_conversation_failed().
     if conversation_id:
         with db():
             log_activity(
@@ -303,12 +316,13 @@ async def public_websocket_agent(
             if not metadata:
                 logger.error(f"Metadata extraction failed for public WS conversation {conversation_id}")
                 with db():
-                    mark_conversation_failed(conversation_row_id, "Metadata extraction failed")
+                    mark_conversation_failed(conversation_row_id, limit_error or "Metadata extraction failed")
                 return
 
             with db():
                 conversation_data = finalize_conversation(
-                    conversation_row_id, metadata, conversation_id, reference_type="api_conversation"
+                    conversation_row_id, metadata, conversation_id, reference_type="api_conversation",
+                    error_message=limit_error,
                 )
 
             logger.info(
@@ -319,7 +333,7 @@ async def public_websocket_agent(
         except Exception:
             logger.error(f"Error while saving public WS conversation:\n{traceback.format_exc()}")
             with db():
-                mark_conversation_failed(conversation_row_id, "Failed to save conversation")
+                mark_conversation_failed(conversation_row_id, limit_error or "Failed to save conversation")
     else:
         with db():
-            mark_conversation_failed(conversation_row_id, "No conversation ID captured")
+            mark_conversation_failed(conversation_row_id, limit_error or "No conversation ID captured")
