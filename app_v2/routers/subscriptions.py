@@ -83,12 +83,14 @@ from app_v2.schemas.subscriptions import (
 from app_v2.schemas.enum_types import (
     PaymentProviderEnum, SubscriptionStatusEnum,
     PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum,
+    SubscriptionBillingEventEnum,
 )
 from app_v2.utils.payment_utils import PaymentProviderFactory
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone, timedelta
 from app_v2.utils.coin_utils import get_user_coin_balance, reset_unused_subscription_coins
+from app_v2.utils.activity_logger import log_activity
 from fastapi.responses import HTMLResponse
 import os
 from app_v2.utils.time_utils import convert_to_unix_timestamp
@@ -787,6 +789,24 @@ def cancel_subscription(
         subscription.subscription_metadata["customer_id"] = response.get("customer_id", "")
 
         db.session.commit()
+
+        plan = db.session.query(PlanModel).filter(PlanModel.id == subscription.plan_id).first()
+        plan_name = plan.display_name if plan else "Unknown Plan"
+        if data.cancel_at_cycle_end:
+            log_activity(
+                user_id=current_user.id,
+                event_type=SubscriptionBillingEventEnum.cancellation_scheduled,
+                description=f"Subscription cancellation scheduled at end of billing period - plan: {plan_name}",
+                metadata={"plan_id": subscription.plan_id, "subscription_id": subscription.id},
+            )
+        else:
+            log_activity(
+                user_id=current_user.id,
+                event_type=SubscriptionBillingEventEnum.cancelled,
+                description=f"Subscription cancelled - plan: {plan_name}",
+                metadata={"plan_id": subscription.plan_id, "subscription_id": subscription.id},
+            )
+
         return {
             "message": "Subscription cancellation initiated",
             "cancel_at_period_end": data.cancel_at_cycle_end,
@@ -1007,6 +1027,17 @@ def pause_subscription(
             subscription.status = SubscriptionStatusEnum.paused
 
         db.session.commit()
+
+        if data.pause_at == "now":
+            plan = db.session.query(PlanModel).filter(PlanModel.id == subscription.plan_id).first()
+            plan_name = plan.display_name if plan else "Unknown Plan"
+            log_activity(
+                user_id=current_user.id,
+                event_type=SubscriptionBillingEventEnum.paused,
+                description=f"Subscription paused - plan: {plan_name}",
+                metadata={"plan_id": subscription.plan_id, "subscription_id": subscription.id},
+            )
+
         return {"message": "Subscription paused", "pause_at": data.pause_at}
 
     except HTTPException:
