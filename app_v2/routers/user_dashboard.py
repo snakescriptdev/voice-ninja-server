@@ -456,7 +456,7 @@ def user_subscription(current_user: UnifiedAuthModel = Depends(require_active_us
         )
 
 @router.get("/coin-usage", response_model=UserCoinUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(require_active_user())):
+def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True))):
     try:
         balance = get_user_coin_balance(current_user.id)
         
