@@ -87,6 +87,7 @@ class WebAgentContext:
     initial_usage: float
     minute_limit: Optional[float]
     call_start_time: datetime
+    limit_reached: bool = False
 
 
 @dataclass
@@ -175,6 +176,8 @@ async def fetch_and_validate_web_agent(
         try:
             check_feature_limit_and_usage(user_id, "monthly_minutes")
         except HTTPException as e:
+            conversation_row_id = start_conversation(user_id, web_agent.agent_id, ChannelEnum.widget)
+            mark_conversation_failed(conversation_row_id, "Monthly minutes limit reached")
             await _reject_ws(websocket, e.detail)
             logger.error("Monthly minutes limit for owner %s: %s", user_id, e.detail)
             return None
@@ -404,6 +407,7 @@ async def run_web_agent_session(
         chunk_count += 1
         if chunk_count % 10 == 0 and _is_minute_limit_exceeded(ctx):
             logger.warning("Auto-disconnect user %s: monthly minutes limit", ctx.user_id)
+            ctx.limit_reached = True
             await websocket.send_json({
                 "type": "error",
                 "message": "Monthly minutes limit reached. Call disconnected.",
@@ -491,12 +495,13 @@ def _persist_web_conversation(
     metadata: dict,
     conv_id: str,
     lead_id: Optional[int],
+    error_message: Optional[str] = None,
 ) -> ConversationsModel:
     """
     Finalizes the in_progress conversation row created at call start, deducts
     coins, and links the lead if present. Must be called inside db() context.
     """
-    record = finalize_conversation(conversation_row_id, metadata, conv_id)
+    record = finalize_conversation(conversation_row_id, metadata, conv_id, error_message=error_message)
 
     if lead_id:
         lead = db.session.query(WebAgentLeadModel).get(lead_id)
@@ -578,11 +583,17 @@ async def save_web_conversation(
     conv_id: str,
     lead_id: Optional[int],
     conversation_row_id: int,
+    error_message: Optional[str] = None,
 ) -> None:
     """
     Fetches ElevenLabs metadata, finalizes the in_progress conversation row
     created at call start, deducts coins, links lead, and dispatches
     notification emails.
+
+    error_message: passed through to finalize_conversation() when the call
+    still produced real metadata but was cut short for a known reason (e.g.
+    monthly minutes limit) — preserves transcript/history instead of
+    discarding it via mark_conversation_failed().
     """
     try:
         el_conv = ElevenLabsConversation()
@@ -591,11 +602,11 @@ async def save_web_conversation(
         if not metadata:
             logger.error("Metadata extraction failed for conversation %s", conv_id)
             with db():
-                mark_conversation_failed(conversation_row_id, "Metadata extraction failed")
+                mark_conversation_failed(conversation_row_id, error_message or "Metadata extraction failed")
             return
 
         with db():
-            record = _persist_web_conversation(conversation_row_id, metadata, conv_id, lead_id)
+            record = _persist_web_conversation(conversation_row_id, metadata, conv_id, lead_id, error_message=error_message)
 
         logger.info(
             "Conversation %s saved (duration=%ss, messages=%s, cost=%s)",
@@ -1220,15 +1231,21 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
         conv_id = None
         failure_reason = "Web agent session failed"
 
+    limit_error = "Monthly minutes limit reached" if ctx.limit_reached else None
+
     # ── 4. Log end ────────────────────────────────────────────────────────────
     log_web_chat_ended(ctx, conv_id, lead_id)
 
     # ── 5. Persist & notify ───────────────────────────────────────────────────
+    # Even when the monthly limit ended the call, a captured conv_id means
+    # real EL metadata exists — finalize normally (with the limit note
+    # attached) so transcript/history still shows up, instead of discarding
+    # it via mark_conversation_failed().
     if conv_id:
-        await save_web_conversation(ctx, conv_id, lead_id, conversation_row_id)
+        await save_web_conversation(ctx, conv_id, lead_id, conversation_row_id, error_message=limit_error)
     else:
         with db():
-            mark_conversation_failed(conversation_row_id, failure_reason or "No conversation ID captured")
+            mark_conversation_failed(conversation_row_id, limit_error or failure_reason or "No conversation ID captured")
 
     # ── 6. Close ──────────────────────────────────────────────────────────────
     try:
