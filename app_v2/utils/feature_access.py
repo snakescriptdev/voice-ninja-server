@@ -284,9 +284,10 @@ def check_feature_limit_and_usage(user_id: int, feature_key: str, allow_coin_fal
         plan_name = plan.display_name if plan else "Unknown Plan"
 
         if not feature:
+            feature_key_display_name = feature_key.replace("_", " ").title()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Your current plan '{plan_name}' does not include access to {feature_key}.",
+                detail=f"Your current plan '{plan_name}' does not include access to {feature_key_display_name}.",
             )
 
         # Boolean feature (NULL limit = unlimited)
@@ -425,9 +426,10 @@ def check_can_enable_resource(user_id: int, feature_key: str, allow_coin_fallbac
         )
 
         if not feature:
+            feature_key_display_name = feature_key.replace("_", " ").title()
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Your current plan does not include access to {feature_key}.",
+                detail=f"Your current plan does not include access to {feature_key_display_name}.",
             )
 
         # NULL limit means unlimited — always allow enable

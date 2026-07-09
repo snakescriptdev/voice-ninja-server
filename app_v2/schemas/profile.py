@@ -1,7 +1,19 @@
 """Pydantic schemas for profile-related endpoints."""
 
+import re
 from typing import Optional, Dict
 from pydantic import BaseModel, Field, field_validator
+
+# Columns for first_name/last_name/phone/address have no DB-enforced max length
+# (plain String/VARCHAR without a length in the migrations), so these caps are
+# app-level limits chosen to keep the data sane and the error messages friendly.
+NAME_MAX_LENGTH = 50
+ADDRESS_MAX_LENGTH = 255
+PHONE_MIN_DIGITS = 10
+PHONE_MAX_DIGITS = 15
+# Letters, digits, spaces and common address punctuation.
+ADDRESS_PATTERN = re.compile(r"^[\w\s,.'\-#/]+$", re.UNICODE)
+PHONE_STRIP_CHARS_PATTERN = re.compile(r"[\s\-]")
 
 
 
@@ -46,37 +58,48 @@ class ProfileRequest(BaseModel):
     @classmethod
     def validate_name(cls, v: Optional[str]) -> Optional[str]:
         """Validate name fields: strip whitespace, check length, and ensure only alphabetic characters."""
-        if v is not None and v.strip():  # Only validate if not None and not empty
-            v = v.strip()
-            if len(v) < 2:
-                raise ValueError('Name must be at least 2 characters long')
-            if len(v) > 50:
-                raise ValueError('Name must not exceed 50 characters')
-            if not v.replace(' ', '').replace('-', '').replace("'", '').isalpha():
-                raise ValueError('Name must contain only letters, spaces, hyphens, and apostrophes')
-            return v
-        return None if not v or not v.strip() else v
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            raise ValueError('cannot be empty or only spaces')
+        if len(v) < 2:
+            raise ValueError('must be at least 2 characters long')
+        if len(v) > NAME_MAX_LENGTH:
+            raise ValueError(f'must not exceed {NAME_MAX_LENGTH} characters')
+        if not v.replace(' ', '').replace('-', '').replace("'", '').isalpha():
+            raise ValueError('must contain only letters, spaces, hyphens, and apostrophes')
+        return v
 
     @field_validator('phone')
     @classmethod
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
-        """Validate phone: strip whitespace, ensure only digits, and must be exactly 10 digits."""
-        if v is not None and v.strip():  # Only validate if not None and not empty
-            v = v.strip()
-            if not v.isdigit():
-                raise ValueError('Phone number must contain only digits')
-            if len(v) != 10:
-                raise ValueError('Phone number must be exactly 10 digits')
-            return v
-        return None if not v or not v.strip() else v
+        """Validate phone: strip whitespace/hyphens, ensure only digits, and check length."""
+        if v is None:
+            return None
+        if not v.strip():
+            raise ValueError('cannot be empty or only spaces')
+        cleaned = PHONE_STRIP_CHARS_PATTERN.sub('', v.strip())
+        if not cleaned.isdigit():
+            raise ValueError('must contain only digits (spaces and hyphens are allowed as separators)')
+        if len(cleaned) < PHONE_MIN_DIGITS or len(cleaned) > PHONE_MAX_DIGITS:
+            raise ValueError(f'must be between {PHONE_MIN_DIGITS} and {PHONE_MAX_DIGITS} digits long')
+        return cleaned
 
     @field_validator('address')
     @classmethod
     def validate_address(cls, v: Optional[str]) -> Optional[str]:
-        """Validate address: strip whitespace."""
-        if v is not None and v.strip():
-            return v.strip()
-        return None if not v or not v.strip() else v
+        """Validate address: strip whitespace, check length, and restrict to safe characters."""
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            raise ValueError('cannot be empty or only spaces')
+        if len(v) > ADDRESS_MAX_LENGTH:
+            raise ValueError(f'must not exceed {ADDRESS_MAX_LENGTH} characters')
+        if not ADDRESS_PATTERN.match(v):
+            raise ValueError("can only contain letters, numbers, spaces, and , . ' - # / characters")
+        return v
 
 
 class ProfileResponse(BaseModel):
