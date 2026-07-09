@@ -665,6 +665,14 @@ def _enforce_ai_voice_agents(
                 f"from disabled agent={agent.id}"
             )
 
+        # Cascade: disable any web-agent widgets attached to this agent
+        for web_agent in agent.web_agent:
+            web_agent.is_enabled = False
+            logger.info(
+                f"_enforce_ai_voice_agents | cascade disable web_agent={web_agent.id} "
+                f"from disabled agent={agent.id}"
+            )
+
     logger.info(
         f"_enforce_ai_voice_agents | user={user_id} | "
         f"disabled={disabled_ids} | kept={[a.id for a in agents_to_keep]}"

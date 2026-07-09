@@ -64,6 +64,7 @@ class PhoneNumberAssignStatus(str,Enum):
 class CallStatusEnum(str,Enum):
     success = "success"
     failed = "failed"
+    in_progress = "in_progress"
 
 class ChannelEnum(str,Enum):
     test_voice = "Test voice"
