@@ -5,8 +5,12 @@ from app_v2.utils.jwt_utils import get_current_user, is_admin,HTTPBearer
 from app_v2.databases.models import UnifiedAuthModel, PlanModel, PlanFeatureModel, PlanProviderModel, CoinPackageModel, UserSubscriptionModel
 from app_v2.schemas.plans import PlanCreate, PlanUpdate, PlanResponse
 from app_v2.schemas.admin_dashboard import CoinBundleCreate, CoinBundleUpdate, CoinBundleResponse
-from app_v2.schemas.enum_types import PaymentProviderEnum, SubscriptionStatusEnum
+from app_v2.schemas.enum_types import (
+    PaymentProviderEnum, SubscriptionStatusEnum, BOOLEAN_ONLY_PLAN_FEATURES,
+    SubscriptionBillingEventEnum,
+)
 from app_v2.utils.payment_utils import PaymentProviderFactory
+from app_v2.utils.activity_logger import log_activity
 from app_v2.core.logger import setup_logger
 from sqlalchemy import or_, func
 from sqlalchemy.orm import joinedload
@@ -14,6 +18,19 @@ from sqlalchemy.orm import joinedload
 logger = setup_logger(__name__)
 security = HTTPBearer()
 router = APIRouter(prefix="/api/v2/admin/plans", tags=["Admin Plans"])
+
+def _normalized_feature_limit(feature_key, limit):
+    """
+    Boolean-only features (e.g. analytics_dashboard) have no usage tracking,
+    so any numeric limit is meaningless — enabled always means unlimited.
+    Force limit to None for them regardless of what the client sent, so we
+    never persist a stray 0/other number that would confuse anything reading
+    the limit later (plan responses, /profile feature_limits, etc.).
+    """
+    if feature_key in BOOLEAN_ONLY_PLAN_FEATURES:
+        return None
+    return limit
+
 
 def validate_unique_features(features):
     seen = set()
@@ -237,7 +254,7 @@ def create_plan(plan_data: PlanCreate):
             new_feature = PlanFeatureModel(
                 plan_id=new_plan.id,
                 feature_key=feature.feature_key,
-                limit=feature.limit
+                limit=_normalized_feature_limit(feature.feature_key, feature.limit)
             )
             db.session.add(new_feature)
 
@@ -411,6 +428,7 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
             # Add new features
             new_features_list = []
             for feature in update_data["features"]:
+                feature["limit"] = _normalized_feature_limit(feature.get("feature_key"), feature.get("limit"))
                 new_feature = PlanFeatureModel(
                     plan_id=plan_id,
                     **feature
@@ -483,6 +501,12 @@ def update_plan(plan_id: int, plan_update: PlanUpdate):
                     sub.status = SubscriptionStatusEnum.cancelled
                     db.session.add(sub)
                     logger.info(f"Scheduled cancellation at period end for subscription {sub.id} (plan {plan_id} deactivated)")
+                    log_activity(
+                        user_id=sub.user_id,
+                        event_type=SubscriptionBillingEventEnum.cancelled_admin_inactive,
+                        description=f"Subscription cancelled - plan '{plan.display_name}' was deactivated by admin",
+                        metadata={"plan_id": plan_id, "subscription_id": sub.id},
+                    )
                 except Exception as sub_err:
                     logger.error(f"Failed to cancel subscription {sub.id} on plan deactivation: {str(sub_err)}")
 
@@ -551,11 +575,20 @@ def delete_plan(plan_id: int):
 
                 provider = provider_factory.get_provider(provider_type)
                 provider.cancel_subscription(sub.provider_subscription_id, cancel_at_cycle_end=True)
-                
-                # Mark in DB
+
+                # Mark in DB — mirrors the deactivation branch in update_plan()
+                # so a deleted plan's subscriptions are consistently cancelled
+                # immediately rather than left "active" until period end.
                 sub.cancel_at_period_end = True
+                sub.status = SubscriptionStatusEnum.cancelled
                 db.session.add(sub)
                 logger.info(f"Cancelled subscription {sub.provider_subscription_id} at period end for plan {plan_id}")
+                log_activity(
+                    user_id=sub.user_id,
+                    event_type=SubscriptionBillingEventEnum.cancelled_admin_deleted,
+                    description=f"Subscription cancelled - plan '{plan.display_name}' was deleted by admin",
+                    metadata={"plan_id": plan_id, "subscription_id": sub.id},
+                )
             except Exception as sub_err:
                 logger.error(f"Failed to cancel subscription {sub.provider_subscription_id}: {str(sub_err)}")
                 # We might want to continue or stop. Usually better to log and continue to allow plan deletion,

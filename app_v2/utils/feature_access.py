@@ -16,7 +16,7 @@ from app_v2.databases.models import (
     ConversationsModel,
 )
 
-from app_v2.schemas.enum_types import SubscriptionStatusEnum, PhoneNumberAssignStatus
+from app_v2.schemas.enum_types import SubscriptionStatusEnum, PhoneNumberAssignStatus, BOOLEAN_ONLY_PLAN_FEATURES
 from app_v2.core.logger import setup_logger
 from app_v2.utils.jwt_utils import get_current_user
 from app_v2.utils.public_auth import get_public_api_user
@@ -322,8 +322,12 @@ def check_feature_limit_and_usage(user_id: int, feature_key: str, allow_coin_fal
 def get_feature_limit(user_id: int, feature_key: str) -> Optional[float]:
     """
     Get the numeric limit for a feature from the user's active plan.
-    Returns None if unlimited or feature not in plan.
+    Returns None if unlimited, boolean-only (no usage tracking), or feature
+    not in plan.
     """
+    if feature_key in BOOLEAN_ONLY_PLAN_FEATURES:
+        return None
+
     with db():
         subscription = _get_any_active_subscription(user_id)
         if not subscription:
@@ -344,6 +348,10 @@ def get_all_feature_limits(user_id: int) -> Optional[Dict[str, Optional[int]]]:
     """
     Get all feature limits for the user's active plan.
     Returns None if no active subscription.
+
+    Boolean-only features (e.g. analytics_dashboard) always report None here
+    even if a stray numeric limit is stored — they have no usage tracking, so
+    enabled always means unlimited.
     """
     with db():
         subscription = _get_any_active_subscription(user_id)
@@ -355,7 +363,10 @@ def get_all_feature_limits(user_id: int) -> Optional[Dict[str, Optional[int]]]:
         ).all()
 
         return {
-            f.feature_key: (int(f.limit) if f.limit is not None else None)
+            f.feature_key: (
+                None if f.feature_key in BOOLEAN_ONLY_PLAN_FEATURES
+                else (int(f.limit) if f.limit is not None else None)
+            )
             for f in features
         }
 
