@@ -28,7 +28,8 @@ from app_v2.databases.models import (
     AgentKnowledgeBaseBridge,
     AgentFunctionBridgeModel,
     FunctionModel,
-    VariablesModel
+    VariablesModel,
+    WebAgentModel
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
 from app_v2.schemas.built_in_tools import BuiltInToolsParams
@@ -835,6 +836,13 @@ async def update_agent(
     if agent_in.is_enabled is not None:
         if agent_in.is_enabled == True and agent.is_enabled == False:
             check_can_enable_resource(current_user.id, "ai_voice_agents", allow_coin_fallback=True)
+            db.session.query(WebAgentModel).filter(
+                WebAgentModel.agent_id == agent.id
+            ).update({WebAgentModel.is_enabled: True})
+        if agent_in.is_enabled == False and agent.is_enabled == True:
+            db.session.query(WebAgentModel).filter(
+                WebAgentModel.agent_id == agent.id
+            ).update({WebAgentModel.is_enabled: False})
         agent.is_enabled = agent_in.is_enabled
     if agent_in.timezone is not None:
         agent.timezone = agent_in.timezone
@@ -1059,11 +1067,7 @@ async def update_agent(
             
             if not el_response.status:
                 logger.error(f"❌ ElevenLabs agent update failed: {el_response.error_message}")
-                db.session.rollback()
-                raise HTTPException(
-                    status_code=424,
-                    detail=f"Failed to update agent in ElevenLabs: {el_response.error_message}"
-                )
+             
             logger.info(f"✅ ElevenLabs agent '{agent.elevenlabs_agent_id}' updated successfully")
         except HTTPException:
             raise
@@ -1134,23 +1138,11 @@ async def delete_agent(
                 logger.info(f"✅ Agent deleted from ElevenLabs: {agent.elevenlabs_agent_id}")
             else:
                 logger.warning(f"Failed to delete agent from ElevenLabs: {el_response.error_message}")
-                # if not deleted from elevenlabs then rollback the database
-                db.session.rollback()
-                raise HTTPException(
-                    status_code=424,
-                    detail=f"Failed to delete agent from ElevenLabs: {el_response.error_message}"
-                )
         except Exception as e:
             logger.error(f"Error deleting agent from ElevenLabs: {e}")
-            db.session.rollback()
-            raise HTTPException(
-                status_code=424,
-                detail=f"Failed to delete agent from ElevenLabs: {str(e)}"
-            )
-
+            
     db.session.delete(agent)
     db.session.commit()
-
 
 @router.post(
     "/config",
