@@ -89,6 +89,7 @@ class CallContext:
     minute_limit: Optional[float]
     initial_usage: float
     call_start_time: datetime
+    limit_reached: bool = False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -255,11 +256,16 @@ def _has_sufficient_coins(user_balance: int) -> tuple[bool, int]:
 async def check_user_limits(
     websocket: WebSocket,
     user_id: int,
+    agent_id: int,
 ) -> Optional[LimitsResult]:
     """
     Checks coin balance (minimum 3-minute threshold) and monthly minutes limit.
     All DB calls are wrapped in a single db() context to avoid session errors.
     Rejects websocket and returns None on any failure.
+
+    A rejection due to the monthly minutes limit specifically also creates a
+    failed conversation row (instead of no row at all) so the attempt is
+    visible in the conversation history with the reason recorded.
     """
     async def _reject(message: str, reason: str) -> None:
         await websocket.send_json({"type": "error", "message": message})
@@ -281,6 +287,8 @@ async def check_user_limits(
             return None
 
         if not _is_monthly_limit_ok(user_id):
+            conversation_row_id = start_conversation(user_id, agent_id, ChannelEnum.test_voice)
+            mark_conversation_failed(conversation_row_id, "Monthly minutes limit reached")
             await _reject(
                 "Monthly minutes limit reached. Call disconnected.",
                 "Monthly minutes limit reached",
@@ -403,6 +411,7 @@ async def browser_to_elevenlabs(
                 elapsed_min = (datetime.now(timezone.utc) - ctx.call_start_time).total_seconds() / 60
                 if ctx.minute_limit is not None and (ctx.initial_usage + elapsed_min) >= ctx.minute_limit:
                     logger.warning(f"Auto-disconnect user {ctx.user_id}: monthly minutes limit")
+                    ctx.limit_reached = True
                     await websocket.send_json({"type": "error", "message": "Monthly minutes limit reached."})
                     await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                     return
@@ -584,11 +593,17 @@ async def save_conversation(
     agent_id: int,
     conversation_id: str,
     conversation_row_id: int,
+    error_message: Optional[str] = None,
 ) -> None:
     """
     Fetches ElevenLabs metadata, finalizes the in_progress conversation row
     created at call start, deducts coins, and triggers low-balance alert if
     needed.
+
+    error_message: passed through to finalize_conversation() when the call
+    still produced real metadata but was cut short for a known reason (e.g.
+    monthly minutes limit) — preserves transcript/history instead of
+    discarding it via mark_conversation_failed().
     """
     try:
         el_conv = ElevenLabsConversation()
@@ -597,11 +612,11 @@ async def save_conversation(
         if not metadata:
             logger.error(f"Metadata extraction failed for conversation {conversation_id}")
             with db():
-                mark_conversation_failed(conversation_row_id, "Metadata extraction failed")
+                mark_conversation_failed(conversation_row_id, error_message or "Metadata extraction failed")
             return
 
         with db():
-            record = finalize_conversation(conversation_row_id, metadata, conversation_id)
+            record = finalize_conversation(conversation_row_id, metadata, conversation_id, error_message=error_message)
 
         logger.info(
             f"Conversation {conversation_id} saved "
@@ -657,7 +672,7 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
         return
 
     # ── 3. Limits check ───────────────────────────────────────────────────────
-    limits = await check_user_limits(websocket, auth.user_id)
+    limits = await check_user_limits(websocket, auth.user_id, agent_id)
     if not limits:
         return
     
@@ -705,17 +720,25 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
             mark_conversation_failed(conversation_row_id, "Failed to connect to ElevenLabs")
         return
 
+    limit_error = "Monthly minutes limit reached" if ctx.limit_reached else None
+    if limit_error:
+        logger.warning(f"Call for user {auth.user_id} ended due to monthly minutes limit")
+
     # ── 7. Log completion ─────────────────────────────────────────────────────
     log_conversation_completed(auth.user_id, agent_id, agent_result.agent, agent_result.elevenlabs_agent_id, conversation_id)
 
-    # ── 8. Persist & alert ────────────────────────────────────────────────────
+    # ── 8. Persist & alert ─────────────────────────────────────────────────────
+    # Even when the monthly limit ended the call, if a conversation_id was
+    # captured real EL metadata exists — finalize normally (with the limit
+    # note attached) so transcript/history still shows up, instead of
+    # discarding it via mark_conversation_failed().
     if not conversation_id:
         logger.warning("No conversation_id captured — skipping save.")
         with db():
-            mark_conversation_failed(conversation_row_id, "No conversation ID captured")
+            mark_conversation_failed(conversation_row_id, limit_error or "No conversation ID captured")
         return
 
-    await save_conversation(auth.user_id, agent_id, conversation_id, conversation_row_id)
+    await save_conversation(auth.user_id, agent_id, conversation_id, conversation_row_id, error_message=limit_error)
 
 
 @router.get("/{agent_id}/test-connection/info", tags=["WebSocket"])

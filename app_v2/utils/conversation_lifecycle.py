@@ -44,6 +44,7 @@ def finalize_conversation(
     metadata: dict,
     elevenlabs_conv_id: str,
     reference_type: str = "conversation",
+    error_message: Optional[str] = None,
 ) -> ConversationsModel:
     """
     Fills in the final outcome on the row created by start_conversation() and
@@ -52,6 +53,13 @@ def finalize_conversation(
     force=True is passed to deduct_coins so that if the call cost exceeded the
     user's balance (overdraft), the full cost is still recorded and the
     balance goes negative rather than silently skipping the deduction.
+
+    error_message: set when the call was cut short for a known reason (e.g.
+    the monthly minutes limit was hit mid-call) even though ElevenLabs still
+    returned real metadata. The transcript/duration/elevenlabs_conv_id are
+    still saved (so conversation history keeps showing on the frontend), but
+    call_status is forced to failed and error_message records why — instead
+    of trusting ElevenLabs' own call_successful flag for that call.
     """
     record = db.session.query(ConversationsModel).get(conversation_row_id)
     if record is None:
@@ -62,10 +70,14 @@ def finalize_conversation(
 
     record.message_count = metadata.get("message_count")
     record.duration = metadata.get("duration")
-    record.call_status = CallStatusEnum.success if metadata.get("call_successful") else CallStatusEnum.failed
     record.transcript_summary = metadata.get("transcript_summary")
     record.elevenlabs_conv_id = elevenlabs_conv_id
     record.cost = raw_cost
+    if error_message:
+        record.call_status = CallStatusEnum.failed
+        record.error_message = error_message
+    else:
+        record.call_status = CallStatusEnum.success if metadata.get("call_successful") else CallStatusEnum.failed
     db.session.flush()
 
     if calculated_cost > 0:
