@@ -15,7 +15,10 @@ from app_v2.databases.models import (
 )
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
 from sqlalchemy import or_
-from app_v2.schemas.enum_types import CoinTransactionTypeEnum, PaymentStatusEnum,SubscriptionStatusEnum,PaymentTypeEnum
+from app_v2.schemas.enum_types import (
+    CoinTransactionTypeEnum, PaymentStatusEnum, SubscriptionStatusEnum, PaymentTypeEnum,
+    SUBSCRIPTION_BILLING_EVENT_TYPES, SUBSCRIPTION_BILLING_EVENT_STATUS_LABELS,
+)
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.constants import api_list
 
@@ -661,23 +664,29 @@ def get_billing_history(
     size: int = 10,
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
-    """Lists past payments and billing events."""
+    """
+    Lists past payments plus non-payment subscription lifecycle events
+    (paused, cancelled by the user, or cancelled by admin because the plan
+    was deactivated/deleted) — merged and sorted by date since they come
+    from two different tables (PaymentModel and ActivityLogModel).
+    """
     try:
         skip = (page - 1) * size
 
-        base_query = db.session.query(PaymentModel).filter(
+        payments = db.session.query(PaymentModel).filter(
             PaymentModel.user_id == current_user.id
-        )
+        ).all()
 
-        total_count = base_query.count()
+        billing_events = db.session.query(ActivityLogModel).filter(
+            ActivityLogModel.user_id == current_user.id,
+            ActivityLogModel.event_type.in_(SUBSCRIPTION_BILLING_EVENT_TYPES),
+        ).all()
 
-        payments = base_query.order_by(PaymentModel.created_at.desc()).offset(skip).limit(size).all()
-        
         plans = {p.id: p.display_name for p in db.session.query(PlanModel).all()}
         from app_v2.databases.models import CoinPackageModel
         bundles = {b.id: b.name for b in db.session.query(CoinPackageModel).all()}
-        
-        history = []
+
+        dated_items = []
         for p in payments:
             description = "Miscellaneous Payment"
             from app_v2.schemas.enum_types import PaymentTypeEnum
@@ -689,17 +698,31 @@ def get_billing_history(
                 b_id = p.metadata_json.get("bundle_id") if p.metadata_json else None
                 bundle_name = bundles.get(b_id, "Coin Bundle")
                 description = f"Purchase: {bundle_name}"
-            
-            history.append(BillingHistoryItem(
+
+            dated_items.append((p.created_at, BillingHistoryItem(
                 date=p.created_at,
                 description=description,
                 amount=p.amount,
                 currency=p.currency,
                 status=p.status,
                 invoice_url=p.invoice_url
-            ))
-            
+            )))
+
+        for log in billing_events:
+            dated_items.append((log.created_at, BillingHistoryItem(
+                date=log.created_at,
+                description=log.description,
+                amount=0.0,
+                currency="",
+                status=SUBSCRIPTION_BILLING_EVENT_STATUS_LABELS.get(log.event_type, log.event_type),
+                invoice_url=None
+            )))
+
+        dated_items.sort(key=lambda item: item[0], reverse=True)
+
+        total_count = len(dated_items)
         total_pages = ceil(total_count / size) if size > 0 else 1
+        history = [item for _, item in dated_items[skip: skip + size]]
 
         return BillingHistoryResponse(
             total=total_count,
