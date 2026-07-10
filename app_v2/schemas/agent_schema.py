@@ -21,6 +21,7 @@ class AgentCreate(BaseModel):
     first_message: str | None = None
     system_prompt: str
     phone: Optional[str] = Field(None, description="Phone number to assign to this agent (e.g., +14155551234)")
+    twilio_connector_id: Optional[int] = Field(None, description="Twilio connector to verify/import `phone` from")
     voice: str
     ai_model: str
     language: str = Field(description="language code to be passed in model (en-01 for english)")
@@ -42,6 +43,7 @@ class AgentUpdate(BaseModel):
     ai_model: Optional[str] = None
     language: Optional[str] = Field(default=None,description="language code to be passed in model (en-01 for english)")
     phone: Optional[str] = Field(None, description="Phone number to assign to this agent (e.g., +14155551234)")
+    twilio_connector_id: Optional[int] = Field(None, description="Twilio connector to verify/import `phone` from")
     knowledgebase: Optional[List[int | Dict]] = None
     variables: Optional[Dict[str, str]] = None
     tools: Optional[List[int | Dict]] = None
