@@ -271,6 +271,11 @@ async def create_agent(
         if not language:
             raise HTTPException(status_code=400, detail="Invalid language")
 
+        from app_v2.routers.agents import resolve_phone_record, finalize_phone_assignment
+        phone_record, phone_connector = resolve_phone_record(
+            db.session, user_id, agent_in.phone, agent_in.twilio_connector_id
+        )
+
         # -------------------------------------------------
         # KB & Tools validation and lookup
         # -------------------------------------------------
@@ -362,7 +367,9 @@ async def create_agent(
             db.session.add(AgentKnowledgeBaseBridge(agent_id=new_agent.id, kb_id=kb_id))
         for tool_id in tool_ids_ordered:
             db.session.add(AgentFunctionBridgeModel(agent_id=new_agent.id, function_id=tool_id))
-            
+
+        finalize_phone_assignment(phone_record, new_agent, phone_connector)
+
         db.session.commit()
         db.session.refresh(new_agent)
         return agent_to_read(new_agent)
@@ -396,6 +403,23 @@ async def update_agent_public(
         if agent_in.timezone is not None:
             agent.timezone = agent_in.timezone
             el_update_params["timezone"] = agent_in.timezone
+
+        # ---- Phone Number Update ----
+        if agent_in.phone is not None:
+            from app_v2.routers.agents import resolve_phone_record, finalize_phone_assignment, unassign_phone
+
+            old_phone = db.session.query(PhoneNumberService).filter(
+                PhoneNumberService.assigned_to == agent_id
+            ).first()
+
+            new_phone_value = agent_in.phone.strip() if agent_in.phone else ""
+
+            if not (old_phone and old_phone.phone_number == new_phone_value):
+                unassign_phone(old_phone)
+                new_phone_record, new_phone_connector = resolve_phone_record(
+                    db.session, current_user.id, agent_in.phone, agent_in.twilio_connector_id, current_agent_id=agent_id
+                )
+                finalize_phone_assignment(new_phone_record, agent, new_phone_connector)
 
         # ---- Knowledge Base Update ----
         if agent_in.knowledgebase is not None:

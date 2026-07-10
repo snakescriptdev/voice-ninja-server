@@ -9,7 +9,8 @@ from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 import math
 from app_v2.utils.llm_utils import generate_system_prompt_async
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
-from app_v2.utils.feature_access import check_can_enable_resource
+from app_v2.utils.elevenlabs.phone_connection import ElevenLabsPhoneConnection
+from app_v2.utils.feature_access import check_can_enable_resource, require_feature_enabled
 
 from app_v2.utils.jwt_utils import HTTPBearer,require_active_user
 from app_v2.databases.models import (
@@ -24,6 +25,7 @@ from app_v2.databases.models import (
     AgentLanguageBridge,
     UnifiedAuthModel,
     PhoneNumberService,
+    TwilioUserCreds,
     KnowledgeBaseModel,
     AgentKnowledgeBaseBridge,
     AgentFunctionBridgeModel,
@@ -33,10 +35,15 @@ from app_v2.databases.models import (
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
 from app_v2.schemas.built_in_tools import BuiltInToolsParams
+from app_v2.schemas.enum_types import PlanFeatureEnum
 from typing import List, Optional, Any
 from app_v2.utils.activity_logger import log_activity
 from app_v2.core.logger import setup_logger
+from app_v2.core.config import VoiceSettings
 from app_v2.utils.feature_access import RequireFeature
+from app_v2.utils.crypto_utils import decrypt_data
+from app_v2.utils.twillio_phone_service import TwilioPhoneService
+from twilio.base.exceptions import TwilioRestException
 logger = setup_logger(__name__)
 
 router = APIRouter(
@@ -260,6 +267,7 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
 
     # DTMF / Keypad
     if built_in_tools_params.play_keypad_touch_tone:
+        require_feature_enabled(user_id, PlanFeatureEnum.phone_numbers)
         config = built_in_tools_params.play_keypad_touch_tone
         if isinstance(config, bool):
              el_tools["play_keypad_touch_tone"] = {
@@ -333,6 +341,142 @@ def prune_stale_agent_transfers(agent: AgentModel, session: Session) -> None:
             logger.exception(f"Unexpected error syncing pruned transfers to ElevenLabs for agent {agent.id}")
 
     session.commit()
+
+
+def resolve_phone_record(
+    session: Session,
+    user_id: int,
+    phone: Optional[str],
+    twilio_connector_id: Optional[int],
+    current_agent_id: Optional[int] = None,
+):
+    """
+    Validate & resolve the PhoneNumberService row for `phone`, without assigning
+    it to an agent yet (the caller does that once the agent id is known).
+
+    If `twilio_connector_id` is given, the number is verified against that Twilio
+    account via the Twilio API and the local record is created/updated on the fly.
+    Otherwise falls back to requiring an already-owned, previously imported number.
+
+    Returns (phone_record_or_None, connector_or_None). Raises HTTPException on
+    any validation failure (feature not enabled, connector not found, number not
+    found in Twilio, number already assigned to a different agent).
+    """
+    if not phone or not phone.strip():
+        return None, None
+    phone = phone.strip()
+
+    connector = None
+    if twilio_connector_id:
+        require_feature_enabled(user_id, PlanFeatureEnum.phone_numbers)
+
+        connector = session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.id == twilio_connector_id,
+            TwilioUserCreds.user_id == user_id,
+        ).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Twilio connector not found")
+
+        twilio_number = None
+        try:
+            service = TwilioPhoneService(
+                account_sid=connector.account_sid,
+                auth_token=decrypt_data(connector.auth_token),
+            )
+            twilio_number = service.get_phone_number_details(phone)
+        except TwilioRestException as te:
+            logger.warning(f"Twilio verification failed for {phone}: {te}")
+
+        if not twilio_number:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Phone number {phone} was not found in the selected Twilio connector."
+            )
+
+        phone_record = session.query(PhoneNumberService).filter(
+            PhoneNumberService.phone_number == phone,
+            PhoneNumberService.user_id == user_id,
+        ).first()
+        if phone_record:
+            phone_record.sid = twilio_number["sid"]
+        else:
+            phone_record = PhoneNumberService(
+                phone_number=phone,
+                sid=twilio_number["sid"],
+                type="connector",
+                user_id=user_id,
+                assigned_to=None,
+                status=PhoneNumberAssignStatus.unassigned,
+                monthly_cost=0,
+            )
+            session.add(phone_record)
+            session.flush()
+    else:
+        phone_record = session.query(PhoneNumberService).filter(
+            PhoneNumberService.phone_number == phone,
+            PhoneNumberService.user_id == user_id,
+        ).first()
+        if not phone_record:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Phone number {phone} not found or not owned by you"
+            )
+
+    # Global uniqueness: no two agents can ever share the same Twilio number.
+    if phone_record.assigned_to is not None and phone_record.assigned_to != current_agent_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Phone number {phone} is already assigned to another agent"
+        )
+
+    return phone_record, connector
+
+
+def finalize_phone_assignment(phone_record: Optional[PhoneNumberService], agent: AgentModel, connector) -> None:
+    """Assign `phone_record` to `agent` and best-effort register/relink it with ElevenLabs."""
+    if not phone_record:
+        return
+
+    phone_record.assigned_to = agent.id
+    phone_record.status = PhoneNumberAssignStatus.assigned
+    logger.info(f"Assigned phone {phone_record.phone_number} to agent {agent.agent_name}")
+
+    if not agent.elevenlabs_agent_id:
+        return
+
+    try:
+        el = ElevenLabsPhoneConnection()
+        if phone_record.elevenlabs_phone_id:
+            el.update_phone_number_agent(phone_record.elevenlabs_phone_id, agent.elevenlabs_agent_id)
+        else:
+            account_sid = connector.account_sid if connector else VoiceSettings.TWILIO_ACCOUNT_SID
+            auth_token = decrypt_data(connector.auth_token) if connector else VoiceSettings.TWILIO_AUTH_TOKEN
+            resp = el.import_twilio_number(
+                phone_number=phone_record.phone_number,
+                label=agent.agent_name,
+                account_sid=account_sid,
+                auth_token=auth_token,
+                agent_id=agent.elevenlabs_agent_id,
+            )
+            if resp.status and resp.data:
+                phone_record.elevenlabs_phone_id = resp.data.get("phone_number_id")
+            else:
+                logger.warning(f"ElevenLabs phone import failed for {phone_record.phone_number}: {resp.error_message}")
+    except Exception as e:
+        logger.error(f"ElevenLabs phone registration failed for {phone_record.phone_number}: {e}", exc_info=True)
+
+
+def unassign_phone(phone_record: Optional[PhoneNumberService]) -> None:
+    """Unassign a phone record from its agent and best-effort unlink it in ElevenLabs."""
+    if not phone_record:
+        return
+    phone_record.assigned_to = None
+    phone_record.status = PhoneNumberAssignStatus.unassigned
+    if phone_record.elevenlabs_phone_id:
+        try:
+            ElevenLabsPhoneConnection().update_phone_number_agent(phone_record.elevenlabs_phone_id, None)
+        except Exception as e:
+            logger.warning(f"Failed to unlink ElevenLabs phone number {phone_record.elevenlabs_phone_id}: {e}")
 
 
 # -------------------- CREATE --------------------
@@ -422,30 +566,11 @@ async def create_agent(
         raise HTTPException(status_code=400, detail="Invalid language code")
 
     # -------------------------------------------------
-    # Phone number lookup & validation 
+    # Phone number lookup & validation
     # -------------------------------------------------
-    phone_record = None
-    if agent_in.phone:
-        phone_record = (
-            db.session.query(PhoneNumberService)
-            .filter(
-                PhoneNumberService.phone_number == agent_in.phone,
-                PhoneNumberService.user_id == user_id,
-            )
-            .first()
-        )
-
-        if not phone_record:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Phone number {agent_in.phone} not found or not owned by you"
-            )
-
-        if phone_record.assigned_to is not None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Phone number {agent_in.phone} is already assigned to another agent"
-            )
+    phone_record, phone_connector = resolve_phone_record(
+        db.session, user_id, agent_in.phone, agent_in.twilio_connector_id
+    )
 
     # -------------------------------------------------
     # KB & Tools validation and lookup
@@ -627,12 +752,7 @@ async def create_agent(
         for key, value in merged_variables.items():
             db.session.add(VariablesModel(agent_id=new_agent.id, variable_name=key, variable_value=value))
 
-        if phone_record:
-            phone_record.assigned_to = new_agent.id
-            phone_record.status = PhoneNumberAssignStatus.assigned
-            logger.info(
-                f"Assigned phone {phone_record.phone_number} to agent {new_agent.agent_name}"
-            )
+        finalize_phone_assignment(phone_record, new_agent, phone_connector)
 
         db.session.commit()
         db.session.refresh(new_agent)
@@ -794,34 +914,20 @@ async def update_agent(
     
     # ---- Phone Number Update ----
     if agent_in.phone is not None:
-        # First, unassign any currently assigned phone
         old_phone = db.session.query(PhoneNumberService).filter(
             PhoneNumberService.assigned_to == agent_id
         ).first()
-        
-        if old_phone:
-            old_phone.assigned_to = None
-            old_phone.status = PhoneNumberAssignStatus.unassigned
-            logger.info(f"Unassigned phone {old_phone.phone_number} from agent {agent.agent_name}")
-        
-        # Now assign new phone if provided (empty string means unassign only)
-        if agent_in.phone and agent_in.phone.strip():
-            # Lookup phone by phone number string
-            new_phone = db.session.query(PhoneNumberService).filter(
-                PhoneNumberService.phone_number == agent_in.phone,
-                PhoneNumberService.user_id == current_user.id
-            ).first()
-            
-            if not new_phone:
-                raise HTTPException(status_code=404, detail=f"Phone number {agent_in.phone} not found or not owned by you")
-            
-            if new_phone.assigned_to is not None and new_phone.assigned_to != agent_id:
-                raise HTTPException(status_code=400, detail=f"Phone number {agent_in.phone} is already assigned to another agent")
-            
-            new_phone.assigned_to = agent_id
-            new_phone.status = PhoneNumberAssignStatus.assigned
-            logger.info(f"Assigned phone {new_phone.phone_number} to agent {agent.agent_name}")
-        # else: empty string means unassign only (already done above)
+
+        new_phone_value = agent_in.phone.strip() if agent_in.phone else ""
+
+        if not (old_phone and old_phone.phone_number == new_phone_value):
+            # Actual change (or explicit unassign via empty string) — swap it over.
+            unassign_phone(old_phone)
+
+            new_phone_record, new_phone_connector = resolve_phone_record(
+                db.session, current_user.id, agent_in.phone, agent_in.twilio_connector_id, current_agent_id=agent_id
+            )
+            finalize_phone_assignment(new_phone_record, agent, new_phone_connector)
     
     # ---- Base Fields ----
     if agent_in.agent_name is not None:
@@ -1120,12 +1226,9 @@ async def delete_agent(
     assigned_phone = db.session.query(PhoneNumberService).filter(
         PhoneNumberService.assigned_to == agent_id
     ).first()
-    
-    if assigned_phone:
-        assigned_phone.assigned_to = None
-        assigned_phone.status = PhoneNumberAssignStatus.unassigned
-        logger.info(f"Unassigned phone {assigned_phone.phone_number} from agent {agent.agent_name}")
-        db.session.flush()  # Use flush instead of commit to allow rollback if ElevenLabs fails
+
+    unassign_phone(assigned_phone)
+    db.session.flush()  # Use flush instead of commit to allow rollback if ElevenLabs fails
 
     # ---- Delete from ElevenLabs ----
     if agent.elevenlabs_agent_id:
