@@ -507,6 +507,9 @@ class PhoneNumberService(Base):
     #sid
     sid: Mapped[str] = mapped_column(String)
 
+    # ElevenLabs phone_number_id once this number has been imported into ElevenLabs
+    elevenlabs_phone_id: Mapped[str] = mapped_column(String, nullable=True)
+
     #relationships
     user = relationship("UnifiedAuthModel", backref="phone_numbers")
     agent = relationship("AgentModel", back_populates="phone_number")

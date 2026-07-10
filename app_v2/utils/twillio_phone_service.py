@@ -10,8 +10,8 @@ class TwilioPhoneService:
     def __init__(self, account_sid: str = None, auth_token: str = None):
         asid = account_sid or VoiceSettings.TWILIO_ACCOUNT_SID
         atoken = auth_token or VoiceSettings.TWILIO_AUTH_TOKEN
-        # self.client = Client(asid, atoken)
-        # logger.info(f"Twilio client initialized with account SID: {asid}")
+        self.client = Client(asid, atoken)
+        logger.info(f"Twilio client initialized with account SID: {asid}")
     
     def get_available_phone_numbers(
         self,
