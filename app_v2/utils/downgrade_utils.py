@@ -7,7 +7,7 @@ plan.
 Policy rules (per resource type):
   ai_voice_agents     → Order by fewest ConversationsModel count, then oldest
                         created_at. Set is_enabled = False on excess.
-  web_voice_agent     → Order by fewest WebAgentLeadModel count, then oldest
+  widget_agent     → Order by fewest WidgetLeadModel count, then oldest
                         created_at. Set is_enabled = False on excess.
   phone_numbers       → Unassigned first, then oldest created_at. Set
                         status = unassigned, clear assigned_to on excess.
@@ -38,8 +38,8 @@ from sqlalchemy import func
 
 from app_v2.databases.models import (
     AgentModel,
-    WebAgentModel,
-    WebAgentLeadModel,
+    WidgetModel,
+    WidgetLeadModel,
     PhoneNumberService,
     VoiceModel,
     ConversationsModel,
@@ -62,7 +62,7 @@ logger = setup_logger(__name__)
 
 COUNT_BASED_FEATURES = {
     "ai_voice_agents",
-    "web_voice_agent",
+    "widget_agent",
     "phone_numbers",
     "custom_voice_cloning",
     "knowledge_base",
@@ -267,29 +267,29 @@ def _get_affected_resource_names(user_id: int, feature_key: str, new_limit: int,
             to_disable = enabled_agents[: total - new_limit]
             return [a.agent_name for a in to_disable]
 
-    elif feature_key == "web_voice_agent":
+    elif feature_key == "widget_agent":
         lead_count_sub = (
             session.query(
-                WebAgentLeadModel.web_agent_id,
-                func.count(WebAgentLeadModel.id).label("lead_count"),
+                WidgetLeadModel.widget_id,
+                func.count(WidgetLeadModel.id).label("lead_count"),
             )
-            .group_by(WebAgentLeadModel.web_agent_id)
+            .group_by(WidgetLeadModel.widget_id)
             .subquery()
         )
-        enabled_web_agents = (
-            session.query(WebAgentModel)
-            .outerjoin(lead_count_sub, WebAgentModel.id == lead_count_sub.c.web_agent_id)
-            .filter(WebAgentModel.user_id == user_id, WebAgentModel.is_enabled == True)
+        enabled_widgets = (
+            session.query(WidgetModel)
+            .outerjoin(lead_count_sub, WidgetModel.id == lead_count_sub.c.widget_id)
+            .filter(WidgetModel.user_id == user_id, WidgetModel.is_enabled == True)
             .order_by(
                 func.coalesce(lead_count_sub.c.lead_count, 0).asc(),
-                WebAgentModel.created_at.asc(),
+                WidgetModel.created_at.asc(),
             )
             .all()
         )
-        total = len(enabled_web_agents)
+        total = len(enabled_widgets)
         if total > new_limit:
-            to_disable = enabled_web_agents[: total - new_limit]
-            return [wa.web_agent_name for wa in to_disable]
+            to_disable = enabled_widgets[: total - new_limit]
+            return [wa.widget_name for wa in to_disable]
 
     elif feature_key == "phone_numbers":
         all_phones = (
@@ -363,12 +363,12 @@ def _get_current_count(user_id: int, feature_key: str, session: Session) -> int:
             )
             .scalar() or 0
         )
-    elif feature_key == "web_voice_agent":
+    elif feature_key == "widget_agent":
         return (
-            session.query(func.count(WebAgentModel.id))
+            session.query(func.count(WidgetModel.id))
             .filter(
-                WebAgentModel.user_id == user_id,
-                WebAgentModel.is_enabled == True,
+                WidgetModel.user_id == user_id,
+                WidgetModel.is_enabled == True,
             )
             .scalar() or 0
         )
@@ -412,7 +412,7 @@ def _build_preview_message(
         if current_usage == 0:
             removed_no_usage = {
                 "ai_voice_agents": "The new plan does not include AI voice agents. You have none currently, so no immediate impact.",
-                "web_voice_agent": "The new plan does not include web agents. You have none currently, so no immediate impact.",
+                "widget_agent": "The new plan does not include widgets. You have none currently, so no immediate impact.",
                 "phone_numbers": "The new plan does not include phone numbers. You have none currently, so no immediate impact.",
                 "custom_voice_cloning": "The new plan does not include custom voice cloning. You have none currently, so no immediate impact.",
                 "knowledge_base": "The new plan does not include knowledge bases. You have none currently, so no immediate impact.",
@@ -426,9 +426,9 @@ def _build_preview_message(
                 f"The new plan does not include AI voice agents. "
                 f"All {current_usage} of your active agent(s) will be automatically disabled."
             ),
-            "web_voice_agent": (
-                f"The new plan does not include web agents. "
-                f"All {current_usage} of your active web agent(s) will be automatically disabled."
+            "widget_agent": (
+                f"The new plan does not include widgets. "
+                f"All {current_usage} of your active widget(s) will be automatically disabled."
             ),
             "phone_numbers": (
                 f"The new plan does not include phone numbers. "
@@ -457,9 +457,9 @@ def _build_preview_message(
                 f"Your new plan allows up to {new_limit} active AI voice agent(s). "
                 f"You currently have {current_usage} — no agents will be disabled."
             ),
-            "web_voice_agent": (
-                f"Your new plan allows up to {new_limit} active web agent(s). "
-                f"You currently have {current_usage} — no web agents will be disabled."
+            "widget_agent": (
+                f"Your new plan allows up to {new_limit} active widget(s). "
+                f"You currently have {current_usage} — no widgets will be disabled."
             ),
             "phone_numbers": (
                 f"Your new plan allows up to {new_limit} phone number(s). "
@@ -487,11 +487,11 @@ def _build_preview_message(
             f"(those with the fewest calls are disabled first). "
             f"You will keep your {new_limit} most-used agent(s) active."
         ),
-        "web_voice_agent": (
-            f"Your new plan only allows {new_limit} active web agent(s), but you currently "
-            f"have {current_usage}. {will_disable} web agent(s) will be automatically disabled "
+        "widget_agent": (
+            f"Your new plan only allows {new_limit} active widget(s), but you currently "
+            f"have {current_usage}. {will_disable} widget(s) will be automatically disabled "
             f"(those with the fewest leads are disabled first). "
-            f"You will keep your {new_limit} most-used web agent(s) active."
+            f"You will keep your {new_limit} most-used widget(s) active."
         ),
         "phone_numbers": (
             f"Your new plan only allows {new_limit} phone number(s), but you currently "
@@ -539,7 +539,7 @@ def enforce_downgrade_for_user(
     Returns a summary dict describing what was changed:
     {
       "ai_voice_agents": {"disabled_ids": [3, 7], "kept_enabled_ids": [1, 2]},
-      "web_voice_agent":  {"disabled_ids": [5]},
+      "widget_agent":  {"disabled_ids": [5]},
       "phone_numbers":    {"unassigned_ids": [8], "kept_ids": [2]},
       "custom_voice_cloning": {"detached_voice_ids": [4], "kept_ids": [1, 2]},
     }
@@ -568,9 +568,9 @@ def enforce_downgrade_for_user(
             result = _enforce_ai_voice_agents(user_id, new_limit, session)
             summary["ai_voice_agents"] = result
 
-        elif feature_key == "web_voice_agent":
-            result = _enforce_web_voice_agents(user_id, new_limit, session)
-            summary["web_voice_agent"] = result
+        elif feature_key == "widget_agent":
+            result = _enforce_widget_agent(user_id, new_limit, session)
+            summary["widget_agent"] = result
 
         elif feature_key == "phone_numbers":
             result = _enforce_phone_numbers(user_id, new_limit, session)
@@ -665,11 +665,11 @@ def _enforce_ai_voice_agents(
                 f"from disabled agent={agent.id}"
             )
 
-        # Cascade: disable any web-agent widgets attached to this agent
-        for web_agent in agent.web_agent:
-            web_agent.is_enabled = False
+        # Cascade: disable any widget widgets attached to this agent
+        for widget in agent.widget:
+            widget.is_enabled = False
             logger.info(
-                f"_enforce_ai_voice_agents | cascade disable web_agent={web_agent.id} "
+                f"_enforce_ai_voice_agents | cascade disable widget={widget.id} "
                 f"from disabled agent={agent.id}"
             )
 
@@ -684,7 +684,7 @@ def _enforce_ai_voice_agents(
     }
 
 
-def _enforce_web_voice_agents(
+def _enforce_widget_agent(
     user_id: int,
     new_limit: int,
     session: Session,
@@ -693,60 +693,60 @@ def _enforce_web_voice_agents(
     Disable excess web voice agents.
 
     Ordering (least valuable first):
-      1. Fewest total leads (WebAgentLeadModel count) ASC
+      1. Fewest total leads (WidgetLeadModel count) ASC
       2. Oldest created_at ASC (tiebreaker)
 
-    Only currently enabled web agents are considered.
+    Only currently enabled widgets are considered.
     Sets is_enabled = False on excess.
     """
-    # Subquery: lead count per web agent
+    # Subquery: lead count per widget
     lead_count_sub = (
         session.query(
-            WebAgentLeadModel.web_agent_id,
-            func.count(WebAgentLeadModel.id).label("lead_count"),
+            WidgetLeadModel.widget_id,
+            func.count(WidgetLeadModel.id).label("lead_count"),
         )
-        .group_by(WebAgentLeadModel.web_agent_id)
+        .group_by(WidgetLeadModel.widget_id)
         .subquery()
     )
 
-    enabled_web_agents = (
-        session.query(WebAgentModel)
-        .outerjoin(lead_count_sub, WebAgentModel.id == lead_count_sub.c.web_agent_id)
+    enabled_widgets = (
+        session.query(WidgetModel)
+        .outerjoin(lead_count_sub, WidgetModel.id == lead_count_sub.c.widget_id)
         .filter(
-            WebAgentModel.user_id == user_id,
-            WebAgentModel.is_enabled == True,
+            WidgetModel.user_id == user_id,
+            WidgetModel.is_enabled == True,
         )
         .order_by(
             func.coalesce(lead_count_sub.c.lead_count, 0).asc(),
-            WebAgentModel.created_at.asc(),
+            WidgetModel.created_at.asc(),
         )
         .all()
     )
 
-    total_enabled = len(enabled_web_agents)
+    total_enabled = len(enabled_widgets)
 
     if total_enabled <= new_limit:
         return {
             "disabled_ids": [],
-            "kept_enabled_ids": [wa.id for wa in enabled_web_agents],
+            "kept_enabled_ids": [wa.id for wa in enabled_widgets],
         }
 
-    web_agents_to_keep = enabled_web_agents[total_enabled - new_limit:]
-    web_agents_to_disable = enabled_web_agents[:total_enabled - new_limit]
+    widgets_to_keep = enabled_widgets[total_enabled - new_limit:]
+    widgets_to_disable = enabled_widgets[:total_enabled - new_limit]
 
     disabled_ids: List[int] = []
-    for web_agent in web_agents_to_disable:
-        web_agent.is_enabled = False
-        disabled_ids.append(web_agent.id)
+    for widget in widgets_to_disable:
+        widget.is_enabled = False
+        disabled_ids.append(widget.id)
 
     logger.info(
-        f"_enforce_web_voice_agents | user={user_id} | "
-        f"disabled={disabled_ids} | kept={[wa.id for wa in web_agents_to_keep]}"
+        f"_enforce_widget_agent | user={user_id} | "
+        f"disabled={disabled_ids} | kept={[wa.id for wa in widgets_to_keep]}"
     )
 
     return {
         "disabled_ids": disabled_ids,
-        "kept_enabled_ids": [wa.id for wa in web_agents_to_keep],
+        "kept_enabled_ids": [wa.id for wa in widgets_to_keep],
     }
 
 

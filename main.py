@@ -15,7 +15,7 @@ from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
 from app_v2.core.exceptions import get_readable_message
-from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router,  web_agent_router,websocket_router,conversation_router,web_agent_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_plans, subscription_router, admin_user_management, payment_insights_router, api_key_management, public_api,public_websocket_router,webhooks
+from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router,  widget_router,websocket_router,conversation_router,widget_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_plans, subscription_router, admin_user_management, payment_insights_router, api_key_management, public_api,public_websocket_router,webhooks
 from app_v2.routers.email_subscription import public_router as email_subscription_public_router, admin_router as email_subscription_admin_router
 from app_v2.utils.jwt_utils import HTTPBearer
 from fastapi.responses import HTMLResponse
@@ -165,10 +165,10 @@ app.include_router(agent_router)
 app.include_router(voice_router)
 app.include_router(function_router)
 app.include_router(knowledge_base_router)
-app.include_router(web_agent_router)
+app.include_router(widget_router)
 app.include_router(websocket_router)
 app.include_router(conversation_router)
-app.include_router(web_agent_config_router)
+app.include_router(widget_config_router)
 app.include_router(user_dashboard_router)
 app.include_router(admin_dashboard_router)
 app.include_router(admin_plans.router)

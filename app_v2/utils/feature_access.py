@@ -9,7 +9,7 @@ from app_v2.databases.models import (
     PlanModel,
     PlanFeatureModel,
     AgentModel,
-    WebAgentModel,
+    WidgetModel,
     KnowledgeBaseModel,
     PhoneNumberService,
     VoiceModel,
@@ -150,12 +150,12 @@ def get_ai_voice_agents_usage(user_id: int) -> int:
     )
 
 
-def get_web_agents_usage(user_id: int) -> int:
-    """Count web agents."""
+def get_widgets_usage(user_id: int) -> int:
+    """Count widgets."""
     return (
-        db.session.query(func.count(WebAgentModel.id))
+        db.session.query(func.count(WidgetModel.id))
         .filter(
-            WebAgentModel.user_id == user_id
+            WidgetModel.user_id == user_id
         )
         .scalar() or 0
     )
@@ -227,7 +227,7 @@ def get_monthly_minutes_usage(user_id: int) -> float:
 FEATURE_USAGE_HANDLERS: Dict[str, Callable[[int], float]] = {
     "ai_voice_agents": get_ai_voice_agents_usage,
     "phone_numbers": get_phone_numbers_usage,
-    "web_voice_agent": get_web_agents_usage,
+    "widget_agent": get_widgets_usage,
     "knowledge_base": get_kb_usage_mb,
     "monthly_minutes": get_monthly_minutes_usage,
     "custom_voice_cloning": get_custom_voice_usage,
@@ -384,7 +384,7 @@ def get_feature_usage(user_id: int, feature_key: str) -> float:
 def check_can_enable_resource(user_id: int, feature_key: str, allow_coin_fallback: bool = False):
     """
     Called specifically when a user tries to ENABLE an existing resource
-    (agent, web agent etc.) that is currently disabled.
+    (agent, widget etc.) that is currently disabled.
 
     Rule: enabled_count must be strictly less than the plan limit before
     allowing the enable action.
@@ -401,8 +401,8 @@ def check_can_enable_resource(user_id: int, feature_key: str, allow_coin_fallbac
         # In your agent enable endpoint, before setting is_enabled = True:
         check_can_enable_resource(current_user.id, "ai_voice_agents", allow_coin_fallback=True)
 
-        # In your web agent enable endpoint:
-        check_can_enable_resource(current_user.id, "web_voice_agent", allow_coin_fallback=True)
+        # In your widget enable endpoint:
+        check_can_enable_resource(current_user.id, "widget_agent", allow_coin_fallback=True)
     """
     with db():
         # Use loose lookup so access is preserved during plan-change checkout
@@ -454,9 +454,9 @@ def check_can_enable_resource(user_id: int, feature_key: str, allow_coin_fallbac
                 .filter(AgentModel.user_id == uid, AgentModel.is_enabled == True)
                 .scalar() or 0
             ),
-            "web_voice_agent": lambda uid: (
-                db.session.query(func.count(WebAgentModel.id))
-                .filter(WebAgentModel.user_id == uid, WebAgentModel.is_enabled == True)
+            "widget_agent": lambda uid: (
+                db.session.query(func.count(WidgetModel.id))
+                .filter(WidgetModel.user_id == uid, WidgetModel.is_enabled == True)
                 .scalar() or 0
             ),
         }

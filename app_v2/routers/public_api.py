@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from app_v2.databases.models import (
     AgentModel, 
-    WebAgentModel, 
+    WidgetModel, 
     UnifiedAuthModel,
     VoiceModel,
     AIModels,
@@ -40,7 +40,7 @@ from app_v2.schemas.function_schema import (
     PrimitiveField
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
-from app_v2.schemas.web_agent_schema import WebAgentConfig, WebAgentConfigResponse, WebAgentConfigUpdate, WebAgentListResponse
+from app_v2.schemas.widget_schema import WidgetConfig, WidgetConfigResponse, WidgetConfigUpdate, WidgetListResponse
 from app_v2.schemas.language_schema import LanguageRead
 from app_v2.schemas.voice_schema import VoiceRead
 from app_v2.schemas.ai_model import AIModelRead
@@ -152,28 +152,28 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         timezone=agent.timezone
     )
 
-def web_agent_to_response(web_agent: WebAgentModel, request: Request = None) -> WebAgentConfigResponse:
+def widget_to_response(widget: WidgetModel, request: Request = None) -> WidgetConfigResponse:
     base_url = str(request.base_url).rstrip("/") if request else ""
-    return WebAgentConfigResponse(
-        id=web_agent.id,
-        public_id=web_agent.public_id,
-        web_agent_name=web_agent.web_agent_name,
-        shareable_link=f"{base_url}/api/v2/web-agent/preview/{web_agent.public_id}",
-        agent_id=web_agent.agent_id,
-        is_enabled=web_agent.is_enabled,
+    return WidgetConfigResponse(
+        id=widget.id,
+        public_id=widget.public_id,
+        widget_name=widget.widget_name,
+        shareable_link=f"{base_url}/api/v2/widget/preview/{widget.public_id}",
+        agent_id=widget.agent_id,
+        is_enabled=widget.is_enabled,
         appearance={
-            "widget_title": web_agent.widget_title,
-            "widget_subtitle": web_agent.widget_subtitle,
-            "primary_color": web_agent.primary_color,
-            "position": web_agent.position,
-            "show_branding": web_agent.show_branding
+            "widget_title": widget.widget_title,
+            "widget_subtitle": widget.widget_subtitle,
+            "primary_color": widget.primary_color,
+            "position": widget.position,
+            "show_branding": widget.show_branding
         },
         prechat={
-            "enable_prechat": web_agent.enable_prechat,
-            "require_name": web_agent.require_name,
-            "require_email": web_agent.require_email,
-            "require_phone": web_agent.require_phone,
-            "custom_fields": web_agent.custom_fields or []
+            "enable_prechat": widget.enable_prechat,
+            "require_name": widget.require_name,
+            "require_email": widget.require_email,
+            "require_phone": widget.require_phone,
+            "custom_fields": widget.custom_fields or []
         }
     )
 
@@ -525,11 +525,11 @@ async def delete_agent_public(
     return None
 
 # -------------------------------------------------------------------
-# WEB AGENTS CRUD
+# WidgetS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/web-agents", response_model=PaginatedResponse[WebAgentListResponse])
-async def list_web_agents(
+@router.get("/widgets", response_model=PaginatedResponse[WidgetListResponse])
+async def list_widgets(
     request: Request,
     page: int = 1,
     size: int = 20,
@@ -539,41 +539,41 @@ async def list_web_agents(
     skip = (max(1, page) - 1) * size
     base_url = str(request.base_url).rstrip("/")
     with db():
-        query = db.session.query(WebAgentModel).filter(WebAgentModel.user_id == current_user.id)
+        query = db.session.query(WidgetModel).filter(WidgetModel.user_id == current_user.id)
         total = query.count()
-        web_agents = query.order_by(WebAgentModel.created_at.desc()).offset(skip).limit(size).all()
+        widgets = query.order_by(WidgetModel.created_at.desc()).offset(skip).limit(size).all()
         
         items = [
-            WebAgentListResponse(
+            WidgetListResponse(
                 id=wa.id,
-                web_agent_name=wa.web_agent_name,
+                widget_name=wa.widget_name,
                 public_id=wa.public_id,
-                shareable_link=f"{base_url}/api/v2/web-agent/preview/{wa.public_id}",
+                shareable_link=f"{base_url}/api/v2/widget/preview/{wa.public_id}",
                 is_enabled=wa.is_enabled,
                 created_at=wa.created_at,
                 agent_name=wa.agent.agent_name
-            ) for wa in web_agents
+            ) for wa in widgets
         ]
         return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total/size), items=items)
 
-@router.get("/web-agents/{public_id}", response_model=WebAgentConfigResponse)
-async def get_web_agent(
+@router.get("/widgets/{public_id}", response_model=WidgetConfigResponse)
+async def get_widget(
     public_id: str,
     request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
-        wa = db.session.query(WebAgentModel).filter(
-            WebAgentModel.public_id == public_id, WebAgentModel.user_id == current_user.id
+        wa = db.session.query(WidgetModel).filter(
+            WidgetModel.public_id == public_id, WidgetModel.user_id == current_user.id
         ).first()
         if not wa:
-            raise HTTPException(status_code=404, detail="Web Agent not found")
-        return web_agent_to_response(wa, request)
+            raise HTTPException(status_code=404, detail="Widget not found")
+        return widget_to_response(wa, request)
 
-@router.post("/web-agents", response_model=WebAgentConfigResponse, status_code=status.HTTP_201_CREATED)
-async def create_web_agent(
-    wa_in: WebAgentConfig,
+@router.post("/widgets", response_model=WidgetConfigResponse, status_code=status.HTTP_201_CREATED)
+async def create_widget(
+    wa_in: WidgetConfig,
     request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
@@ -585,10 +585,10 @@ async def create_web_agent(
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
         
-        new_wa = WebAgentModel(
+        new_wa = WidgetModel(
             user_id=current_user.id,
             agent_id=wa_in.agent_id,
-            web_agent_name=wa_in.web_agent_name,
+            widget_name=wa_in.widget_name,
             widget_title=wa_in.appearance.widget_title,
             widget_subtitle=wa_in.appearance.widget_subtitle,
             primary_color=wa_in.appearance.primary_color,
@@ -603,24 +603,24 @@ async def create_web_agent(
         db.session.add(new_wa)
         db.session.commit()
         db.session.refresh(new_wa)
-        return web_agent_to_response(new_wa, request)
+        return widget_to_response(new_wa, request)
 
-@router.put("/web-agents/{public_id}", response_model=WebAgentConfigResponse)
-async def update_web_agent(
+@router.put("/widgets/{public_id}", response_model=WidgetConfigResponse)
+async def update_widget(
     public_id: str,
-    wa_in: WebAgentConfigUpdate,
+    wa_in: WidgetConfigUpdate,
     request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     with db():
-        wa = db.session.query(WebAgentModel).filter(
-            WebAgentModel.public_id == public_id, WebAgentModel.user_id == current_user.id
+        wa = db.session.query(WidgetModel).filter(
+            WidgetModel.public_id == public_id, WidgetModel.user_id == current_user.id
         ).first()
         if not wa:
-            raise HTTPException(status_code=404, detail="Web Agent not found")
+            raise HTTPException(status_code=404, detail="Widget not found")
         
-        if wa_in.web_agent_name: wa.web_agent_name = wa_in.web_agent_name
+        if wa_in.widget_name: wa.widget_name = wa_in.widget_name
         if wa_in.is_enabled is not None: wa.is_enabled = wa_in.is_enabled
         if wa_in.appearance:
             if wa_in.appearance.widget_title: wa.widget_title = wa_in.appearance.widget_title
@@ -631,20 +631,20 @@ async def update_web_agent(
         
         db.session.commit()
         db.session.refresh(wa)
-        return web_agent_to_response(wa, request)
+        return widget_to_response(wa, request)
 
-@router.delete("/web-agents/{public_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_web_agent(
+@router.delete("/widgets/{public_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_widget(
     public_id: str,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
-        wa = db.session.query(WebAgentModel).filter(
-            WebAgentModel.public_id == public_id, WebAgentModel.user_id == current_user.id
+        wa = db.session.query(WidgetModel).filter(
+            WidgetModel.public_id == public_id, WidgetModel.user_id == current_user.id
         ).first()
         if not wa:
-            raise HTTPException(status_code=404, detail="Web Agent not found")
+            raise HTTPException(status_code=404, detail="Widget not found")
         db.session.delete(wa)
         db.session.commit()
     return None

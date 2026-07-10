@@ -1,6 +1,6 @@
 """
 Shared helpers for the conversation-row lifecycle, used by every call-handling
-websocket flow (regular test-connection, web-agent widget, public API).
+websocket flow (regular test-connection, widget widget, public API).
 
 A row is created with call_status=in_progress the moment a call starts (so it
 shows up in the conversations list immediately), then finalized in place once
