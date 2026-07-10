@@ -487,6 +487,40 @@ def check_can_enable_resource(user_id: int, feature_key: str, allow_coin_fallbac
         return True
 
 
+def require_feature_enabled(user_id: int, feature_key: str):
+    """
+    Check that a user's active plan includes a feature, without checking
+    usage limits. Use this for gating access to a feature's management
+    (view/create/edit/delete) rather than metering how much of it is used.
+    """
+    with db():
+        subscription = _get_any_active_subscription(user_id)
+
+        if not subscription:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Active subscription required to access feature: {feature_key}",
+            )
+
+        feature = db.session.query(PlanFeatureModel).filter(
+            PlanFeatureModel.plan_id == subscription.plan_id,
+            PlanFeatureModel.feature_key == feature_key,
+        ).first()
+
+        if not feature:
+            plan = db.session.query(PlanModel).filter(
+                PlanModel.id == subscription.plan_id
+            ).first()
+            plan_name = plan.display_name if plan else "Unknown Plan"
+            feature_key_display_name = feature_key.replace("_", " ").title()
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Your current plan '{plan_name}' does not include access to {feature_key_display_name}.",
+            )
+
+        return True
+
+
 # ------------------------------------------------------------------
 # FASTAPI DEPENDENCY
 # ------------------------------------------------------------------
@@ -514,4 +548,31 @@ class RequireFeaturePublic:
         self.allow_coin_fallback = allow_coin_fallback
     def __call__(self, current_user: UnifiedAuthModel = Depends(get_public_api_user)):
         check_feature_limit_and_usage(current_user.id, self.feature_key, self.allow_coin_fallback)
+        return current_user
+
+
+class RequireFeatureEnabled:
+    """FastAPI Dependency for requiring a feature to be present on the plan (no usage-limit check, JWT-based)."""
+
+    def __init__(self, feature_key: str):
+        self.feature_key = feature_key
+
+    def __call__(self, current_user: UnifiedAuthModel = Depends(get_current_user)):
+        if current_user.is_suspended:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Your account has been suspended. Please contact support for assistance.",
+            )
+        require_feature_enabled(current_user.id, self.feature_key)
+        return current_user
+
+
+class RequireFeatureEnabledPublic:
+    """FastAPI Dependency for requiring a feature to be present on the plan (no usage-limit check, API Key-based)."""
+
+    def __init__(self, feature_key: str):
+        self.feature_key = feature_key
+
+    def __call__(self, current_user: UnifiedAuthModel = Depends(get_public_api_user)):
+        require_feature_enabled(current_user.id, self.feature_key)
         return current_user
