@@ -41,8 +41,8 @@ class PrechatConfigUpdate(BaseModel):
 
 
 
-class WebAgentConfig(BaseModel):
-    web_agent_name: str
+class WidgetConfig(BaseModel):
+    widget_name: str
     agent_id: int
 
     appearance: AppearanceConfig
@@ -50,10 +50,10 @@ class WebAgentConfig(BaseModel):
 
 
 
-class WebAgentConfigResponse(BaseModel):
+class WidgetConfigResponse(BaseModel):
     id: int
     public_id: str
-    web_agent_name: str
+    widget_name: str
     shareable_link: str
     agent_id: int
     is_enabled: Optional[bool]
@@ -64,9 +64,9 @@ class WebAgentConfigResponse(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class WebAgentListResponse(BaseModel):
+class WidgetListResponse(BaseModel):
     id:int
-    web_agent_name: str
+    widget_name: str
     public_id: str
     shareable_link: str
     is_enabled: bool | None = True
@@ -79,20 +79,20 @@ class WebAgentListResponse(BaseModel):
 
 
 
-class WebAgentPublicConfig(BaseModel):
+class WidgetPublicConfig(BaseModel):
     public_id: str
-    web_agent_name: str
+    widget_name: str
     appearance: AppearanceConfig
     prechat: PrechatConfig
 
-class WebAgentLeadCreate(BaseModel):
+class WidgetLeadCreate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
     custom_data: Optional[list] = None
 
-class WebAgentConfigUpdate(BaseModel):
-    web_agent_name: Optional[str] = None
+class WidgetConfigUpdate(BaseModel):
+    widget_name: Optional[str] = None
     agent_id: Optional[int] = None
 
     appearance: Optional[AppearanceConfigUpdate] = None

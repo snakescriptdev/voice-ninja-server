@@ -226,9 +226,9 @@ def suspend_user(user_id:int,request:SuspendUserRequest):
             if request.reason:
                 user.suspension_reason = request.reason
             #disable agents for the user and pause subscription.
-            web_agents = user.web_agents
-            for agent in web_agents:
-                agent.is_enabled = False
+            widgets = user.widgets
+            for widget in widgets:
+                widget.is_enabled = False
             #pause subscription for user
             subscriptions= user.subscriptions
             for subscription in subscriptions:
@@ -243,9 +243,9 @@ def suspend_user(user_id:int,request:SuspendUserRequest):
             user.suspension_reason = None
             #resume subscription for user
             #disable agents for the user and pause subscription.
-            web_agents = user.web_agents
-            for agent in web_agents:
-                agent.is_enabled = True
+            widgets = user.widgets
+            for widget in widgets:
+                widget.is_enabled = True
             subscriptions= user.subscriptions
             for subscription in subscriptions:
                 if subscription.status == SubscriptionStatusEnum.paused:
