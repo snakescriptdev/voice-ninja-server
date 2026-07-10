@@ -10,7 +10,7 @@ from app_v2.utils.feature_access import RequireFeature
 from app_v2.databases.models import (
     UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, 
     ConversationsModel, PlanModel, UserSubscriptionModel, CoinsLedgerModel, 
-    PaymentModel, WebAgentModel, WebAgentLeadModel,APIDailyUsageModel,CoinPackageModel,
+    PaymentModel, WidgetModel, WidgetLeadModel,APIDailyUsageModel,CoinPackageModel,
     APICallLogModel
 )
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
@@ -215,25 +215,25 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         ).scalar() or 0
         coin_used_this_month_change = calculate_percentage_change(coin_used_this_month, coin_used_prev_month)
 
-        active_leads_count = db.session.query(func.count(WebAgentLeadModel.id)).join(
-            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        active_leads_count = db.session.query(func.count(WidgetLeadModel.id)).join(
+            WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id
         ).filter(
-            WebAgentModel.user_id == current_user.id
+            WidgetModel.user_id == current_user.id
         ).scalar() or 0
         
-        curr_leads = db.session.query(func.count(WebAgentLeadModel.id)).join(
-            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        curr_leads = db.session.query(func.count(WidgetLeadModel.id)).join(
+            WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id
         ).filter(
-            WebAgentModel.user_id == current_user.id,
-            WebAgentLeadModel.created_at >= first_day_of_month
+            WidgetModel.user_id == current_user.id,
+            WidgetLeadModel.created_at >= first_day_of_month
         ).scalar() or 0
         
-        prev_leads = db.session.query(func.count(WebAgentLeadModel.id)).join(
-            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        prev_leads = db.session.query(func.count(WidgetLeadModel.id)).join(
+            WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id
         ).filter(
-            WebAgentModel.user_id == current_user.id,
-            WebAgentLeadModel.created_at >= first_day_prev_month,
-            WebAgentLeadModel.created_at < first_day_of_month
+            WidgetModel.user_id == current_user.id,
+            WidgetLeadModel.created_at >= first_day_prev_month,
+            WidgetLeadModel.created_at < first_day_of_month
         ).scalar() or 0
         active_leads_count_change = calculate_percentage_change(curr_leads, prev_leads)
         
@@ -844,22 +844,22 @@ def get_user_leads(
     try:
         skip = (page - 1) * size
         
-        query = db.session.query(WebAgentLeadModel).join(
-            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        query = db.session.query(WidgetLeadModel).join(
+            WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id
         ).filter(
-            WebAgentModel.user_id == current_user.id
+            WidgetModel.user_id == current_user.id
         )
         
         if search:
             term = f"%{search}%"
             query = query.filter(
-                (WebAgentLeadModel.name.ilike(term)) |
-                (WebAgentLeadModel.email.ilike(term)) |
-                (WebAgentLeadModel.phone.ilike(term))
+                (WidgetLeadModel.name.ilike(term)) |
+                (WidgetLeadModel.email.ilike(term)) |
+                (WidgetLeadModel.phone.ilike(term))
             )
             
         total = query.count()
-        leads = query.order_by(WebAgentLeadModel.created_at.desc()).offset(skip).limit(size).all()
+        leads = query.order_by(WidgetLeadModel.created_at.desc()).offset(skip).limit(size).all()
         
         total_pages = ceil(total / size) if size > 0 else 1
         
@@ -871,8 +871,8 @@ def get_user_leads(
             leads=[
                 DashboardLeadItem(
                     id=lead.id,
-                    web_agent_id=lead.web_agent_id,
-                    web_agent_name=lead.web_agent.web_agent_name,
+                    widget_id=lead.widget_id,
+                    widget_name=lead.widget.widget_name,
                     name=lead.name,
                     email=lead.email,
                     phone=lead.phone,

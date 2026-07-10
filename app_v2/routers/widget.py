@@ -1,8 +1,8 @@
 """
-Web Agent router
+Widget router
 Structure:
-  validation/    → fetch_and_validate_web_agent(), check_owner_limits()
-  bridge/        → BrowserAudioInterface, run_web_agent_session()
+  validation/    → fetch_and_validate_widget(), check_owner_limits()
+  bridge/        → BrowserAudioInterface, run_widget_session()
   storage/       → save_web_conversation(), maybe_send_notifications()
   activity/      → log_web_chat_started(), log_web_chat_ended()
   routes/        → embed_script, ws proxy, config, lead — all thin orchestrators
@@ -30,11 +30,11 @@ from app_v2.databases.models import (
     ConversationsModel,
     CoinUsageSettingsModel,
     UnifiedAuthModel,
-    WebAgentLeadModel,
-    WebAgentModel,
+    WidgetLeadModel,
+    WidgetModel,
 )
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
-from app_v2.schemas.web_agent_schema import WebAgentLeadCreate, WebAgentPublicConfig
+from app_v2.schemas.widget_schema import WidgetLeadCreate, WidgetPublicConfig
 from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.utils.conversation_lifecycle import (
@@ -55,7 +55,7 @@ from app_v2.routers.websocket_router import check_elevenlabs_credits
 logger = setup_logger(__name__)
 security = HTTPBearer()
 
-router = APIRouter(prefix="/api/v2/web-agent", tags=["web-agent"])
+router = APIRouter(prefix="/api/v2/widget", tags=["widget"])
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -76,12 +76,12 @@ VOICE_NINJA_LOGO_SVG = """<svg width="62" height="21" viewBox="0 0 62 21" fill="
 # ─────────────────────────────────────────────────────────────────────────────
 
 @dataclass
-class WebAgentContext:
-    """All data needed to run a web agent session, extracted before WS bridge starts."""
+class WidgetContext:
+    """All data needed to run a widget session, extracted before WS bridge starts."""
     user_id: int
     agent_id: int
     agent_name: str
-    web_agent_name: str
+    widget_name: str
     public_id: str
     elevenlabs_agent_id: str
     initial_usage: float
@@ -126,39 +126,39 @@ def _has_sufficient_coins(user_balance: int) -> tuple[bool, int]:
     return user_balance >= minimum, minimum
 
 
-async def fetch_and_validate_web_agent(
+async def fetch_and_validate_widget(
     websocket: WebSocket,
     public_id: str,
-) -> Optional[WebAgentContext]:
+) -> Optional[WidgetContext]:
     """
-    Loads WebAgentModel, validates it and its owner's limits.
+    Loads WidgetModel, validates it and its owner's limits.
     All DB calls in a single db() context.
-    Returns WebAgentContext on success, None (after rejecting WS) on failure.
+    Returns WidgetContext on success, None (after rejecting WS) on failure.
     """
     with db():
-        web_agent: Optional[WebAgentModel] = (
-            db.session.query(WebAgentModel)
-            .filter(WebAgentModel.public_id == public_id)
+        widget: Optional[WidgetModel] = (
+            db.session.query(WidgetModel)
+            .filter(WidgetModel.public_id == public_id)
             .first()
         )
 
-        if not web_agent:
-            await _reject_ws(websocket, "Web Agent not found")
+        if not widget:
+            await _reject_ws(websocket, "Widget not found")
             return None
 
-        if not web_agent.is_enabled:
-            await _reject_ws(websocket, "Web Agent is disabled")
+        if not widget.is_enabled:
+            await _reject_ws(websocket, "Widget is disabled")
             return None
 
-        if not web_agent.agent or not web_agent.agent.is_enabled:
+        if not widget.agent or not widget.agent.is_enabled:
             await _reject_ws(websocket, "Voice Agent is disabled")
             return None
 
-        if not web_agent.agent.elevenlabs_agent_id:
+        if not widget.agent.elevenlabs_agent_id:
             await _reject_ws(websocket, "Agent not configured")
             return None
 
-        user_id: int = web_agent.user_id
+        user_id: int = widget.user_id
         owner_balance = get_user_coin_balance(user_id)
         sufficient, minimum_required = _has_sufficient_coins(owner_balance)
 
@@ -176,23 +176,23 @@ async def fetch_and_validate_web_agent(
         try:
             check_feature_limit_and_usage(user_id, "monthly_minutes")
         except HTTPException as e:
-            conversation_row_id = start_conversation(user_id, web_agent.agent_id, ChannelEnum.widget)
+            conversation_row_id = start_conversation(user_id, widget.agent_id, ChannelEnum.widget)
             mark_conversation_failed(conversation_row_id, "Monthly minutes limit reached")
             await _reject_ws(websocket, e.detail)
             logger.error("Monthly minutes limit for owner %s: %s", user_id, e.detail)
             return None
 
-        has_credits = await check_elevenlabs_credits(websocket, user_id, web_agent.agent_id, channel=ChannelEnum.call)
+        has_credits = await check_elevenlabs_credits(websocket, user_id, widget.agent_id, channel=ChannelEnum.call)
         if not has_credits:
             return None
 
-        return WebAgentContext(
+        return WidgetContext(
             user_id=user_id,
-            agent_id=web_agent.agent_id,
-            agent_name=web_agent.agent.agent_name,
-            web_agent_name=web_agent.web_agent_name,
+            agent_id=widget.agent_id,
+            agent_name=widget.agent.agent_name,
+            widget_name=widget.widget_name,
             public_id=public_id,
-            elevenlabs_agent_id=web_agent.agent.elevenlabs_agent_id,
+            elevenlabs_agent_id=widget.agent.elevenlabs_agent_id,
             initial_usage=get_feature_usage(user_id, "monthly_minutes"),
             minute_limit=get_feature_limit(user_id, "monthly_minutes"),
             call_start_time=datetime.now(timezone.utc),
@@ -318,7 +318,7 @@ def _make_on_user_transcript(websocket: WebSocket, loop: asyncio.AbstractEventLo
 async def _start_elevenlabs_conversation(
     websocket: WebSocket,
     audio_if: BrowserAudioInterface,
-    ctx: WebAgentContext,
+    ctx: WidgetContext,
     language: str,
     model: str,
     el_ended: asyncio.Event,
@@ -377,19 +377,19 @@ async def _start_elevenlabs_conversation(
         return None
 
 
-def _is_minute_limit_exceeded(ctx: WebAgentContext) -> bool:
+def _is_minute_limit_exceeded(ctx: WidgetContext) -> bool:
     if ctx.minute_limit is None:
         return False
     elapsed = (datetime.now(timezone.utc) - ctx.call_start_time).total_seconds() / 60
     return (ctx.initial_usage + elapsed) >= ctx.minute_limit
 
 
-async def run_web_agent_session(
+async def run_widget_session(
     websocket: WebSocket,
-    ctx: WebAgentContext,
+    ctx: WidgetContext,
 ) -> Optional[str]:
     """
-    Main message loop for the web agent WebSocket session.
+    Main message loop for the widget WebSocket session.
     Handles conversation_init, user_audio_chunk, end, and minute-limit checks.
     Returns the ElevenLabs conversation_id (or None) after session ends.
     """
@@ -504,7 +504,7 @@ def _persist_web_conversation(
     record = finalize_conversation(conversation_row_id, metadata, conv_id, error_message=error_message)
 
     if lead_id:
-        lead = db.session.query(WebAgentLeadModel).get(lead_id)
+        lead = db.session.query(WidgetLeadModel).get(lead_id)
         if lead:
             lead.conversation_id = record.id
             db.session.add(lead)
@@ -532,7 +532,7 @@ def _fetch_owner_notification_settings(user_id: int, lead_id: Optional[int]) -> 
             settings.usage_alerts = owner.notification_settings.useage_alerts
 
     if lead_id:
-        lead = db.session.query(WebAgentLeadModel).get(lead_id)
+        lead = db.session.query(WidgetLeadModel).get(lead_id)
         if lead and lead.name:
             lead_name = lead.name
 
@@ -540,7 +540,7 @@ def _fetch_owner_notification_settings(user_id: int, lead_id: Optional[int]) -> 
 
 
 async def maybe_send_notifications(
-    ctx: WebAgentContext,
+    ctx: WidgetContext,
     record: ConversationsModel,
     metadata: dict,
     lead_id: Optional[int],
@@ -554,7 +554,7 @@ async def maybe_send_notifications(
         try:
             await send_conversation_notification_email(
                 company_email=notif.email,
-                agent_name=ctx.web_agent_name,
+                agent_name=ctx.widget_name,
                 conversation_id=str(record.id),
                 base_url=VoiceSettings.FRONTEND_URL,
                 user_name=lead_name,
@@ -579,7 +579,7 @@ async def maybe_send_notifications(
 
 
 async def save_web_conversation(
-    ctx: WebAgentContext,
+    ctx: WidgetContext,
     conv_id: str,
     lead_id: Optional[int],
     conversation_row_id: int,
@@ -625,33 +625,33 @@ async def save_web_conversation(
 # Activity logging helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def log_web_chat_started(ctx: WebAgentContext, lead_id: Optional[int]) -> None:
+def log_web_chat_started(ctx: WidgetContext, lead_id: Optional[int]) -> None:
     with db():
         log_activity(
             user_id=ctx.user_id,
-            event_type="web_agent_chat_started",
+            event_type="widget_chat_started",
             description=f"Public web chat started for agent: {ctx.agent_name}",
             metadata={
                 "public_id": ctx.public_id,
                 "agent_id": ctx.agent_id,
                 "agent_name": ctx.agent_name,
-                "web_agent_name": ctx.web_agent_name,
+                "widget_name": ctx.widget_name,
                 "lead_id": lead_id,
             },
         )
 
 
-def log_web_chat_ended(ctx: WebAgentContext, conv_id: Optional[str], lead_id: Optional[int]) -> None:
+def log_web_chat_ended(ctx: WidgetContext, conv_id: Optional[str], lead_id: Optional[int]) -> None:
     with db():
         log_activity(
             user_id=ctx.user_id,
-            event_type="web_agent_chat_ended",
+            event_type="widget_chat_ended",
             description=f"Public web chat ended for agent: {ctx.agent_name}",
             metadata={
                 "public_id": ctx.public_id,
                 "agent_id": ctx.agent_id,
                 "agent_name": ctx.agent_name,
-                "web_agent_name": ctx.web_agent_name,
+                "widget_name": ctx.widget_name,
                 "conversation_id": conv_id,
                 "lead_id": lead_id,
             },
@@ -673,7 +673,7 @@ def _build_embed_script(public_id: str) -> str:
     var u = new URL(script.src);
     baseUrl = u.origin + u.pathname.replace(/\/embed\.js\/[^\/]+$/, '');
   } else {
-    baseUrl = window.location.origin + '/api/v2/web-agent';
+    baseUrl = window.location.origin + '/api/v2/widget';
   }
 
   var wsUrl     = (baseUrl.startsWith('https') ? 'wss:' : 'ws:') + baseUrl.split('://')[1] + '/ws/' + publicId;
@@ -1141,26 +1141,26 @@ async def logo_svg():
     )
 
 
-@router.get("/preview/{public_id}", response_class=HTMLResponse, summary="Preview page for web agent")
+@router.get("/preview/{public_id}", response_class=HTMLResponse, summary="Preview page for widget")
 async def preview_page(request: Request, public_id: str):
     with db():
-        web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
-        if not web_agent:
-            raise HTTPException(status_code=404, detail="Web Agent not found")
-        if not web_agent.is_enabled:
-            return HTMLResponse("<html><body><h1>Web Agent is disabled</h1></body></html>", status_code=403)
-        if not web_agent.agent or not web_agent.agent.is_enabled:
+        widget = db.session.query(WidgetModel).filter(WidgetModel.public_id == public_id).first()
+        if not widget:
+            raise HTTPException(status_code=404, detail="Widget not found")
+        if not widget.is_enabled:
+            return HTMLResponse("<html><body><h1>Widget is disabled</h1></body></html>", status_code=403)
+        if not widget.agent or not widget.agent.is_enabled:
             return HTMLResponse("<html><body><h1>Voice Agent is disabled</h1></body></html>", status_code=403)
-        web_agent_name = web_agent.web_agent_name
+        widget_name = widget.widget_name
 
     base = str(request.base_url).rstrip("/")
-    script_url = f"{base}/api/v2/web-agent/embed.js/{public_id}"
+    script_url = f"{base}/api/v2/widget/embed.js/{public_id}"
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Voice Ninja – {web_agent_name}</title>
+  <title>Voice Ninja – {widget_name}</title>
   <style>
     body {{ font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; background: #f5f5f5; }}
     .header {{ padding: 16px 24px; background: #1a1a1a; color: #fff; }}
@@ -1174,18 +1174,18 @@ async def preview_page(request: Request, public_id: str):
     return HTMLResponse(html)
 
 
-@router.get("/embed.js/{public_id}", response_class=Response, summary="Embed script for web agent widget")
+@router.get("/embed.js/{public_id}", response_class=Response, summary="Embed script for widget widget")
 async def embed_script(public_id: str):
     # All ORM attribute access (including .agent relationship) must happen inside db()
     with db():
-        web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
-        if not web_agent:
-            return Response("// Web Agent not found.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
-        if not web_agent.is_enabled:
-            return Response("// Web Agent is disabled.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
-        if not web_agent.agent or not web_agent.agent.is_enabled:
+        widget = db.session.query(WidgetModel).filter(WidgetModel.public_id == public_id).first()
+        if not widget:
+            return Response("// Widget not found.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+        if not widget.is_enabled:
+            return Response("// Widget is disabled.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+        if not widget.agent or not widget.agent.is_enabled:
             return Response("// Voice Agent is disabled.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
-        if not web_agent.agent.elevenlabs_agent_id:
+        if not widget.agent.elevenlabs_agent_id:
             return Response("// Agent has no ElevenLabs configuration.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
 
     return Response(
@@ -1196,23 +1196,23 @@ async def embed_script(public_id: str):
 
 
 @router.websocket("/ws/{public_id}")
-async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int] = None):
+async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int] = None):
     """
     Pure orchestration — zero business logic lives here.
 
     Flow:
       1. Accept connection
-      2. Validate web agent + owner limits
+      2. Validate widget + owner limits
       3. Log chat start
       4. Run audio bridge session
       5. Log chat end
       6. Save conversation + notify
     """
     await websocket.accept()
-    logger.info("Web agent WS connected for public_id=%s", public_id)
+    logger.info("Widget WS connected for public_id=%s", public_id)
 
     # ── 1. Validate ───────────────────────────────────────────────────────────
-    ctx = await fetch_and_validate_web_agent(websocket, public_id)
+    ctx = await fetch_and_validate_widget(websocket, public_id)
     if not ctx:
         return
 
@@ -1225,11 +1225,11 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
     # ── 3. Run session ────────────────────────────────────────────────────────
     failure_reason = None
     try:
-        conv_id = await run_web_agent_session(websocket, ctx)
+        conv_id = await run_widget_session(websocket, ctx)
     except Exception:
-        logger.error("run_web_agent_session failed:\n%s", traceback.format_exc())
+        logger.error("run_widget_session failed:\n%s", traceback.format_exc())
         conv_id = None
-        failure_reason = "Web agent session failed"
+        failure_reason = "Widget session failed"
 
     limit_error = "Monthly minutes limit reached" if ctx.limit_reached else None
 
@@ -1253,53 +1253,53 @@ async def web_agent_ws(websocket: WebSocket, public_id: str, lead_id: Optional[i
     except Exception:
         pass
 
-    logger.info("Web agent WS closed for public_id=%s", public_id)
+    logger.info("Widget WS closed for public_id=%s", public_id)
 
 
-@router.get("/config/{public_id}", response_model=WebAgentPublicConfig)
+@router.get("/config/{public_id}", response_model=WidgetPublicConfig)
 def get_public_config(public_id: str):
-    web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
-    if not web_agent:
-        raise HTTPException(status_code=404, detail="Web Agent not found")
-    if not web_agent.is_enabled:
-        raise HTTPException(status_code=403, detail="Web Agent is disabled")
-    if not web_agent.agent or not web_agent.agent.is_enabled:
+    widget = db.session.query(WidgetModel).filter(WidgetModel.public_id == public_id).first()
+    if not widget:
+        raise HTTPException(status_code=404, detail="Widget not found")
+    if not widget.is_enabled:
+        raise HTTPException(status_code=403, detail="Widget is disabled")
+    if not widget.agent or not widget.agent.is_enabled:
         raise HTTPException(status_code=403, detail="Voice Agent is disabled")
 
-    return WebAgentPublicConfig(
-        public_id=web_agent.public_id,
-        web_agent_name=web_agent.web_agent_name,
+    return WidgetPublicConfig(
+        public_id=widget.public_id,
+        widget_name=widget.widget_name,
         appearance={
-            "widget_title":    web_agent.widget_title,
-            "widget_subtitle": web_agent.widget_subtitle,
-            "primary_color":   web_agent.primary_color,
-            "position":        web_agent.position,
-            "show_branding":   web_agent.show_branding,
+            "widget_title":    widget.widget_title,
+            "widget_subtitle": widget.widget_subtitle,
+            "primary_color":   widget.primary_color,
+            "position":        widget.position,
+            "show_branding":   widget.show_branding,
         },
         prechat={
-            "enable_prechat": web_agent.enable_prechat,
-            "require_name":   web_agent.require_name,
-            "require_email":  web_agent.require_email,
-            "require_phone":  web_agent.require_phone,
-            "custom_fields":  web_agent.custom_fields or [],
+            "enable_prechat": widget.enable_prechat,
+            "require_name":   widget.require_name,
+            "require_email":  widget.require_email,
+            "require_phone":  widget.require_phone,
+            "custom_fields":  widget.custom_fields or [],
         },
     )
 
 
 @router.post("/lead/{public_id}")
-def submit_lead(public_id: str, lead: WebAgentLeadCreate):
-    web_agent = db.session.query(WebAgentModel).filter(WebAgentModel.public_id == public_id).first()
-    if not web_agent:
-        raise HTTPException(status_code=404, detail="Web Agent not found")
-    if not web_agent.is_enabled:
-        raise HTTPException(status_code=403, detail="Web Agent is disabled")
-    if not web_agent.agent or not web_agent.agent.is_enabled:
+def submit_lead(public_id: str, lead: WidgetLeadCreate):
+    widget = db.session.query(WidgetModel).filter(WidgetModel.public_id == public_id).first()
+    if not widget:
+        raise HTTPException(status_code=404, detail="Widget not found")
+    if not widget.is_enabled:
+        raise HTTPException(status_code=403, detail="Widget is disabled")
+    if not widget.agent or not widget.agent.is_enabled:
         raise HTTPException(status_code=403, detail="Voice Agent is disabled")
-    if not web_agent.enable_prechat:
+    if not widget.enable_prechat:
         raise HTTPException(status_code=400, detail="Pre-chat is not enabled for this agent")
 
-    new_lead = WebAgentLeadModel(
-        web_agent_id=web_agent.id,
+    new_lead = WidgetLeadModel(
+        widget_id=widget.id,
         name=lead.name,
         email=lead.email,
         phone=lead.phone,

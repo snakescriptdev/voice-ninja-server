@@ -126,7 +126,7 @@ class PlanFeatureEnum(str,Enum):
     phone_numbers = "phone_numbers"
     monthly_minutes = "monthly_minutes"
     knowledge_base = "knowledge_base"
-    web_voice_agent = "web_voice_agent"
+    widget_agent = "widget_agent"
     api_access = "api_access"
     analytics_dashboard= "analytics_dashboard"
     custom_voice_cloning= "custom_voice_cloning"

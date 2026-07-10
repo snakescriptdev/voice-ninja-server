@@ -4,7 +4,7 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy import or_
 from datetime import date
 from typing import Optional
-from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WebAgentLeadModel, CoinsLedgerModel
+from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WidgetLeadModel, CoinsLedgerModel
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.activity_logger import log_activity
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum, CoinTransactionTypeEnum
@@ -31,7 +31,7 @@ def list_user_conversations(
 		q = (
 			db.session.query(ConversationsModel)
 			.outerjoin(AgentModel, ConversationsModel.agent_id == AgentModel.id)
-			.outerjoin(WebAgentLeadModel, WebAgentLeadModel.conversation_id == ConversationsModel.id)
+			.outerjoin(WidgetLeadModel, WidgetLeadModel.conversation_id == ConversationsModel.id)
 			.options(joinedload(ConversationsModel.agent), joinedload(ConversationsModel.lead))
 			.filter(ConversationsModel.user_id == current_user.id)
 		)
@@ -40,7 +40,7 @@ def list_user_conversations(
 			q = q.filter(
 				or_(
 					AgentModel.agent_name.ilike(f"%{search}%"),
-					WebAgentLeadModel.name.ilike(f"%{search}%")
+					WidgetLeadModel.name.ilike(f"%{search}%")
 				)
 			)
 			

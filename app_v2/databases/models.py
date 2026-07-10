@@ -151,7 +151,7 @@ class UnifiedAuthModel(Base):
     knowledge_bases = relationship("KnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
     functions = relationship("FunctionModel",back_populates="user",cascade="all, delete-orphan")
     conversations = relationship("ConversationsModel",back_populates="user",cascade="all, delete-orphan")
-    web_agents = relationship("WebAgentModel", back_populates="user",cascade="all, delete-orphan")
+    widgets = relationship("WidgetModel", back_populates="user",cascade="all, delete-orphan")
     subscriptions = relationship("UserSubscriptionModel", back_populates="user",cascade="all, delete-orphan")
     payments = relationship("PaymentModel", back_populates="user",cascade="all, delete-orphan")
     coins_ledger = relationship("CoinsLedgerModel", back_populates="user",cascade="all, delete-orphan")
@@ -274,7 +274,7 @@ class AgentModel(Base):
     phone_number = relationship("PhoneNumberService",back_populates="agent")
     agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent",cascade="all, delete-orphan", order_by="AgentKnowledgeBaseBridge.id")
     conversations = relationship("ConversationsModel",back_populates="agent",cascade="all, delete-orphan")
-    web_agent = relationship("WebAgentModel",back_populates="agent",cascade="all, delete-orphan")
+    widget = relationship("WidgetModel",back_populates="agent",cascade="all, delete-orphan")
 
 
 
@@ -542,10 +542,10 @@ class ConversationsModel(Base):
     #relationships
     agent = relationship("AgentModel",back_populates="conversations")
     user = relationship("UnifiedAuthModel",back_populates="conversations")
-    lead = relationship("WebAgentLeadModel", back_populates="conversation", uselist=False)
+    lead = relationship("WidgetLeadModel", back_populates="conversation", uselist=False)
 
-class WebAgentModel(Base):
-    __tablename__ = "web_agents"
+class WidgetModel(Base):
+    __tablename__ = "widgets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -566,7 +566,7 @@ class WebAgentModel(Base):
         nullable=False
     )
 
-    web_agent_name: Mapped[str] = mapped_column(String(255))
+    widget_name: Mapped[str] = mapped_column(String(255))
     is_enabled: Mapped[bool] = mapped_column(Boolean,default=True)
 
     # Appearance
@@ -592,18 +592,18 @@ class WebAgentModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
-    user = relationship("UnifiedAuthModel", back_populates="web_agents")
-    agent = relationship("AgentModel",back_populates="web_agent")
-    leads = relationship("WebAgentLeadModel", back_populates="web_agent",cascade="all, delete-orphan")
+    user = relationship("UnifiedAuthModel", back_populates="widgets")
+    agent = relationship("AgentModel",back_populates="widget")
+    leads = relationship("WidgetLeadModel", back_populates="widget",cascade="all, delete-orphan")
 
 
-class WebAgentLeadModel(Base):
-    __tablename__ = "web_agent_leads"
+class WidgetLeadModel(Base):
+    __tablename__ = "widget_leads"
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    web_agent_id: Mapped[int] = mapped_column(
-        ForeignKey("web_agents.id"),
+    widget_id: Mapped[int] = mapped_column(
+        ForeignKey("widgets.id"),
         nullable=False
     )
 
@@ -617,7 +617,7 @@ class WebAgentLeadModel(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-    web_agent = relationship("WebAgentModel", back_populates="leads")
+    widget = relationship("WidgetModel", back_populates="leads")
     conversation = relationship("ConversationsModel", back_populates="lead")
 
 class ActivityLogModel(Base):
@@ -696,7 +696,7 @@ class PlanFeatureModel(Base):
     # "ai_voice_agents"
     # "phone_numbers"
     # "monthly_knowledgebases"
-    # "web_voice_agents"
+    # "widget_agent"
     # "api_access"
     # "analytics_dashboard"
 
