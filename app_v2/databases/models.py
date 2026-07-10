@@ -147,7 +147,7 @@ class UnifiedAuthModel(Base):
     agents = relationship("AgentModel", back_populates="user")
     voices = relationship("VoiceModel", back_populates="user")
     notification_settings = relationship("UserNotificationSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", cascade="all, delete-orphan")
     knowledge_bases = relationship("KnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
     functions = relationship("FunctionModel",back_populates="user",cascade="all, delete-orphan")
     conversations = relationship("ConversationsModel",back_populates="user",cascade="all, delete-orphan")
@@ -515,10 +515,12 @@ class TwilioUserCreds(Base):
     __tablename__ = "twilio_user_creds"
 
     id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"),unique=True) #enusre 1:1 
+    user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"))
 
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     account_sid: Mapped[str] = mapped_column(String,nullable=False)
     auth_token: Mapped[str] = mapped_column(String,nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("UnifiedAuthModel", back_populates="twilio_user_creds")
 

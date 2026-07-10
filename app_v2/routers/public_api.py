@@ -12,8 +12,8 @@ import shutil
 from datetime import datetime, timezone
 
 from app_v2.databases.models import (
-    AgentModel, 
-    WidgetModel, 
+    AgentModel,
+    WidgetModel,
     UnifiedAuthModel,
     VoiceModel,
     AIModels,
@@ -28,7 +28,8 @@ from app_v2.databases.models import (
     AgentLanguageBridge,
     AgentKnowledgeBaseBridge,
     AgentFunctionBridgeModel,
-    FunctionApiConfig
+    FunctionApiConfig,
+    TwilioUserCreds
 )
 from app_v2.schemas.function_schema import (
     FunctionCreateSchema,
@@ -41,6 +42,7 @@ from app_v2.schemas.function_schema import (
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
 from app_v2.schemas.widget_schema import WidgetConfig, WidgetConfigResponse, WidgetConfigUpdate, WidgetListResponse
+from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
 from app_v2.schemas.language_schema import LanguageRead
 from app_v2.schemas.voice_schema import VoiceRead
 from app_v2.schemas.ai_model import AIModelRead
@@ -54,9 +56,11 @@ from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum
 from app_v2.utils.public_auth import get_public_api_user
 from app_v2.utils.crypto_utils import encrypt_data, decrypt_data
+from twilio.rest import Client as TwilioClient
+from twilio.base.exceptions import TwilioRestException
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.rate_limit import track_and_limit_api, log_public_api_call
-from app_v2.utils.feature_access import RequireFeaturePublic
+from app_v2.utils.feature_access import RequireFeaturePublic, require_feature_enabled
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.utils.elevenlabs import ElevenLabsKB
 from app_v2.utils.scraping_utils import scrape_webpage_title
@@ -175,6 +179,15 @@ def widget_to_response(widget: WidgetModel, request: Request = None) -> WidgetCo
             "require_phone": widget.require_phone,
             "custom_fields": widget.custom_fields or []
         }
+    )
+
+def twilio_connector_to_response(connector: TwilioUserCreds) -> TwilioConnectorResponse:
+    return TwilioConnectorResponse(
+        id=connector.id,
+        name=connector.name,
+        account_sid=connector.account_sid,
+        auth_token=decrypt_data(connector.auth_token),
+        created_at=connector.created_at,
     )
 
 def voice_to_read(voice: VoiceModel) -> VoiceRead:
@@ -646,6 +659,152 @@ async def delete_widget(
         if not wa:
             raise HTTPException(status_code=404, detail="Widget not found")
         db.session.delete(wa)
+        db.session.commit()
+    return None
+
+# -------------------------------------------------------------------
+# TWILIO CONNECTORS CRUD
+# -------------------------------------------------------------------
+
+@router.get("/twilio-connectors", response_model=PaginatedResponse[TwilioConnectorResponse])
+async def list_twilio_connectors(
+    page: int = 1,
+    size: int = 20,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
+    skip = (max(1, page) - 1) * size
+    with db():
+        query = db.session.query(TwilioUserCreds).filter(TwilioUserCreds.user_id == current_user.id)
+        total = query.count()
+        connectors = query.order_by(TwilioUserCreds.created_at.desc()).offset(skip).limit(size).all()
+
+        items = [twilio_connector_to_response(c) for c in connectors]
+        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total / size), items=items)
+
+@router.get("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
+async def get_twilio_connector(
+    connector_id: int,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
+    with db():
+        connector = db.session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.id == connector_id, TwilioUserCreds.user_id == current_user.id
+        ).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Twilio connector not found")
+        return twilio_connector_to_response(connector)
+
+@router.post("/twilio-connectors", response_model=TwilioConnectorResponse, status_code=status.HTTP_201_CREATED)
+async def create_twilio_connector(
+    connector_in: TwilioConnectorCreate,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
+    with db():
+        existing_name = db.session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.user_id == current_user.id,
+            func.lower(TwilioUserCreds.name) == connector_in.name.lower()
+        ).first()
+        if existing_name:
+            raise HTTPException(status_code=400, detail=f"A connector with the name '{existing_name.name}' already exists.")
+
+        existing_sid = db.session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.user_id == current_user.id,
+            func.lower(TwilioUserCreds.account_sid) == connector_in.account_sid.lower()
+        ).first()
+        if existing_sid:
+            raise HTTPException(status_code=400, detail=f"This Twilio account is already connected as '{existing_sid.name}'.")
+
+    try:
+        client = TwilioClient(connector_in.account_sid, connector_in.auth_token)
+        client.api.accounts(connector_in.account_sid).fetch()
+    except TwilioRestException:
+        raise HTTPException(status_code=400, detail="Invalid Twilio Account SID or Auth Token.")
+
+    with db():
+        new_connector = TwilioUserCreds(
+            user_id=current_user.id,
+            name=connector_in.name,
+            account_sid=connector_in.account_sid,
+            auth_token=encrypt_data(connector_in.auth_token),
+        )
+        db.session.add(new_connector)
+        db.session.commit()
+        db.session.refresh(new_connector)
+        return twilio_connector_to_response(new_connector)
+
+@router.put("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
+async def update_twilio_connector(
+    connector_id: int,
+    connector_in: TwilioConnectorUpdate,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
+
+    if (connector_in.account_sid is None) != (connector_in.auth_token is None):
+        raise HTTPException(status_code=400, detail="Both Account SID and Auth Token must be provided together to update credentials.")
+
+    with db():
+        connector = db.session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.id == connector_id, TwilioUserCreds.user_id == current_user.id
+        ).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Twilio connector not found")
+
+        if connector_in.name is not None:
+            existing_name = db.session.query(TwilioUserCreds).filter(
+                TwilioUserCreds.user_id == current_user.id,
+                TwilioUserCreds.id != connector_id,
+                func.lower(TwilioUserCreds.name) == connector_in.name.lower()
+            ).first()
+            if existing_name:
+                raise HTTPException(status_code=400, detail=f"A connector with the name '{existing_name.name}' already exists.")
+
+        if connector_in.account_sid is not None:
+            existing_sid = db.session.query(TwilioUserCreds).filter(
+                TwilioUserCreds.user_id == current_user.id,
+                TwilioUserCreds.id != connector_id,
+                func.lower(TwilioUserCreds.account_sid) == connector_in.account_sid.lower()
+            ).first()
+            if existing_sid:
+                raise HTTPException(status_code=400, detail=f"This Twilio account is already connected as '{existing_sid.name}'.")
+
+        if connector_in.account_sid is not None and connector_in.auth_token is not None:
+            try:
+                client = TwilioClient(connector_in.account_sid, connector_in.auth_token)
+                client.api.accounts(connector_in.account_sid).fetch()
+            except TwilioRestException:
+                raise HTTPException(status_code=400, detail="Invalid Twilio Account SID or Auth Token.")
+            connector.account_sid = connector_in.account_sid
+            connector.auth_token = encrypt_data(connector_in.auth_token)
+
+        if connector_in.name is not None:
+            connector.name = connector_in.name
+
+        db.session.commit()
+        db.session.refresh(connector)
+        return twilio_connector_to_response(connector)
+
+@router.delete("/twilio-connectors/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_twilio_connector(
+    connector_id: int,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
+    with db():
+        connector = db.session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.id == connector_id, TwilioUserCreds.user_id == current_user.id
+        ).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Twilio connector not found")
+        db.session.delete(connector)
         db.session.commit()
     return None
 
