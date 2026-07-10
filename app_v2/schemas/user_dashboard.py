@@ -169,8 +169,8 @@ class PublicAPIUsageResponse(BaseModel):
 
 class DashboardLeadItem(BaseModel):
     id: int
-    web_agent_id: int
-    web_agent_name: str
+    widget_id: int
+    widget_name: str
     name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None

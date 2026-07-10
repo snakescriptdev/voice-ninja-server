@@ -29,7 +29,7 @@ from app_v2.databases.models import (
     AgentFunctionBridgeModel,
     FunctionModel,
     VariablesModel,
-    WebAgentModel
+    WidgetModel
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
 from app_v2.schemas.built_in_tools import BuiltInToolsParams
@@ -836,13 +836,13 @@ async def update_agent(
     if agent_in.is_enabled is not None:
         if agent_in.is_enabled == True and agent.is_enabled == False:
             check_can_enable_resource(current_user.id, "ai_voice_agents", allow_coin_fallback=True)
-            db.session.query(WebAgentModel).filter(
-                WebAgentModel.agent_id == agent.id
-            ).update({WebAgentModel.is_enabled: True})
+            db.session.query(WidgetModel).filter(
+                WidgetModel.agent_id == agent.id
+            ).update({WidgetModel.is_enabled: True})
         if agent_in.is_enabled == False and agent.is_enabled == True:
-            db.session.query(WebAgentModel).filter(
-                WebAgentModel.agent_id == agent.id
-            ).update({WebAgentModel.is_enabled: False})
+            db.session.query(WidgetModel).filter(
+                WidgetModel.agent_id == agent.id
+            ).update({WidgetModel.is_enabled: False})
         agent.is_enabled = agent_in.is_enabled
     if agent_in.timezone is not None:
         agent.timezone = agent_in.timezone
