@@ -15,7 +15,7 @@ from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
 from app_v2.core.exceptions import get_readable_message
-from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router, phone_router, widget_router,websocket_router,conversation_router,widget_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_plans, subscription_router, admin_user_management, payment_insights_router, api_key_management, public_api,public_websocket_router,webhooks, twilio_connector_router
+from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router, phone_router, widget_router,websocket_router,conversation_router,widget_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_plans, subscription_router, admin_user_management, payment_insights_router, api_key_management, public_api,public_websocket_router,webhooks, twilio_connector_router, web_agent_config_router, web_agent_router
 from app_v2.routers.email_subscription import public_router as email_subscription_public_router, admin_router as email_subscription_admin_router
 from app_v2.utils.jwt_utils import HTTPBearer
 from fastapi.responses import HTMLResponse
@@ -182,6 +182,8 @@ app.include_router(public_api.router)
 app.include_router(public_websocket_router.router)
 app.include_router(webhooks.router)
 app.include_router(twilio_connector_router)
+app.include_router(web_agent_config_router)
+app.include_router(web_agent_router)
 app.include_router(email_subscription_public_router)
 app.include_router(email_subscription_admin_router)
 

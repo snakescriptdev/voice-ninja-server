@@ -71,12 +71,18 @@ class ChannelEnum(str,Enum):
     call= "call"
     widget = "widget"
     api = "api"
+    web_agent = "Web Agent"
 
 class WidgetPosition(str,Enum):
     top_left = "top-left"
     top_right = "top-right"
     bottom_left = "bottom-left"
     bottom_right = "bottom-right"
+
+class WebAgentPosition(str, Enum):
+    left = "left"
+    center = "center"
+    right = "right"
 
 class BillingPeriodEnum(str, Enum):
     monthly = "monthly"
@@ -130,13 +136,14 @@ class PlanFeatureEnum(str,Enum):
     api_access = "api_access"
     analytics_dashboard= "analytics_dashboard"
     custom_voice_cloning= "custom_voice_cloning"
+    web_agent = "web_agent"
 
 
 # Features that are pure on/off gates with no numeric usage tracking behind
 # them (no entry in FEATURE_USAGE_HANDLERS). A "limit" has no meaning for
 # these — enabled always means unlimited, so storing/returning anything but
 # None for them is misleading.
-BOOLEAN_ONLY_PLAN_FEATURES = {PlanFeatureEnum.analytics_dashboard}
+BOOLEAN_ONLY_PLAN_FEATURES = {PlanFeatureEnum.analytics_dashboard, PlanFeatureEnum.web_agent}
 
 
 class SubscriptionBillingEventEnum(str, Enum):
