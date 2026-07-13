@@ -110,3 +110,24 @@ class ElevenLabsPhoneConnection(BaseElevenLabs):
             logger.error(f"Failed to update ElevenLabs phone number {phone_number_id}: {response.error_message}")
 
         return response
+
+    def delete_phone_number(self, phone_number_id: str) -> ElevenLabsResponse:
+        """
+        Delete an imported phone number from ElevenLabs Conversational AI.
+
+        Args:
+            phone_number_id: ElevenLabs phone_number_id returned by import_twilio_number
+
+        Returns:
+            ElevenLabsResponse indicating success/failure
+        """
+        logger.info(f"Deleting ElevenLabs phone number {phone_number_id}")
+
+        response = self._delete(f"/convai/phone-numbers/{phone_number_id}")
+
+        if response.status:
+            logger.info(f"✅ ElevenLabs phone number {phone_number_id} deleted")
+        else:
+            logger.error(f"Failed to delete ElevenLabs phone number {phone_number_id}: {response.error_message}")
+
+        return response
