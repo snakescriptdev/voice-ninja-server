@@ -31,7 +31,8 @@ from app_v2.databases.models import (
     AgentFunctionBridgeModel,
     FunctionModel,
     VariablesModel,
-    WidgetModel
+    WidgetModel,
+    WebAgentPageModel
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
 from app_v2.schemas.built_in_tools import BuiltInToolsParams
@@ -1006,10 +1007,16 @@ async def update_agent(
             db.session.query(WidgetModel).filter(
                 WidgetModel.agent_id == agent.id
             ).update({WidgetModel.is_enabled: True})
+            db.session.query(WebAgentPageModel).filter(
+                WebAgentPageModel.agent_id == agent.id
+            ).update({WebAgentPageModel.is_enabled: True})
         if agent_in.is_enabled == False and agent.is_enabled == True:
             db.session.query(WidgetModel).filter(
                 WidgetModel.agent_id == agent.id
             ).update({WidgetModel.is_enabled: False})
+            db.session.query(WebAgentPageModel).filter(
+                WebAgentPageModel.agent_id == agent.id
+            ).update({WebAgentPageModel.is_enabled: False})
         agent.is_enabled = agent_in.is_enabled
     if agent_in.timezone is not None:
         agent.timezone = agent_in.timezone

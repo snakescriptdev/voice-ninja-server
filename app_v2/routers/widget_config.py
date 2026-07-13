@@ -34,8 +34,11 @@ router = APIRouter(
 
 
 @router.get("/widgets", response_model=list[WidgetListResponse], openapi_extra={"security": [{"BearerAuth": []}]})
-def list_widgets(request: Request, user=Depends(require_active_user())):
-    widgets = db.session.query(WidgetModel).filter(WidgetModel.user_id == user.id).order_by(WidgetModel.created_at.desc()).all()
+def list_widgets(request: Request, agent_id: Optional[int] = None, user=Depends(require_active_user())):
+    query = db.session.query(WidgetModel).filter(WidgetModel.user_id == user.id)
+    if agent_id is not None:
+        query = query.filter(WidgetModel.agent_id == agent_id)
+    widgets = query.order_by(WidgetModel.created_at.desc()).all()
     base_url = str(request.base_url).rstrip("/")
     return [
         WidgetListResponse(
@@ -183,6 +186,16 @@ def update_widget(
         widget.widget_name = update_data["widget_name"]
     if "is_enabled" in update_data:
         if update_data["is_enabled"] and not widget.is_enabled:
+            voice_agent = (
+                db.session.query(AgentModel)
+                .filter(AgentModel.id == widget.agent_id)
+                .first()
+            )
+            if not voice_agent or not voice_agent.is_enabled:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Cannot enable widget: its Voice Agent is disabled",
+                )
             check_can_enable_resource(user.id, "widget_agent", allow_coin_fallback=True)
         widget.is_enabled = update_data["is_enabled"]
 
