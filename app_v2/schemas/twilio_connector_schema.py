@@ -2,6 +2,8 @@ from pydantic import BaseModel, field_validator
 from datetime import datetime
 from typing import Optional
 
+from app_v2.schemas.enum_types import PhoneNumberAssignStatus
+
 
 class TwilioConnectorCreate(BaseModel):
     name: str
@@ -37,6 +39,16 @@ class TwilioConnectorResponse(BaseModel):
     account_sid: str
     auth_token: str
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ConnectorAgentResponse(BaseModel):
+    agent_id: int
+    agent_name: str
+    phone_number: str
+    status: PhoneNumberAssignStatus
 
     class Config:
         from_attributes = True

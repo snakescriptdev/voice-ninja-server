@@ -828,6 +828,10 @@ async def delete_twilio_connector(
         ).first()
         if not connector:
             raise HTTPException(status_code=404, detail="Twilio connector not found")
+
+        from app_v2.routers.agents import unassign_phone_numbers_for_connector
+        unassign_phone_numbers_for_connector(db.session, current_user.id, connector)
+
         db.session.delete(connector)
         db.session.commit()
     return None
