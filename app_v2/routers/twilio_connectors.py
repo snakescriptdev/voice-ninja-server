@@ -1,3 +1,4 @@
+import math
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
@@ -6,11 +7,19 @@ from typing import List
 from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
 
-from app_v2.databases.models import TwilioUserCreds, UnifiedAuthModel
-from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
+from app_v2.databases.models import TwilioUserCreds, UnifiedAuthModel, AgentModel, PhoneNumberService
+from app_v2.schemas.twilio_connector_schema import (
+    TwilioConnectorCreate,
+    TwilioConnectorUpdate,
+    TwilioConnectorResponse,
+    ConnectorAgentResponse,
+)
+from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.jwt_utils import HTTPBearer
 from app_v2.utils.crypto_utils import encrypt_data, decrypt_data
 from app_v2.utils.feature_access import RequireFeatureEnabled
+from app_v2.utils.twillio_phone_service import TwilioPhoneService
+from app_v2.routers.agents import unassign_phone_numbers_for_connector
 from app_v2.schemas.enum_types import PlanFeatureEnum
 from app_v2.core.logger import setup_logger
 
@@ -77,6 +86,77 @@ async def get_twilio_connector(
     except Exception as e:
         logger.error(f"Error fetching Twilio connector_id={connector_id} for user_id={current_user.id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to fetch Twilio connector")
+
+
+@router.get("/{connector_id}/agents", response_model=PaginatedResponse[ConnectorAgentResponse], openapi_extra={"security": [{"BearerAuth": []}]})
+async def list_connector_agents(
+    connector_id: int,
+    page: int = 1,
+    size: int = 20,
+    current_user: UnifiedAuthModel = Depends(RequireFeatureEnabled(PlanFeatureEnum.phone_numbers))
+):
+    """List the agents (and their phone number) currently using this Twilio connector, paginated."""
+    try:
+        with db():
+            connector = db.session.query(TwilioUserCreds).filter(
+                TwilioUserCreds.id == connector_id,
+                TwilioUserCreds.user_id == current_user.id
+            ).first()
+            if not connector:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Twilio connector not found")
+
+            try:
+                service = TwilioPhoneService(
+                    account_sid=connector.account_sid,
+                    auth_token=decrypt_data(connector.auth_token),
+                )
+                connector_numbers = set(service.list_account_phone_numbers())
+            except TwilioRestException as te:
+                logger.warning(f"Could not list Twilio numbers for connector_id={connector_id}: {te}")
+                connector_numbers = set()
+
+            if not connector_numbers:
+                return PaginatedResponse(total=0, page=page, size=size, pages=0, items=[])
+
+            base_query = (
+                db.session.query(PhoneNumberService, AgentModel)
+                .join(AgentModel, PhoneNumberService.assigned_to == AgentModel.id)
+                .filter(
+                    PhoneNumberService.user_id == current_user.id,
+                    PhoneNumberService.type == "connector",
+                    PhoneNumberService.phone_number.in_(connector_numbers),
+                    PhoneNumberService.assigned_to.isnot(None),
+                )
+                .order_by(AgentModel.agent_name.asc())
+            )
+
+            total = base_query.count()
+            skip = (max(1, page) - 1) * size
+            rows = base_query.offset(skip).limit(size).all()
+
+            items = [
+                ConnectorAgentResponse(
+                    agent_id=agent.id,
+                    agent_name=agent.agent_name,
+                    phone_number=phone.phone_number,
+                    status=phone.status,
+                )
+                for phone, agent in rows
+            ]
+
+            return PaginatedResponse(
+                total=total,
+                page=page,
+                size=size,
+                pages=math.ceil(total / size) if size else 0,
+                items=items,
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching agents for connector_id={connector_id}, user_id={current_user.id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch agents for this Twilio connector")
 
 
 @router.post("/", response_model=TwilioConnectorResponse, status_code=status.HTTP_201_CREATED, openapi_extra={"security": [{"BearerAuth": []}]})
@@ -228,6 +308,8 @@ async def delete_twilio_connector(
 
             if not connector:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Twilio connector not found")
+
+            unassign_phone_numbers_for_connector(db.session, current_user.id, connector)
 
             db.session.delete(connector)
             db.session.commit()

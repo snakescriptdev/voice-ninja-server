@@ -364,7 +364,10 @@ def resolve_phone_record(
     """
     if not phone or not phone.strip():
         return None, None
-    phone = phone.strip()
+    # Normalize away any internal/leading/trailing whitespace (e.g. "+1 659 399 7159"
+    # -> "+16593997159") so numbers are matched and stored consistently regardless
+    # of how the user typed them.
+    phone = re.sub(r"\s+", "", phone)
 
     connector = None
     if twilio_connector_id:
@@ -444,39 +447,97 @@ def finalize_phone_assignment(phone_record: Optional[PhoneNumberService], agent:
     if not agent.elevenlabs_agent_id:
         return
 
+    def _import_fresh(el: ElevenLabsPhoneConnection) -> None:
+        account_sid = connector.account_sid if connector else VoiceSettings.TWILIO_ACCOUNT_SID
+        auth_token = decrypt_data(connector.auth_token) if connector else VoiceSettings.TWILIO_AUTH_TOKEN
+        resp = el.import_twilio_number(
+            phone_number=phone_record.phone_number,
+            label=agent.agent_name,
+            account_sid=account_sid,
+            auth_token=auth_token,
+            agent_id=agent.elevenlabs_agent_id,
+        )
+        if resp.status and resp.data:
+            phone_record.elevenlabs_phone_id = resp.data.get("phone_number_id")
+        else:
+            logger.warning(f"ElevenLabs phone import failed for {phone_record.phone_number}: {resp.error_message}")
+
     try:
         el = ElevenLabsPhoneConnection()
         if phone_record.elevenlabs_phone_id:
-            el.update_phone_number_agent(phone_record.elevenlabs_phone_id, agent.elevenlabs_agent_id)
+            resp = el.update_phone_number_agent(phone_record.elevenlabs_phone_id, agent.elevenlabs_agent_id)
+            if not resp.status:
+                # The stored elevenlabs_phone_id no longer exists on ElevenLabs
+                # (e.g. it was deleted when previously unassigned) — clear it and
+                # re-import the number fresh instead of silently leaving it unlinked.
+                logger.warning(
+                    f"Failed to relink ElevenLabs phone number {phone_record.elevenlabs_phone_id}: "
+                    f"{resp.error_message}; re-importing {phone_record.phone_number} fresh"
+                )
+                phone_record.elevenlabs_phone_id = None
+                _import_fresh(el)
         else:
-            account_sid = connector.account_sid if connector else VoiceSettings.TWILIO_ACCOUNT_SID
-            auth_token = decrypt_data(connector.auth_token) if connector else VoiceSettings.TWILIO_AUTH_TOKEN
-            resp = el.import_twilio_number(
-                phone_number=phone_record.phone_number,
-                label=agent.agent_name,
-                account_sid=account_sid,
-                auth_token=auth_token,
-                agent_id=agent.elevenlabs_agent_id,
-            )
-            if resp.status and resp.data:
-                phone_record.elevenlabs_phone_id = resp.data.get("phone_number_id")
-            else:
-                logger.warning(f"ElevenLabs phone import failed for {phone_record.phone_number}: {resp.error_message}")
+            _import_fresh(el)
     except Exception as e:
         logger.error(f"ElevenLabs phone registration failed for {phone_record.phone_number}: {e}", exc_info=True)
 
 
 def unassign_phone(phone_record: Optional[PhoneNumberService]) -> None:
-    """Unassign a phone record from its agent and best-effort unlink it in ElevenLabs."""
+    """Unassign a phone record from its agent and best-effort delete it from ElevenLabs."""
     if not phone_record:
         return
     phone_record.assigned_to = None
     phone_record.status = PhoneNumberAssignStatus.unassigned
     if phone_record.elevenlabs_phone_id:
         try:
-            ElevenLabsPhoneConnection().update_phone_number_agent(phone_record.elevenlabs_phone_id, None)
+            response = ElevenLabsPhoneConnection().delete_phone_number(phone_record.elevenlabs_phone_id)
+            if response.status:
+                phone_record.elevenlabs_phone_id = None
+            else:
+                logger.warning(
+                    f"Failed to delete ElevenLabs phone number {phone_record.elevenlabs_phone_id}: {response.error_message}"
+                )
         except Exception as e:
-            logger.warning(f"Failed to unlink ElevenLabs phone number {phone_record.elevenlabs_phone_id}: {e}")
+            logger.warning(f"Failed to delete ElevenLabs phone number {phone_record.elevenlabs_phone_id}: {e}")
+
+
+def unassign_phone_numbers_for_connector(session: Session, user_id: int, connector: TwilioUserCreds) -> None:
+    """
+    Best-effort: when a Twilio connector is deleted, unassign every phone number
+    provisioned under that connector's Twilio account from whichever agent it's
+    linked to, both in the DB (`assigned_to`) and in ElevenLabs.
+
+    There's no persistent FK from PhoneNumberService to TwilioUserCreds (the
+    connector is only used transiently to verify/import a number), so the set of
+    numbers belonging to this connector is resolved by listing the connector's
+    Twilio account and matching against locally stored "connector" type records.
+    """
+    try:
+        service = TwilioPhoneService(
+            account_sid=connector.account_sid,
+            auth_token=decrypt_data(connector.auth_token),
+        )
+        connector_numbers = set(service.list_account_phone_numbers())
+    except TwilioRestException as te:
+        logger.warning(f"Could not list Twilio numbers for connector_id={connector.id}: {te}")
+        return
+
+    if not connector_numbers:
+        return
+
+    phone_records = session.query(PhoneNumberService).filter(
+        PhoneNumberService.user_id == user_id,
+        PhoneNumberService.type == "connector",
+        PhoneNumberService.phone_number.in_(connector_numbers),
+        PhoneNumberService.assigned_to.isnot(None),
+    ).all()
+
+    for phone_record in phone_records:
+        logger.info(
+            f"Unassigning phone {phone_record.phone_number} from agent_id={phone_record.assigned_to} "
+            f"due to deletion of connector_id={connector.id}"
+        )
+        unassign_phone(phone_record)
 
 
 # -------------------- CREATE --------------------
