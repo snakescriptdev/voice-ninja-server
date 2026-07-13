@@ -95,6 +95,15 @@ class TwilioPhoneService:
             logger.error(f"Failed to update webhooks for phone number {sid}: {str(e)}")
             raise
 
+    def list_account_phone_numbers(self):
+        """List every phone number currently provisioned on this Twilio account."""
+        try:
+            numbers = self.client.incoming_phone_numbers.list()
+            return [n.phone_number for n in numbers]
+        except TwilioRestException as e:
+            logger.error(f"Failed to list phone numbers for account: {str(e)}")
+            raise
+
     def get_phone_number_details(self, phone_number: str):
         """Fetch details for a phone number from Twilio."""
         try:
