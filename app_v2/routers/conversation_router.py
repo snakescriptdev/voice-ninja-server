@@ -25,6 +25,7 @@ def list_user_conversations(
 	date_after: Optional[date] = Query(None),
 	date_before: Optional[date] = Query(None),
 	call_status: Optional[CallStatusEnum] = Query(None),
+	channel: Optional[ChannelEnum] = Query(None),
 	current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
 	with db():
@@ -52,6 +53,9 @@ def list_user_conversations(
 			
 		if call_status:
 			q = q.filter(ConversationsModel.call_status == call_status)
+
+		if channel:
+			q = q.filter(ConversationsModel.channel == channel)
 
 		q = q.order_by(ConversationsModel.created_at.desc())
 
@@ -88,6 +92,7 @@ def list_user_conversations(
 				"duration": seconds_to_timer(conv.duration),
 				"messages": conv.message_count,
 				"call_status": conv.call_status.name if conv.call_status else None,
+				"channel": conv.channel.value if conv.channel else None,
 				"lead_name": getattr(conv.lead, "name", None) if conv.lead else None,
 				"cost": display_cost
 			})
