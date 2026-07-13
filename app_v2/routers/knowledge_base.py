@@ -1,21 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form, Query
+from fastapi.responses import FileResponse
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import os
 import shutil
 import logging
+import mimetypes
 from datetime import datetime, timezone
 from app_v2.schemas.pagination import PaginatedResponse
 import math
 
 from app_v2.databases.models import KnowledgeBaseModel, AgentModel, UnifiedAuthModel, AgentKnowledgeBaseBridge
 from app_v2.schemas.knowledge_base_schema import (
-    KnowledgeBaseResponse, 
-    KnowledgeBaseURLCreate, 
-    KnowledgeBaseTextCreate, 
-    KnowledgeBaseFileUpdate,
+    KnowledgeBaseResponse,
+    KnowledgeBaseURLCreate,
+    KnowledgeBaseTextCreate,
     KnowledgeBaseURLUpdate,
     KnowledgeBaseTextUpdate,
     KnowledgeBaseBind
@@ -410,6 +411,40 @@ async def get_agent_knowledge_base(
         logger.error(f"Error retrieving agent knowledge base: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@router.get("/{kb_id}/file", openapi_extra={"security": [{"BearerAuth": []}]})
+async def download_knowledge_base_file(
+    kb_id: int,
+    current_user: UnifiedAuthModel = Depends(require_active_user())
+):
+    """Streams the raw file for a file-type KB item so the user can view/download it."""
+    try:
+        with db():
+            kb_entry = db.session.query(KnowledgeBaseModel).filter(
+                KnowledgeBaseModel.id == kb_id,
+                KnowledgeBaseModel.user_id == current_user.id,
+                KnowledgeBaseModel.kb_type == "file"
+            ).first()
+
+            if not kb_entry:
+                raise HTTPException(status_code=404, detail="File Knowledge base item not found")
+
+            if not kb_entry.content_path or not os.path.exists(kb_entry.content_path):
+                raise HTTPException(status_code=404, detail="File not found on server")
+
+            filename = kb_entry.title or os.path.basename(kb_entry.content_path)
+            media_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+
+            return FileResponse(
+                path=kb_entry.content_path,
+                media_type=media_type,
+                filename=filename,
+            )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error downloading knowledge base file: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @router.delete("/{kb_id}", status_code=status.HTTP_204_NO_CONTENT, openapi_extra={"security": [{"BearerAuth": []}]})
 async def delete_knowledge_base_item(
     kb_id: int,
@@ -467,9 +502,15 @@ async def delete_knowledge_base_item(
 @router.put("/{kb_id}/file", response_model=KnowledgeBaseResponse, openapi_extra={"security": [{"BearerAuth": []}]})
 async def update_file_knowledge_base(
     kb_id: int,
-    update_data: KnowledgeBaseFileUpdate,
+    title: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
+    """
+    Renames the KB item and/or replaces its underlying file. Passing a new
+    `file` always triggers a re-sync with ElevenLabs — even if it has the
+    same filename as the current one — since the content may differ.
+    """
     try:
         with db():
             kb_entry = db.session.query(KnowledgeBaseModel).filter(
@@ -477,19 +518,110 @@ async def update_file_knowledge_base(
                 KnowledgeBaseModel.user_id == current_user.id,
                 KnowledgeBaseModel.kb_type == "file"
             ).first()
-            
+
             if not kb_entry:
                 raise HTTPException(status_code=404, detail="File Knowledge base item not found")
-            
-            if update_data.title is not None and update_data.title != kb_entry.title:
-                kb_entry.title = update_data.title
-                if kb_entry.elevenlabs_document_id:
-                    ElevenLabsKB().update_document_name(kb_entry.elevenlabs_document_id, kb_entry.title)
+
+            new_file_path = None
+            new_file_size_mb = None
+            new_title = title if title is not None else kb_entry.title
+
+            if file is not None:
+                _, ext = os.path.splitext(file.filename)
+                if ext.lower() not in ALLOWED_EXTENSIONS:
+                    raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
+
+                file.file.seek(0, 2)
+                file_size = file.file.tell()
+                file.file.seek(0)
+                if file_size == 0:
+                    raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
+
+                new_file_size_mb = file_size / (1024 * 1024)
+                limit = get_feature_limit(current_user.id, "knowledge_base")
+                plan_limit_mb = limit if limit is not None else MAX_FILE_SIZE_IN_MB
+                if plan_limit_mb is not None and new_file_size_mb > plan_limit_mb:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"Your current plan does not support files larger than {plan_limit_mb}MB."
+                    )
+                if new_file_size_mb > MAX_FILE_SIZE_IN_MB:
+                    raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds system 20MB hard limit.")
+
+                # Exclude this item itself — replacing a file with another
+                # copy of the same name is exactly what this endpoint is for.
+                existing_file = db.session.query(KnowledgeBaseModel).filter(
+                    KnowledgeBaseModel.user_id == current_user.id,
+                    KnowledgeBaseModel.kb_type == "file",
+                    KnowledgeBaseModel.id != kb_id,
+                    func.lower(KnowledgeBaseModel.title) == file.filename.lower()
+                ).first()
+                if existing_file:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"A file named '{file.filename}' already exists in your knowledge base."
+                    )
+
+                new_file_path = os.path.join(UPLOAD_DIR, f"{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
+                with open(new_file_path, "wb") as buffer:
+                    shutil.copyfileobj(file.file, buffer)
+
+                if title is None:
+                    new_title = file.filename
+
+            changed = new_file_path is not None or new_title != kb_entry.title
+
+            if changed:
+                # ElevenLabs doesn't support in-place renaming/content updates
+                # for every KB type, so edits are applied by creating a new
+                # document first and only deleting the old one once that
+                # succeeds — deleting first would leave elevenlabs_document_id
+                # pointing at a document that no longer exists if the
+                # re-create then fails, which poisons every future agent sync
+                # referencing this KB (ElevenLabs rejects the whole
+                # knowledge_base array over one stale id).
+                kb_client = ElevenLabsKB()
+                old_document_id = kb_entry.elevenlabs_document_id
+                old_file_path = kb_entry.content_path
+
+                upload_path = new_file_path or kb_entry.content_path
+                if not upload_path or not os.path.exists(upload_path):
+                    if new_file_path and os.path.exists(new_file_path):
+                        os.remove(new_file_path)
+                    raise HTTPException(status_code=400, detail="Local file missing, cannot re-sync with ElevenLabs")
+
+                kb_response = kb_client.upload_document(upload_path, name=new_title)
+                if not kb_response.status:
+                    if new_file_path and os.path.exists(new_file_path):
+                        os.remove(new_file_path)
+                    logger.error(f"Failed to re-sync file KB: {kb_response.error_message}")
+                    db.session.rollback()
+                    raise HTTPException(
+                        status_code=424,
+                        detail=f"Failed to sync file with ElevenLabs: {kb_response.error_message}"
+                    )
+
+                kb_entry.title = new_title
+                kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
+                kb_entry.rag_index_id = kb_client.compute_rag_index(kb_entry.elevenlabs_document_id)
+
+                if new_file_path:
+                    kb_entry.content_path = new_file_path
+                    kb_entry.file_size = round(new_file_size_mb * 1024, 2)  # stored in KB
+                    if old_file_path and old_file_path != new_file_path and os.path.exists(old_file_path):
+                        try:
+                            os.remove(old_file_path)
+                        except OSError as e:
+                            logger.warning(f"Failed to remove old file {old_file_path}: {e}")
+
+                if old_document_id:
+                    kb_client.delete_document(old_document_id)
 
             db.session.commit()
             db.session.refresh(kb_entry)
 
-            # Sync agents
+            # Sync agents this KB is attached to, so they immediately pick up
+            # the new document/RAG index.
             bridges = db.session.query(AgentKnowledgeBaseBridge).filter(AgentKnowledgeBaseBridge.kb_id == kb_id).all()
             for bridge in bridges:
                 sync_agent_kb(bridge.agent_id)
@@ -517,30 +649,36 @@ async def update_url_knowledge_base(
             
             if not kb_entry:
                 raise HTTPException(status_code=404, detail="URL Knowledge base item not found")
-            
-            needs_resync = False
-            if update_data.title is not None and update_data.title != kb_entry.title:
+
+            title_changed = update_data.title is not None and update_data.title != kb_entry.title
+            url_changed = update_data.url is not None and str(update_data.url) != kb_entry.content_path
+
+            if title_changed:
                 kb_entry.title = update_data.title
-                if kb_entry.elevenlabs_document_id:
-                    ElevenLabsKB().update_document_name(kb_entry.elevenlabs_document_id, kb_entry.title)
-
-            if update_data.url is not None and str(update_data.url) != kb_entry.content_path:
+            if url_changed:
                 kb_entry.content_path = str(update_data.url)
-                needs_resync = True
 
-            if needs_resync:
-                # Delete old doc and upload new URL
+            if title_changed or url_changed:
+                # Create the new document first, delete the old one only on
+                # success — see comment in update_file_knowledge_base for why
+                # delete-then-create is unsafe.
                 kb_client = ElevenLabsKB()
-                if kb_entry.elevenlabs_document_id:
-                    kb_client.delete_document(kb_entry.elevenlabs_document_id)
-                
+                old_document_id = kb_entry.elevenlabs_document_id
+
                 kb_response = kb_client.add_url_document(kb_entry.content_path, name=kb_entry.title)
-                if kb_response.status:
-                    kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
-                    # Compute new RAG index
-                    kb_entry.rag_index_id = kb_client.compute_rag_index(kb_entry.elevenlabs_document_id)
-                else:
+                if not kb_response.status:
                     logger.error(f"Failed to re-sync URL KB: {kb_response.error_message}")
+                    db.session.rollback()
+                    raise HTTPException(
+                        status_code=424,
+                        detail=f"Failed to sync URL with ElevenLabs: {kb_response.error_message}"
+                    )
+
+                kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
+                # Compute new RAG index
+                kb_entry.rag_index_id = kb_client.compute_rag_index(kb_entry.elevenlabs_document_id)
+                if old_document_id:
+                    kb_client.delete_document(old_document_id)
 
             db.session.commit()
             db.session.refresh(kb_entry)
@@ -573,29 +711,36 @@ async def update_text_knowledge_base(
             
             if not kb_entry:
                 raise HTTPException(status_code=404, detail="Text Knowledge base item not found")
-            
-            needs_resync = False
-            if update_data.title is not None and update_data.title != kb_entry.title:
+
+            title_changed = update_data.title is not None and update_data.title != kb_entry.title
+            content_changed = update_data.content_text is not None and update_data.content_text != kb_entry.content_text
+
+            if title_changed:
                 kb_entry.title = update_data.title
-                if kb_entry.elevenlabs_document_id:
-                    ElevenLabsKB().update_document_name(kb_entry.elevenlabs_document_id, kb_entry.title)
-
-            if update_data.content_text is not None and update_data.content_text != kb_entry.content_text:
+            if content_changed:
                 kb_entry.content_text = update_data.content_text
-                needs_resync = True
 
-            if needs_resync:
+            if title_changed or content_changed:
+                # Create the new document first, delete the old one only on
+                # success — see comment in update_file_knowledge_base for why
+                # delete-then-create is unsafe.
                 kb_client = ElevenLabsKB()
-                if kb_entry.elevenlabs_document_id:
-                    kb_client.delete_document(kb_entry.elevenlabs_document_id)
-                
+                old_document_id = kb_entry.elevenlabs_document_id
+
                 kb_response = kb_client.add_text_document(kb_entry.content_text, name=kb_entry.title)
-                if kb_response.status:
-                    kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
-                    # Compute new RAG index
-                    kb_entry.rag_index_id = kb_client.compute_rag_index(kb_entry.elevenlabs_document_id)
-                else:
+                if not kb_response.status:
                     logger.error(f"Failed to re-sync text KB: {kb_response.error_message}")
+                    db.session.rollback()
+                    raise HTTPException(
+                        status_code=424,
+                        detail=f"Failed to sync text with ElevenLabs: {kb_response.error_message}"
+                    )
+
+                kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
+                # Compute new RAG index
+                kb_entry.rag_index_id = kb_client.compute_rag_index(kb_entry.elevenlabs_document_id)
+                if old_document_id:
+                    kb_client.delete_document(old_document_id)
 
             db.session.commit()
             db.session.refresh(kb_entry)

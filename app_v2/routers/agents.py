@@ -1241,7 +1241,12 @@ async def update_agent(
             
             if not el_response.status:
                 logger.error(f"❌ ElevenLabs agent update failed: {el_response.error_message}")
-             
+                db.session.rollback()
+                raise HTTPException(
+                    status_code=424,
+                    detail=f"Failed to update agent in ElevenLabs: {el_response.error_message}"
+                )
+
             logger.info(f"✅ ElevenLabs agent '{agent.elevenlabs_agent_id}' updated successfully")
         except HTTPException:
             raise
