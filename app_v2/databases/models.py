@@ -152,6 +152,7 @@ class UnifiedAuthModel(Base):
     functions = relationship("FunctionModel",back_populates="user",cascade="all, delete-orphan")
     conversations = relationship("ConversationsModel",back_populates="user",cascade="all, delete-orphan")
     widgets = relationship("WidgetModel", back_populates="user",cascade="all, delete-orphan")
+    web_agent_pages = relationship("WebAgentPageModel", back_populates="user",cascade="all, delete-orphan")
     subscriptions = relationship("UserSubscriptionModel", back_populates="user",cascade="all, delete-orphan")
     payments = relationship("PaymentModel", back_populates="user",cascade="all, delete-orphan")
     coins_ledger = relationship("CoinsLedgerModel", back_populates="user",cascade="all, delete-orphan")
@@ -275,6 +276,7 @@ class AgentModel(Base):
     agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent",cascade="all, delete-orphan", order_by="AgentKnowledgeBaseBridge.id")
     conversations = relationship("ConversationsModel",back_populates="agent",cascade="all, delete-orphan")
     widget = relationship("WidgetModel",back_populates="agent",cascade="all, delete-orphan")
+    web_agent_pages = relationship("WebAgentPageModel",back_populates="agent",cascade="all, delete-orphan")
 
 
 
@@ -600,6 +602,7 @@ class WidgetModel(Base):
     user = relationship("UnifiedAuthModel", back_populates="widgets")
     agent = relationship("AgentModel",back_populates="widget")
     leads = relationship("WidgetLeadModel", back_populates="widget",cascade="all, delete-orphan")
+    web_agent_pages = relationship("WebAgentPageModel", back_populates="widget",cascade="all, delete-orphan")
 
 
 class WidgetLeadModel(Base):
@@ -624,6 +627,52 @@ class WidgetLeadModel(Base):
 
     widget = relationship("WidgetModel", back_populates="leads")
     conversation = relationship("ConversationsModel", back_populates="lead")
+
+
+class WebAgentPageModel(Base):
+    __tablename__ = "web_agent_pages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    public_id: Mapped[str] = mapped_column(
+        String(36),
+        unique=True,
+        index=True,
+        default=lambda: str(uuid.uuid4())
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("unified_auth.id"),
+        nullable=False
+    )
+
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id"),
+        nullable=False
+    )
+
+    widget_id: Mapped[int] = mapped_column(
+        ForeignKey("widgets.id"),
+        nullable=False
+    )
+
+    web_agent_name: Mapped[str] = mapped_column(String(255))
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    bg_color: Mapped[str] = mapped_column(String(20), default="#0B0B0F")
+
+    agent_position: Mapped[str] = mapped_column(
+        Enum("left", "center", "right", name="web_agent_position"),
+        default="center"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    user = relationship("UnifiedAuthModel", back_populates="web_agent_pages")
+    agent = relationship("AgentModel", back_populates="web_agent_pages")
+    widget = relationship("WidgetModel", back_populates="web_agent_pages")
+
 
 class ActivityLogModel(Base):
     __tablename__ = "activity_logs"
