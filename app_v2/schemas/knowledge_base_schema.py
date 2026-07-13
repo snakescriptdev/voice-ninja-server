@@ -9,9 +9,6 @@ class KnowledgeBaseTextCreate(BaseModel):
     title: str
     content: str
 
-class KnowledgeBaseFileUpdate(BaseModel):
-    title: Optional[str] = None
-
 class KnowledgeBaseURLUpdate(BaseModel):
     title: Optional[str] = None
     url: Optional[HttpUrl] = None
