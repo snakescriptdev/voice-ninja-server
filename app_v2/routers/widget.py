@@ -129,6 +129,7 @@ def _has_sufficient_coins(user_balance: int) -> tuple[bool, int]:
 async def fetch_and_validate_widget(
     websocket: WebSocket,
     public_id: str,
+    channel: ChannelEnum = ChannelEnum.widget,
 ) -> Optional[WidgetContext]:
     """
     Loads WidgetModel, validates it and its owner's limits.
@@ -176,7 +177,7 @@ async def fetch_and_validate_widget(
         try:
             check_feature_limit_and_usage(user_id, "monthly_minutes")
         except HTTPException as e:
-            conversation_row_id = start_conversation(user_id, widget.agent_id, ChannelEnum.widget)
+            conversation_row_id = start_conversation(user_id, widget.agent_id, channel)
             mark_conversation_failed(conversation_row_id, "Monthly minutes limit reached")
             await _reject_ws(websocket, e.detail)
             logger.error("Monthly minutes limit for owner %s: %s", user_id, e.detail)
@@ -1196,7 +1197,7 @@ async def embed_script(public_id: str):
 
 
 @router.websocket("/ws/{public_id}")
-async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int] = None):
+async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int] = None, source: Optional[str] = None):
     """
     Pure orchestration — zero business logic lives here.
 
@@ -1207,12 +1208,18 @@ async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int]
       4. Run audio bridge session
       5. Log chat end
       6. Save conversation + notify
+
+    `source` distinguishes callers that share this same WS route: the
+    embeddable widget script omits it (channel=widget), while the standalone
+    Web Agent page passes `source=web_agent` (channel=web_agent).
     """
     await websocket.accept()
     logger.info("Widget WS connected for public_id=%s", public_id)
 
+    channel = ChannelEnum.web_agent if source == "web_agent" else ChannelEnum.widget
+
     # ── 1. Validate ───────────────────────────────────────────────────────────
-    ctx = await fetch_and_validate_widget(websocket, public_id)
+    ctx = await fetch_and_validate_widget(websocket, public_id, channel)
     if not ctx:
         return
 
@@ -1220,7 +1227,7 @@ async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int]
     log_web_chat_started(ctx, lead_id)
 
     with db():
-        conversation_row_id = start_conversation(ctx.user_id, ctx.agent_id, ChannelEnum.widget)
+        conversation_row_id = start_conversation(ctx.user_id, ctx.agent_id, channel)
 
     # ── 3. Run session ────────────────────────────────────────────────────────
     failure_reason = None
