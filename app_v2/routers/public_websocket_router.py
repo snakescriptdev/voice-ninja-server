@@ -21,6 +21,8 @@ from app_v2.utils.conversation_lifecycle import (
     start_conversation,
     finalize_conversation,
     mark_conversation_failed,
+    get_minimum_call_balance,
+    is_balance_exhausted,
 )
 from app_v2.core.logger import setup_logger
 from app_v2.routers.websocket_router import check_elevenlabs_credits
@@ -88,8 +90,13 @@ async def public_websocket_agent(
 
         # 3. Check Balance and Limits
         user_balance = get_user_coin_balance(user_id)
-        if user_balance <= 0:
-            await websocket.send_json({"type": "error", "message": "Insufficient coins", "code": 1008})
+        minimum_required = get_minimum_call_balance()
+        if user_balance < minimum_required:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Insufficient coins. Minimum {minimum_required} coins required to start a call.",
+                "code": 1008,
+            })
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Insufficient coins")
             return
         
@@ -130,6 +137,7 @@ async def public_websocket_agent(
     minute_limit = get_feature_limit(user_id, "monthly_minutes")
     conversation_id = None
     limit_reached = False
+    low_balance_reached = False
 
     async with aiohttp.ClientSession() as session:
         if not ELEVENLABS_API_KEY:
@@ -145,7 +153,7 @@ async def public_websocket_agent(
                 logger.info(f"Connected to ElevenLabs WebSocket for agent {elevenlabs_agent_id}")
                 
                 async def browser_to_elevenlabs():
-                    nonlocal limit_reached
+                    nonlocal limit_reached, low_balance_reached
                     chunk_count = 0
                     try:
                         while True:
@@ -157,6 +165,17 @@ async def public_websocket_agent(
                                     await websocket.send_json({
                                         "type": "error",
                                         "message": "Monthly minutes limit reached. Call disconnected."
+                                    })
+                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                                    return
+
+                                with db():
+                                    low_balance = is_balance_exhausted(call_start_time, user_balance)
+                                if low_balance:
+                                    low_balance_reached = True
+                                    await websocket.send_json({
+                                        "type": "error",
+                                        "message": "Low balance. Call ended to avoid exceeding your available credits."
                                     })
                                     await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                                     return
@@ -288,9 +307,14 @@ async def public_websocket_agent(
             await websocket.send_json({"type": "error", "message": "Failed to connect to voice engine", "code": 1011})
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
 
-    limit_error = "Monthly minutes limit reached" if limit_reached else None
+    if limit_reached:
+        limit_error = "Monthly minutes limit reached"
+    elif low_balance_reached:
+        limit_error = "Call ended due to low balance"
+    else:
+        limit_error = None
     if limit_error:
-        logger.warning(f"Call for user {user_id} ended due to monthly minutes limit")
+        logger.warning(f"Call for user {user_id} ended: {limit_error}")
 
     # Post-conversation logic
     # Even when the monthly limit ended the call, a captured conversation_id

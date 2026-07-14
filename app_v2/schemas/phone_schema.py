@@ -8,9 +8,6 @@ class PhoneNumberSearchRequest(BaseModel):
     area_code: Optional[str] = Field(None, description="Area code to search in")
     limit: Optional[int] = Field(10, ge=1, le=50)
 
-class PhoneNumberBuyRequest(BaseModel):
-    phone_number: str = Field(..., description="The phone number to purchase in E.164 format")
-
 class PhoneNumberAssignRequest(BaseModel):
     phone_number_id: int
     agent_id: int

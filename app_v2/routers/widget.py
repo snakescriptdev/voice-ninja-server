@@ -28,7 +28,6 @@ from app_v2.core.logger import setup_logger
 from app_v2.databases.models import (
     AgentModel,
     ConversationsModel,
-    CoinUsageSettingsModel,
     UnifiedAuthModel,
     WidgetLeadModel,
     WidgetModel,
@@ -41,6 +40,8 @@ from app_v2.utils.conversation_lifecycle import (
     start_conversation,
     finalize_conversation,
     mark_conversation_failed,
+    get_minimum_call_balance,
+    is_balance_exhausted,
 )
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.email_service import send_conversation_notification_email, send_low_coins_email
@@ -87,7 +88,9 @@ class WidgetContext:
     initial_usage: float
     minute_limit: Optional[float]
     call_start_time: datetime
+    owner_balance: int
     limit_reached: bool = False
+    low_balance_reached: bool = False
 
 
 @dataclass
@@ -110,19 +113,9 @@ def _reject_ws(websocket: WebSocket, message: str, code: int = 1008):
     return _inner()
 
 
-def _get_minimum_call_balance() -> int:
-    """
-    Minimum coins required to start a call (must be inside db() context).
-
-    Formula: (3 × cost_per_minute_in_coins) + static_conversation_cost
-    """
-    settings = CoinUsageSettingsModel.get_settings()
-    return int((3 * settings.cost_per_minute_in_coins) + settings.static_conversation_cost)
-
-
 def _has_sufficient_coins(user_balance: int) -> tuple[bool, int]:
     """Returns (is_sufficient, minimum_required). Must be inside db() context."""
-    minimum = _get_minimum_call_balance()
+    minimum = get_minimum_call_balance()
     return user_balance >= minimum, minimum
 
 
@@ -197,6 +190,7 @@ async def fetch_and_validate_widget(
             initial_usage=get_feature_usage(user_id, "monthly_minutes"),
             minute_limit=get_feature_limit(user_id, "monthly_minutes"),
             call_start_time=datetime.now(timezone.utc),
+            owner_balance=owner_balance,
         )
 
 
@@ -385,6 +379,11 @@ def _is_minute_limit_exceeded(ctx: WidgetContext) -> bool:
     return (ctx.initial_usage + elapsed) >= ctx.minute_limit
 
 
+def _is_low_balance_exceeded(ctx: WidgetContext) -> bool:
+    with db():
+        return is_balance_exhausted(ctx.call_start_time, ctx.owner_balance)
+
+
 async def run_widget_session(
     websocket: WebSocket,
     ctx: WidgetContext,
@@ -404,7 +403,7 @@ async def run_widget_session(
     el_ended = asyncio.Event()
 
     while True:
-        # Periodic minute-limit check
+        # Periodic minute-limit / low-balance checks
         chunk_count += 1
         if chunk_count % 10 == 0 and _is_minute_limit_exceeded(ctx):
             logger.warning("Auto-disconnect user %s: monthly minutes limit", ctx.user_id)
@@ -412,6 +411,16 @@ async def run_widget_session(
             await websocket.send_json({
                 "type": "error",
                 "message": "Monthly minutes limit reached. Call disconnected.",
+            })
+            await websocket.close(code=1008)
+            break
+
+        if chunk_count % 10 == 0 and _is_low_balance_exceeded(ctx):
+            logger.warning("Auto-disconnect user %s: low balance", ctx.user_id)
+            ctx.low_balance_reached = True
+            await websocket.send_json({
+                "type": "error",
+                "message": "Low balance. Call ended to avoid exceeding your available credits.",
             })
             await websocket.close(code=1008)
             break
@@ -1238,7 +1247,12 @@ async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int]
         conv_id = None
         failure_reason = "Widget session failed"
 
-    limit_error = "Monthly minutes limit reached" if ctx.limit_reached else None
+    if ctx.limit_reached:
+        limit_error = "Monthly minutes limit reached"
+    elif ctx.low_balance_reached:
+        limit_error = "Call ended due to low balance"
+    else:
+        limit_error = None
 
     # ── 4. Log end ────────────────────────────────────────────────────────────
     log_web_chat_ended(ctx, conv_id, lead_id)

@@ -14,7 +14,6 @@ from fastapi_sqlalchemy import db
 from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
 from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
-from app_v2.utils.signup_utils import grant_free_plan_on_signup
 from app_v2.utils.otp_utils import (
     generate_otp,
     is_email,

@@ -8,15 +8,15 @@ from datetime import datetime, timezone, timedelta
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.utils.feature_access import RequireFeature
 from app_v2.databases.models import (
-    UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, 
-    ConversationsModel, PlanModel, UserSubscriptionModel, CoinsLedgerModel, 
-    PaymentModel, WidgetModel, WidgetLeadModel,APIDailyUsageModel,CoinPackageModel,
+    UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel,
+    ConversationsModel, CoinsLedgerModel,
+    PaymentModel, WidgetModel, WidgetLeadModel,APIDailyUsageModel,
     APICallLogModel
 )
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
 from sqlalchemy import or_
 from app_v2.schemas.enum_types import (
-    CoinTransactionTypeEnum, PaymentStatusEnum, SubscriptionStatusEnum, PaymentTypeEnum,
+    CoinTransactionTypeEnum, PaymentStatusEnum, PaymentTypeEnum,
     SUBSCRIPTION_BILLING_EVENT_TYPES, SUBSCRIPTION_BILLING_EVENT_STATUS_LABELS,
 )
 from app_v2.utils.coin_utils import get_user_coin_balance
@@ -31,7 +31,6 @@ from app_v2.schemas.user_dashboard import (
     HourlyDistribution,
     AgentAnalytics,
     ChannelDistribution,
-    UserSubscriptionResponse,
     UserCoinUsageResponse,
     CoinBucketsResponse,
     CoinBucketItem,
@@ -56,18 +55,6 @@ logger = setup_logger(__name__)
 security = HTTPBearer()
 
 router = APIRouter(prefix="/api/v2/user-dashboard", tags=["User Dashboard"], dependencies=[Depends(security)])
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Active-like statuses (kept in sync with feature_access.py / subscriptions.py)
-# ──────────────────────────────────────────────────────────────────────────────
-# authenticated is included so the dashboard shows the correct plan immediately
-# after checkout, before the subscription.charged webhook fires.
-_ACTIVE_LIKE = (
-    SubscriptionStatusEnum.active,
-    SubscriptionStatusEnum.paused,
-    SubscriptionStatusEnum.authenticated,
-)
 
 
 @router.get("/agents-data", status_code=status.HTTP_200_OK,openapi_extra={"security":[{"BearerAuth":[]}]})
@@ -362,102 +349,6 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         )
 
 
-@router.get("/get-user-subscription", response_model=UserSubscriptionResponse, openapi_extra={"security": [{"BearerAuth": []}]})
-def user_subscription(current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True))):
-    """
-    Returns the user's current subscription and plan details.
-
-    Priority order:
-      1. active/paused/authenticated with cancel_at_period_end=False
-         (the clean, canonical subscription — includes authenticated so the
-         dashboard reflects the new plan immediately after checkout)
-      2. active/paused/authenticated with cancel_at_period_end=True
-         (update or cancel in-flight — user still has access until period end)
-      3. Most recent row regardless of status
-         (expired/cancelled — show last known plan for display purposes)
-    """
-    try:
-        logger.info(f"Fetching user subscription for user: {current_user.id}")
-
-        # Priority 1: clean active/paused/authenticated subscription
-        user_subscription = (
-            db.session.query(UserSubscriptionModel)
-            .filter(
-                UserSubscriptionModel.user_id == current_user.id,
-                UserSubscriptionModel.status.in_(_ACTIVE_LIKE),
-                UserSubscriptionModel.cancel_at_period_end == False,
-            )
-            .order_by(UserSubscriptionModel.created_at.desc())
-            .first()
-        )
-
-        # Priority 2: active/paused/authenticated but cancel or update in-flight
-        if not user_subscription:
-            user_subscription = (
-                db.session.query(UserSubscriptionModel)
-                .filter(
-                    UserSubscriptionModel.user_id == current_user.id,
-                    UserSubscriptionModel.status.in_(_ACTIVE_LIKE),
-                )
-                .order_by(UserSubscriptionModel.created_at.desc())
-                .first()
-            )
-
-        # Priority 3: last resort — most recent regardless of status
-        if not user_subscription:
-            user_subscription = (
-                db.session.query(UserSubscriptionModel)
-                .filter(UserSubscriptionModel.user_id == current_user.id)
-                .order_by(UserSubscriptionModel.created_at.desc())
-                .first()
-            )
-
-        if not user_subscription:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User subscription not found"
-            )
-
-        plan = user_subscription.plan
-        logger.info(f"User subscription found: {user_subscription}")
-        return UserSubscriptionResponse(
-            # ---- subscription ----
-            subscription_id=user_subscription.id,
-            status=user_subscription.status,
-            current_period_start=user_subscription.current_period_start.date(),
-            current_period_end=user_subscription.current_period_end.date(),
-            cancel_at_period_end=user_subscription.cancel_at_period_end,
-            provider=user_subscription.provider,
-            provider_subscription_id=user_subscription.provider_subscription_id,
-            marked_for_update=True if user_subscription.next_plan_id else False,
-            next_plan_id=user_subscription.next_plan_id or None,
-
-            # ---- plan ----
-            plan_id=plan.id,
-            plan_name=plan.display_name,
-            description=plan.description,
-            price=plan.price,
-            currency=plan.currency,
-            coins_included=plan.coins_included,
-            carry_forward_coins=plan.carry_forward_coins,
-            billing_period=plan.billing_period,
-            icon=plan.icon,
-            gradient_color=plan.gradient_color,
-            mark_as_popular=plan.mark_as_popular,
-            is_active=plan.is_active,
-
-            # ---- features ----
-            features=plan.features
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in user_subscription: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch user subscription data: {str(e)}"
-        )
-
 @router.get("/coin-usage", response_model=UserCoinUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True))):
     try:
@@ -527,13 +418,6 @@ def get_coin_buckets(
 
         reference_ids = [item.reference_id for item in buckets_query if item.reference_id]
 
-        subscriptions = (
-            db.session.query(UserSubscriptionModel)
-            .filter(UserSubscriptionModel.id.in_(reference_ids))
-            .all()
-        )
-        subscription_map = {s.id: s for s in subscriptions}
-
         payments = (
             db.session.query(PaymentModel)
             .filter(PaymentModel.id.in_(reference_ids))
@@ -541,38 +425,15 @@ def get_coin_buckets(
         )
         payment_map = {p.id: p for p in payments}
 
-        bundle_ids = []
-        for p in payments:
-            metadata = p.metadata_json or {}
-            if p.payment_type == PaymentTypeEnum.coin_purchase:
-                bundle_id = metadata.get("bundle_id")
-                if bundle_id:
-                    bundle_ids.append(bundle_id)
-
-        bundles = (
-            db.session.query(CoinPackageModel)
-            .filter(CoinPackageModel.id.in_(bundle_ids))
-            .all()
-        )
-        bundle_map = {b.id: b for b in bundles}
-
         buckets = []
         now = datetime.now(timezone.utc)
 
         for item in buckets_query:
             source_name = "Coins"
 
-            sub = subscription_map.get(item.reference_id)
-            if sub and sub.plan:
-                source_name = f"{sub.plan.display_name} Subscription"
-            else:
-                payment = payment_map.get(item.reference_id)
-                if payment and payment.payment_type == PaymentTypeEnum.coin_purchase:
-                    metadata = payment.metadata_json or {}
-                    bundle_id = metadata.get("bundle_id")
-                    bundle = bundle_map.get(bundle_id)
-                    if bundle:
-                        source_name = bundle.name
+            payment = payment_map.get(item.reference_id)
+            if payment and payment.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
+                source_name = "Credit Purchase"
 
             bucket_status = None
             if item.expiry_at and now <= item.expiry_at <= now + timedelta(days=7):
@@ -682,22 +543,15 @@ def get_billing_history(
             ActivityLogModel.event_type.in_(SUBSCRIPTION_BILLING_EVENT_TYPES),
         ).all()
 
-        plans = {p.id: p.display_name for p in db.session.query(PlanModel).all()}
-        from app_v2.databases.models import CoinPackageModel
-        bundles = {b.id: b.name for b in db.session.query(CoinPackageModel).all()}
-
         dated_items = []
         for p in payments:
-            description = "Miscellaneous Payment"
-            from app_v2.schemas.enum_types import PaymentTypeEnum
-            if p.payment_type == PaymentTypeEnum.subscription:
-                p_id = p.metadata_json.get("plan_id") if p.metadata_json else None
-                plan_name = plans.get(p_id, "Monthly Subscription")
-                description = f"Subscription: {plan_name}"
-            elif p.payment_type in [PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon]:
-                b_id = p.metadata_json.get("bundle_id") if p.metadata_json else None
-                bundle_name = bundles.get(b_id, "Coin Bundle")
-                description = f"Purchase: {bundle_name}"
+            if p.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
+                coins = p.metadata_json.get("coins") if p.metadata_json else None
+                description = f"Credit Purchase ({coins} credits)" if coins else "Credit Purchase"
+            elif p.payment_type == PaymentTypeEnum.subscription:
+                description = "Subscription Payment"
+            else:
+                description = "Miscellaneous Payment"
 
             dated_items.append((p.created_at, BillingHistoryItem(
                 date=p.created_at,
