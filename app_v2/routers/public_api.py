@@ -64,7 +64,7 @@ from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.rate_limit import track_and_limit_api, log_public_api_call
 from app_v2.utils.feature_access import RequireFeaturePublic, require_feature_enabled, check_can_enable_resource
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
-from app_v2.utils.elevenlabs import ElevenLabsKB
+from app_v2.utils.elevenlabs import ElevenLabsKB, describe_kb_sync_error
 from app_v2.utils.scraping_utils import scrape_webpage_title
 from app_v2.utils.activity_logger import log_activity
 from app_v2.core.logger import setup_logger
@@ -1247,14 +1247,17 @@ async def create_kb_url_public(
                 detail="This URL has already been added to your knowledge base."
             )
 
+        # Validate the URL is actually reachable before bothering ElevenLabs.
+        title = scrape_webpage_title(url_str)
+
         kb_client = ElevenLabsKB()
         kb_response = kb_client.add_url_document(url_str)
         if not kb_response.status:
-            raise HTTPException(status_code=424, detail=f"ElevenLabs failure: {kb_response.error_message}")
-        
+            logger.error(f"ElevenLabs KB URL addition failed: {kb_response.error_message}")
+            raise HTTPException(status_code=424, detail=describe_kb_sync_error(kb_response.error_message))
+
         doc_id = kb_response.data.get("document_id")
         rag_id = kb_client.compute_rag_index(doc_id)
-        title = scrape_webpage_title(url_str)
 
         kb_entry = KnowledgeBaseModel(
             user_id=current_user.id,

@@ -32,7 +32,6 @@ from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 from app_v2.core.logger import setup_logger
 from app_v2.databases.models import (
     AgentModel,
-    CoinUsageSettingsModel,
     ConversationsModel,
     UnifiedAuthModel,
 )
@@ -43,6 +42,8 @@ from app_v2.utils.conversation_lifecycle import (
     start_conversation,
     finalize_conversation,
     mark_conversation_failed,
+    get_minimum_call_balance,
+    is_balance_exhausted,
 )
 from app_v2.utils.email_service import send_low_coins_email
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
@@ -89,7 +90,9 @@ class CallContext:
     minute_limit: Optional[float]
     initial_usage: float
     call_start_time: datetime
+    user_balance: int
     limit_reached: bool = False
+    low_balance_reached: bool = False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -230,26 +233,12 @@ def _is_monthly_limit_ok(user_id: int) -> bool:
         return False
 
 
-def _get_minimum_call_balance() -> int:
-    """
-    Calculates the minimum coin balance required to start a call.
-
-    Formula:
-        minimum = (3 × cost_per_minute_in_coins) + static_conversation_cost
-
-    Rationale: user must afford at least 3 minutes + the flat per-call fee
-    before we even open the ElevenLabs socket.
-    """
-    settings = CoinUsageSettingsModel.get_settings()
-    return int((3 * settings.cost_per_minute_in_coins) + settings.static_conversation_cost)
-
-
 def _has_sufficient_coins(user_balance: int) -> tuple[bool, int]:
     """
     Returns (is_sufficient, minimum_required).
     Keeps the threshold calculation in one place so it can be logged clearly.
     """
-    minimum = _get_minimum_call_balance()
+    minimum = get_minimum_call_balance()
     return user_balance >= minimum, minimum
 
 
@@ -413,6 +402,15 @@ async def browser_to_elevenlabs(
                     logger.warning(f"Auto-disconnect user {ctx.user_id}: monthly minutes limit")
                     ctx.limit_reached = True
                     await websocket.send_json({"type": "error", "message": "Monthly minutes limit reached."})
+                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    return
+
+                with db():
+                    low_balance = is_balance_exhausted(ctx.call_start_time, ctx.user_balance)
+                if low_balance:
+                    logger.warning(f"Auto-disconnect user {ctx.user_id}: low balance")
+                    ctx.low_balance_reached = True
+                    await websocket.send_json({"type": "error", "message": "Low balance. Call ended to avoid exceeding your available credits."})
                     await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                     return
 
@@ -688,6 +686,7 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
         minute_limit=limits.minute_limit,
         initial_usage=limits.initial_usage,
         call_start_time=datetime.now(timezone.utc),
+        user_balance=limits.user_balance,
     )
 
     # ── 5. Log start ──────────────────────────────────────────────────────────
@@ -720,9 +719,14 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
             mark_conversation_failed(conversation_row_id, "Failed to connect to ElevenLabs")
         return
 
-    limit_error = "Monthly minutes limit reached" if ctx.limit_reached else None
+    if ctx.limit_reached:
+        limit_error = "Monthly minutes limit reached"
+    elif ctx.low_balance_reached:
+        limit_error = "Call ended due to low balance"
+    else:
+        limit_error = None
     if limit_error:
-        logger.warning(f"Call for user {auth.user_id} ended due to monthly minutes limit")
+        logger.warning(f"Call for user {auth.user_id} ended: {limit_error}")
 
     # ── 7. Log completion ─────────────────────────────────────────────────────
     log_conversation_completed(auth.user_id, agent_id, agent_result.agent, agent_result.elevenlabs_agent_id, conversation_id)

@@ -3,13 +3,12 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, desc, select
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-from app_v2.databases.models import UnifiedAuthModel, UserSubscriptionModel, PlanModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, SubscriptionStatusEnum
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
 from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
-from app_v2.utils.payment_utils import PaymentProviderFactory
 
 from app_v2.utils.coin_utils import admin_adjust_coins, get_user_coin_balance
 
@@ -26,19 +25,8 @@ def get_user_management_stats():
         # Total users (non-admin)
         total_users = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.is_admin.is_(False)).count()
 
-        # Users by plan
-        plan_counts = db.session.query(
-            PlanModel.display_name,
-            func.count(UserSubscriptionModel.id).label("count")
-        ).join(UserSubscriptionModel, PlanModel.id == UserSubscriptionModel.plan_id)\
-         .filter(UserSubscriptionModel.status == SubscriptionStatusEnum.active)\
-         .group_by(PlanModel.display_name).all()
-
-        plan_distribution = [{"plan_name": r.display_name, "count": r.count} for r in plan_counts]
-
         return {
-            "total_users": total_users,
-            "plan_distribution": plan_distribution
+            "total_users": total_users
         }
     except Exception as e:
         logger.error(f"Error in get_user_management_stats: {str(e)}")
@@ -49,7 +37,6 @@ def list_users_managed(
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1),
     search: Optional[str] = None,
-    plan_id: Optional[int] = Query(None),
     is_suspended: Optional[bool] = Query(None),
     sort_order: str = Query("desc", enum=["asc", "desc"])
 ):
@@ -121,8 +108,6 @@ def list_users_managed(
             UnifiedAuthModel.first_name,
             UnifiedAuthModel.email,
             UnifiedAuthModel.is_suspended,
-            PlanModel.display_name.label("plan_name"),
-            PlanModel.id.label("plan_id"),
             func.coalesce(coins_subquery.c.balance, 0).label("balance_coins"),
             func.coalesce(agent_subquery.c.agent_count, 0).label("no_of_agents"),
             func.coalesce(phone_subquery.c.phone_count, 0).label("no_of_phones"),
@@ -135,8 +120,6 @@ def list_users_managed(
             func.coalesce(calls_weekly_subquery.c.calls_weekly, 0).label("calls_weekly"),
             func.coalesce(voice_subquery.c.voice_count, 0).label("no_of_voices"),
         ).filter(UnifiedAuthModel.is_admin.is_(False))\
-         .outerjoin(UserSubscriptionModel, (UnifiedAuthModel.id == UserSubscriptionModel.user_id) & (UserSubscriptionModel.status == SubscriptionStatusEnum.active))\
-         .outerjoin(PlanModel, UserSubscriptionModel.plan_id == PlanModel.id)\
          .outerjoin(agent_subquery, UnifiedAuthModel.id == agent_subquery.c.user_id)\
          .outerjoin(phone_subquery, UnifiedAuthModel.id == phone_subquery.c.user_id)\
          .outerjoin(coins_subquery, UnifiedAuthModel.id == coins_subquery.c.user_id)\
@@ -155,10 +138,6 @@ def list_users_managed(
                     UnifiedAuthModel.email.ilike(f"%{search}%")
                 )
             )
-
-        # Plan Filter
-        if plan_id:
-            query = query.filter(PlanModel.id == plan_id)
 
         # Suspended Filter
         if is_suspended is not None:
@@ -181,8 +160,6 @@ def list_users_managed(
                 user_id=r.user_id,
                 username=r.first_name or r.username or "Unknown",
                 email=r.email or "",
-                plan_name=r.plan_name,
-                plan_id=r.plan_id,
                 balance_coins=int(r.balance_coins),
                 no_of_agents=r.no_of_agents,
                 no_of_phones=r.no_of_phones,
@@ -225,36 +202,15 @@ def suspend_user(user_id:int,request:SuspendUserRequest):
         if request.is_suspended:
             if request.reason:
                 user.suspension_reason = request.reason
-            #disable agents for the user and pause subscription.
+            #disable agents for the user
             widgets = user.widgets
             for widget in widgets:
                 widget.is_enabled = False
-            #pause subscription for user
-            subscriptions= user.subscriptions
-            for subscription in subscriptions:
-                if subscription.status == SubscriptionStatusEnum.active:
-                    provider = subscription.provider
-                    subscription_provider =PaymentProviderFactory.get_provider(provider)
-                    #pause subscription
-                    subscription_provider.pause_subscription(subscription.provider_subscription_id)
-                    logger.info(f"Subscription paused for user {user_id}")
-                    subscription.status = SubscriptionStatusEnum.paused
         else:
             user.suspension_reason = None
-            #resume subscription for user
-            #disable agents for the user and pause subscription.
             widgets = user.widgets
             for widget in widgets:
                 widget.is_enabled = True
-            subscriptions= user.subscriptions
-            for subscription in subscriptions:
-                if subscription.status == SubscriptionStatusEnum.paused:
-                    provider = subscription.provider
-                    subscription_provider =PaymentProviderFactory.get_provider(provider)
-                    #resume subscription
-                    subscription_provider.resume_subscription(subscription.provider_subscription_id)
-                    logger.info(f"Subscription resumed for user {user_id}")
-                    subscription.status = SubscriptionStatusEnum.active
         db.session.add(user)
         db.session.commit()
         db.session.refresh(user)

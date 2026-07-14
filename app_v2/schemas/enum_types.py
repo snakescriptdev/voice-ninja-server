@@ -84,28 +84,9 @@ class WebAgentPosition(str, Enum):
     center = "center"
     right = "right"
 
-class BillingPeriodEnum(str, Enum):
-    monthly = "monthly"
-    annual = "annual"
-
-class PlanIconEnum(str, Enum):
-    zap = "zap"
-    sparkles = "sparkles"
-    crown = "crown"
-
 class PaymentProviderEnum(str, Enum):
     razorpay = "razorpay"
     stripe = "stripe"
-
-class SubscriptionStatusEnum(str, Enum):
-    active    = "active"
-    cancelled = "cancelled"
-    pending   = "pending"
-    halted    = "halted"
-    paused    = "paused"
-    expired   = "expired"
-    completed = "completed"
-    authenticated = "authenticated"
 
 class PaymentStatusEnum(str, Enum):
     pending = "pending"
@@ -172,13 +153,3 @@ SUBSCRIPTION_BILLING_EVENT_STATUS_LABELS = {
     SubscriptionBillingEventEnum.cancelled_admin_inactive.value: "cancelled",
     SubscriptionBillingEventEnum.cancelled_admin_deleted.value: "cancelled",
 }
-
-class ScheduledDowngradeStatusEnum(str, Enum):
-    pending = "pending"
-    completed = "completed"
-    failed = "failed"
-    cancelled = "cancelled"
-
-class ScheduledDowngradeTriggerEnum(str, Enum):
-    plan_change = "plan_change"
-    admin_edit = "admin_edit"

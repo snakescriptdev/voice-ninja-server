@@ -44,29 +44,6 @@ class TwilioPhoneService:
             raise
 
     
-    def buy_phone_number(
-        self,
-        phone_number: str,
-        voice_url: str,
-
-    ):
-        try:
-            number = self.client.incoming_phone_numbers.create(
-                phone_number= phone_number,
-                voice_url=voice_url,
-                voice_method="POST"
-            )
-            logger.info(f"Successfully bought phone number: {number.phone_number}")
-            return {
-                "sid": number.sid,
-                "phone_number": number.phone_number,
-                "friendly_name": number.friendly_name,
-                "capabilities": number.capabilities,
-            }
-        except TwilioRestException as e:
-            logger.error(f"Failed to buy phone number: {str(e)}")
-            raise
-
     def release_phone_number(self, sid: str):
         """Release a phone number from the Twilio account."""
         try:
