@@ -1,15 +1,15 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Query
 from app_v2.utils.jwt_utils import is_admin,HTTPBearer
-from datetime import datetime
-from typing import List, Literal
+from datetime import datetime, date
+from typing import List, Literal, Optional
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinPackageModel, CoinUsageSettingsModel, PlanModel, UserSubscriptionModel, SubscriptionStatusEnum, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinUsageSettingsModel, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel
 from app_v2.schemas.activity_schema import ActivityLogResponse
-from app_v2.schemas.admin_dashboard import UserCostItem, CoinBundleCreate, CoinBundleResponse
+from app_v2.schemas.admin_dashboard import UserCostItem, AdminConversationItem
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
 from app_v2.core.config import VoiceSettings
@@ -42,21 +42,6 @@ def get_overview_stats():
             UnifiedAuthModel.created_at < first_day_of_month
         ).count()
         total_users_change = calculate_percentage_change(curr_users_new, prev_users_new)
-
-        # 2. Active Subscriptions
-        active_subscriptions = db.session.query(UserSubscriptionModel).filter(
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active
-        ).count()
-        curr_subs_new = db.session.query(UserSubscriptionModel).filter(
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active,
-            UserSubscriptionModel.current_period_start >= first_day_of_month
-        ).count()
-        prev_subs_new = db.session.query(UserSubscriptionModel).filter(
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active,
-            UserSubscriptionModel.current_period_start >= first_day_prev_month,
-            UserSubscriptionModel.current_period_start < first_day_of_month
-        ).count()
-        active_subscriptions_change = calculate_percentage_change(curr_subs_new, prev_subs_new)
 
         # 3. Total Phone Numbers
         total_phone_numbers = db.session.query(PhoneNumberService).count()
@@ -109,8 +94,6 @@ def get_overview_stats():
             "stats": {
                 "total_users": total_users,
                 "total_users_change": float(total_users_change),
-                "active_subscriptions": active_subscriptions,
-                "active_subscriptions_change": float(active_subscriptions_change),
                 "total_phone_numbers": total_phone_numbers,
                 "total_agents": total_agents,
                 "active_agents": active_agents,
@@ -191,49 +174,6 @@ def get_revenue_graph():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
-
-@router.get("/analytics/subscription-distribution",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_subscription_distribution():
-    """
-    Subscription distribution by plan percentage.
-    """
-    try:
-        total_active = db.session.query(UserSubscriptionModel).filter(
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active
-        ).count()
-
-        if total_active == 0:
-            return {"status": "success", "distribution": []}
-
-        distribution_query = db.session.query(
-            PlanModel.display_name,
-            func.count(UserSubscriptionModel.id).label('count')
-        ).join(PlanModel, UserSubscriptionModel.plan_id == PlanModel.id).filter(
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active
-        ).group_by(PlanModel.display_name).all()
-
-        distribution = [
-            {
-                "plan_name": d.display_name,
-                "count": d.count,
-                "percentage": round((d.count / total_active) * 100, 2)
-            } for d in distribution_query
-        ]
-
-        return {
-            "status": "success",
-            "total_active": total_active,
-            "distribution": distribution
-        }
-    except Exception as e:
-        logger.error(f"Error in get_subscription_distribution: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-
 
 
 @router.get("/elevenlabs/usage-and-billing",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
@@ -383,5 +323,98 @@ def get_users_cost(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch users cost data: {str(e)}"
+        )
+
+
+@router.get(
+    "/elevenlabs/conversations",
+    response_model=PaginatedResponse[AdminConversationItem],
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def list_all_conversations_for_admin(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None, description="Search by user name/email or agent name"),
+    date_after: Optional[date] = Query(None),
+    date_before: Optional[date] = Query(None),
+):
+    """
+    Every conversation across every user, side by side with the raw
+    ElevenLabs cost we were charged (`ConversationsModel.cost`) and the coins
+    we actually deducted from the user for it (from `CoinsLedgerModel`) — so
+    admins can audit that the two line up as expected.
+    """
+    try:
+        q = (
+            db.session.query(ConversationsModel, UnifiedAuthModel, AgentModel)
+            .join(UnifiedAuthModel, ConversationsModel.user_id == UnifiedAuthModel.id)
+            .outerjoin(AgentModel, ConversationsModel.agent_id == AgentModel.id)
+        )
+
+        if search:
+            q = q.filter(
+                or_(
+                    UnifiedAuthModel.name.ilike(f"%{search}%"),
+                    UnifiedAuthModel.email.ilike(f"%{search}%"),
+                    AgentModel.agent_name.ilike(f"%{search}%"),
+                )
+            )
+        if date_after:
+            q = q.filter(ConversationsModel.created_at >= date_after)
+        if date_before:
+            q = q.filter(ConversationsModel.created_at <= date_before)
+
+        q = q.order_by(ConversationsModel.created_at.desc())
+
+        total = q.count()
+        rows = q.offset((page - 1) * page_size).limit(page_size).all()
+
+        conv_ids = [conv.id for conv, _, _ in rows]
+        if conv_ids:
+            ledger_entries = db.session.query(
+                CoinsLedgerModel.reference_id, CoinsLedgerModel.coins
+            ).filter(
+                CoinsLedgerModel.reference_type == "conversation",
+                CoinsLedgerModel.reference_id.in_(conv_ids),
+                CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage,
+            ).all()
+            coins_deducted_map = {entry.reference_id: abs(entry.coins) for entry in ledger_entries}
+        else:
+            coins_deducted_map = {}
+
+        items = [
+            AdminConversationItem(
+                id=conv.id,
+                created_at=conv.created_at,
+                user_id=user.id,
+                user_name=user.name or user.username or "Unknown",
+                user_email=user.email or "",
+                agent_name=agent.agent_name if agent else None,
+                channel=conv.channel.value if conv.channel else None,
+                call_status=conv.call_status.name if conv.call_status else None,
+                duration=conv.duration,
+                elevenlabs_cost=float(conv.cost or 0),
+                coins_deducted=coins_deducted_map.get(conv.id, 0),
+            )
+            for conv, user, agent in rows
+        ]
+
+        from math import ceil
+        total_pages = ceil(total / page_size) if page_size > 0 else 1
+
+        return PaginatedResponse(
+            total=total,
+            page=page,
+            size=page_size,
+            pages=total_pages,
+            items=items,
+        )
+
+    except Exception as e:
+        logger.error(f"Error in list_all_conversations_for_admin: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch conversations: {str(e)}"
         )
 

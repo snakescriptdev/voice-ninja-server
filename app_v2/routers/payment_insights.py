@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta
 from typing import List
 
 from app_v2.utils.jwt_utils import HTTPBearer,is_admin
-from app_v2.databases.models import UnifiedAuthModel, PaymentModel, PlanModel
+from app_v2.databases.models import UnifiedAuthModel, PaymentModel
 from app_v2.schemas.payment_insights_schema import (
     PaymentInsightsResponse, 
     DailyTrendItem, 
@@ -96,34 +96,25 @@ def get_payment_insights():
                 revenue=trends_map.get(day_str, 0.0)
             ))
 
-        # 3. Revenue by Plan & Coin Bundle
+        # 3. Revenue by payment type (generic labels — no plan/bundle names anymore,
+        # every purchase is a pay-as-you-go credit purchase)
         all_success_payments = db.session.query(PaymentModel).filter(
             PaymentModel.status == PaymentStatusEnum.success
         ).all()
 
         plan_revenue_map = {}
         bundle_revenue_map = {}
-        
-        # Pre-fetch plans and bundles for names
-        plans = {p.id: p.display_name for p in db.session.query(PlanModel).all()}
-        from app_v2.databases.models import CoinPackageModel
-        bundles = {b.id: b.name for b in db.session.query(CoinPackageModel).all()}
 
         for p in all_success_payments:
             if p.payment_type == PaymentTypeEnum.subscription:
-                p_id = p.metadata_json.get("plan_id") if p.metadata_json else None
-                name = plans.get(p_id, "Unknown Plan")
-                plan_revenue_map[name] = plan_revenue_map.get(name, 0.0) + p.amount
-            elif p.payment_type == PaymentTypeEnum.coin_purchase or p.payment_type == PaymentTypeEnum.addon:
-                b_id = p.metadata_json.get("bundle_id") if p.metadata_json else None
-                name = bundles.get(b_id, "Unknown Bundle")
-                bundle_revenue_map[name] = bundle_revenue_map.get(name, 0.0) + p.amount
+                plan_revenue_map["Subscription"] = plan_revenue_map.get("Subscription", 0.0) + p.amount
+            elif p.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
+                bundle_revenue_map["Credit Purchase"] = bundle_revenue_map.get("Credit Purchase", 0.0) + p.amount
 
         revenue_by_plan = [RevenueItem(name=k, revenue=v) for k, v in plan_revenue_map.items()]
         revenue_by_coin_bundle = [RevenueItem(name=k, revenue=v) for k, v in bundle_revenue_map.items()]
 
         # 4. Recent Transactions
-        from app_v2.databases.models import UnifiedAuthModel
         recent_txs = db.session.query(PaymentModel, UnifiedAuthModel.username).join(
             UnifiedAuthModel, PaymentModel.user_id == UnifiedAuthModel.id
         ).filter(
@@ -132,14 +123,10 @@ def get_payment_insights():
 
         recent_transactions = []
         for p, uname in recent_txs:
-            plan_name = None
-            if p.payment_type == PaymentTypeEnum.subscription:
-                p_id = p.metadata_json.get("plan_id") if p.metadata_json else None
-                plan_name = plans.get(p_id)
-            elif p.payment_type == PaymentTypeEnum.coin_purchase or p.payment_type == PaymentTypeEnum.addon:
-                b_id = p.metadata_json.get("bundle_id") if p.metadata_json else None
-                plan_name = bundles.get(b_id)
-            
+            plan_name = "Subscription" if p.payment_type == PaymentTypeEnum.subscription else (
+                "Credit Purchase" if p.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon) else None
+            )
+
             recent_transactions.append(PaymentItemSchema(
                 id=p.id,
                 user_id=p.user_id,

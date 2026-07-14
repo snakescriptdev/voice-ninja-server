@@ -3,6 +3,7 @@ import uuid
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from fastapi_sqlalchemy import db
+from sqlalchemy import func
 
 from app_v2.databases.models import AgentModel, WidgetModel, WebAgentPageModel
 from app_v2.schemas.web_agent_schema import (
@@ -61,6 +62,31 @@ def _validate_widget_belongs_to_agent(user_id: int, widget_id: int, agent_id: in
     return widget
 
 
+def _check_web_agent_name_unique(
+    agent_id: int,
+    widget_id: int,
+    web_agent_name: str,
+    exclude_id: int | None = None,
+) -> None:
+    """
+    A web agent name only needs to be unique within the same (voice agent,
+    widget) pair — the same name is fine under a different agent or a
+    different widget.
+    """
+    query = db.session.query(WebAgentPageModel).filter(
+        WebAgentPageModel.agent_id == agent_id,
+        WebAgentPageModel.widget_id == widget_id,
+        func.lower(WebAgentPageModel.web_agent_name) == web_agent_name.lower(),
+    )
+    if exclude_id is not None:
+        query = query.filter(WebAgentPageModel.id != exclude_id)
+    if query.first():
+        raise HTTPException(
+            status_code=400,
+            detail="A web agent with this name already exists for this Voice Agent and Widget combination.",
+        )
+
+
 @router.get("/", response_model=list[WebAgentListResponse], openapi_extra={"security": [{"BearerAuth": []}]})
 def list_web_agents(request: Request, user=Depends(RequireFeatureEnabled(PlanFeatureEnum.web_agent))):
     web_agents = (
@@ -100,6 +126,7 @@ def create_web_agent(request: Request, payload: WebAgentCreate, user=Depends(Req
         raise HTTPException(status_code=403, detail="Agent is disabled")
 
     _validate_widget_belongs_to_agent(user.id, payload.widget_id, payload.agent_id)
+    _check_web_agent_name_unique(payload.agent_id, payload.widget_id, payload.web_agent_name)
 
     web_agent = WebAgentPageModel(
         public_id=str(uuid.uuid4()),
@@ -155,13 +182,18 @@ def update_web_agent(
             raise HTTPException(status_code=403, detail="Agent does not belong to user")
         web_agent.agent_id = new_agent_id
 
+    new_widget_id = update_data.get("widget_id", web_agent.widget_id)
     if "widget_id" in update_data:
-        _validate_widget_belongs_to_agent(user.id, update_data["widget_id"], new_agent_id)
-        web_agent.widget_id = update_data["widget_id"]
+        _validate_widget_belongs_to_agent(user.id, new_widget_id, new_agent_id)
+        web_agent.widget_id = new_widget_id
     elif "agent_id" in update_data:
         # Agent changed but widget wasn't re-specified — the existing widget must
         # still belong to the (new) agent for the record to stay consistent.
-        _validate_widget_belongs_to_agent(user.id, web_agent.widget_id, new_agent_id)
+        _validate_widget_belongs_to_agent(user.id, new_widget_id, new_agent_id)
+
+    new_name = update_data.get("web_agent_name", web_agent.web_agent_name)
+    if "web_agent_name" in update_data or "agent_id" in update_data or "widget_id" in update_data:
+        _check_web_agent_name_unique(new_agent_id, new_widget_id, new_name, exclude_id=web_agent.id)
 
     if "web_agent_name" in update_data:
         web_agent.web_agent_name = update_data["web_agent_name"]

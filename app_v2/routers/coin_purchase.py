@@ -1,24 +1,29 @@
 """
-coin_purchase.py  (updated – production-grade)
+coin_purchase.py — pay-as-you-go credit purchase
 ────────────────────────────────────────────────────────────────────────────────
-Key changes vs original:
-  • verify_coin_payment is now idempotent – if the webhook (payment.captured)
+A user enters a rupee amount, gets a live credit estimate, and pays once via
+Razorpay — no bundles, no stored card, no recurring mandate.
+
+  • verify_coin_payment is idempotent – if the webhook (payment.captured)
     arrives before the frontend calls /verify, we detect the already-fulfilled
     order and return success without double-crediting.
-  • Pending order is created in create_order; actual coin credit ONLY happens
-    after signature verification succeeds in verify_coin_payment.
+  • Pending order is created in create_coin_order; actual coin credit ONLY
+    happens after signature verification succeeds in verify_coin_payment.
   • Failed payment path: if order is already marked failed we 409 rather than
     re-verifying.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
-from app_v2.utils.jwt_utils import require_active_user, HTTPBearer,is_admin
+from app_v2.utils.jwt_utils import require_active_user, HTTPBearer, is_admin
 from app_v2.databases.models import (
-    UnifiedAuthModel, CoinPackageModel, PaymentModel,
+    UnifiedAuthModel, PaymentModel,
     CoinsLedgerModel, AddOnCoinOrderModel, CoinUsageSettingsModel,
 )
-from app_v2.schemas.coin_purchase import OrderCreateRequest, OrderCreateResponse, OrderVerifyRequest
+from app_v2.schemas.coin_purchase import (
+    OrderCreateRequest, OrderCreateResponse, OrderVerifyRequest,
+    CreditEstimateResponse, MIN_PURCHASE_AMOUNT,
+)
 from app_v2.schemas.enum_types import (
     PaymentProviderEnum, PaymentStatusEnum,
     PaymentTypeEnum, CoinTransactionTypeEnum,
@@ -26,7 +31,7 @@ from app_v2.schemas.enum_types import (
 from app_v2.utils.payment_utils import PaymentProviderFactory
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.schemas.admin_settings import CoinUsageSettingsResponse, CoinUsageSettingsUpdate
 from fastapi.responses import HTMLResponse
@@ -37,11 +42,35 @@ security = HTTPBearer()
 router = APIRouter(prefix="/api/v2/coins", tags=["Coins"])
 
 
+def _credits_for_amount(amount: float) -> int:
+    settings = CoinUsageSettingsModel.get_settings()
+    return round(amount * settings.credits_per_rupee)
+
+
 @router.get("/checkout/demo", response_class=HTMLResponse)
 async def get_addon_purchase_demo():
     template_path = os.path.join(os.path.dirname(__file__), "..", "templates", "demo_addon_purchase.html")
     with open(template_path, "r") as f:
         return f.read()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Live credit estimate (no DB write)
+# ──────────────────────────────────────────────────────────────────────────────
+
+@router.get(
+    "/estimate",
+    response_model=CreditEstimateResponse,
+    dependencies=[Depends(security)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def estimate_credits(amount: float):
+    if amount < MIN_PURCHASE_AMOUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Minimum purchase amount is ₹{MIN_PURCHASE_AMOUNT:.0f}",
+        )
+    return CreditEstimateResponse(amount=amount, credits=_credits_for_amount(amount))
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -59,38 +88,30 @@ def create_coin_order(
     current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """
-    Create a Razorpay order for an add-on coin bundle and persist a pending
-    AddOnCoinOrderModel.  The frontend uses the returned order_id to open the
-    Razorpay checkout modal.
+    Create a Razorpay order for a pay-as-you-go credit purchase and persist a
+    pending AddOnCoinOrderModel. The frontend uses the returned order_id to
+    open the Razorpay checkout modal.
     """
     try:
-        bundle = (
-            db.session.query(CoinPackageModel)
-            .filter(CoinPackageModel.id == data.bundle_id, CoinPackageModel.is_active == True)
-            .first()
-        )
-        if not bundle:
-            raise HTTPException(status_code=404, detail="Coin bundle not found or inactive")
+        credits = _credits_for_amount(data.amount)
 
         rzp_provider = PaymentProviderFactory.get_provider("razorpay")
         order = rzp_provider.create_order(
-            amount=bundle.price,
-            currency=bundle.currency,
+            amount=data.amount,
+            currency="INR",
             receipt=f"recp_addon_{current_user.id}_{int(datetime.now(timezone.utc).timestamp())}",
             notes={
                 "user_id": str(current_user.id),
-                "bundle_id": str(bundle.id),
                 "type": "addon_purchase",
             },
         )
 
         addon_order = AddOnCoinOrderModel(
             user_id=current_user.id,
-            bundle_id=bundle.id,
             provider=PaymentProviderEnum.razorpay,
             provider_order_id=order["id"],
-            amount=bundle.price,
-            coins=bundle.coins,
+            amount=data.amount,
+            coins=credits,
             status=PaymentStatusEnum.pending,
         )
         db.session.add(addon_order)
@@ -98,12 +119,12 @@ def create_coin_order(
 
         return OrderCreateResponse(
             order_id=order["id"],
-            amount=bundle.price,
-            currency=bundle.currency,
+            amount=data.amount,
+            currency="INR",
             key_id=VoiceSettings.RAZOR_KEY_ID,
             user_email=current_user.email or "",
             user_phone=current_user.phone or "",
-            bundle_name=bundle.name,
+            credits=credits,
         )
     except HTTPException:
         raise
@@ -174,15 +195,6 @@ def verify_coin_payment(
         if not rzp_provider.verify_order_signature(params):
             raise HTTPException(status_code=400, detail="Invalid payment signature")
 
-        # ── Fetch bundle ──────────────────────────────────────────────────────
-        bundle = (
-            db.session.query(CoinPackageModel)
-            .filter(CoinPackageModel.id == data.bundle_id)
-            .first()
-        )
-        if not bundle:
-            raise HTTPException(status_code=404, detail="Bundle not found")
-
         # ── Guard against duplicate payment_id (webhook race) ─────────────────
         existing_payment = (
             db.session.query(PaymentModel)
@@ -206,32 +218,28 @@ def verify_coin_payment(
         # ── Record payment ────────────────────────────────────────────────────
         payment = PaymentModel(
             user_id=current_user.id,
-            amount=bundle.price,
-            currency=bundle.currency,
+            amount=addon_order.amount,
+            currency="INR",
             status=PaymentStatusEnum.success,
             provider=PaymentProviderEnum.razorpay,
             provider_payment_id=data.razorpay_payment_id,
             provider_order_id=data.razorpay_order_id,
             payment_type=PaymentTypeEnum.coin_purchase,
-            metadata_json={"bundle_id": bundle.id, "coins": bundle.coins},
+            metadata_json={"coins": addon_order.coins},
         )
         db.session.add(payment)
         db.session.flush()
 
         # ── Credit coins ──────────────────────────────────────────────────────
         current_balance = get_user_coin_balance(current_user.id)
-        new_balance = current_balance + bundle.coins
-
-        expiry_date = None
-        if bundle.validity_days is not None:
-            expiry_date = datetime.now(timezone.utc) + timedelta(days=bundle.validity_days)
+        new_balance = current_balance + addon_order.coins
 
         ledger_entry = CoinsLedgerModel(
             user_id=current_user.id,
             transaction_type=CoinTransactionTypeEnum.credit_purchase,
-            coins=bundle.coins,
-            remaining_coins=bundle.coins,
-            expiry_at=expiry_date,
+            coins=addon_order.coins,
+            remaining_coins=addon_order.coins,
+            expiry_at=None,
             reference_type="payment",
             reference_id=payment.id,
             balance_after=new_balance,
@@ -279,14 +287,14 @@ def update_coin_usage_settings(data: CoinUsageSettingsUpdate):
         settings = CoinUsageSettingsModel.get_settings()
         with db():
             db.session.add(settings)
-            if data.phone_number_purchase_cost is not None:
-                settings.phone_number_purchase_cost = data.phone_number_purchase_cost
-            if data.elevenlabs_multiplier is not None:
-                settings.elevenlabs_multiplier = data.elevenlabs_multiplier
-            if data.static_conversation_cost is not None:
-                settings.static_conversation_cost = data.static_conversation_cost
-            if data.cost_per_minute_in_coins is not None:
-                settings.cost_per_minute_in_coins = data.cost_per_minute_in_coins
+            if data.markup_percentage is not None:
+                settings.markup_percentage = data.markup_percentage
+            if data.estimated_coins_per_minute is not None:
+                settings.estimated_coins_per_minute = data.estimated_coins_per_minute
+            if data.minimum_call_minutes is not None:
+                settings.minimum_call_minutes = data.minimum_call_minutes
+            if data.credits_per_rupee is not None:
+                settings.credits_per_rupee = data.credits_per_rupee
             db.session.commit()
             db.session.refresh(settings)
             return settings

@@ -6,12 +6,49 @@ Handles document uploading, URL addition, processing status, and deletion.
 """
 
 import os
+import re
+import json
 import mimetypes
 from typing import Optional, Dict, Any, List
 from .base import BaseElevenLabs, ElevenLabsResponse
 from app_v2.core.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Known ElevenLabs KB-sync failure statuses mapped to a short, actionable
+# message a user can actually do something with. Anything not in this map
+# falls back to a generic message — the raw ElevenLabs body (with its
+# request_id/stack-trace-like detail) is for logs only, never for users.
+_FRIENDLY_KB_SYNC_ERRORS = {
+    "ReadabilityError": (
+        "We couldn't extract readable content from this page. Make sure the "
+        "URL is publicly accessible and contains real text content — not a "
+        "login-gated page, a bare PDF/file link, or a page rendered entirely "
+        "by JavaScript."
+    ),
+}
+
+
+def describe_kb_sync_error(raw_error_message: Optional[str]) -> str:
+    """
+    Translate a raw ElevenLabs error (typically `Status <code>: <json body>`)
+    into a short, user-facing message. The raw body is logged by the caller
+    before this is used — this function only decides what the user sees.
+    """
+    match = re.search(r"\{.*\}", raw_error_message or "", re.DOTALL)
+    if match:
+        try:
+            body = json.loads(match.group(0))
+            detail = body.get("detail") if isinstance(body, dict) else None
+            error_status = detail.get("status") if isinstance(detail, dict) else None
+            if error_status in _FRIENDLY_KB_SYNC_ERRORS:
+                return _FRIENDLY_KB_SYNC_ERRORS[error_status]
+        except (ValueError, AttributeError, TypeError):
+            pass
+    return (
+        "We couldn't add this URL to your knowledge base right now. Please "
+        "double-check the link and try again."
+    )
 
 
 class ElevenLabsKB(BaseElevenLabs):

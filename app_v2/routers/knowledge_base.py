@@ -24,7 +24,7 @@ from app_v2.schemas.knowledge_base_schema import (
 from app_v2.utils.jwt_utils import HTTPBearer,require_active_user
 from app_v2.utils.feature_access import RequireFeature, get_feature_limit, get_feature_usage
 from app_v2.core.logger import setup_logger
-from app_v2.utils.elevenlabs import ElevenLabsKB, ElevenLabsAgent
+from app_v2.utils.elevenlabs import ElevenLabsKB, ElevenLabsAgent, describe_kb_sync_error
 from app_v2.utils.scraping_utils import scrape_webpage_title
 
 logger = setup_logger(__name__)
@@ -209,6 +209,10 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
                     detail="This URL has already been added to your knowledge base."
                 )
 
+            # ---- Validate the URL is actually reachable before bothering ElevenLabs ----
+            # Also gives us the page title in the same request.
+            title = scrape_webpage_title(url_str)
+
             # ---- ElevenLabs KB Sync ----
             elevenlabs_document_id = None
             rag_index_id = None
@@ -216,22 +220,19 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
                 logger.info(f"Syncing URL '{url_str}' to ElevenLabs KB")
                 kb_client = ElevenLabsKB()
                 kb_response = kb_client.add_url_document(url_str)
-                
+
                 if kb_response.status:
                     elevenlabs_document_id = kb_response.data.get("document_id")
                     # ---- Compute RAG Index ----
                     rag_index_id = kb_client.compute_rag_index(elevenlabs_document_id)
                 else:
-                    raise HTTPException(status_code=424, detail=f"ElevenLabs KB URL addition failed: {kb_response.error_message}")
+                    logger.error(f"ElevenLabs KB URL addition failed: {kb_response.error_message}")
+                    raise HTTPException(status_code=424, detail=describe_kb_sync_error(kb_response.error_message))
             except HTTPException:
                 raise
             except Exception as e:
                 logger.error(f"Error syncing URL with ElevenLabs: {e}")
                 raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
-            
-            # ---- Scrape Webpage Title ----
-            title = scrape_webpage_title(url_str)
-
 
             kb_entry = KnowledgeBaseModel(
                 user_id=current_user.id,
@@ -653,10 +654,13 @@ async def update_url_knowledge_base(
             title_changed = update_data.title is not None and update_data.title != kb_entry.title
             url_changed = update_data.url is not None and str(update_data.url) != kb_entry.content_path
 
+            if url_changed:
+                # Validate the new URL is actually reachable before touching
+                # ElevenLabs or committing anything.
+                scrape_webpage_title(str(update_data.url))
+                kb_entry.content_path = str(update_data.url)
             if title_changed:
                 kb_entry.title = update_data.title
-            if url_changed:
-                kb_entry.content_path = str(update_data.url)
 
             if title_changed or url_changed:
                 # Create the new document first, delete the old one only on
@@ -671,7 +675,7 @@ async def update_url_knowledge_base(
                     db.session.rollback()
                     raise HTTPException(
                         status_code=424,
-                        detail=f"Failed to sync URL with ElevenLabs: {kb_response.error_message}"
+                        detail=describe_kb_sync_error(kb_response.error_message)
                     )
 
                 kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")

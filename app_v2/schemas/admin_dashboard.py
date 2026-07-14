@@ -10,49 +10,17 @@ class UserCostItem(BaseModel):
 
     model_config = {"from_attributes": True}
 
-class UserDetailItem(BaseModel):
-    user_id: int
-    username: str
-    email: str
-    plan: Optional[str] = "No Plan"
-    coins_count: int = 0
-    agents_count: int = 0
-    phones_count: int = 0
-    last_active: Optional[datetime] = None
-
-class PlanUserCount(BaseModel):
-    plan_name: str
-    count: int
-
-class UserCountOverviewResponse(BaseModel):
-    status: str
-    total_users: int
-    users_by_plan: List[PlanUserCount]
-    users: PaginatedResponse[UserDetailItem]
-
-class CoinBundleCreate(BaseModel):
-    name: str = Field(...,max_length=90,min_length=3)
-    coins: int = Field(..., gt=0, le=1000000)
-    price: float = Field(..., ge=1, le=100000)
-    currency: Optional[str] = "INR"
-    validity_days: Optional[int] = None
-
-class CoinBundleUpdate(BaseModel):
-    name: Optional[str] = Field(default=None, max_length=90, min_length=3)
-    coins: Optional[int] = Field(default=None, gt=0, le=1000000)
-    price: Optional[float] = Field(default=None, ge=1, le=100000)
-    currency: Optional[str] = None
-    validity_days: Optional[int] = None
-    is_active: Optional[bool] = None
-
-class CoinBundleResponse(BaseModel):
+class AdminConversationItem(BaseModel):
     id: int
-    name: str
-    coins: int
-    price: float
-    currency: str
-    is_active: bool
-    validity_days: Optional[int]
     created_at: datetime
+    user_id: int
+    user_name: str
+    user_email: str
+    agent_name: Optional[str] = None
+    channel: Optional[str] = None
+    call_status: Optional[str] = None
+    duration: Optional[int] = None
+    elevenlabs_cost: float
+    coins_deducted: int
 
     model_config = {"from_attributes": True}

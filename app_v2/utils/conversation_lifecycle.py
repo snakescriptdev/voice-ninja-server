@@ -7,6 +7,7 @@ shows up in the conversations list immediately), then finalized in place once
 the call ends and ElevenLabs metadata is available — instead of only ever
 inserting a row after the call is over.
 """
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi_sqlalchemy import db
@@ -20,9 +21,43 @@ logger = setup_logger(__name__)
 
 
 def calculate_conversation_cost(raw_el_cost: float) -> int:
-    """Converts ElevenLabs' raw cost into coin cost. Must be called inside db()."""
+    """
+    Converts ElevenLabs' raw cost into coin cost: the actual bill is always
+    raw_el_cost plus a configurable markup so we never charge the user less
+    than ElevenLabs charged us. Must be called inside db().
+    """
     settings = CoinUsageSettingsModel.get_settings()
-    return int((raw_el_cost * settings.elevenlabs_multiplier) + settings.static_conversation_cost)
+    return int(raw_el_cost * (1 + settings.markup_percentage / 100))
+
+
+def get_minimum_call_balance() -> int:
+    """
+    Minimum coin balance required to start a call: enough for the
+    admin-configured minimum_call_minutes at the admin-configured safety
+    estimate. Must be called inside db().
+    """
+    settings = CoinUsageSettingsModel.get_settings()
+    return int(settings.minimum_call_minutes * settings.estimated_coins_per_minute)
+
+
+def estimate_coins_used_so_far(call_start_time: datetime) -> int:
+    """
+    Estimates coins consumed by an in-progress call using the admin-configured
+    per-minute safety rate — a stand-in for the real cost, which ElevenLabs
+    only reports after the call ends. Must be called inside db().
+    """
+    settings = CoinUsageSettingsModel.get_settings()
+    elapsed_minutes = (datetime.now(timezone.utc) - call_start_time).total_seconds() / 60
+    return int(elapsed_minutes * settings.estimated_coins_per_minute)
+
+
+def is_balance_exhausted(call_start_time: datetime, user_balance: int) -> bool:
+    """
+    Returns True once the estimated cost of the in-progress call reaches the
+    user's balance at call start, so callers can cut the call short instead
+    of letting it run up an uncollectible debt. Must be called inside db().
+    """
+    return estimate_coins_used_so_far(call_start_time) >= user_balance
 
 
 def start_conversation(user_id: int, agent_id: int, channel: ChannelEnum) -> int:
