@@ -14,6 +14,13 @@ class PurchaseConfigResponse(BaseModel):
     minimum_purchase_amount_inr: float
     credits_per_rupee: float
 
+
+class CallConfigResponse(BaseModel):
+    # Minimum coin balance required to start/sustain a call.
+    minimum_call_balance: int
+    minimum_credits_per_minute: int
+    minimum_call_minutes: int
+
 class OrderCreateRequest(BaseModel):
     amount: float = Field(..., ge=MIN_PURCHASE_AMOUNT)
 

@@ -846,6 +846,87 @@ async def create_agent(
 
     return agent_to_read(new_agent)
 
+
+@router.post(
+    "/{agent_id}/clone",
+    status_code=status.HTTP_201_CREATED,
+    summary="Clone agent",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def clone_agent(
+    agent_id: int,
+    current_user: UnifiedAuthModel = Depends(RequireFeature("ai_voice_agents", allow_coin_fallback=True)),
+):
+    """
+    Duplicate an existing agent into a brand-new agent (and a fresh ElevenLabs
+    agent), copying its prompt, first message, voice, AI model, language,
+    knowledge bases, tools, variables, built-in tools and timezone.
+
+    The phone assignment, conversations, widget and web-agent pages are NOT
+    copied. Implemented by rebuilding an AgentCreate from the source and
+    reusing create_agent(), so all validation / ElevenLabs / DB steps are
+    shared with normal creation.
+    """
+    user_id = current_user.id
+
+    source = (
+        db.session.query(AgentModel)
+        .options(
+            selectinload(AgentModel.agent_ai_models).selectinload(AgentAIModelBridge.ai_model),
+            selectinload(AgentModel.agent_languages).selectinload(AgentLanguageBridge.language),
+            selectinload(AgentModel.voice),
+            selectinload(AgentModel.variables),
+            selectinload(AgentModel.agent_knowledge_bases),
+            selectinload(AgentModel.agent_functions),
+        )
+        .filter(AgentModel.id == agent_id, AgentModel.user_id == user_id)
+        .first()
+    )
+    if not source:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    ai_model = source.agent_ai_models[0].ai_model.model_name if source.agent_ai_models else None
+    language = source.agent_languages[0].language.lang_code if source.agent_languages else None
+    if not ai_model or not language or not source.voice:
+        raise HTTPException(
+            status_code=400,
+            detail="Source agent is missing voice/model/language and cannot be cloned",
+        )
+
+    # Generate a unique clone name: "<name> (copy)", "<name> (copy) 2", ...
+    base_name = f"{source.agent_name} (copy)"
+    clone_name = base_name
+    suffix = 2
+    while (
+        db.session.query(AgentModel)
+        .filter(
+            func.lower(AgentModel.agent_name) == clone_name.lower(),
+            AgentModel.user_id == user_id,
+        )
+        .first()
+    ):
+        clone_name = f"{base_name} {suffix}"
+        suffix += 1
+
+    payload = AgentCreate(
+        agent_name=clone_name,
+        first_message=source.first_message,
+        system_prompt=source.system_prompt,
+        phone=None,               # unique per-agent assignment — never cloned
+        twilio_connector_id=None,
+        voice=source.voice.voice_name,
+        ai_model=ai_model,
+        language=language,
+        knowledgebase=[{"id": b.kb_id} for b in source.agent_knowledge_bases],
+        variables={v.variable_name: v.variable_value for v in source.variables},
+        tools=[{"id": b.function_id} for b in source.agent_functions],
+        built_in_tools=BuiltInToolsParams(**source.built_in_tools) if source.built_in_tools else None,
+        timezone=source.timezone,
+    )
+
+    return await create_agent(agent_in=payload, current_user=current_user)
+
+
 # -------------------- GET ALL --------------------
 
 @router.get(
