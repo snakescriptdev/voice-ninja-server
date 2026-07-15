@@ -13,11 +13,21 @@ from typing import Optional
 from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import ConversationsModel, CoinUsageSettingsModel
+from app_v2.databases.models import ConversationsModel, CoinUsageSettingsModel, AgentModel
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
 from app_v2.utils.coin_utils import deduct_coins
+from app_v2.utils.cost_utils import (
+    compute_live_charge_credits,
+    estimate_costs_credits,
+    compute_actual_breakdown,
+)
 
 logger = setup_logger(__name__)
+
+# Error message set on a conversation when a call is cut short mid-call because
+# the user ran out of coins. Shared with the websocket routers so the marker and
+# the /details error_message stay consistent and filterable.
+LOW_BALANCE_ERROR_MESSAGE = "Call ended due to low coins balance"
 
 
 def calculate_conversation_cost(raw_el_cost: float) -> int:
@@ -37,27 +47,41 @@ def get_minimum_call_balance() -> int:
     estimate. Must be called inside db().
     """
     settings = CoinUsageSettingsModel.get_settings()
-    return int(settings.minimum_call_minutes * settings.estimated_coins_per_minute)
+    return int(settings.minimum_call_minutes * settings.minimum_credits_per_minute)
 
 
-def estimate_coins_used_so_far(call_start_time: datetime) -> int:
+def estimate_coins_used_so_far(
+    call_start_time: datetime,
+    agent_llm_price_per_minute: Optional[float] = None,
+) -> int:
     """
-    Estimates coins consumed by an in-progress call using the admin-configured
-    per-minute safety rate — a stand-in for the real cost, which ElevenLabs
-    only reports after the call ends. Must be called inside db().
+    Estimates coins the in-progress call would be billed SO FAR — the mid-call
+    stand-in for the real cost, which ElevenLabs only reports after the call
+    ends. Combines the admin's conservative conversation rate with the agent's
+    per-minute LLM price (USD floor) and applies the markup, so it errs high on
+    purpose (cut the call before uncollectible debt). Telephony is 0 for now.
+
+    agent_llm_price_per_minute: the agent's stored llm_price_per_minute; when
+    None (unknown), only the conversation estimate is used — backward
+    compatible with callers that don't have it. Must be called inside db().
     """
     settings = CoinUsageSettingsModel.get_settings()
     elapsed_minutes = (datetime.now(timezone.utc) - call_start_time).total_seconds() / 60
-    return int(elapsed_minutes * settings.estimated_coins_per_minute)
+    return int(compute_live_charge_credits(agent_llm_price_per_minute, elapsed_minutes, settings))
 
 
-def is_balance_exhausted(call_start_time: datetime, user_balance: int) -> bool:
+def is_balance_exhausted(
+    call_start_time: datetime,
+    user_balance: int,
+    agent_llm_price_per_minute: Optional[float] = None,
+) -> bool:
     """
-    Returns True once the estimated cost of the in-progress call reaches the
-    user's balance at call start, so callers can cut the call short instead
-    of letting it run up an uncollectible debt. Must be called inside db().
+    Returns True once the estimated (LLM + conversation + telephony, with
+    markup) cost of the in-progress call reaches the user's balance at call
+    start, so callers can cut the call short instead of letting it run up an
+    uncollectible debt. Must be called inside db().
     """
-    return estimate_coins_used_so_far(call_start_time) >= user_balance
+    return estimate_coins_used_so_far(call_start_time, agent_llm_price_per_minute) >= user_balance
 
 
 def start_conversation(user_id: int, agent_id: int, channel: ChannelEnum) -> int:
@@ -111,8 +135,35 @@ def finalize_conversation(
     if error_message:
         record.call_status = CallStatusEnum.failed
         record.error_message = error_message
+        record.ended_due_to_low_balance = (error_message == LOW_BALANCE_ERROR_MESSAGE)
     else:
         record.call_status = CallStatusEnum.success if metadata.get("call_successful") else CallStatusEnum.failed
+
+    # ---- Cost audit: store the calculated estimate, the real ElevenLabs
+    # breakdown, coins charged, and the resulting profit margin. ----
+    settings = CoinUsageSettingsModel.get_settings()
+    agent_llm_price = (
+        db.session.query(AgentModel.llm_price_per_minute)
+        .filter(AgentModel.id == record.agent_id)
+        .scalar()
+    )
+
+    calculated = estimate_costs_credits(agent_llm_price, record.duration, settings)
+    record.calculated_llm_cost = calculated["calculated_llm_cost"]
+    record.calculated_conversation_cost = calculated["calculated_conversation_cost"]
+    record.calculated_telephony_cost = calculated["calculated_telephony_cost"]
+
+    record.coins_charged_to_user = calculated_cost
+    actual = compute_actual_breakdown(
+        total_elevenlabs_credits=raw_cost,
+        llm_credits=metadata.get("llm_credits"),
+        coins_charged_to_user=calculated_cost,
+        settings=settings,
+    )
+    record.actual_llm_credits = actual["actual_llm_credits"]
+    record.actual_conversation_credits = actual["actual_conversation_credits"]
+    record.profit_percentage = actual["profit_percentage"]
+
     db.session.flush()
 
     if calculated_cost > 0:

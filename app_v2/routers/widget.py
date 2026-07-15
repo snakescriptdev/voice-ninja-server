@@ -42,6 +42,7 @@ from app_v2.utils.conversation_lifecycle import (
     mark_conversation_failed,
     get_minimum_call_balance,
     is_balance_exhausted,
+    LOW_BALANCE_ERROR_MESSAGE,
 )
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.email_service import send_conversation_notification_email, send_low_coins_email
@@ -89,6 +90,7 @@ class WidgetContext:
     minute_limit: Optional[float]
     call_start_time: datetime
     owner_balance: int
+    agent_llm_price: Optional[float] = None
     limit_reached: bool = False
     low_balance_reached: bool = False
 
@@ -191,6 +193,7 @@ async def fetch_and_validate_widget(
             minute_limit=get_feature_limit(user_id, "monthly_minutes"),
             call_start_time=datetime.now(timezone.utc),
             owner_balance=owner_balance,
+            agent_llm_price=widget.agent.llm_price_per_minute,
         )
 
 
@@ -381,7 +384,11 @@ def _is_minute_limit_exceeded(ctx: WidgetContext) -> bool:
 
 def _is_low_balance_exceeded(ctx: WidgetContext) -> bool:
     with db():
-        return is_balance_exhausted(ctx.call_start_time, ctx.owner_balance)
+        return is_balance_exhausted(
+            ctx.call_start_time,
+            ctx.owner_balance,
+            agent_llm_price_per_minute=ctx.agent_llm_price,
+        )
 
 
 async def run_widget_session(
@@ -1250,7 +1257,7 @@ async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int]
     if ctx.limit_reached:
         limit_error = "Monthly minutes limit reached"
     elif ctx.low_balance_reached:
-        limit_error = "Call ended due to low balance"
+        limit_error = LOW_BALANCE_ERROR_MESSAGE
     else:
         limit_error = None
 
