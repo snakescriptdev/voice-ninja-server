@@ -74,17 +74,22 @@ class ProfileRequest(BaseModel):
     @field_validator('phone')
     @classmethod
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
-        """Validate phone: strip whitespace/hyphens, ensure only digits, and check length."""
+        """Validate phone: strip whitespace/hyphens, allow an optional leading
+        '+' country-code prefix, ensure the rest is digits, and check length."""
         if v is None:
             return None
         if not v.strip():
             raise ValueError('cannot be empty or only spaces')
         cleaned = PHONE_STRIP_CHARS_PATTERN.sub('', v.strip())
-        if not cleaned.isdigit():
-            raise ValueError('must contain only digits (spaces and hyphens are allowed as separators)')
-        if len(cleaned) < PHONE_MIN_DIGITS or len(cleaned) > PHONE_MAX_DIGITS:
+        # Preserve a single leading '+' (E.164 country code) for the return
+        # value, but validate the digit portion without it.
+        has_plus = cleaned.startswith('+')
+        digits = cleaned[1:] if has_plus else cleaned
+        if not digits.isdigit():
+            raise ValueError('must contain only digits, optionally prefixed with a country code (e.g. +91)')
+        if len(digits) < PHONE_MIN_DIGITS or len(digits) > PHONE_MAX_DIGITS:
             raise ValueError(f'must be between {PHONE_MIN_DIGITS} and {PHONE_MAX_DIGITS} digits long')
-        return cleaned
+        return f'+{digits}' if has_plus else digits
 
     @field_validator('address')
     @classmethod

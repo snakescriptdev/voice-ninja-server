@@ -71,6 +71,7 @@ class WidgetListResponse(BaseModel):
     shareable_link: str
     is_enabled: bool | None = True
     created_at: datetime
+    agent_id: int | None = None
     agent_name: str
 
     @field_serializer("created_at")
