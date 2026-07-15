@@ -12,6 +12,26 @@ from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
 
 
+def _extract_llm_credits(charging: Dict[str, Any]) -> float:
+    """
+    Best-effort pull of the LLM portion (in EL credits) out of the conversation
+    metadata's `charging` block. ElevenLabs reports the "Credits (LLM)" figure
+    here; the exact key has varied, so we probe the known candidates and fall
+    back to 0 (whole cost then attributed to conversation). The raw charging
+    block is logged so the precise field can be confirmed against a live call.
+    """
+    if not isinstance(charging, dict):
+        return 0.0
+    for key in ("llm_charge", "llm_credits", "llm_cost", "llm_price_credits"):
+        value = charging.get(key)
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                continue
+    return 0.0
+
+
 class ElevenLabsConversation(BaseElevenLabs):
     """
     Utility class for ElevenLabs Conversational AI conversation management.
@@ -141,12 +161,20 @@ class ElevenLabsConversation(BaseElevenLabs):
 
             if has_metadata and has_analysis and has_transcript:
                 try:
+                    el_metadata = conv_data.get("metadata") or {}
+                    charging = el_metadata.get("charging") or {}
+                    # Log once per successful extract so the exact LLM-credit
+                    # field name in `charging` can be confirmed against reality.
+                    logger.info(f"Charging block for {conversation_id}: {charging}")
                     metadata = {
                         "agent_name": conv_data.get("agent_name"),
-                        "duration": (conv_data.get("metadata") or {}).get("call_duration_secs"),
+                        "duration": el_metadata.get("call_duration_secs"),
                         "call_successful": (conv_data.get("analysis") or {}).get("call_successful", True),
                         "transcript_summary": (conv_data.get("analysis") or {}).get("transcript_summary"),
-                        "cost": (conv_data.get("metadata") or {}).get("cost"),
+                        # Total ElevenLabs cost for the call, in EL credits.
+                        "cost": el_metadata.get("cost"),
+                        # LLM portion of that cost (EL credits), 0 if unavailable.
+                        "llm_credits": _extract_llm_credits(charging),
                     }
 
                     transcript_list = []

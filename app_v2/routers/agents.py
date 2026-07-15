@@ -786,6 +786,12 @@ async def create_agent(
         db.session.add(new_agent)
         db.session.flush()
 
+        # Store the expected per-minute LLM price for this agent's model
+        # (best-effort; used only for the live low-balance cutoff estimate).
+        new_agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
+            elevenlabs_agent_id, ai_model.model_name
+        )
+
         # Bridge: AI Model
         db.session.add(
             AgentAIModelBridge(
@@ -1248,6 +1254,22 @@ async def update_agent(
                 )
 
             logger.info(f"✅ ElevenLabs agent '{agent.elevenlabs_agent_id}' updated successfully")
+
+            # Refresh the stored per-minute LLM price estimate now that
+            # ElevenLabs has the updated config (prompt / KB / RAG / model all
+            # affect it). Best-effort — never block the update on this.
+            effective_model = el_update_params.get("llm_model")
+            if not effective_model:
+                effective_model = (
+                    db.session.query(AIModels.model_name)
+                    .join(AgentAIModelBridge, AgentAIModelBridge.ai_model_id == AIModels.id)
+                    .filter(AgentAIModelBridge.agent_id == agent_id)
+                    .scalar()
+                )
+            if effective_model:
+                agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
+                    agent.elevenlabs_agent_id, effective_model
+                )
         except HTTPException:
             raise
         except Exception as e:

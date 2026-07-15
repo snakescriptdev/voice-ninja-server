@@ -22,7 +22,7 @@ from app_v2.databases.models import (
 )
 from app_v2.schemas.coin_purchase import (
     OrderCreateRequest, OrderCreateResponse, OrderVerifyRequest,
-    CreditEstimateResponse, MIN_PURCHASE_AMOUNT,
+    CreditEstimateResponse, PurchaseConfigResponse, MIN_PURCHASE_AMOUNT,
 )
 from app_v2.schemas.enum_types import (
     PaymentProviderEnum, PaymentStatusEnum,
@@ -59,16 +59,33 @@ async def get_addon_purchase_demo():
 # ──────────────────────────────────────────────────────────────────────────────
 
 @router.get(
+    "/purchase-config",
+    response_model=PurchaseConfigResponse,
+    dependencies=[Depends(security)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def get_purchase_config():
+    """Public-to-users purchase config so the buy-credits UI can enforce the
+    admin-configured minimum amount without hardcoding it."""
+    settings = CoinUsageSettingsModel.get_settings()
+    return PurchaseConfigResponse(
+        minimum_purchase_amount_inr=settings.minimum_purchase_amount_inr,
+        credits_per_rupee=settings.credits_per_rupee,
+    )
+
+
+@router.get(
     "/estimate",
     response_model=CreditEstimateResponse,
     dependencies=[Depends(security)],
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
 def estimate_credits(amount: float):
-    if amount < MIN_PURCHASE_AMOUNT:
+    minimum = CoinUsageSettingsModel.get_settings().minimum_purchase_amount_inr
+    if amount < minimum:
         raise HTTPException(
             status_code=400,
-            detail=f"Minimum purchase amount is ₹{MIN_PURCHASE_AMOUNT:.0f}",
+            detail=f"Minimum purchase amount is ₹{minimum:.0f}",
         )
     return CreditEstimateResponse(amount=amount, credits=_credits_for_amount(amount))
 
@@ -93,6 +110,13 @@ def create_coin_order(
     open the Razorpay checkout modal.
     """
     try:
+        minimum = CoinUsageSettingsModel.get_settings().minimum_purchase_amount_inr
+        if data.amount < minimum:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Minimum purchase amount is ₹{minimum:.0f}",
+            )
+
         credits = _credits_for_amount(data.amount)
 
         rzp_provider = PaymentProviderFactory.get_provider("razorpay")
@@ -287,14 +311,20 @@ def update_coin_usage_settings(data: CoinUsageSettingsUpdate):
         settings = CoinUsageSettingsModel.get_settings()
         with db():
             db.session.add(settings)
+            if data.elevenlabs_conversation_credits_per_minute is not None:
+                settings.elevenlabs_conversation_credits_per_minute = data.elevenlabs_conversation_credits_per_minute
+            if data.usd_to_credits is not None:
+                settings.usd_to_credits = data.usd_to_credits
             if data.markup_percentage is not None:
                 settings.markup_percentage = data.markup_percentage
-            if data.estimated_coins_per_minute is not None:
-                settings.estimated_coins_per_minute = data.estimated_coins_per_minute
+            if data.minimum_credits_per_minute is not None:
+                settings.minimum_credits_per_minute = data.minimum_credits_per_minute
             if data.minimum_call_minutes is not None:
                 settings.minimum_call_minutes = data.minimum_call_minutes
             if data.credits_per_rupee is not None:
                 settings.credits_per_rupee = data.credits_per_rupee
+            if data.minimum_purchase_amount_inr is not None:
+                settings.minimum_purchase_amount_inr = data.minimum_purchase_amount_inr
             db.session.commit()
             db.session.refresh(settings)
             return settings

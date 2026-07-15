@@ -26,6 +26,7 @@ def list_user_conversations(
 	date_before: Optional[date] = Query(None),
 	call_status: Optional[CallStatusEnum] = Query(None),
 	channel: Optional[ChannelEnum] = Query(None),
+	low_balance_only: bool = Query(False, description="Only show calls that ended due to low coins balance"),
 	current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
 	with db():
@@ -56,6 +57,9 @@ def list_user_conversations(
 
 		if channel:
 			q = q.filter(ConversationsModel.channel == channel)
+
+		if low_balance_only:
+			q = q.filter(ConversationsModel.ended_due_to_low_balance.is_(True))
 
 		q = q.order_by(ConversationsModel.created_at.desc())
 
@@ -94,7 +98,8 @@ def list_user_conversations(
 				"call_status": conv.call_status.name if conv.call_status else None,
 				"channel": conv.channel.value if conv.channel else None,
 				"lead_name": getattr(conv.lead, "name", None) if conv.lead else None,
-				"cost": display_cost
+				"cost": display_cost,
+				"ended_due_to_low_balance": conv.ended_due_to_low_balance,
 			})
 
 		return {
@@ -165,7 +170,8 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 			"messages": conv.message_count,
 			"channel": conv.channel.value if conv.channel else None,
 			"cost": display_cost,
-            "error_message": conv.error_message
+            "error_message": conv.error_message,
+            "ended_due_to_low_balance": conv.ended_due_to_low_balance,
 		},
 		"call_info": {
 			"agent": getattr(conv.agent, "agent_name", None),
