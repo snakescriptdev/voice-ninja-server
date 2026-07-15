@@ -261,6 +261,13 @@ class AgentModel(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True,server_default="true")
     timezone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
+    # Static, pre-call expected LLM cost (USD per minute) for this agent's
+    # selected model, refreshed from ElevenLabs' llm-usage/calculate endpoint on
+    # every create/edit. This is a FLOOR estimate (config-only; ignores tool /
+    # RAG runtime) used solely for the live low-balance cutoff — never for
+    # billing, which reconciles against the real reported credits after a call.
+    llm_price_per_minute: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     user = relationship("UnifiedAuthModel",back_populates="agents")
 
     voice = relationship("VoiceModel",back_populates="agents")
@@ -542,8 +549,25 @@ class ConversationsModel(Base):
     transcript_summary: Mapped[str] = mapped_column(String,nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     elevenlabs_conv_id: Mapped[str] = mapped_column(String,nullable=True)
+    # Actual TOTAL ElevenLabs cost for the call, in EL credits (from metadata.cost).
     cost: Mapped[int] = mapped_column(Integer,nullable=True)
     error_message : Mapped[str] = mapped_column(String,nullable=True)
+
+    # ---- Cost audit columns (see app_v2/utils/cost_utils.py) ----
+    # Live estimates accumulated during the call, stored in ₹ for the admin audit.
+    calculated_conversation_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    calculated_llm_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    calculated_telephony_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=0.0)
+    # Actual ElevenLabs charge split from post-call metadata, in EL credits.
+    actual_llm_credits: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    actual_conversation_credits: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # What we actually deducted from the user (their coins) and the resulting margin.
+    coins_charged_to_user: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    profit_percentage: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # True when the call was cut short because the user ran out of coins mid-call
+    # (call_status is failed and error_message says so). Used for filtering.
+    ended_due_to_low_balance: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
     #relationships
     agent = relationship("AgentModel",back_populates="conversations")
     user = relationship("UnifiedAuthModel",back_populates="conversations")
@@ -782,26 +806,37 @@ class CoinUsageSettingsModel(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
 
+    # ─── What ElevenLabs charges us ──────────────────────────────────────────
+    # EL credits ElevenLabs charges us per minute of CONVERSATION (STT+TTS+turn
+    # taking) — NOT LLM, which is billed separately. Drives the conversation
+    # portion of the live ongoing-call cost estimate.
+    elevenlabs_conversation_credits_per_minute: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    # How many EL credits equal 1 USD. The ElevenLabs LLM-usage calculate
+    # endpoint returns price_per_minute in USD, so this converts the stored
+    # per-agent LLM price into credits for the live estimate. Admin-tuned.
+    usd_to_credits: Mapped[float] = mapped_column(Float, default=10000.0, server_default="10000.0")
+
+    # ─── What we charge our users ────────────────────────────────────────────
     # How much more (in %) we deduct from the user than what ElevenLabs
     # actually charged us for the conversation, e.g. 30 = charge 30% more
     # than the raw ElevenLabs cost. This is the sole input to actual billing.
     markup_percentage: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
-    # Conservative estimated coins/minute used ONLY for the pre-call minimum
-    # balance gate and the mid-call low-balance cutoff — never for actual
-    # billing, since the real ElevenLabs cost is only known after a call ends.
-    estimated_coins_per_minute: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    # Minimum coins a user must have PER MINUTE of call before we open the
+    # ElevenLabs socket. The pre-call gate requires
+    # minimum_credits_per_minute × minimum_call_minutes coins.
+    minimum_credits_per_minute: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
-    # How many minutes' worth of estimated_coins_per_minute a user must be
+    # How many minutes' worth of minimum_credits_per_minute a user must be
     # able to afford before we even open the ElevenLabs socket.
     minimum_call_minutes: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
 
     # Pay-as-you-go purchase rate: how many coins a user receives per ₹1 paid.
-    # Placeholder default of 1.0 — must be tuned by an admin against real
-    # ElevenLabs cost so the target margin actually holds:
-    #   credits_per_rupee = target_margin_retained_fraction * (1 + markup_percentage / 100)
-    #                       / (real ElevenLabs cost, in rupees, per credit consumed)
     credits_per_rupee: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
+
+    # Minimum rupee amount a user must spend in a single pay-as-you-go purchase.
+    minimum_purchase_amount_inr: Mapped[float] = mapped_column(Float, default=500.0, server_default="500.0")
 
     # Singleton guard: only one row can have this value
     singleton_guard: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")

@@ -44,6 +44,7 @@ from app_v2.utils.conversation_lifecycle import (
     mark_conversation_failed,
     get_minimum_call_balance,
     is_balance_exhausted,
+    LOW_BALANCE_ERROR_MESSAGE,
 )
 from app_v2.utils.email_service import send_low_coins_email
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
@@ -406,7 +407,11 @@ async def browser_to_elevenlabs(
                     return
 
                 with db():
-                    low_balance = is_balance_exhausted(ctx.call_start_time, ctx.user_balance)
+                    low_balance = is_balance_exhausted(
+                        ctx.call_start_time,
+                        ctx.user_balance,
+                        agent_llm_price_per_minute=ctx.agent.llm_price_per_minute,
+                    )
                 if low_balance:
                     logger.warning(f"Auto-disconnect user {ctx.user_id}: low balance")
                     ctx.low_balance_reached = True
@@ -722,7 +727,7 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
     if ctx.limit_reached:
         limit_error = "Monthly minutes limit reached"
     elif ctx.low_balance_reached:
-        limit_error = "Call ended due to low balance"
+        limit_error = LOW_BALANCE_ERROR_MESSAGE
     else:
         limit_error = None
     if limit_error:

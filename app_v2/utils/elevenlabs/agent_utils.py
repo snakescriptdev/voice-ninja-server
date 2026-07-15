@@ -132,22 +132,95 @@ class ElevenLabsAgent(BaseElevenLabs):
     def get_agent(self, agent_id: str) -> ElevenLabsResponse:
         """
         Get agent details by agent_id.
-        
+
         Args:
             agent_id: ElevenLabs agent ID
-            
+
         Returns:
             ElevenLabsResponse with agent details
         """
         logger.info(f"Fetching agent: {agent_id}")
         response = self._get(f"/convai/agents/{agent_id}")
-        
+
         if response.status:
             logger.info(f"✅ Agent fetched: {agent_id}")
         else:
             logger.error(f"Failed to fetch agent: {response.error_message}")
-        
+
         return response
+
+    def calculate_llm_usage(self, agent_id: str) -> ElevenLabsResponse:
+        """
+        Fetch ElevenLabs' expected LLM usage for an agent.
+
+        POSTs an empty body to /convai/agent/{agent_id}/llm-usage/calculate so
+        ElevenLabs derives prompt_length / number_of_pages / rag_enabled from the
+        agent's own stored configuration. The response is:
+            {"llm_prices": [{"llm": "gpt-4o", "price_per_minute": 0.046...}, ...]}
+
+        NOTE: this is a STATIC, pre-call estimate (a floor). It is computed from
+        the agent's config only and does NOT account for tool calls, tool
+        results, or RAG runtime — actual per-minute LLM cost can be several times
+        higher. Use it for the live low-balance cutoff, never for final billing
+        (which reconciles against the real reported credits after a call ends).
+
+        Args:
+            agent_id: ElevenLabs agent ID.
+
+        Returns:
+            ElevenLabsResponse whose data contains the "llm_prices" list.
+        """
+        logger.info(f"Calculating expected LLM usage for agent: {agent_id}")
+        response = self._post(f"/convai/agent/{agent_id}/llm-usage/calculate", data={})
+
+        if response.status:
+            logger.info(f"✅ LLM usage calculated for agent {agent_id}")
+        else:
+            logger.error(f"Failed to calculate LLM usage for {agent_id}: {response.error_message}")
+
+        return response
+
+    @staticmethod
+    def extract_price_for_model(llm_usage_data: Dict[str, Any], model_name: str) -> Optional[float]:
+        """
+        Pull the price_per_minute (USD) for a specific model out of a
+        calculate_llm_usage() response.
+
+        Matches the model exactly first, then falls back to a normalized
+        (case-insensitive) match so minor id variations still resolve. Returns
+        None if the model isn't present in the price list.
+        """
+        prices = (llm_usage_data or {}).get("llm_prices") or []
+        if not model_name:
+            return None
+
+        for entry in prices:
+            if entry.get("llm") == model_name:
+                return entry.get("price_per_minute")
+
+        target = model_name.strip().lower()
+        for entry in prices:
+            if str(entry.get("llm", "")).strip().lower() == target:
+                return entry.get("price_per_minute")
+
+        logger.warning(f"Model '{model_name}' not found in llm_prices list")
+        return None
+
+    def get_llm_price_per_minute(self, agent_id: str, model_name: str) -> Optional[float]:
+        """
+        Convenience: fetch the agent's expected LLM usage and return the
+        price_per_minute (USD) for `model_name`. Returns None on any failure so
+        callers can store the price best-effort without breaking agent
+        create/update if ElevenLabs is unavailable.
+        """
+        try:
+            resp = self.calculate_llm_usage(agent_id)
+            if not resp.status or not resp.data:
+                return None
+            return self.extract_price_for_model(resp.data, model_name)
+        except Exception:
+            logger.exception(f"Failed to resolve LLM price for agent {agent_id}, model {model_name}")
+            return None
     
     def update_agent(
         self,

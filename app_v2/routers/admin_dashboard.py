@@ -394,8 +394,16 @@ def list_all_conversations_for_admin(
                 channel=conv.channel.value if conv.channel else None,
                 call_status=conv.call_status.name if conv.call_status else None,
                 duration=conv.duration,
+                elevenlabs_conv_id=conv.elevenlabs_conv_id,
                 elevenlabs_cost=float(conv.cost or 0),
                 coins_deducted=coins_deducted_map.get(conv.id, 0),
+                actual_conversation_credits=conv.actual_conversation_credits,
+                actual_llm_credits=conv.actual_llm_credits,
+                actual_telephony_cost=0.0,
+                calculated_conversation_cost=conv.calculated_conversation_cost,
+                calculated_llm_cost=conv.calculated_llm_cost,
+                calculated_telephony_cost=conv.calculated_telephony_cost or 0.0,
+                profit_percentage=conv.profit_percentage,
             )
             for conv, user, agent in rows
         ]
