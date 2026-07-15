@@ -1,11 +1,18 @@
 from pydantic import BaseModel,Field
 from typing import Optional, Dict, Any
 
-MIN_PURCHASE_AMOUNT = 50.0
+# Absolute floor only. The real, admin-configurable minimum lives in
+# CoinUsageSettingsModel.minimum_purchase_amount_inr and is enforced in the
+# route handlers, so it stays authoritative even if set below this value.
+MIN_PURCHASE_AMOUNT = 1.0
 
 class CreditEstimateResponse(BaseModel):
     amount: float
     credits: int
+
+class PurchaseConfigResponse(BaseModel):
+    minimum_purchase_amount_inr: float
+    credits_per_rupee: float
 
 class OrderCreateRequest(BaseModel):
     amount: float = Field(..., ge=MIN_PURCHASE_AMOUNT)

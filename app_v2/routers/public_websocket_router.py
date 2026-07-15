@@ -23,6 +23,7 @@ from app_v2.utils.conversation_lifecycle import (
     mark_conversation_failed,
     get_minimum_call_balance,
     is_balance_exhausted,
+    LOW_BALANCE_ERROR_MESSAGE,
 )
 from app_v2.core.logger import setup_logger
 from app_v2.routers.websocket_router import check_elevenlabs_credits
@@ -87,6 +88,7 @@ async def public_websocket_agent(
         
         elevenlabs_agent_id = agent.elevenlabs_agent_id
         agent_name = agent.agent_name
+        agent_llm_price = agent.llm_price_per_minute
 
         # 3. Check Balance and Limits
         user_balance = get_user_coin_balance(user_id)
@@ -170,7 +172,11 @@ async def public_websocket_agent(
                                     return
 
                                 with db():
-                                    low_balance = is_balance_exhausted(call_start_time, user_balance)
+                                    low_balance = is_balance_exhausted(
+                                        call_start_time,
+                                        user_balance,
+                                        agent_llm_price_per_minute=agent_llm_price,
+                                    )
                                 if low_balance:
                                     low_balance_reached = True
                                     await websocket.send_json({
@@ -310,7 +316,7 @@ async def public_websocket_agent(
     if limit_reached:
         limit_error = "Monthly minutes limit reached"
     elif low_balance_reached:
-        limit_error = "Call ended due to low balance"
+        limit_error = LOW_BALANCE_ERROR_MESSAGE
     else:
         limit_error = None
     if limit_error:

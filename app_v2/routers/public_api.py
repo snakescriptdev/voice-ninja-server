@@ -361,7 +361,12 @@ async def create_agent(
         )
         db.session.add(new_agent)
         db.session.flush()
-        
+
+        # Best-effort store of the expected per-minute LLM price (live cutoff only).
+        new_agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
+            elevenlabs_agent_id, ai_model.model_name
+        )
+
         db.session.add(AgentAIModelBridge(agent_id=new_agent.id, ai_model_id=ai_model.id))
         db.session.add(AgentLanguageBridge(agent_id=new_agent.id, lang_id=language.id))
         
@@ -529,6 +534,21 @@ async def update_agent_public(
                     raise HTTPException(
                         status_code=424,
                         detail=f"Failed to update agent in ElevenLabs: {el_response.error_message}"
+                    )
+
+                # Refresh the stored LLM price now that ElevenLabs has the new
+                # config (best-effort; prompt/KB/RAG/model all affect it).
+                effective_model = el_update_params.get("llm_model")
+                if not effective_model:
+                    effective_model = (
+                        db.session.query(AIModels.model_name)
+                        .join(AgentAIModelBridge, AgentAIModelBridge.ai_model_id == AIModels.id)
+                        .filter(AgentAIModelBridge.agent_id == agent_id)
+                        .scalar()
+                    )
+                if effective_model:
+                    agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
+                        agent.elevenlabs_agent_id, effective_model
                     )
             except HTTPException:
                 raise
