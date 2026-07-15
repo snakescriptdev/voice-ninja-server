@@ -92,6 +92,7 @@ def list_user_conversations(
 				"id": conv.id,
 				"date": conv.created_at.strftime("%b %d, %Y"),
 				"time": conv.created_at.strftime("%I:%M %p"),
+				"agent_id": conv.agent_id,
 				"agent_name": getattr(conv.agent, "agent_name", None),
 				"duration": seconds_to_timer(conv.duration),
 				"messages": conv.message_count,

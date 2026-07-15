@@ -22,7 +22,8 @@ from app_v2.databases.models import (
 )
 from app_v2.schemas.coin_purchase import (
     OrderCreateRequest, OrderCreateResponse, OrderVerifyRequest,
-    CreditEstimateResponse, PurchaseConfigResponse, MIN_PURCHASE_AMOUNT,
+    CreditEstimateResponse, PurchaseConfigResponse, CallConfigResponse,
+    MIN_PURCHASE_AMOUNT,
 )
 from app_v2.schemas.enum_types import (
     PaymentProviderEnum, PaymentStatusEnum,
@@ -71,6 +72,23 @@ def get_purchase_config():
     return PurchaseConfigResponse(
         minimum_purchase_amount_inr=settings.minimum_purchase_amount_inr,
         credits_per_rupee=settings.credits_per_rupee,
+    )
+
+
+@router.get(
+    "/call-config",
+    response_model=CallConfigResponse,
+    dependencies=[Depends(security)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def get_call_config():
+    """Minimum-balance requirement for starting a call, so the dashboard can warn
+    the user when their balance is too low to safely place/sustain a call."""
+    s = CoinUsageSettingsModel.get_settings()
+    return CallConfigResponse(
+        minimum_call_balance=int(s.minimum_credits_per_minute * s.minimum_call_minutes),
+        minimum_credits_per_minute=s.minimum_credits_per_minute,
+        minimum_call_minutes=s.minimum_call_minutes,
     )
 
 
