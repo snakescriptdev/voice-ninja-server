@@ -144,6 +144,17 @@ class UnifiedAuthModel(Base):
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
+    # Persisted dismissal for the two low-credit header banners, so a user's
+    # "x" click sticks across devices/sessions. `_recovered` tracks whether the
+    # balance has gone back above the banner's threshold at least once since it
+    # was dismissed — once it drops below the threshold again after that, the
+    # dismissal is cleared (re-armed) so the warning resurfaces for the new
+    # low-balance episode instead of staying hidden forever.
+    low_credits_banner_dismissed = Column(Boolean, default=False, server_default="false")
+    low_credits_banner_recovered = Column(Boolean, default=False, server_default="false")
+    critical_credits_banner_dismissed = Column(Boolean, default=False, server_default="false")
+    critical_credits_banner_recovered = Column(Boolean, default=False, server_default="false")
+
     agents = relationship("AgentModel", back_populates="user")
     voices = relationship("VoiceModel", back_populates="user")
     notification_settings = relationship("UserNotificationSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
