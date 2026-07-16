@@ -22,6 +22,16 @@ class UserManagementListItem(BaseModel):
     class Config:
         from_attributes = True
 
+class AdminUserTransactionItem(BaseModel):
+    date_time: datetime
+    action: str
+    transaction_type: str
+    agent_name: Optional[str] = None
+    # Signed: positive = credits added, negative = credits deducted.
+    coins: int
+    balance_before: int
+    balance_after: int
+
 class SuspendUserRequest(BaseModel):
     is_suspended: bool
     reason: Optional[str] = Field(max_length=1000, default=None)

@@ -7,13 +7,15 @@ shows up in the conversations list immediately), then finalized in place once
 the call ends and ElevenLabs metadata is available — instead of only ever
 inserting a row after the call is over.
 """
+import asyncio
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import ConversationsModel, CoinUsageSettingsModel, AgentModel
+from app_v2.databases.models import ConversationsModel, CoinUsageSettingsModel, AgentModel, UnifiedAuthModel
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
 from app_v2.utils.coin_utils import deduct_coins
 from app_v2.utils.cost_utils import (
@@ -21,8 +23,70 @@ from app_v2.utils.cost_utils import (
     estimate_costs_credits,
     compute_actual_breakdown,
 )
+from app_v2.utils.email_service import send_cost_overrun_email
 
 logger = setup_logger(__name__)
+
+
+def _dispatch_coro(coro) -> None:
+    """Fire-and-forget an async coroutine from sync code, whether or not an
+    event loop is already running in the current thread (finalize runs inside
+    the websocket handler's loop, but occasionally off-thread)."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None and loop.is_running():
+        loop.create_task(coro)
+    else:
+        def _run():
+            try:
+                asyncio.run(coro)
+            except Exception:
+                logger.exception("Failed to send cost-overrun email")
+        threading.Thread(target=_run, daemon=True).start()
+
+
+def _maybe_alert_cost_overrun(record: ConversationsModel) -> None:
+    """Email admins when a call's ACTUAL cost exceeded our CALCULATED estimate
+    (conversation and/or LLM). Admin emails are resolved synchronously here so
+    the dispatched coroutine never touches the DB session."""
+    conv_over = (
+        record.actual_conversation_credits is not None
+        and record.calculated_conversation_cost is not None
+        and record.actual_conversation_credits > record.calculated_conversation_cost
+    )
+    llm_over = (
+        record.actual_llm_credits is not None
+        and record.calculated_llm_cost is not None
+        and record.actual_llm_credits > record.calculated_llm_cost
+    )
+    if not (conv_over or llm_over):
+        return
+    try:
+        admin_emails = [
+            a.email
+            for a in db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.is_admin == True).all()
+            if a.email
+        ]
+        if not admin_emails:
+            return
+        agent_name = (
+            db.session.query(AgentModel.agent_name).filter(AgentModel.id == record.agent_id).scalar()
+        )
+        _dispatch_coro(
+            send_cost_overrun_email(
+                recipients=admin_emails,
+                conversation_id=record.id,
+                agent_name=agent_name,
+                actual_conversation=record.actual_conversation_credits,
+                calculated_conversation=record.calculated_conversation_cost,
+                actual_llm=record.actual_llm_credits,
+                calculated_llm=record.calculated_llm_cost,
+            )
+        )
+    except Exception:
+        logger.exception("Failed to evaluate/send cost-overrun alert")
 
 # Error message set on a conversation when a call is cut short mid-call because
 # the user ran out of coins. Shared with the websocket routers so the marker and
@@ -178,6 +242,10 @@ def finalize_conversation(
 
     db.session.commit()
     db.session.refresh(record)
+
+    # Alert admins if the real cost exceeded our estimate for this call.
+    _maybe_alert_cost_overrun(record)
+
     return record
 
 

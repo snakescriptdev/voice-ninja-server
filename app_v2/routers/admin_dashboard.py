@@ -6,6 +6,7 @@ from app_v2.core.logger import setup_logger
 from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinUsageSettingsModel, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel
 from app_v2.schemas.activity_schema import ActivityLogResponse
 from app_v2.schemas.admin_dashboard import UserCostItem, AdminConversationItem
+from app_v2.schemas.enum_types import CallStatusEnum
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
@@ -338,6 +339,9 @@ def list_all_conversations_for_admin(
     search: Optional[str] = Query(None, description="Search by user name/email or agent name"),
     date_after: Optional[date] = Query(None),
     date_before: Optional[date] = Query(None),
+    user_id: Optional[int] = Query(None, description="Filter to a single user's conversations"),
+    agent_id: Optional[int] = Query(None, description="Filter to a single agent's conversations"),
+    call_status: Optional[CallStatusEnum] = Query(None, description="Filter by call status (success/failed/in_progress)"),
 ):
     """
     Every conversation across every user, side by side with the raw
@@ -364,6 +368,12 @@ def list_all_conversations_for_admin(
             q = q.filter(ConversationsModel.created_at >= date_after)
         if date_before:
             q = q.filter(ConversationsModel.created_at <= date_before)
+        if user_id is not None:
+            q = q.filter(ConversationsModel.user_id == user_id)
+        if agent_id is not None:
+            q = q.filter(ConversationsModel.agent_id == agent_id)
+        if call_status:
+            q = q.filter(ConversationsModel.call_status == call_status)
 
         q = q.order_by(ConversationsModel.created_at.desc())
 
@@ -391,6 +401,7 @@ def list_all_conversations_for_admin(
                 user_name=user.name or user.username or "Unknown",
                 user_email=user.email or "",
                 agent_name=agent.agent_name if agent else None,
+                elevenlabs_agent_id=agent.elevenlabs_agent_id if agent else None,
                 channel=conv.channel.value if conv.channel else None,
                 call_status=conv.call_status.name if conv.call_status else None,
                 duration=conv.duration,

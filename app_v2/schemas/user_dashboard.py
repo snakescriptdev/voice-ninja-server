@@ -26,6 +26,17 @@ class AgentAnalytics(BaseModel):
     avg_duration: float
     coins_used: int
 
+class AgentSummaryItem(BaseModel):
+    agent_id: int
+    agent_name: str
+    elevenlabs_agent_id: Optional[str] = None
+    web_agent_count: int
+    widget_count: int
+    total_conversations: int
+    success_count: int
+    failed_count: int
+    total_credits_used: int
+
 class ChannelDistribution(BaseModel):
     channel: str
     count: int
@@ -75,9 +86,12 @@ class CoinBucketsResponse(BaseModel):
 class UsageHistoryItem(BaseModel):
     date_time: datetime
     action: str
+    transaction_type: str
     agent_name: Optional[str] = None
-    coins_used: int
-    balance: int
+    # Signed: positive = credits added, negative = credits deducted.
+    coins: int
+    balance_before: int
+    balance_after: int
 
 class UsageHistoryResponse(BaseModel):
     history: List[UsageHistoryItem]
@@ -140,6 +154,7 @@ class DashboardLeadItem(BaseModel):
     id: int
     widget_id: int
     widget_name: str
+    widget_public_id: Optional[str] = None
     name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
