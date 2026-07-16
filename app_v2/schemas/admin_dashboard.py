@@ -17,6 +17,8 @@ class AdminConversationItem(BaseModel):
     user_name: str
     user_email: str
     agent_name: Optional[str] = None
+    # ElevenLabs agent id, for linking the agent name to its EL agent page.
+    elevenlabs_agent_id: Optional[str] = None
     channel: Optional[str] = None
     call_status: Optional[str] = None
     duration: Optional[int] = None

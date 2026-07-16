@@ -238,6 +238,38 @@ async def send_email_to_admins(db_session, subject: str, html_body: str):
     except Exception as e:
         logger.error(f"Failed to send email to admins: {str(e)}")
 
+async def send_cost_overrun_email(
+    recipients: list,
+    conversation_id: int,
+    agent_name: str,
+    actual_conversation: float,
+    calculated_conversation: float,
+    actual_llm: float,
+    calculated_llm: float,
+):
+    """
+    Alert admins that a conversation's ACTUAL cost exceeded our CALCULATED
+    estimate (conversation and/or LLM), so pricing assumptions can be reviewed.
+    Recipients are passed in (already resolved) so this coroutine never touches
+    the DB — safe to dispatch fire-and-forget from a finalize call.
+    """
+    def _fmt(v):
+        return f"{v:,.2f}" if v is not None else "—"
+
+    subject = f"Cost overrun on conversation #{conversation_id}"
+    body = f"""
+    <h2>Conversation Cost Overrun</h2>
+    <p>Conversation <b>#{conversation_id}</b> (agent: <b>{agent_name or 'Unknown'}</b>)
+    cost more than our estimate.</p>
+    <ul>
+      <li>Conversation — actual: <b>{_fmt(actual_conversation)}</b> cr, estimated: {_fmt(calculated_conversation)} cr</li>
+      <li>LLM — actual: <b>{_fmt(actual_llm)}</b> cr, estimated: {_fmt(calculated_llm)} cr</li>
+    </ul>
+    <p>Review it under Admin → ElevenLabs Usage → Conversations.</p>
+    """
+    await send_email_async(subject=subject, recipients=recipients, body=body)
+
+
 async def send_voice_limit_email_to_admins(db_session, user_identifier: str, user_id: int):
     """
     Sends an email to all admins notifying them about voice cloning limit reached.
