@@ -26,6 +26,7 @@ def list_user_conversations(
 	date_before: Optional[date] = Query(None),
 	call_status: Optional[CallStatusEnum] = Query(None),
 	channel: Optional[ChannelEnum] = Query(None),
+	agent_id: Optional[int] = Query(None, description="Filter to a single agent's conversations"),
 	low_balance_only: bool = Query(False, description="Only show calls that ended due to low coins balance"),
 	current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
@@ -57,6 +58,9 @@ def list_user_conversations(
 
 		if channel:
 			q = q.filter(ConversationsModel.channel == channel)
+
+		if agent_id is not None:
+			q = q.filter(ConversationsModel.agent_id == agent_id)
 
 		if low_balance_only:
 			q = q.filter(ConversationsModel.ended_due_to_low_balance.is_(True))
