@@ -1,5 +1,5 @@
 from pydantic import BaseModel,Field
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Literal
 
 # Absolute floor only. The real, admin-configurable minimum lives in
 # CoinUsageSettingsModel.minimum_purchase_amount_inr and is enforced in the
@@ -20,6 +20,22 @@ class CallConfigResponse(BaseModel):
     minimum_call_balance: int
     minimum_credits_per_minute: int
     minimum_call_minutes: int
+
+
+BannerType = Literal["low_credits", "critical_credits"]
+
+class CreditBannerStatusResponse(BaseModel):
+    available_coins: int
+    # Balance at/under which a call cannot be started (the "critical" banner).
+    minimum_call_balance: int
+    # Balance at/under which we warn a call may end mid-way (the "low" banner) —
+    # a multiple of minimum_call_balance, always >= it.
+    low_credits_threshold: int
+    show_low_credits_banner: bool
+    show_critical_credits_banner: bool
+
+class DismissCreditBannerRequest(BaseModel):
+    banner: BannerType
 
 class OrderCreateRequest(BaseModel):
     amount: float = Field(..., ge=MIN_PURCHASE_AMOUNT)
