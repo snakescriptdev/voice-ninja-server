@@ -1080,6 +1080,22 @@ async def update_agent(
     
     # ---- Base Fields ----
     if agent_in.agent_name is not None:
+        # Same uniqueness rule as create: no OTHER agent of this user may share
+        # the name (case-insensitive).
+        name_taken = (
+            db.session.query(AgentModel)
+            .filter(
+                func.lower(AgentModel.agent_name) == agent_in.agent_name.lower(),
+                AgentModel.user_id == current_user.id,
+                AgentModel.id != agent_id,
+            )
+            .first()
+        )
+        if name_taken:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Agent with this name already exists",
+            )
         agent.agent_name = agent_in.agent_name
         el_update_params["name"] = agent_in.agent_name
     if agent_in.first_message is not None:

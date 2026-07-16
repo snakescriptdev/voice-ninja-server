@@ -3,14 +3,16 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, desc, select
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, ConversationsModel
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
-from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest
+from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest, AdminUserTransactionItem
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
 
 from app_v2.utils.coin_utils import admin_adjust_coins, get_user_coin_balance
+from app_v2.utils.agent_summary import build_agent_summaries
+from app_v2.schemas.user_dashboard import AgentSummaryItem
 
 security = HTTPBearer()
 logger = setup_logger(__name__)
@@ -185,6 +187,118 @@ def list_users_managed(
     except Exception as e:
         logger.error(f"Error listing users managed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/users/{user_id}", response_model=UserManagementListItem, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_detail(user_id: int):
+    """Single-user detail for the admin user-detail page (same shape as the list item)."""
+    try:
+        user = db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.id == user_id,
+            UnifiedAuthModel.is_admin.is_(False),
+        ).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        now = datetime.now(timezone.utc)
+        month_ago = now - timedelta(days=30)
+        week_ago = now - timedelta(days=7)
+
+        def _count(model):
+            return db.session.query(func.count(model.id)).filter(model.user_id == user_id).scalar() or 0
+
+        no_of_agents = _count(AgentModel)
+        no_of_phones = _count(PhoneNumberService)
+        no_of_voices = db.session.query(func.count(VoiceModel.id)).filter(
+            VoiceModel.user_id == user_id, VoiceModel.is_custom_voice.is_(True)
+        ).scalar() or 0
+        calls_total = _count(APICallLogModel)
+        calls_monthly = db.session.query(func.count(APICallLogModel.id)).filter(
+            APICallLogModel.user_id == user_id, APICallLogModel.created_at >= month_ago
+        ).scalar() or 0
+        calls_weekly = db.session.query(func.count(APICallLogModel.id)).filter(
+            APICallLogModel.user_id == user_id, APICallLogModel.created_at >= week_ago
+        ).scalar() or 0
+        last_activity = db.session.query(func.max(ActivityLogModel.created_at)).filter(
+            ActivityLogModel.user_id == user_id
+        ).scalar()
+        last_active = max([d for d in (user.last_login, last_activity) if d], default=None)
+
+        return UserManagementListItem(
+            user_id=user.id,
+            username=user.first_name or user.name or "Unknown",
+            email=user.email or "",
+            balance_coins=int(get_user_coin_balance(user_id)),
+            no_of_agents=no_of_agents,
+            no_of_phones=no_of_phones,
+            last_active=format_time_ago(last_active) if last_active else "long time ago",
+            is_suspended=bool(user.is_suspended),
+            api_calls_total=calls_total,
+            api_calls_monthly=calls_monthly,
+            api_calls_weekly=calls_weekly,
+            no_of_voices=no_of_voices,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user detail {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users/{user_id}/transactions", response_model=PaginatedResponse[AdminUserTransactionItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_transactions(user_id: int, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
+    """All coin-ledger transactions (added and deducted) for a user, newest first."""
+    try:
+        base = db.session.query(CoinsLedgerModel).filter(CoinsLedgerModel.user_id == user_id)
+        total = base.count()
+        rows = base.order_by(
+            CoinsLedgerModel.created_at.desc(), CoinsLedgerModel.id.desc()
+        ).offset((page - 1) * page_size).limit(page_size).all()
+
+        action_map = {
+            "debit_usage": "AI Interaction",
+            "credit_subscription": "Subscription Credits",
+            "credit_purchase": "Credits Purchased",
+            "refund": "Refund",
+            "expired": "Coins Expired",
+            "carry_forward_reset": "Unused Coins Reset",
+            "admin_adjustment": "Admin Adjustment",
+        }
+
+        items = []
+        for item in rows:
+            agent_name = None
+            if item.reference_type == "conversation" and item.reference_id:
+                conv = db.session.query(ConversationsModel).filter(ConversationsModel.id == item.reference_id).first()
+                if conv and conv.agent:
+                    agent_name = conv.agent.agent_name
+            source_name = str(item.transaction_type.value if hasattr(item.transaction_type, "value") else item.transaction_type)
+            items.append(AdminUserTransactionItem(
+                date_time=item.created_at,
+                action=action_map.get(source_name, source_name.replace("_", " ").title()),
+                transaction_type=source_name,
+                agent_name=agent_name,
+                coins=item.coins,
+                balance_before=item.balance_after - item.coins,
+                balance_after=item.balance_after,
+            ))
+
+        total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
+        return PaginatedResponse(total=total, page=page, size=page_size, pages=total_pages, items=items)
+    except Exception as e:
+        logger.error(f"Error getting transactions for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users/{user_id}/agents-summary", response_model=List[AgentSummaryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_agents_summary(user_id: int):
+    """Per-agent summary (web-agent/widget counts, conversation success/failed
+    counts) for a specific user — for the admin user-detail Agents tab."""
+    try:
+        return build_agent_summaries(user_id)
+    except Exception as e:
+        logger.error(f"Error building agents summary for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.post("/users/{user_id}/suspend",openapi_extra={"security":[{"BearerAuth":[]}]})
 def suspend_user(user_id:int,request:SuspendUserRequest):
