@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 from app_v2.schemas.pagination import PaginatedResponse
 class UserCostItem(BaseModel):
@@ -7,6 +7,23 @@ class UserCostItem(BaseModel):
     user_name: str
     email: str
     total_cost: float
+
+    model_config = {"from_attributes": True}
+
+class ConversationSettingsSnapshot(BaseModel):
+    """
+    The exact billing-relevant CoinUsageSettingsModel values in effect when a
+    conversation was finalized/charged — see CoinUsageSettingsVersionModel.
+    """
+    version_number: int
+    elevenlabs_conversation_credits_per_minute: int
+    usd_to_credits: float
+    markup_percentage: float
+    minimum_credits_per_minute: int
+    minimum_call_minutes: int
+    first_call_max_duration_seconds: int
+    knowledge_base_llm_cost_multiplier: float
+    tool_llm_cost_multiplier: float
 
     model_config = {"from_attributes": True}
 
@@ -39,4 +56,97 @@ class AdminConversationItem(BaseModel):
     # (charged_₹ − our_cost_₹) / our_cost_₹ × 100. Negative = loss.
     profit_percentage: Optional[float] = None
 
+    # LLM cost calibration snapshot, frozen at call time (see
+    # ConversationsModel calibration columns / finalize_conversation()).
+    user_message_count: Optional[int] = None
+    agent_message_count: Optional[int] = None
+    system_prompt_length: Optional[int] = None
+    tool_count: Optional[int] = None
+    kb_total_pages: Optional[int] = None
+    rag_enabled: Optional[bool] = None
+
+    # Which billing-settings version this call was charged under (see
+    # coin_usage_settings_versions) — null for calls that predate this feature.
+    settings_version: Optional[ConversationSettingsSnapshot] = None
+
     model_config = {"from_attributes": True}
+
+class MonthlyProfitLossItem(BaseModel):
+    """
+    One month's profit/loss breakdown over conversations with a computed
+    profit_percentage (calls with no cost data yet are excluded from both
+    buckets and from total_calls).
+    """
+    month: str  # "YYYY-MM"
+    total_calls: int
+    profit_call_count: int
+    loss_call_count: int
+    # Share of total_calls that were profitable / a loss (sums to ~100%).
+    profit_pct_share: float
+    loss_pct_share: float
+    # Mean profit_percentage among profit calls / loss calls this month (the
+    # magnitude, not the share) — null if that month has no calls of that kind.
+    avg_profit_percentage: Optional[float] = None
+    avg_loss_percentage: Optional[float] = None
+
+class OverallProfitLossSummary(BaseModel):
+    """Same shape as MonthlyProfitLossItem but aggregated across every month, plus per-month averages."""
+    total_calls: int
+    profit_call_count: int
+    loss_call_count: int
+    profit_pct_share: float
+    loss_pct_share: float
+    avg_profit_percentage: Optional[float] = None
+    avg_loss_percentage: Optional[float] = None
+    months_count: int
+    avg_profit_call_count_per_month: float
+    avg_loss_call_count_per_month: float
+
+class ProfitLossAnalyticsResponse(BaseModel):
+    # Most recent month first.
+    months: List[MonthlyProfitLossItem]
+    overall: OverallProfitLossSummary
+
+# ---- Admin: Public API / Public Websocket Logs dashboard ----
+
+class AdminPublicLogEndpointItem(BaseModel):
+    channel: str
+    route: str
+    method: Optional[str] = None
+    success_count: int
+    failure_count: int
+    total_count: int
+
+class AdminPublicLogEndpointListResponse(BaseModel):
+    endpoints: List[AdminPublicLogEndpointItem]
+
+class AdminPublicLogItem(BaseModel):
+    id: int
+    channel: Optional[str] = None
+    api_route: str
+    method: Optional[str] = None
+    status_code: int
+    is_success: Optional[bool] = None
+    request_params: Optional[Any] = None
+    request_body: Optional[Any] = None
+    response_body: Optional[Any] = None
+    error_message: Optional[str] = None
+    response_time_ms: Optional[int] = None
+    created_at: datetime
+    api_key_id: Optional[int] = None
+    api_key_name: Optional[str] = None
+    user_id: int
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+
+    model_config = {"from_attributes": True}
+
+class AdminPublicLogUserItem(BaseModel):
+    user_id: int
+    user_name: Optional[str] = None
+    user_email: Optional[str] = None
+    failure_count: int
+    total_count: int
+
+class AdminPublicLogUserListResponse(BaseModel):
+    users: List[AdminPublicLogUserItem]

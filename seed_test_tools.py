@@ -47,8 +47,8 @@ from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 
 BASE_URL = "https://boomless-estelle-nonoppressively.ngrok-free.dev"
 # Target user: first positional CLI arg wins, else env, else default.
-SEED_USER_EMAIL = "priyanshi+20@snakescript.com"
-SEED_USER_ID = "20"
+SEED_USER_EMAIL = "priyanshi+21@snakescript.com"
+SEED_USER_ID = "21"
 
 if len(sys.argv) > 1 and sys.argv[1].strip():
     SEED_USER_EMAIL = sys.argv[1].strip()
@@ -85,7 +85,7 @@ def _post(url, properties, required):
 
 def build_tools() -> list:
     """Returns [(name, description, ApiSchema), ...] for the 15 prompt tools."""
-    api = f"{BASE_URL}/api"
+    api = f"{BASE_URL}/webhooks_tools/api"
     return [
         # ---- Prompt 1: weather bot (GET with a query param) ----
         (

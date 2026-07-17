@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
-from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, PaymentProviderEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum
+from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, PaymentProviderEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, PublicLogChannelEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -278,6 +278,21 @@ class AgentModel(Base):
     # RAG runtime) used solely for the live low-balance cutoff — never for
     # billing, which reconciles against the real reported credits after a call.
     llm_price_per_minute: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # ─── LLM cost calibration constants (current-config cache) ─────────────
+    # Total KB pages ElevenLabs has indexed across this agent's attached
+    # documents, from GET /convai/agent/{id}/knowledge-base/size. Cached here
+    # (refreshed on create/edit like llm_price_per_minute) since it requires
+    # an external call — re-fetching it on every conversation would be
+    # wasteful. 0 when no KB is attached, None if the fetch hasn't run yet.
+    kb_total_pages: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Whether RAG is enabled for this agent's knowledge base. This platform
+    # always sends rag.enabled=true to ElevenLabs on create/update (see
+    # ElevenLabsAgent.create_agent), so this is currently always True — stored
+    # explicitly (rather than assumed) so calibration data stays correct if a
+    # toggle is ever added.
+    rag_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
     user = relationship("UnifiedAuthModel",back_populates="agents")
 
@@ -579,10 +594,30 @@ class ConversationsModel(Base):
     # (call_status is failed and error_message says so). Used for filtering.
     ended_due_to_low_balance: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
+    # ─── LLM cost calibration snapshot (captured at finalize time) ─────────
+    # These freeze what the agent's cost drivers WERE when this call ran, so
+    # later agent edits don't retroactively change a past call's context —
+    # a per-call stand-in for real agent-version history, which doesn't exist
+    # yet. See app_v2/utils/conversation_lifecycle.py finalize_conversation().
+    user_message_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    agent_message_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    system_prompt_length: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tool_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    kb_total_pages: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rag_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+
+    # Which CoinUsageSettingsVersionModel snapshot was in effect when this
+    # call was finalized/charged — see conversation_lifecycle.py's
+    # get_or_create_current_settings_version().
+    settings_version_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("coin_usage_settings_versions.id"), nullable=True
+    )
+
     #relationships
     agent = relationship("AgentModel",back_populates="conversations")
     user = relationship("UnifiedAuthModel",back_populates="conversations")
     lead = relationship("WidgetLeadModel", back_populates="conversation", uselist=False)
+    settings_version = relationship("CoinUsageSettingsVersionModel", back_populates="conversations")
 
 class WidgetModel(Base):
     __tablename__ = "widgets"
@@ -777,10 +812,14 @@ class CoinsLedgerModel(Base):
     reference_id: Mapped[int | None] = mapped_column(Integer)
 
     balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
-    
-    # New fields for FIFO and Expiry
-    expiry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    # Tracks partial consumption of a credit batch across FIFO deductions.
+    # Credits never expire — this is purely a drain counter, not an expiry mechanism.
     remaining_coins: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=0)
+
+    # Free-text reason, populated for admin_adjustment entries (why an admin
+    # added/removed coins) so it's visible in usage history — null otherwise.
+    notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
@@ -843,15 +882,43 @@ class CoinUsageSettingsModel(Base):
     # able to afford before we even open the ElevenLabs socket.
     minimum_call_minutes: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
 
+    # ─── First-call safety cap & LLM cost multipliers ───────────────────────
+    # Max duration (seconds) allowed for an agent's very FIRST call ever
+    # (across any user) — a safety cap while a freshly configured agent's LLM
+    # price / KB / tool multipliers are still unproven. 0 disables the cap.
+    first_call_max_duration_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    # Multiplier applied to the LLM cost estimate when the agent has a
+    # knowledge base attached (KB retrieval adds prompt tokens beyond
+    # ElevenLabs' bare per-minute LLM price). 1.0 = no adjustment.
+    knowledge_base_llm_cost_multiplier: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
+
+    # Multiplier applied to the LLM cost estimate when the agent has any
+    # custom tool attached (tool round-trips add extra LLM calls beyond
+    # ElevenLabs' bare per-minute LLM price). 1.0 = no adjustment. When an
+    # agent has both a KB and tools, the higher of the two multipliers is
+    # used rather than compounding them.
+    tool_llm_cost_multiplier: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
+
     # Pay-as-you-go purchase rate: how many coins a user receives per ₹1 paid.
     credits_per_rupee: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
 
-    # Minimum rupee amount a user must spend in a single pay-as-you-go purchase.
+    # Minimum rupee amount a user must spend in a single pay-as-you-go
+    # purchase. Admin-set (not derived) — see MIN_PURCHASE_AMOUNT in
+    # schemas/coin_purchase.py for the absolute floor enforced regardless.
     minimum_purchase_amount_inr: Mapped[float] = mapped_column(Float, default=500.0, server_default="500.0")
+
+    # Points at the CoinUsageSettingsVersionModel snapshot currently in
+    # effect. A new version is created (and this repointed) only when a
+    # billing-relevant field actually changes value on PUT — see
+    # conversation_lifecycle.py's maybe_create_new_settings_version().
+    current_version_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("coin_usage_settings_versions.id"), nullable=True
+    )
 
     # Singleton guard: only one row can have this value
     singleton_guard: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
-    
+
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -874,6 +941,34 @@ class CoinUsageSettingsModel(Base):
                     db.session.rollback()
                     settings = db.session.query(cls).first()
             return settings
+
+class CoinUsageSettingsVersionModel(Base):
+    """
+    Immutable snapshot of every billing-relevant CoinUsageSettingsModel field,
+    created whenever an admin actually changes one of them (see
+    conversation_lifecycle.py's maybe_create_new_settings_version()). Each
+    ConversationsModel row links to the version that was current when it was
+    finalized, so a call's charge can always be traced back to exactly the
+    rates it was computed under — without needing full agent-level version
+    history, which doesn't exist yet.
+    """
+    __tablename__ = "coin_usage_settings_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+
+    elevenlabs_conversation_credits_per_minute: Mapped[int] = mapped_column(Integer, nullable=False)
+    usd_to_credits: Mapped[float] = mapped_column(Float, nullable=False)
+    markup_percentage: Mapped[float] = mapped_column(Float, nullable=False)
+    minimum_credits_per_minute: Mapped[int] = mapped_column(Integer, nullable=False)
+    minimum_call_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    first_call_max_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    knowledge_base_llm_cost_multiplier: Mapped[float] = mapped_column(Float, nullable=False)
+    tool_llm_cost_multiplier: Mapped[float] = mapped_column(Float, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    conversations = relationship("ConversationsModel", back_populates="settings_version")
 
 class APIKeyModel(Base):
     __tablename__ = "api_keys"
@@ -908,12 +1003,30 @@ class APICallLogModel(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
     api_route: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Route path TEMPLATE (e.g. "/api/v2/public/agents/{agent_id}"), not the
+    # resolved path — so the Logs page groups one row per endpoint.
     status_code: Mapped[int] = mapped_column(Integer, nullable=False)
     response_time_ms: Mapped[int] = mapped_column(Integer, nullable=True) # in milliseconds
     coins_used: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
+    channel: Mapped[Optional[PublicLogChannelEnum]] = mapped_column(Enum(PublicLogChannelEnum, name="publiclogchannelenum"), nullable=True, index=True)
+    method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    request_params: Mapped[Optional[dict]] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
+    request_body: Mapped[Optional[dict]] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
+    response_body: Mapped[Optional[dict]] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
+    is_success: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Which API key made the call — only meaningful for public_api/public_websocket
+    # (widget_websocket calls aren't authenticated via an API key).
+    api_key_id: Mapped[Optional[int]] = mapped_column(ForeignKey("api_keys.id"), nullable=True, index=True)
+
     user = relationship("UnifiedAuthModel")
+    api_key = relationship("APIKeyModel")
+
+    __table_args__ = (
+        Index("ix_api_call_logs_channel_route_created", "channel", "api_route", "created_at"),
+    )
 
 class WebhookEventLogModel(Base):
     """

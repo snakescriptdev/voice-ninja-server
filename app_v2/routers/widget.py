@@ -27,12 +27,13 @@ from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 from app_v2.core.logger import setup_logger
 from app_v2.databases.models import (
     AgentModel,
+    CoinUsageSettingsModel,
     ConversationsModel,
     UnifiedAuthModel,
     WidgetLeadModel,
     WidgetModel,
 )
-from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
+from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum, PublicLogChannelEnum
 from app_v2.schemas.widget_schema import WidgetLeadCreate, WidgetPublicConfig
 from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.coin_utils import get_user_coin_balance
@@ -42,7 +43,12 @@ from app_v2.utils.conversation_lifecycle import (
     mark_conversation_failed,
     get_minimum_call_balance,
     is_balance_exhausted,
+    is_agents_first_call,
+    is_first_call_duration_exceeded,
+    resolve_llm_cost_multiplier,
+    resolve_llm_rate_basis,
     LOW_BALANCE_ERROR_MESSAGE,
+    FIRST_CALL_DURATION_LIMIT_ERROR_MESSAGE,
 )
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.email_service import send_conversation_notification_email, send_low_coins_email
@@ -53,6 +59,8 @@ from app_v2.utils.feature_access import (
 )
 from app_v2.utils.jwt_utils import HTTPBearer, get_current_user
 from app_v2.routers.websocket_router import check_elevenlabs_credits
+from app_v2.utils.ws_call_log import start_ws_call_log, finalize_ws_call_log
+from app_v2.utils.log_sanitizer import sanitize_for_log
 
 logger = setup_logger(__name__)
 security = HTTPBearer()
@@ -93,6 +101,11 @@ class WidgetContext:
     agent_llm_price: Optional[float] = None
     limit_reached: bool = False
     low_balance_reached: bool = False
+    first_call_limit_reached: bool = False
+    is_first_call: bool = False
+    llm_cost_multiplier: float = 1.0
+    llm_rate_basis: Optional[dict] = None
+    ws_log_id: Optional[int] = None
 
 
 @dataclass
@@ -139,18 +152,31 @@ async def fetch_and_validate_widget(
         )
 
         if not widget:
+            # No owner is attributable at all — nothing to log against.
             await _reject_ws(websocket, "Widget not found")
             return None
 
+        # A user is attributable from here on — open the ws call log so every
+        # rejection below can be paired with a finalize call.
+        ws_log_id = start_ws_call_log(
+            user_id=widget.user_id,
+            channel=PublicLogChannelEnum.widget_websocket,
+            api_route="/api/v2/widget/ws/{public_id}",
+            request_params={"path_params": {"public_id": public_id}},
+        )
+
         if not widget.is_enabled:
+            finalize_ws_call_log(ws_log_id, is_success=False, error_message="Widget is disabled")
             await _reject_ws(websocket, "Widget is disabled")
             return None
 
         if not widget.agent or not widget.agent.is_enabled:
+            finalize_ws_call_log(ws_log_id, is_success=False, error_message="Voice Agent is disabled")
             await _reject_ws(websocket, "Voice Agent is disabled")
             return None
 
         if not widget.agent.elevenlabs_agent_id:
+            finalize_ws_call_log(ws_log_id, is_success=False, error_message="Agent not configured")
             await _reject_ws(websocket, "Agent not configured")
             return None
 
@@ -163,6 +189,10 @@ async def fetch_and_validate_widget(
                 "Owner %s has insufficient coins (balance=%s, required=%s)",
                 user_id, owner_balance, minimum_required,
             )
+            finalize_ws_call_log(
+                ws_log_id, is_success=False,
+                error_message=f"Insufficient coins. Minimum {minimum_required} coins required.",
+            )
             await _reject_ws(
                 websocket,
                 f"Insufficient coins. Minimum {minimum_required} coins required.",
@@ -174,14 +204,18 @@ async def fetch_and_validate_widget(
         except HTTPException as e:
             conversation_row_id = start_conversation(user_id, widget.agent_id, channel)
             mark_conversation_failed(conversation_row_id, "Monthly minutes limit reached")
+            finalize_ws_call_log(ws_log_id, is_success=False, error_message="Monthly minutes limit reached")
             await _reject_ws(websocket, e.detail)
             logger.error("Monthly minutes limit for owner %s: %s", user_id, e.detail)
             return None
 
         has_credits = await check_elevenlabs_credits(websocket, user_id, widget.agent_id, channel=ChannelEnum.call)
         if not has_credits:
+            finalize_ws_call_log(ws_log_id, is_success=False, error_message="ElevenLabs credits check failed")
             return None
 
+        settings = CoinUsageSettingsModel.get_settings()
+        is_first_call = is_agents_first_call(widget.agent_id)
         return WidgetContext(
             user_id=user_id,
             agent_id=widget.agent_id,
@@ -194,6 +228,10 @@ async def fetch_and_validate_widget(
             call_start_time=datetime.now(timezone.utc),
             owner_balance=owner_balance,
             agent_llm_price=widget.agent.llm_price_per_minute,
+            is_first_call=is_first_call,
+            llm_cost_multiplier=resolve_llm_cost_multiplier(widget.agent, settings),
+            llm_rate_basis=None if is_first_call else resolve_llm_rate_basis(widget.agent),
+            ws_log_id=ws_log_id,
         )
 
 
@@ -388,7 +426,14 @@ def _is_low_balance_exceeded(ctx: WidgetContext) -> bool:
             ctx.call_start_time,
             ctx.owner_balance,
             agent_llm_price_per_minute=ctx.agent_llm_price,
+            llm_cost_multiplier=ctx.llm_cost_multiplier,
+            llm_rate_basis=ctx.llm_rate_basis,
         )
+
+
+def _is_first_call_capped(ctx: WidgetContext) -> bool:
+    with db():
+        return is_first_call_duration_exceeded(ctx.call_start_time, ctx.is_first_call)
 
 
 async def run_widget_session(
@@ -428,6 +473,16 @@ async def run_widget_session(
             await websocket.send_json({
                 "type": "error",
                 "message": "Low balance. Call ended to avoid exceeding your available credits.",
+            })
+            await websocket.close(code=1008)
+            break
+
+        if chunk_count % 10 == 0 and _is_first_call_capped(ctx):
+            logger.warning("Auto-disconnect user %s: first-call duration limit", ctx.user_id)
+            ctx.first_call_limit_reached = True
+            await websocket.send_json({
+                "type": "error",
+                "message": "First call duration limit reached. Call ended.",
             })
             await websocket.close(code=1008)
             break
@@ -620,10 +675,21 @@ async def save_web_conversation(
             logger.error("Metadata extraction failed for conversation %s", conv_id)
             with db():
                 mark_conversation_failed(conversation_row_id, error_message or "Metadata extraction failed")
+                finalize_ws_call_log(
+                    ctx.ws_log_id, is_success=False,
+                    error_message=error_message or "Metadata extraction failed",
+                )
             return
 
         with db():
             record = _persist_web_conversation(conversation_row_id, metadata, conv_id, lead_id, error_message=error_message)
+            finalize_ws_call_log(
+                ctx.ws_log_id,
+                is_success=not error_message,
+                status_code=1000,
+                response_body=sanitize_for_log({"conversation_id": conv_id, "cost": record.cost}),
+                error_message=error_message,
+            )
 
         logger.info(
             "Conversation %s saved (duration=%ss, messages=%s, cost=%s)",
@@ -636,6 +702,7 @@ async def save_web_conversation(
         logger.error("save_web_conversation failed:\n%s", traceback.format_exc())
         with db():
             mark_conversation_failed(conversation_row_id, "Failed to save conversation")
+            finalize_ws_call_log(ctx.ws_log_id, is_success=False, error_message="Failed to save conversation")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1258,6 +1325,8 @@ async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int]
         limit_error = "Monthly minutes limit reached"
     elif ctx.low_balance_reached:
         limit_error = LOW_BALANCE_ERROR_MESSAGE
+    elif ctx.first_call_limit_reached:
+        limit_error = FIRST_CALL_DURATION_LIMIT_ERROR_MESSAGE
     else:
         limit_error = None
 
@@ -1274,6 +1343,10 @@ async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int]
     else:
         with db():
             mark_conversation_failed(conversation_row_id, limit_error or failure_reason or "No conversation ID captured")
+            finalize_ws_call_log(
+                ctx.ws_log_id, is_success=False,
+                error_message=limit_error or failure_reason or "No conversation ID captured",
+            )
 
     # ── 6. Close ──────────────────────────────────────────────────────────────
     try:
