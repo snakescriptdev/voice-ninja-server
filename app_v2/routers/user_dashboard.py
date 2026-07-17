@@ -11,13 +11,13 @@ from app_v2.databases.models import (
     UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel,
     ConversationsModel, CoinsLedgerModel,
     PaymentModel, WidgetModel, WidgetLeadModel,APIDailyUsageModel,
-    APICallLogModel
+    APICallLogModel, APIKeyModel
 )
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
-from sqlalchemy import or_
 from app_v2.schemas.enum_types import (
     CoinTransactionTypeEnum, PaymentStatusEnum, PaymentTypeEnum,
     SUBSCRIPTION_BILLING_EVENT_TYPES, SUBSCRIPTION_BILLING_EVENT_STATUS_LABELS,
+    PublicLogChannelEnum,
 )
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.constants import api_list
@@ -47,11 +47,20 @@ from app_v2.schemas.user_dashboard import (
     DashboardLeadItem,
     DashboardLeadListResponse,
     AgentSummaryItem,
+    PublicLogEndpointItem,
+    PublicLogEndpointListResponse,
+    DayOfMonthBucket,
+    PublicLogGraphResponse,
+    PublicLogItem,
+    PublicLogListResponse,
+    PublicLogOverviewResponse,
 )
 from app_v2.utils.agent_summary import build_agent_summaries
 from app_v2.core.logger import setup_logger
 from app_v2.utils.time_utils import format_time_ago
 from math import ceil
+import calendar
+from sqlalchemy import case
 
 logger = setup_logger(__name__)
 security = HTTPBearer()
@@ -384,15 +393,10 @@ def get_coin_buckets(
 ):
     try:
         skip = (page - 1) * size
-        now = datetime.now(timezone.utc)
 
         base_query = db.session.query(CoinsLedgerModel).filter(
             CoinsLedgerModel.user_id == current_user.id,
             CoinsLedgerModel.remaining_coins > 0,
-            or_(
-                CoinsLedgerModel.expiry_at.is_(None),
-                CoinsLedgerModel.expiry_at > now
-            )
         )
 
         total_available = (
@@ -400,10 +404,6 @@ def get_coin_buckets(
             .filter(
                 CoinsLedgerModel.user_id == current_user.id,
                 CoinsLedgerModel.remaining_coins > 0,
-                or_(
-                    CoinsLedgerModel.expiry_at.is_(None),
-                    CoinsLedgerModel.expiry_at > now
-                )
             )
             .scalar() or 0
         )
@@ -412,7 +412,7 @@ def get_coin_buckets(
 
         buckets_query = (
             base_query
-            .order_by(CoinsLedgerModel.expiry_at.asc().nulls_last())
+            .order_by(CoinsLedgerModel.created_at.asc())
             .offset(skip)
             .limit(size)
             .all()
@@ -428,7 +428,6 @@ def get_coin_buckets(
         payment_map = {p.id: p for p in payments}
 
         buckets = []
-        now = datetime.now(timezone.utc)
 
         for item in buckets_query:
             source_name = "Coins"
@@ -437,16 +436,10 @@ def get_coin_buckets(
             if payment and payment.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
                 source_name = "Credit Purchase"
 
-            bucket_status = None
-            if item.expiry_at and now <= item.expiry_at <= now + timedelta(days=7):
-                bucket_status = "expiring soon"
-
             buckets.append(
                 CoinBucketItem(
                     source=source_name,
                     amount=item.remaining_coins,
-                    expiry_date=item.expiry_at,
-                    status=bucket_status
                 )
             )
 
@@ -526,6 +519,7 @@ def get_usage_history(
                 coins=item.coins,                              # signed
                 balance_before=item.balance_after - item.coins,
                 balance_after=item.balance_after,
+                reason=item.notes,
             ))
             
         total_pages = ceil(total_count / size) if size > 0 else 1
@@ -620,13 +614,17 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
         now = datetime.now(timezone.utc)
         last_24h = now - timedelta(hours=24)
         
+        # Scoped to channel=public_api so websocket call rows (added for the
+        # Logs page) don't inflate these "Developer API" HTTP-only metrics.
         total_api_calls_this_month = db.session.query(func.count(APICallLogModel.id)).filter(
             APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == PublicLogChannelEnum.public_api,
             APICallLogModel.created_at >= first_day_of_month
         ).scalar() or 0
-        
+
         total_api_calls_prev_month = db.session.query(func.count(APICallLogModel.id)).filter(
             APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == PublicLogChannelEnum.public_api,
             APICallLogModel.created_at >= first_day_prev_month,
             APICallLogModel.created_at < first_day_of_month
         ).scalar() or 0
@@ -634,11 +632,13 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
 
         api_coins_used_this_month = db.session.query(func.sum(APICallLogModel.coins_used)).filter(
             APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == PublicLogChannelEnum.public_api,
             APICallLogModel.created_at >= first_day_of_month
         ).scalar() or 0
 
         avg_api_response_time_24h = db.session.query(func.avg(APICallLogModel.response_time_ms)).filter(
             APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == PublicLogChannelEnum.public_api,
             APICallLogModel.created_at >= last_24h
         ).scalar() or 0.0
 
@@ -691,7 +691,8 @@ def get_user_api_logs(
         skip = (page - 1) * size
         
         base_query = db.session.query(APICallLogModel).filter(
-            APICallLogModel.user_id == current_user.id
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == PublicLogChannelEnum.public_api,
         )
         
         total_count = base_query.count()
@@ -709,6 +710,265 @@ def get_user_api_logs(
     except Exception as e:
         logger.error(f"Error in get_user_api_logs: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+PUBLIC_LOG_CHANNELS = [
+    PublicLogChannelEnum.public_api,
+    PublicLogChannelEnum.public_websocket,
+    PublicLogChannelEnum.widget_websocket,
+]
+
+
+def _parse_month_param(month: Optional[str]) -> tuple:
+    """Returns (year, month) for a "YYYY-MM" string, defaulting to the current UTC month."""
+    if month:
+        try:
+            parsed = datetime.strptime(month, "%Y-%m")
+            return parsed.year, parsed.month
+        except ValueError:
+            raise HTTPException(status_code=400, detail="month must be in YYYY-MM format")
+    now = datetime.now(timezone.utc)
+    return now.year, now.month
+
+
+def _day_of_month_graph(base_filters: list, year: int, month: int) -> PublicLogGraphResponse:
+    """Builds the full day-of-month range for `month`, filling gaps with 0 —
+    mirrors the fill-the-full-range pattern used by /analytics's daily trends."""
+    days_in_month = calendar.monthrange(year, month)[1]
+    month_start = datetime(year, month, 1, tzinfo=timezone.utc)
+    month_end = (
+        datetime(year + 1, 1, 1, tzinfo=timezone.utc) if month == 12
+        else datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    )
+
+    rows = (
+        db.session.query(
+            func.extract("day", APICallLogModel.created_at).label("day"),
+            func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
+            func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
+        )
+        .filter(*base_filters, APICallLogModel.created_at >= month_start, APICallLogModel.created_at < month_end)
+        .group_by("day")
+        .all()
+    )
+    by_day = {int(r.day): r for r in rows}
+    buckets = [
+        DayOfMonthBucket(
+            day=d,
+            success_count=int(by_day[d].success_count or 0) if d in by_day else 0,
+            failure_count=int(by_day[d].failure_count or 0) if d in by_day else 0,
+        )
+        for d in range(1, days_in_month + 1)
+    ]
+    return PublicLogGraphResponse(month=f"{year:04d}-{month:02d}", buckets=buckets)
+
+
+@router.get("/public-logs/endpoints", response_model=PublicLogEndpointListResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_log_endpoints(current_user: UnifiedAuthModel = Depends(require_active_user())):
+    """
+    All-time success/failure/total counts per (channel, route, method) across
+    this user's public API + public websocket surfaces — backs the Logs
+    page's endpoint table. All-time (not month-scoped) so a chronically
+    broken endpoint set up months ago still surfaces here; the month view
+    lives in the graph endpoints below.
+    """
+    try:
+        rows = (
+            db.session.query(
+                APICallLogModel.channel,
+                APICallLogModel.api_route,
+                APICallLogModel.method,
+                func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
+                func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
+                func.count(APICallLogModel.id).label("total_count"),
+            )
+            .filter(
+                APICallLogModel.user_id == current_user.id,
+                APICallLogModel.channel.in_(PUBLIC_LOG_CHANNELS),
+            )
+            .group_by(APICallLogModel.channel, APICallLogModel.api_route, APICallLogModel.method)
+            .all()
+        )
+        endpoints = [
+            PublicLogEndpointItem(
+                channel=row.channel.value if row.channel else PublicLogChannelEnum.public_api.value,
+                route=row.api_route,
+                method=row.method,
+                success_count=int(row.success_count or 0),
+                failure_count=int(row.failure_count or 0),
+                total_count=int(row.total_count or 0),
+            )
+            for row in rows
+        ]
+        return PublicLogEndpointListResponse(endpoints=endpoints)
+    except Exception as e:
+        logger.error(f"Error in get_public_log_endpoints: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public-logs/summary-graph", response_model=PublicLogGraphResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_log_summary_graph(month: Optional[str] = None, current_user: UnifiedAuthModel = Depends(require_active_user())):
+    """Day-of-month success/failure counts across all this user's public endpoints, for `month` (YYYY-MM, default current month)."""
+    try:
+        year, mon = _parse_month_param(month)
+        base_filters = [
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel.in_(PUBLIC_LOG_CHANNELS),
+        ]
+        return _day_of_month_graph(base_filters, year, mon)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_public_log_summary_graph: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public-logs/overview", response_model=PublicLogOverviewResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_log_overview(current_user: UnifiedAuthModel = Depends(require_active_user())):
+    """All-time total/success/failure call counts across this user's public API + public websocket surfaces."""
+    try:
+        row = (
+            db.session.query(
+                func.count(APICallLogModel.id).label("total_calls"),
+                func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
+                func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
+            )
+            .filter(
+                APICallLogModel.user_id == current_user.id,
+                APICallLogModel.channel.in_(PUBLIC_LOG_CHANNELS),
+            )
+            .first()
+        )
+        return PublicLogOverviewResponse(
+            total_calls=int(row.total_calls or 0),
+            success_count=int(row.success_count or 0),
+            failure_count=int(row.failure_count or 0),
+        )
+    except Exception as e:
+        logger.error(f"Error in get_public_log_overview: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public-logs/hourly-distribution", response_model=List[HourlyDistribution], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_log_hourly_distribution(current_user: UnifiedAuthModel = Depends(require_active_user())):
+    """All-time hour-of-day distribution of this user's public API + public websocket calls, for spotting peak usage times."""
+    try:
+        hourly_data = (
+            db.session.query(
+                func.extract("hour", APICallLogModel.created_at).label("hour"),
+                func.count(APICallLogModel.id).label("count"),
+            )
+            .filter(
+                APICallLogModel.user_id == current_user.id,
+                APICallLogModel.channel.in_(PUBLIC_LOG_CHANNELS),
+            )
+            .group_by("hour")
+            .all()
+        )
+
+        def format_hour(h):
+            h = int(h)
+            if h == 0: return "12 AM"
+            if h == 12: return "12 PM"
+            if h < 12: return f"{h} AM"
+            return f"{h-12} PM"
+
+        by_hour = {int(r.hour): int(r.count) for r in hourly_data}
+        return [
+            HourlyDistribution(hour=h, time_label=format_hour(h), count=by_hour.get(h, 0))
+            for h in range(24)
+        ]
+    except Exception as e:
+        logger.error(f"Error in get_public_log_hourly_distribution: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public-logs/logs", response_model=PublicLogListResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_logs(
+    channel: PublicLogChannelEnum,
+    route: str,
+    page: int = 1,
+    size: int = 20,
+    only_failures: bool = True,
+    api_key_id: Optional[int] = None,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    """Paginated call log rows (full request/response detail) for one endpoint; defaults to failures only."""
+    try:
+        skip = (page - 1) * size
+        base_query = db.session.query(APICallLogModel).filter(
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == channel,
+            APICallLogModel.api_route == route,
+        )
+        if only_failures:
+            base_query = base_query.filter(APICallLogModel.is_success == False)
+        if api_key_id is not None:
+            base_query = base_query.filter(APICallLogModel.api_key_id == api_key_id)
+
+        total_count = base_query.count()
+        logs = base_query.order_by(APICallLogModel.created_at.desc()).offset(skip).limit(size).all()
+        total_pages = ceil(total_count / size) if size > 0 else 1
+
+        key_ids = {log.api_key_id for log in logs if log.api_key_id}
+        key_names = {}
+        if key_ids:
+            key_names = {
+                k.id: k.name or k.client_id
+                for k in db.session.query(APIKeyModel).filter(APIKeyModel.id.in_(key_ids)).all()
+            }
+
+        return PublicLogListResponse(
+            total=total_count,
+            page=page,
+            size=size,
+            pages=total_pages,
+            items=[
+                PublicLogItem(
+                    id=log.id,
+                    channel=log.channel.value if log.channel else None,
+                    api_route=log.api_route,
+                    method=log.method,
+                    status_code=log.status_code,
+                    is_success=log.is_success,
+                    request_params=log.request_params,
+                    request_body=log.request_body,
+                    response_body=log.response_body,
+                    error_message=log.error_message,
+                    response_time_ms=log.response_time_ms,
+                    created_at=log.created_at,
+                    api_key_id=log.api_key_id,
+                    api_key_name=key_names.get(log.api_key_id),
+                )
+                for log in logs
+            ],
+        )
+    except Exception as e:
+        logger.error(f"Error in get_public_logs: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public-logs/graph", response_model=PublicLogGraphResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_log_graph(
+    channel: PublicLogChannelEnum,
+    route: str,
+    month: Optional[str] = None,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    """Day-of-month success/failure counts scoped to one (channel, route), for `month` (YYYY-MM, default current month)."""
+    try:
+        year, mon = _parse_month_param(month)
+        base_filters = [
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == channel,
+            APICallLogModel.api_route == route,
+        ]
+        return _day_of_month_graph(base_filters, year, mon)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_public_log_graph: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/leads", response_model=DashboardLeadListResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_leads(

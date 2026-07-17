@@ -70,5 +70,9 @@ class AgentRead(BaseModel):
     tools: List[dict[str,int|str]] = []
     built_in_tools: Optional[Dict] = None
     timezone: Optional[str] = None
+    # True iff this agent has never had a conversation row yet — drives the
+    # first-call-duration-cap banner/icon on the frontend (see
+    # CoinUsageSettingsModel.first_call_max_duration_seconds).
+    is_first_call_pending: bool = True
     class Config:
         from_attributes = True

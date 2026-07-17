@@ -35,6 +35,7 @@ from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone
 from app_v2.utils.coin_utils import get_user_coin_balance
+from app_v2.utils.conversation_lifecycle import SETTINGS_VERSION_FIELDS, maybe_create_new_settings_version
 from app_v2.schemas.admin_settings import CoinUsageSettingsResponse, CoinUsageSettingsUpdate
 from fastapi.responses import HTMLResponse
 import os
@@ -90,6 +91,7 @@ def get_call_config():
         minimum_call_balance=int(s.minimum_credits_per_minute * s.minimum_call_minutes),
         minimum_credits_per_minute=s.minimum_credits_per_minute,
         minimum_call_minutes=s.minimum_call_minutes,
+        first_call_max_duration_seconds=s.first_call_max_duration_seconds,
     )
 
 
@@ -386,7 +388,6 @@ def verify_coin_payment(
             transaction_type=CoinTransactionTypeEnum.credit_purchase,
             coins=addon_order.coins,
             remaining_coins=addon_order.coins,
-            expiry_at=None,
             reference_type="payment",
             reference_id=payment.id,
             balance_after=new_balance,
@@ -434,6 +435,7 @@ def update_coin_usage_settings(data: CoinUsageSettingsUpdate):
         settings = CoinUsageSettingsModel.get_settings()
         with db():
             db.session.add(settings)
+            before = {field: getattr(settings, field) for field in SETTINGS_VERSION_FIELDS}
             if data.elevenlabs_conversation_credits_per_minute is not None:
                 settings.elevenlabs_conversation_credits_per_minute = data.elevenlabs_conversation_credits_per_minute
             if data.usd_to_credits is not None:
@@ -444,10 +446,17 @@ def update_coin_usage_settings(data: CoinUsageSettingsUpdate):
                 settings.minimum_credits_per_minute = data.minimum_credits_per_minute
             if data.minimum_call_minutes is not None:
                 settings.minimum_call_minutes = data.minimum_call_minutes
+            if data.first_call_max_duration_seconds is not None:
+                settings.first_call_max_duration_seconds = data.first_call_max_duration_seconds
+            if data.knowledge_base_llm_cost_multiplier is not None:
+                settings.knowledge_base_llm_cost_multiplier = data.knowledge_base_llm_cost_multiplier
+            if data.tool_llm_cost_multiplier is not None:
+                settings.tool_llm_cost_multiplier = data.tool_llm_cost_multiplier
             if data.credits_per_rupee is not None:
                 settings.credits_per_rupee = data.credits_per_rupee
             if data.minimum_purchase_amount_inr is not None:
                 settings.minimum_purchase_amount_inr = data.minimum_purchase_amount_inr
+            maybe_create_new_settings_version(settings, before)
             db.session.commit()
             db.session.refresh(settings)
             return settings

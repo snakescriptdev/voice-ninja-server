@@ -31,6 +31,8 @@ class AdminUserTransactionItem(BaseModel):
     coins: int
     balance_before: int
     balance_after: int
+    # Reason an admin gave for this adjustment; null for non-admin entries.
+    reason: Optional[str] = None
 
 class SuspendUserRequest(BaseModel):
     is_suspended: bool
@@ -55,7 +57,6 @@ class AdjustUserCoinRequest(BaseModel):
 
     coins: int
     reason: str = Field(..., max_length=1000)
-    validity: Optional[int] = Field(gt=0, default=None)
 
     @field_validator("reason", mode="before")
     @classmethod

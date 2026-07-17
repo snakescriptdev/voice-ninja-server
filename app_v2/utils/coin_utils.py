@@ -2,8 +2,7 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func
 from app_v2.databases.models import CoinsLedgerModel, CoinTransactionTypeEnum
 from app_v2.core.logger import setup_logger
-from sqlalchemy import or_
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 import math
 
 logger = setup_logger(__name__)
@@ -40,6 +39,7 @@ def deduct_coins(
     commit: bool = True,
     transaction_type: CoinTransactionTypeEnum = CoinTransactionTypeEnum.debit_usage,
     force: bool = False,
+    notes: str | None = None,
 ) -> bool:
     """
     Deducts coins from the user's ledger using FIFO logic on valid credit batches.
@@ -59,17 +59,11 @@ def deduct_coins(
     coin_amount = math.ceil(amount)
 
     try:
-        now = datetime.now(timezone.utc)
-        #expire the coins which are expired as cleanup 
-        expire_user_coins(user_id)
-        # 1. Fetch valid credit batches FIFO with row-level locking
+        # 1. Fetch valid credit batches FIFO with row-level locking. Credits
+        # never expire, so every batch with coins left is eligible.
         batches = db.session.query(CoinsLedgerModel).filter(
             CoinsLedgerModel.user_id == user_id,
             CoinsLedgerModel.remaining_coins > 0,
-            or_(
-                CoinsLedgerModel.expiry_at == None,
-                CoinsLedgerModel.expiry_at > now
-            )
         ).order_by(CoinsLedgerModel.created_at.asc()).with_for_update().all()
         #latest balance row
         latest_balance_row = (
@@ -117,6 +111,7 @@ def deduct_coins(
             reference_id=reference_id,
             balance_after=balance_after,
             remaining_coins=0,
+            notes=notes,
         )
         db.session.add(ledger_entry)
 
@@ -176,79 +171,15 @@ def reset_unused_subscription_coins(user_id: int):
         return 0
 
 
-def expire_user_coins(user_id: int):
-    """
-    Finds all credit batches that have expired but still have remaining coins for a specific user.
-    Zeros them out and creates 'expired' ledger entries.
-    """
-    try:
-        now = datetime.now(timezone.utc)
-        expired_batches = db.session.query(CoinsLedgerModel).filter(
-            CoinsLedgerModel.user_id == user_id,
-            CoinsLedgerModel.remaining_coins > 0,
-            CoinsLedgerModel.expiry_at != None,
-            CoinsLedgerModel.expiry_at <= now
-        ).with_for_update().all() #with_for_update is used to lock the rows so that no other transaction can modify them
-
-        total_expired = 0
-        for batch in expired_batches:
-            total_expired += batch.remaining_coins
-            batch.remaining_coins = 0
-
-        if total_expired > 0:
-            current_balance = get_user_coin_balance(user_id)
-            balance_after =current_balance - total_expired
-            ledger_entry = CoinsLedgerModel(
-                user_id=user_id,
-                transaction_type=CoinTransactionTypeEnum.expired,
-                coins=-total_expired,
-                reference_type="expiry",
-                balance_after=balance_after,
-                remaining_coins=0,
-            )
-            db.session.add(ledger_entry)
-            db.session.commit()
-            logger.info(f"Expired {total_expired} coins for user {user_id}.")
-            return total_expired
-        return 0
-    except Exception as e:
-        logger.error(f"Failed to expire coins for user {user_id}: {e}")
-        return 0
-
-
-def run_expiry_check():
-    """
-    Global expiry check for all users. Ideally run via a background task.
-    """
-    try:
-        now = datetime.now(timezone.utc)
-        expired_users = db.session.query(CoinsLedgerModel.user_id).filter(
-            CoinsLedgerModel.remaining_coins > 0,
-            CoinsLedgerModel.expiry_at != None,
-            CoinsLedgerModel.expiry_at <= now
-        ).distinct().all()
-
-        for (user_id,) in expired_users:
-            expire_user_coins(user_id)
-
-        db.session.commit()
-        logger.info("Global expiry check completed successfully.")
-    except Exception as e:
-        logger.error(f"Failed to run global expiry check: {e}")
-        db.session.rollback()
-
-
 def admin_adjust_coins(
     user_id: int,
     amount: int,
     reason: str,
-    validity_days: int | None = None,
     commit: bool = True,
 ) -> bool:
     """
     Adjusts user coins (add or deduct) from admin management.
     amount > 0 adds coins (credit), amount < 0 deducts coins (debit).
-    validity_days: Number of days before coins expire (only for credits).
     Must be called within an active db() session block.
     """
     if amount == 0:
@@ -260,27 +191,22 @@ def admin_adjust_coins(
         if  amount<0 and current_balance<abs(amount):
             return False
         if amount > 0:
-            expiry_at = None
-            if validity_days:
-                expiry_at = now + timedelta(days=validity_days)
-
             ledger_entry = CoinsLedgerModel(
                 user_id=user_id,
                 transaction_type=CoinTransactionTypeEnum.admin_adjustment,
                 coins=amount,
                 remaining_coins=amount,
-                expiry_at=expiry_at,
                 reference_type="admin_adjustment",
                 reference_id=None,
                 balance_after=current_balance + amount,
                 created_at=now,
+                notes=reason,
             )
             db.session.add(ledger_entry)
             if commit:
                 db.session.commit()
             logger.info(
-                f"Admin added {amount} coins to user {user_id}. "
-                f"Validity: {validity_days} days. Reason: {reason}"
+                f"Admin added {amount} coins to user {user_id}. Reason: {reason}"
             )
             return True
         else:
@@ -291,6 +217,7 @@ def admin_adjust_coins(
                 reference_type="admin_adjustment",
                 commit=commit,
                 transaction_type=CoinTransactionTypeEnum.admin_adjustment,
+                notes=reason,
             )
 
     except Exception as e:

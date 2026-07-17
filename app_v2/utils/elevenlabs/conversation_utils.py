@@ -190,6 +190,15 @@ class ElevenLabsConversation(BaseElevenLabs):
                         )
                     metadata["transcript"] = transcript_list
                     metadata["message_count"] = len(transcript_list)
+                    # Split by role for LLM-cost calibration: cost tracks turn
+                    # count (every turn re-sends the whole history), and user
+                    # vs. agent turns can differ (e.g. multi-part replies).
+                    metadata["user_message_count"] = sum(
+                        1 for t in transcript_list if t["role"] == "user"
+                    )
+                    metadata["agent_message_count"] = sum(
+                        1 for t in transcript_list if t["role"] == "agent"
+                    )
 
                     logger.info(f"✅ Extracted metadata for conversation {conversation_id}: "
                                 f"duration={metadata.get('duration')}s, messages={metadata.get('message_count')}")
