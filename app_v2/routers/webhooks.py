@@ -270,7 +270,6 @@ def _order_payment_captured(
         transaction_type=CoinTransactionTypeEnum.credit_purchase,
         coins=addon_order.coins,
         remaining_coins=addon_order.coins,
-        expiry_at=None,
         reference_type="payment",
         reference_id=payment.id,
         balance_after=new_balance,

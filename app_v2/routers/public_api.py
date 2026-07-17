@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, selectinload
 from fastapi_sqlalchemy import db
 from sqlalchemy import or_
 from typing import List
+import json
 import math
 import uuid
 import os
@@ -55,13 +56,14 @@ from app_v2.schemas.knowledge_base_schema import (
     KnowledgeBaseBind
 )
 from app_v2.schemas.pagination import PaginatedResponse
-from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum
+from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum, PublicLogChannelEnum
 from app_v2.utils.public_auth import get_public_api_user
 from app_v2.utils.crypto_utils import encrypt_data, decrypt_data
 from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.rate_limit import track_and_limit_api, log_public_api_call
+from app_v2.utils.log_sanitizer import sanitize_for_log
 from app_v2.utils.feature_access import RequireFeaturePublic, require_feature_enabled, check_can_enable_resource
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.utils.elevenlabs import ElevenLabsKB, describe_kb_sync_error
@@ -80,20 +82,38 @@ from fastapi.routing import APIRoute
 from typing import Callable
 from fastapi.responses import Response
 
+def _try_parse_json_bytes(raw: bytes):
+    """Best-effort JSON parse; returns None on empty/invalid/non-JSON bytes."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+
+
 class PublicAPIRoute(APIRoute):
     def get_route_handler(self) -> Callable:
         original = super().get_route_handler()
+        route_path = self.path  # path TEMPLATE (e.g. "/api/v2/public/agents/{agent_id}"), so logs group by endpoint
         async def custom(request: Request) -> Response:
             start_time = time.time()
             status_code = 500
+            error_message = None
+            response = None
+            # Cached by Starlette, so reading it here doesn't consume the
+            # handler's own await request.json()/request.body() calls.
+            raw_request_body = await request.body()
             try:
                 response = await original(request)
                 status_code = response.status_code
                 return response
             except HTTPException as e:
                 status_code = e.status_code
+                error_message = str(e.detail)
                 raise e
             except Exception as e:
+                error_message = str(e)
                 raise e
             finally:
                 process_time_ms = int((time.time() - start_time) * 1000)
@@ -104,7 +124,35 @@ class PublicAPIRoute(APIRoute):
                             from app_v2.databases.models import APIKeyModel
                             key = db.session.query(APIKeyModel).filter_by(client_id=client_id, is_active=True).first()
                             if key:
-                                log_public_api_call(key.user_id, request.url.path, status_code, process_time_ms, 0)
+                                content_type = request.headers.get("content-type", "")
+                                if "application/json" in content_type:
+                                    req_body_parsed = _try_parse_json_bytes(raw_request_body)
+                                elif raw_request_body:
+                                    req_body_parsed = {"_unloggable": True, "content_type": content_type}
+                                else:
+                                    req_body_parsed = None
+                                resp_body_parsed = (
+                                    _try_parse_json_bytes(getattr(response, "body", None))
+                                    if response is not None else None
+                                )
+                                log_public_api_call(
+                                    user_id=key.user_id,
+                                    api_route=route_path,
+                                    status_code=status_code,
+                                    response_time_ms=process_time_ms,
+                                    coins_used=0,
+                                    channel=PublicLogChannelEnum.public_api,
+                                    method=request.method,
+                                    request_params={
+                                        "path_params": dict(request.path_params),
+                                        "query_params": dict(request.query_params),
+                                    },
+                                    request_body=sanitize_for_log(req_body_parsed),
+                                    response_body=sanitize_for_log(resp_body_parsed),
+                                    is_success=status_code < 400,
+                                    error_message=error_message,
+                                    api_key_id=key.id,
+                                )
                     except Exception as e:
                         logger.error(f"Failed to log public API call in route handler: {e}")
 

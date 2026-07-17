@@ -70,14 +70,6 @@ class UserCoinUsageResponse(BaseModel):
 class CoinBucketItem(BaseModel):
     source: str
     amount: int
-    expiry_date: Optional[datetime] = None
-    status: Optional[str] = None
-
-    @field_serializer("expiry_date")
-    def serialize_datetime(self,dt:datetime):
-        if dt is not None:
-            return dt.date()
-        return None
 
 class CoinBucketsResponse(BaseModel):
     buckets: List[CoinBucketItem]
@@ -92,8 +84,14 @@ class UsageHistoryItem(BaseModel):
     coins: int
     balance_before: int
     balance_after: int
+    # Reason an admin gave for this adjustment; null for non-admin entries.
+    reason: Optional[str] = None
 
 class UsageHistoryResponse(BaseModel):
+    total: int
+    page: int
+    size: int
+    pages: int
     history: List[UsageHistoryItem]
 
 class BillingHistoryItem(BaseModel):
@@ -172,3 +170,56 @@ class DashboardLeadListResponse(BaseModel):
     size: int
     pages: int
     leads: List[DashboardLeadItem]
+
+# ---- Public API / Public Websocket Logs page ----
+
+class PublicLogEndpointItem(BaseModel):
+    channel: str
+    route: str
+    method: Optional[str] = None
+    success_count: int
+    failure_count: int
+    total_count: int
+
+class PublicLogEndpointListResponse(BaseModel):
+    endpoints: List[PublicLogEndpointItem]
+
+class DayOfMonthBucket(BaseModel):
+    day: int
+    success_count: int
+    failure_count: int
+
+class PublicLogGraphResponse(BaseModel):
+    month: str
+    buckets: List[DayOfMonthBucket]
+
+class PublicLogItem(BaseModel):
+    id: int
+    channel: Optional[str] = None
+    api_route: str
+    method: Optional[str] = None
+    status_code: int
+    is_success: Optional[bool] = None
+    request_params: Optional[Any] = None
+    request_body: Optional[Any] = None
+    response_body: Optional[Any] = None
+    error_message: Optional[str] = None
+    response_time_ms: Optional[int] = None
+    created_at: datetime
+    api_key_id: Optional[int] = None
+    api_key_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class PublicLogOverviewResponse(BaseModel):
+    total_calls: int
+    success_count: int
+    failure_count: int
+
+class PublicLogListResponse(BaseModel):
+    total: int
+    page: int
+    size: int
+    pages: int
+    items: List[PublicLogItem]

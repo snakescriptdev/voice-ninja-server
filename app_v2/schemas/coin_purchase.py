@@ -1,8 +1,8 @@
 from pydantic import BaseModel,Field
 from typing import Optional, Dict, Any, Literal
 
-# Absolute floor only. The real, admin-configurable minimum lives in
-# CoinUsageSettingsModel.minimum_purchase_amount_inr and is enforced in the
+# Absolute floor only. The real minimum is admin-set — see
+# CoinUsageSettingsModel.minimum_purchase_amount_inr — and is enforced in the
 # route handlers, so it stays authoritative even if set below this value.
 MIN_PURCHASE_AMOUNT = 1.0
 
@@ -20,6 +20,8 @@ class CallConfigResponse(BaseModel):
     minimum_call_balance: int
     minimum_credits_per_minute: int
     minimum_call_minutes: int
+    # Max duration (seconds) allowed for an agent's very first call; 0 = no cap.
+    first_call_max_duration_seconds: int
 
 
 BannerType = Literal["low_credits", "critical_credits"]

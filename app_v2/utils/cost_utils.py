@@ -35,19 +35,39 @@ def compute_live_charge_credits(
     agent_llm_price_per_minute: Optional[float],
     elapsed_minutes: float,
     settings,
+    llm_cost_multiplier: float = 1.0,
+    llm_credits_override: Optional[float] = None,
 ) -> float:
     """
     Credits we would charge the user for the call SO FAR — the number the cutoff
     compares against the user's balance.
 
     = (conversation credits + LLM credits + 0 telephony) × (1 + markup%)
+
+    llm_cost_multiplier: admin-configured multiplier applied on top of the
+    agent's bare llm_price_per_minute when the agent has a knowledge base
+    and/or tools attached — both add LLM overhead (RAG retrieval, tool
+    round-trips) beyond the static per-minute floor. Defaults to 1.0 (no
+    adjustment) for agents with neither. Ignored when llm_credits_override
+    is given.
+
+    llm_credits_override: when provided, used directly as the LLM credits
+    component instead of the agent_llm_price_per_minute-based formula. This
+    is the turns-based projection learned from the agent's own last completed
+    call (see resolve_llm_rate_basis / estimate_llm_credits_from_turns in
+    conversation_lifecycle.py) — used for non-first calls where a fresh,
+    config-matching prior call exists. Conversation and telephony credits are
+    unaffected either way; only the LLM component changes.
     """
     conv_per_min = _num(getattr(settings, "elevenlabs_conversation_credits_per_minute", 0))
     usd_to_credits = _num(getattr(settings, "usd_to_credits", 0))
     markup = _num(getattr(settings, "markup_percentage", 0.0))
 
     conversation_credits = conv_per_min * elapsed_minutes
-    llm_credits = _num(agent_llm_price_per_minute) * elapsed_minutes * usd_to_credits
+    if llm_credits_override is not None:
+        llm_credits = _num(llm_credits_override)
+    else:
+        llm_credits = _num(agent_llm_price_per_minute) * elapsed_minutes * usd_to_credits * _num(llm_cost_multiplier, 1.0)
     telephony_credits = 0.0
 
     cost_credits = conversation_credits + llm_credits + telephony_credits
@@ -58,11 +78,14 @@ def estimate_costs_credits(
     agent_llm_price_per_minute: Optional[float],
     duration_seconds: Optional[float],
     settings,
+    llm_cost_multiplier: float = 1.0,
 ) -> Dict[str, float]:
     """
     Our estimated COST (no markup) for a call of the given duration, broken into
     credit components — stored as the conversations.calculated_* audit columns
     so the estimate can be compared against the real ElevenLabs charge.
+
+    llm_cost_multiplier: see compute_live_charge_credits.
     """
     minutes = _num(duration_seconds) / 60.0
     conv_per_min = _num(getattr(settings, "elevenlabs_conversation_credits_per_minute", 0))
@@ -70,7 +93,7 @@ def estimate_costs_credits(
 
     return {
         "calculated_conversation_cost": round(conv_per_min * minutes, 4),
-        "calculated_llm_cost": round(_num(agent_llm_price_per_minute) * minutes * usd_to_credits, 4),
+        "calculated_llm_cost": round(_num(agent_llm_price_per_minute) * minutes * usd_to_credits * _num(llm_cost_multiplier, 1.0), 4),
         "calculated_telephony_cost": 0.0,
     }
 

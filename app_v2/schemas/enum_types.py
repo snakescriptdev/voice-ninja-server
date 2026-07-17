@@ -73,6 +73,16 @@ class ChannelEnum(str,Enum):
     api = "api"
     web_agent = "Web Agent"
 
+class PublicLogChannelEnum(str, Enum):
+    """
+    Which public surface a logged api_call_logs row came from. Distinct from
+    ChannelEnum (which describes ConversationsModel.channel and already has
+    an unrelated "api" value) to avoid collision/confusion.
+    """
+    public_api = "public_api"
+    public_websocket = "public_websocket"
+    widget_websocket = "widget_websocket"
+
 class WidgetPosition(str,Enum):
     top_left = "top-left"
     top_right = "top-right"
