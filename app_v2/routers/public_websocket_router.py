@@ -12,7 +12,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from fastapi_sqlalchemy import db
 
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
-from app_v2.databases.models import AgentModel, APIKeyModel, ChannelEnum
+from app_v2.databases.models import AgentModel, APIKeyModel, ChannelEnum, CoinUsageSettingsModel
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.feature_access import check_feature_limit_and_usage, get_feature_limit, get_feature_usage
@@ -23,8 +23,16 @@ from app_v2.utils.conversation_lifecycle import (
     mark_conversation_failed,
     get_minimum_call_balance,
     is_balance_exhausted,
+    is_agents_first_call,
+    is_first_call_duration_exceeded,
+    resolve_llm_cost_multiplier,
+    resolve_llm_rate_basis,
     LOW_BALANCE_ERROR_MESSAGE,
+    FIRST_CALL_DURATION_LIMIT_ERROR_MESSAGE,
 )
+from app_v2.utils.ws_call_log import start_ws_call_log, finalize_ws_call_log
+from app_v2.utils.log_sanitizer import sanitize_for_log
+from app_v2.schemas.enum_types import PublicLogChannelEnum
 from app_v2.core.logger import setup_logger
 from app_v2.routers.websocket_router import check_elevenlabs_credits
 
@@ -67,33 +75,56 @@ async def public_websocket_agent(
     client_id = auth_msg["client_id"]
     client_secret = auth_msg["client_secret"]
 
+    ws_log_id = None
     with db():
         api_key_record = db.session.query(APIKeyModel).filter(APIKeyModel.client_id == client_id, APIKeyModel.is_active == True).first()
         if not api_key_record:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid Client ID or inactive key")
             return
-        
+
+        # A user is attributable as soon as client_id resolves to a key, even
+        # if the secret check below then fails — log from this point on.
+        user_id = api_key_record.user_id
+        ws_log_id = start_ws_call_log(
+            user_id=user_id,
+            channel=PublicLogChannelEnum.public_websocket,
+            api_route="/api/v2/public/ws/{agent_id}",
+            request_params={"path_params": {"agent_id": agent_id}},
+            request_body=sanitize_for_log({
+                "type": auth_msg.get("type"), "client_id": client_id, "client_secret": client_secret,
+            }),
+            api_key_id=api_key_record.id,
+        )
+
         # Verify secret
         if not bcrypt.checkpw(client_secret.encode('utf-8'), api_key_record.client_secret_hash.encode('utf-8')):
+            finalize_ws_call_log(ws_log_id, is_success=False, status_code=1008, error_message="Invalid Client Secret")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid Client Secret")
             return
-        
-        user_id = api_key_record.user_id
 
         # 2. Verify agent ownership and configuration
         agent = db.session.query(AgentModel).filter(AgentModel.id == agent_id, AgentModel.user_id == user_id).first()
         if not agent or not agent.elevenlabs_agent_id:
+            finalize_ws_call_log(ws_log_id, is_success=False, status_code=1008, error_message="Agent not found or not configured")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Agent not found or not configured")
             return
         
         elevenlabs_agent_id = agent.elevenlabs_agent_id
         agent_name = agent.agent_name
         agent_llm_price = agent.llm_price_per_minute
+        coin_settings = CoinUsageSettingsModel.get_settings()
+        is_first_call = is_agents_first_call(agent_id)
+        llm_cost_multiplier = resolve_llm_cost_multiplier(agent, coin_settings)
+        llm_rate_basis = None if is_first_call else resolve_llm_rate_basis(agent)
 
         # 3. Check Balance and Limits
         user_balance = get_user_coin_balance(user_id)
         minimum_required = get_minimum_call_balance()
         if user_balance < minimum_required:
+            finalize_ws_call_log(
+                ws_log_id, is_success=False, status_code=1008,
+                error_message=f"Insufficient coins. Minimum {minimum_required} coins required to start a call.",
+            )
             await websocket.send_json({
                 "type": "error",
                 "message": f"Insufficient coins. Minimum {minimum_required} coins required to start a call.",
@@ -101,18 +132,20 @@ async def public_websocket_agent(
             })
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Insufficient coins")
             return
-        
+
         try:
             check_feature_limit_and_usage(user_id, "monthly_minutes")
         except Exception as e:
             conversation_row_id = start_conversation(user_id, agent_id, ChannelEnum.api)
             mark_conversation_failed(conversation_row_id, "Monthly minutes limit reached")
+            finalize_ws_call_log(ws_log_id, is_success=False, status_code=1008, error_message="Monthly minutes limit reached")
             await websocket.send_json({"type": "error", "message": str(e), "code": 1008})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Limit reached")
             return
-        
+
         has_credits = await check_elevenlabs_credits(websocket, user_id, agent_id, channel=ChannelEnum.api)
         if not has_credits:
+            finalize_ws_call_log(ws_log_id, is_success=False, status_code=1008, error_message="ElevenLabs credits check failed")
             return
 
 
@@ -140,12 +173,14 @@ async def public_websocket_agent(
     conversation_id = None
     limit_reached = False
     low_balance_reached = False
+    first_call_limit_reached = False
 
     async with aiohttp.ClientSession() as session:
         if not ELEVENLABS_API_KEY:
             logger.error("ELEVENLABS_API_KEY is missing!")
             with db():
                 mark_conversation_failed(conversation_row_id, "Server configuration error: ELEVENLABS_API_KEY missing")
+                finalize_ws_call_log(ws_log_id, is_success=False, status_code=1011, error_message="Server configuration error: ELEVENLABS_API_KEY missing")
             await websocket.send_json({"type": "error", "message": "Server configuration error", "code": 1011})
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
             return
@@ -155,7 +190,7 @@ async def public_websocket_agent(
                 logger.info(f"Connected to ElevenLabs WebSocket for agent {elevenlabs_agent_id}")
                 
                 async def browser_to_elevenlabs():
-                    nonlocal limit_reached, low_balance_reached
+                    nonlocal limit_reached, low_balance_reached, first_call_limit_reached
                     chunk_count = 0
                     try:
                         while True:
@@ -176,12 +211,25 @@ async def public_websocket_agent(
                                         call_start_time,
                                         user_balance,
                                         agent_llm_price_per_minute=agent_llm_price,
+                                        llm_cost_multiplier=llm_cost_multiplier,
+                                        llm_rate_basis=llm_rate_basis,
                                     )
                                 if low_balance:
                                     low_balance_reached = True
                                     await websocket.send_json({
                                         "type": "error",
                                         "message": "Low balance. Call ended to avoid exceeding your available credits."
+                                    })
+                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                                    return
+
+                                with db():
+                                    first_call_capped = is_first_call_duration_exceeded(call_start_time, is_first_call)
+                                if first_call_capped:
+                                    first_call_limit_reached = True
+                                    await websocket.send_json({
+                                        "type": "error",
+                                        "message": "First call duration limit reached. Call ended."
                                     })
                                     await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                                     return
@@ -310,6 +358,7 @@ async def public_websocket_agent(
             logger.error(f"ElevenLabs connection failed: {e}")
             with db():
                 mark_conversation_failed(conversation_row_id, "Failed to connect to voice engine")
+                finalize_ws_call_log(ws_log_id, is_success=False, status_code=1011, error_message="Failed to connect to voice engine")
             await websocket.send_json({"type": "error", "message": "Failed to connect to voice engine", "code": 1011})
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
 
@@ -317,6 +366,8 @@ async def public_websocket_agent(
         limit_error = "Monthly minutes limit reached"
     elif low_balance_reached:
         limit_error = LOW_BALANCE_ERROR_MESSAGE
+    elif first_call_limit_reached:
+        limit_error = FIRST_CALL_DURATION_LIMIT_ERROR_MESSAGE
     else:
         limit_error = None
     if limit_error:
@@ -347,11 +398,22 @@ async def public_websocket_agent(
                 logger.error(f"Metadata extraction failed for public WS conversation {conversation_id}")
                 with db():
                     mark_conversation_failed(conversation_row_id, limit_error or "Metadata extraction failed")
+                    finalize_ws_call_log(
+                        ws_log_id, is_success=False, status_code=1011,
+                        error_message=limit_error or "Metadata extraction failed",
+                    )
                 return
 
             with db():
                 conversation_data = finalize_conversation(
                     conversation_row_id, metadata, conversation_id, reference_type="api_conversation",
+                    error_message=limit_error,
+                )
+                finalize_ws_call_log(
+                    ws_log_id,
+                    is_success=not limit_error,
+                    status_code=1000,
+                    response_body=sanitize_for_log({"conversation_id": conversation_id, "cost": conversation_data.cost}),
                     error_message=limit_error,
                 )
 
@@ -364,6 +426,14 @@ async def public_websocket_agent(
             logger.error(f"Error while saving public WS conversation:\n{traceback.format_exc()}")
             with db():
                 mark_conversation_failed(conversation_row_id, limit_error or "Failed to save conversation")
+                finalize_ws_call_log(
+                    ws_log_id, is_success=False, status_code=1011,
+                    error_message=limit_error or "Failed to save conversation",
+                )
     else:
         with db():
             mark_conversation_failed(conversation_row_id, limit_error or "No conversation ID captured")
+            finalize_ws_call_log(
+                ws_log_id, is_success=False, status_code=1011,
+                error_message=limit_error or "No conversation ID captured",
+            )

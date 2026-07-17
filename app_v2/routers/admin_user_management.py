@@ -280,6 +280,7 @@ def get_user_transactions(user_id: int, page: int = Query(1, ge=1), page_size: i
                 coins=item.coins,
                 balance_before=item.balance_after - item.coins,
                 balance_after=item.balance_after,
+                reason=item.notes,
             ))
 
         total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
@@ -364,7 +365,6 @@ def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
             user_id=user_id,
             amount=request.coins,
             reason=request.reason,
-            validity_days=request.validity
         )
         
         if not success and request.coins < 0:

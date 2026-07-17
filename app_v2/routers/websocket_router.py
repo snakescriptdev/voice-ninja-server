@@ -26,12 +26,14 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import HTMLResponse
 from fastapi_sqlalchemy import db
 from jose import JWTError, jwt
+from sqlalchemy.orm import selectinload
 
 from app_v2.core.config import VoiceSettings
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 from app_v2.core.logger import setup_logger
 from app_v2.databases.models import (
     AgentModel,
+    CoinUsageSettingsModel,
     ConversationsModel,
     UnifiedAuthModel,
 )
@@ -44,7 +46,12 @@ from app_v2.utils.conversation_lifecycle import (
     mark_conversation_failed,
     get_minimum_call_balance,
     is_balance_exhausted,
+    is_agents_first_call,
+    is_first_call_duration_exceeded,
+    resolve_llm_cost_multiplier,
+    resolve_llm_rate_basis,
     LOW_BALANCE_ERROR_MESSAGE,
+    FIRST_CALL_DURATION_LIMIT_ERROR_MESSAGE,
 )
 from app_v2.utils.email_service import send_low_coins_email
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
@@ -94,6 +101,10 @@ class CallContext:
     user_balance: int
     limit_reached: bool = False
     low_balance_reached: bool = False
+    first_call_limit_reached: bool = False
+    is_first_call: bool = False
+    llm_cost_multiplier: float = 1.0
+    llm_rate_basis: Optional[dict] = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -179,9 +190,19 @@ async def authenticate_websocket_user(websocket: WebSocket) -> Optional[AuthResu
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _query_agent(user_id: int, agent_id: int) -> Optional[AgentModel]:
-    """Fetches agent owned by user_id."""
+    """
+    Fetches agent owned by user_id. Eagerly loads agent_knowledge_bases and
+    agent_functions since this agent instance outlives the db() session that
+    loaded it (resolve_llm_cost_multiplier/resolve_llm_rate_basis touch these
+    relationships from a later, separate db() block) — lazy loading them then
+    would raise DetachedInstanceError.
+    """
     return (
         db.session.query(AgentModel)
+        .options(
+            selectinload(AgentModel.agent_knowledge_bases),
+            selectinload(AgentModel.agent_functions),
+        )
         .filter(AgentModel.id == agent_id, AgentModel.user_id == user_id)
         .first()
     )
@@ -411,11 +432,22 @@ async def browser_to_elevenlabs(
                         ctx.call_start_time,
                         ctx.user_balance,
                         agent_llm_price_per_minute=ctx.agent.llm_price_per_minute,
+                        llm_cost_multiplier=ctx.llm_cost_multiplier,
+                        llm_rate_basis=ctx.llm_rate_basis,
                     )
                 if low_balance:
                     logger.warning(f"Auto-disconnect user {ctx.user_id}: low balance")
                     ctx.low_balance_reached = True
                     await websocket.send_json({"type": "error", "message": "Low balance. Call ended to avoid exceeding your available credits."})
+                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    return
+
+                with db():
+                    first_call_capped = is_first_call_duration_exceeded(ctx.call_start_time, ctx.is_first_call)
+                if first_call_capped:
+                    logger.warning(f"Auto-disconnect user {ctx.user_id}: first-call duration limit")
+                    ctx.first_call_limit_reached = True
+                    await websocket.send_json({"type": "error", "message": "First call duration limit reached. Call ended."})
                     await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
                     return
 
@@ -684,6 +716,12 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
         return
 
     # ── 4. Build call context ─────────────────────────────────────────────────
+    with db():
+        settings = CoinUsageSettingsModel.get_settings()
+        is_first_call = is_agents_first_call(agent_id)
+        llm_cost_multiplier = resolve_llm_cost_multiplier(agent_result.agent, settings)
+        llm_rate_basis = None if is_first_call else resolve_llm_rate_basis(agent_result.agent)
+
     ctx = CallContext(
         user_id=auth.user_id,
         agent=agent_result.agent,
@@ -692,6 +730,9 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
         initial_usage=limits.initial_usage,
         call_start_time=datetime.now(timezone.utc),
         user_balance=limits.user_balance,
+        is_first_call=is_first_call,
+        llm_cost_multiplier=llm_cost_multiplier,
+        llm_rate_basis=llm_rate_basis,
     )
 
     # ── 5. Log start ──────────────────────────────────────────────────────────
@@ -728,6 +769,8 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
         limit_error = "Monthly minutes limit reached"
     elif ctx.low_balance_reached:
         limit_error = LOW_BALANCE_ERROR_MESSAGE
+    elif ctx.first_call_limit_reached:
+        limit_error = FIRST_CALL_DURATION_LIMIT_ERROR_MESSAGE
     else:
         limit_error = None
     if limit_error:

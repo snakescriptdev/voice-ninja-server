@@ -9,7 +9,9 @@ from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 import math
 from app_v2.utils.llm_utils import generate_system_prompt_async
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
+from app_v2.utils.elevenlabs.kb_utils import ElevenLabsKB
 from app_v2.utils.elevenlabs.phone_connection import ElevenLabsPhoneConnection
+from app_v2.utils.conversation_lifecycle import is_agents_first_call
 from app_v2.utils.feature_access import check_can_enable_resource, require_feature_enabled
 
 from app_v2.utils.jwt_utils import HTTPBearer,require_active_user
@@ -32,7 +34,8 @@ from app_v2.databases.models import (
     FunctionModel,
     VariablesModel,
     WidgetModel,
-    WebAgentPageModel
+    WebAgentPageModel,
+    ConversationsModel,
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
 from app_v2.schemas.built_in_tools import BuiltInToolsParams
@@ -61,7 +64,7 @@ from sqlalchemy.orm import selectinload
 
 # -------------------- RESPONSE MAPPER --------------------
 
-def agent_to_read(agent: AgentModel) -> AgentRead:
+def agent_to_read(agent: AgentModel, is_first_call_pending: Optional[bool] = None) -> AgentRead:
     ai_model = (
         agent.agent_ai_models[0].ai_model.model_name
         if agent.agent_ai_models else None
@@ -116,7 +119,12 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
             for bridge in agent.agent_functions
         ],
         built_in_tools=agent.built_in_tools,
-        timezone=agent.timezone
+        timezone=agent.timezone,
+        is_first_call_pending=(
+            is_first_call_pending
+            if is_first_call_pending is not None
+            else is_agents_first_call(agent.id)
+        ),
     )
 
 
@@ -792,6 +800,16 @@ async def create_agent(
             elevenlabs_agent_id, ai_model.model_name
         )
 
+        # Cache LLM-cost calibration constants (best-effort; see
+        # ConversationsModel's calibration snapshot columns for how these get
+        # used per-call). rag.enabled is always sent as True to ElevenLabs
+        # (see ElevenLabsAgent.create_agent), so this just records that.
+        new_agent.rag_enabled = True
+        if el_kb_list:
+            new_agent.kb_total_pages = ElevenLabsKB().get_kb_total_pages(elevenlabs_agent_id)
+        else:
+            new_agent.kb_total_pages = 0
+
         # Bridge: AI Model
         db.session.add(
             AgentAIModelBridge(
@@ -979,8 +997,25 @@ async def get_all_agents(
         .all()
     )
 
-    items = [agent_to_read(agent) for agent in agents]
-    
+    # Bulk-check which of this page's agents have ever had a conversation, so
+    # is_first_call_pending doesn't cost a query per agent (N+1) in the list view.
+    agent_ids = [a.id for a in agents]
+    agents_with_calls = (
+        {
+            row[0]
+            for row in db.session.query(ConversationsModel.agent_id)
+            .filter(ConversationsModel.agent_id.in_(agent_ids))
+            .distinct()
+            .all()
+        }
+        if agent_ids
+        else set()
+    )
+    items = [
+        agent_to_read(agent, is_first_call_pending=(agent.id not in agents_with_calls))
+        for agent in agents
+    ]
+
     return PaginatedResponse(
         total=total,
         page=page,
@@ -1367,6 +1402,17 @@ async def update_agent(
                 agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
                     agent.elevenlabs_agent_id, effective_model
                 )
+
+            # Refresh LLM-cost calibration constants too (best-effort). Query
+            # current KB bridge rows directly rather than relying on
+            # el_kb_list, which is only set when this request touched KB.
+            agent.rag_enabled = True
+            has_kb = db.session.query(AgentKnowledgeBaseBridge.id).filter(
+                AgentKnowledgeBaseBridge.agent_id == agent_id
+            ).first() is not None
+            agent.kb_total_pages = (
+                ElevenLabsKB().get_kb_total_pages(agent.elevenlabs_agent_id) if has_kb else 0
+            )
         except HTTPException:
             raise
         except Exception as e:
