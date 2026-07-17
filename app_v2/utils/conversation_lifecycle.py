@@ -31,7 +31,11 @@ from app_v2.utils.cost_utils import (
     estimate_costs_credits,
     compute_actual_breakdown,
 )
-from app_v2.utils.email_service import send_cost_overrun_email, send_insufficient_call_balance_email
+from app_v2.utils.email_service import (
+    send_cost_overrun_email,
+    send_insufficient_call_balance_email,
+    send_low_agent_balance_email,
+)
 
 logger = setup_logger(__name__)
 
@@ -156,6 +160,44 @@ def _maybe_alert_insufficient_call_balance(
         )
     except Exception:
         logger.exception("Failed to evaluate/send insufficient-call-balance alert")
+
+
+def _maybe_alert_low_agent_balance(record: ConversationsModel, agent: Optional[AgentModel]) -> None:
+    """
+    Email the user when their current balance can no longer cover even one
+    more minute of calling with THIS specific agent — using
+    agent.avg_credits_per_minute, a live 1-minute cost projection refreshed
+    on every one of this agent's calls (see finalize_conversation()). A
+    per-agent complement to _maybe_alert_insufficient_call_balance's
+    admin-wide minimum-call-minutes threshold, since different agents can
+    cost very differently per minute.
+    """
+    if agent is None or not agent.avg_credits_per_minute or agent.avg_credits_per_minute <= 0:
+        return
+    try:
+        current_balance = get_user_coin_balance(record.user_id)
+        if current_balance >= agent.avg_credits_per_minute:
+            return
+
+        user = db.session.query(UnifiedAuthModel).get(record.user_id)
+        if not user or not user.email:
+            return
+        alerts_enabled = user.notification_settings and user.notification_settings.useage_alerts
+        if not alerts_enabled:
+            return
+
+        _dispatch_coro(
+            send_low_agent_balance_email(
+                user_email=user.email,
+                user_name=user.first_name or user.name or "User",
+                agent_name=agent.agent_name,
+                current_balance=current_balance,
+                credits_per_minute=agent.avg_credits_per_minute,
+                base_url=VoiceSettings.FRONTEND_URL,
+            )
+        )
+    except Exception:
+        logger.exception("Failed to evaluate/send low-agent-balance alert")
 
 # Error message set on a conversation when a call is cut short mid-call because
 # the user ran out of coins. Shared with the websocket routers so the marker and
@@ -475,7 +517,6 @@ def finalize_conversation(
     record = db.session.query(ConversationsModel).get(conversation_row_id)
     if record is None:
         raise ValueError(f"Conversation row {conversation_row_id} not found")
-    print(f'metadata: {metadata}')#do remove
     raw_cost = float(metadata.get("cost") or 0)
     calculated_cost = calculate_conversation_cost(raw_cost)
 
@@ -500,6 +541,15 @@ def finalize_conversation(
     agent = db.session.query(AgentModel).filter(AgentModel.id == record.agent_id).first()
     agent_llm_price = agent.llm_price_per_minute if agent else None
     llm_cost_multiplier = resolve_llm_cost_multiplier(agent, settings)
+
+    # Live projection of what a 1-minute call would cost this agent right
+    # now, refreshed on every call so it always reflects current pricing —
+    # used to warn the user when their balance can't cover even one more
+    # minute with this specific agent (see _maybe_alert_low_agent_balance()).
+    if agent is not None:
+        agent.avg_credits_per_minute = compute_live_charge_credits(
+            agent_llm_price, 1.0, settings, llm_cost_multiplier,
+        )
 
     # ---- LLM cost calibration snapshot: freeze what the agent's cost drivers
     # WERE at call time (no agent-versioning table exists yet to pull this
@@ -545,6 +595,10 @@ def finalize_conversation(
 
     # Alert the user if they can no longer afford even the minimum call.
     _maybe_alert_insufficient_call_balance(record, settings)
+
+    # Alert the user if their balance can't cover even 1 more minute with
+    # this specific agent.
+    _maybe_alert_low_agent_balance(record, agent)
 
     return record
 

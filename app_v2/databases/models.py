@@ -294,6 +294,14 @@ class AgentModel(Base):
     # toggle is ever added.
     rag_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
+    # Estimated credits needed for a hypothetical 1-minute call on this agent
+    # right now, via compute_live_charge_credits(elapsed_minutes=1). Refreshed
+    # after every one of the agent's calls finalizes — see
+    # finalize_conversation() in app_v2/utils/conversation_lifecycle.py. Used
+    # to warn a user when their balance can't cover even one more minute with
+    # this specific agent (see _maybe_alert_low_agent_balance()).
+    avg_credits_per_minute: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     user = relationship("UnifiedAuthModel",back_populates="agents")
 
     voice = relationship("VoiceModel",back_populates="agents")
