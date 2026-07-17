@@ -209,6 +209,87 @@ async def send_insufficient_call_balance_email(
         logger.error(f"Failed to send insufficient call balance email: {str(e)}")
 
 
+async def send_low_agent_balance_email(
+    user_email: str,
+    agent_name: str,
+    current_balance: int,
+    credits_per_minute: float,
+    base_url: str,
+    user_name: str | None = None,
+):
+    """
+    Sent right after a call ends when the user's remaining balance has
+    dropped below what this specific agent needs for even one more minute
+    of calling (agent.avg_credits_per_minute, a live 1-minute cost
+    projection refreshed after every call to this agent) — so their next
+    call with THIS agent will likely end well under a minute.
+    """
+    try:
+        subject = f"⚠️ Low Balance for {agent_name} — Calls May End Early"
+        recharge_link = f"{base_url}/billing-wallet"
+        estimated_seconds = int(max(current_balance, 0) / credits_per_minute * 60)
+
+        body = f"""
+        <html>
+        <body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:30px;margin:0;">
+        <table width="600" align="center" style="background:white;border-radius:10px;padding:30px;border-collapse:collapse;box-shadow:0 0 10px rgba(0,0,0,0.08);">
+            <tr>
+                <td>
+                    <h2 style="color:#1f2937;margin-top:0;">Low Balance for {agent_name} ⚠️</h2>
+
+                    <p>Hi {user_name or "User"},</p>
+
+                    <p>
+                    Your call with <b>{agent_name}</b> just ended, and your remaining coin
+                    balance is now below what this agent needs for even one more minute
+                    of calling.
+                    </p>
+
+                    <div style="padding:18px 20px;background:#fff3cd;border-radius:8px;border-left:5px solid #ffc107;margin:20px 0;">
+                        <p style="margin:0;">
+                        Your next call with <b>{agent_name}</b> will last at most
+                        <b>~{estimated_seconds} second(s)</b> before it's cut short.
+                        </p>
+                    </div>
+
+                    <table width="100%" cellpadding="10" style="border-collapse:collapse;margin-bottom:20px;">
+                        <tr style="background:#f8f9fa;">
+                            <td><b>Your Current Balance</b></td>
+                            <td>{current_balance:,} coins</td>
+                        </tr>
+                        <tr>
+                            <td><b>{agent_name} — Cost per Minute</b></td>
+                            <td>{credits_per_minute:,.0f} coins / minute</td>
+                        </tr>
+                    </table>
+
+                    <p>Recharge now to keep making calls with this agent without interruption.</p>
+
+                    <a href="{recharge_link}"
+                       style="display:inline-block;padding:12px 22px;background:#ffc107;color:#1f2937;
+                              text-decoration:none;border-radius:6px;font-weight:bold;">
+                       Recharge Now
+                    </a>
+
+                    <br/><br/>
+                    <p style="color:#555;">Thanks,<br/>Voice Ninja Team</p>
+                </td>
+            </tr>
+        </table>
+        </body>
+        </html>
+        """
+
+        await send_email_async(
+            subject=subject,
+            recipients=[user_email],
+            body=body
+        )
+
+    except Exception as e:
+        logger.error(f"Failed to send low agent balance email: {str(e)}")
+
+
 async def send_welcome_subscription_email(user_email: str, unsubscribe_token: str, base_url: str):
     try:
         subject = "Welcome to Voice Ninja! 🚀"
