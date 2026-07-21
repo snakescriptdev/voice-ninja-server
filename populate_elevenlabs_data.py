@@ -36,10 +36,7 @@ from app_v2.schemas.enum_types import (
     ChannelEnum,
     CallStatusEnum,
     WidgetPosition,
-    BillingPeriodEnum,
-    PlanIconEnum,
     PaymentProviderEnum,
-    SubscriptionStatusEnum,
     PaymentStatusEnum,
     PaymentTypeEnum
 )
@@ -496,10 +493,7 @@ def sync_database_enums(session: Session):
         "channelenum": ChannelEnum,
         "callstatusenum": CallStatusEnum,
         "widget_position": WidgetPosition,
-        "billingperiodenum": BillingPeriodEnum,
-        "planiconenum": PlanIconEnum,
         "paymentproviderenum": PaymentProviderEnum,
-        "subscriptionstatusenum": SubscriptionStatusEnum,
         "paymentstatusenum": PaymentStatusEnum,
         "paymenttypeenum": PaymentTypeEnum,
         "cointransactiontypeenum": CoinTransactionTypeEnum

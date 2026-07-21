@@ -3,15 +3,16 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, desc, select
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-from app_v2.databases.models import UnifiedAuthModel, UserSubscriptionModel, PlanModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, SubscriptionStatusEnum
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, ConversationsModel
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
-from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest
+from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest, AdminUserTransactionItem
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
-from app_v2.utils.payment_utils import PaymentProviderFactory
 
 from app_v2.utils.coin_utils import admin_adjust_coins, get_user_coin_balance
+from app_v2.utils.agent_summary import build_agent_summaries
+from app_v2.schemas.user_dashboard import AgentSummaryItem
 
 security = HTTPBearer()
 logger = setup_logger(__name__)
@@ -26,19 +27,8 @@ def get_user_management_stats():
         # Total users (non-admin)
         total_users = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.is_admin.is_(False)).count()
 
-        # Users by plan
-        plan_counts = db.session.query(
-            PlanModel.display_name,
-            func.count(UserSubscriptionModel.id).label("count")
-        ).join(UserSubscriptionModel, PlanModel.id == UserSubscriptionModel.plan_id)\
-         .filter(UserSubscriptionModel.status == SubscriptionStatusEnum.active)\
-         .group_by(PlanModel.display_name).all()
-
-        plan_distribution = [{"plan_name": r.display_name, "count": r.count} for r in plan_counts]
-
         return {
-            "total_users": total_users,
-            "plan_distribution": plan_distribution
+            "total_users": total_users
         }
     except Exception as e:
         logger.error(f"Error in get_user_management_stats: {str(e)}")
@@ -49,7 +39,7 @@ def list_users_managed(
     page: int = Query(1, ge=1),
     limit: int = Query(10, ge=1),
     search: Optional[str] = None,
-    plan_id: Optional[int] = Query(None),
+    is_suspended: Optional[bool] = Query(None),
     sort_order: str = Query("desc", enum=["asc", "desc"])
 ):
     """
@@ -120,8 +110,6 @@ def list_users_managed(
             UnifiedAuthModel.first_name,
             UnifiedAuthModel.email,
             UnifiedAuthModel.is_suspended,
-            PlanModel.display_name.label("plan_name"),
-            PlanModel.id.label("plan_id"),
             func.coalesce(coins_subquery.c.balance, 0).label("balance_coins"),
             func.coalesce(agent_subquery.c.agent_count, 0).label("no_of_agents"),
             func.coalesce(phone_subquery.c.phone_count, 0).label("no_of_phones"),
@@ -134,8 +122,6 @@ def list_users_managed(
             func.coalesce(calls_weekly_subquery.c.calls_weekly, 0).label("calls_weekly"),
             func.coalesce(voice_subquery.c.voice_count, 0).label("no_of_voices"),
         ).filter(UnifiedAuthModel.is_admin.is_(False))\
-         .outerjoin(UserSubscriptionModel, (UnifiedAuthModel.id == UserSubscriptionModel.user_id) & (UserSubscriptionModel.status == SubscriptionStatusEnum.active))\
-         .outerjoin(PlanModel, UserSubscriptionModel.plan_id == PlanModel.id)\
          .outerjoin(agent_subquery, UnifiedAuthModel.id == agent_subquery.c.user_id)\
          .outerjoin(phone_subquery, UnifiedAuthModel.id == phone_subquery.c.user_id)\
          .outerjoin(coins_subquery, UnifiedAuthModel.id == coins_subquery.c.user_id)\
@@ -155,9 +141,9 @@ def list_users_managed(
                 )
             )
 
-        # Plan Filter
-        if plan_id:
-            query = query.filter(PlanModel.id == plan_id)
+        # Suspended Filter
+        if is_suspended is not None:
+            query = query.filter(UnifiedAuthModel.is_suspended == is_suspended)
 
         # Default Sorting (Last Active)
         order_attr = last_active_subquery.c.last_active
@@ -176,8 +162,6 @@ def list_users_managed(
                 user_id=r.user_id,
                 username=r.first_name or r.username or "Unknown",
                 email=r.email or "",
-                plan_name=r.plan_name,
-                plan_id=r.plan_id,
                 balance_coins=int(r.balance_coins),
                 no_of_agents=r.no_of_agents,
                 no_of_phones=r.no_of_phones,
@@ -204,6 +188,119 @@ def list_users_managed(
         logger.error(f"Error listing users managed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/users/{user_id}", response_model=UserManagementListItem, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_detail(user_id: int):
+    """Single-user detail for the admin user-detail page (same shape as the list item)."""
+    try:
+        user = db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.id == user_id,
+            UnifiedAuthModel.is_admin.is_(False),
+        ).first()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+        now = datetime.now(timezone.utc)
+        month_ago = now - timedelta(days=30)
+        week_ago = now - timedelta(days=7)
+
+        def _count(model):
+            return db.session.query(func.count(model.id)).filter(model.user_id == user_id).scalar() or 0
+
+        no_of_agents = _count(AgentModel)
+        no_of_phones = _count(PhoneNumberService)
+        no_of_voices = db.session.query(func.count(VoiceModel.id)).filter(
+            VoiceModel.user_id == user_id, VoiceModel.is_custom_voice.is_(True)
+        ).scalar() or 0
+        calls_total = _count(APICallLogModel)
+        calls_monthly = db.session.query(func.count(APICallLogModel.id)).filter(
+            APICallLogModel.user_id == user_id, APICallLogModel.created_at >= month_ago
+        ).scalar() or 0
+        calls_weekly = db.session.query(func.count(APICallLogModel.id)).filter(
+            APICallLogModel.user_id == user_id, APICallLogModel.created_at >= week_ago
+        ).scalar() or 0
+        last_activity = db.session.query(func.max(ActivityLogModel.created_at)).filter(
+            ActivityLogModel.user_id == user_id
+        ).scalar()
+        last_active = max([d for d in (user.last_login, last_activity) if d], default=None)
+
+        return UserManagementListItem(
+            user_id=user.id,
+            username=user.first_name or user.name or "Unknown",
+            email=user.email or "",
+            balance_coins=int(get_user_coin_balance(user_id)),
+            no_of_agents=no_of_agents,
+            no_of_phones=no_of_phones,
+            last_active=format_time_ago(last_active) if last_active else "long time ago",
+            is_suspended=bool(user.is_suspended),
+            api_calls_total=calls_total,
+            api_calls_monthly=calls_monthly,
+            api_calls_weekly=calls_weekly,
+            no_of_voices=no_of_voices,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user detail {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users/{user_id}/transactions", response_model=PaginatedResponse[AdminUserTransactionItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_transactions(user_id: int, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
+    """All coin-ledger transactions (added and deducted) for a user, newest first."""
+    try:
+        base = db.session.query(CoinsLedgerModel).filter(CoinsLedgerModel.user_id == user_id)
+        total = base.count()
+        rows = base.order_by(
+            CoinsLedgerModel.created_at.desc(), CoinsLedgerModel.id.desc()
+        ).offset((page - 1) * page_size).limit(page_size).all()
+
+        action_map = {
+            "debit_usage": "AI Interaction",
+            "credit_subscription": "Subscription Credits",
+            "credit_purchase": "Credits Purchased",
+            "refund": "Refund",
+            "expired": "Coins Expired",
+            "carry_forward_reset": "Unused Coins Reset",
+            "admin_adjustment": "Admin Adjustment",
+        }
+
+        items = []
+        for item in rows:
+            agent_name = None
+            if item.reference_type == "conversation" and item.reference_id:
+                conv = db.session.query(ConversationsModel).filter(ConversationsModel.id == item.reference_id).first()
+                if conv and conv.agent:
+                    agent_name = conv.agent.agent_name
+            source_name = str(item.transaction_type.value if hasattr(item.transaction_type, "value") else item.transaction_type)
+            items.append(AdminUserTransactionItem(
+                date_time=item.created_at,
+                action=action_map.get(source_name, source_name.replace("_", " ").title()),
+                transaction_type=source_name,
+                agent_name=agent_name,
+                coins=item.coins,
+                balance_before=item.balance_after - item.coins,
+                balance_after=item.balance_after,
+                reason=item.notes,
+            ))
+
+        total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
+        return PaginatedResponse(total=total, page=page, size=page_size, pages=total_pages, items=items)
+    except Exception as e:
+        logger.error(f"Error getting transactions for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users/{user_id}/agents-summary", response_model=List[AgentSummaryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_agents_summary(user_id: int):
+    """Per-agent summary (web-agent/widget counts, conversation success/failed
+    counts) for a specific user — for the admin user-detail Agents tab."""
+    try:
+        return build_agent_summaries(user_id)
+    except Exception as e:
+        logger.error(f"Error building agents summary for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.post("/users/{user_id}/suspend",openapi_extra={"security":[{"BearerAuth":[]}]})
 def suspend_user(user_id:int,request:SuspendUserRequest):
     try:
@@ -220,30 +317,15 @@ def suspend_user(user_id:int,request:SuspendUserRequest):
         if request.is_suspended:
             if request.reason:
                 user.suspension_reason = request.reason
-            #disable agents for the user and pause subscription.
-            web_agents = user.web_agents
-            for agent in web_agents:
-                agent.is_enabled = False
-            #pause subscription for user
-            subscriptions= user.subscriptions
-            for subscription in subscriptions:
-                if subscription.status == SubscriptionStatusEnum.active:
-                    provider = subscription.provider
-                    subscription_provider =PaymentProviderFactory.get_provider(provider)
-                    #pause subscription
-                    subscription_provider.pause_subscription(subscription.provider_subscription_id)
-                    logger.info(f"Subscription paused for user {user_id}")
+            #disable agents for the user
+            widgets = user.widgets
+            for widget in widgets:
+                widget.is_enabled = False
         else:
             user.suspension_reason = None
-            #resume subscription for user
-            subscriptions= user.subscriptions
-            for subscription in subscriptions:
-                if subscription.status == SubscriptionStatusEnum.paused:
-                    provider = subscription.provider
-                    subscription_provider =PaymentProviderFactory.get_provider(provider)
-                    #resume subscription
-                    subscription_provider.resume_subscription(subscription.provider_subscription_id)
-                    logger.info(f"Subscription resumed for user {user_id}")
+            widgets = user.widgets
+            for widget in widgets:
+                widget.is_enabled = True
         db.session.add(user)
         db.session.commit()
         db.session.refresh(user)
@@ -272,12 +354,17 @@ def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
             )
-        
+
+        if user.is_suspended:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="This user's account is suspended. Please reactivate the account before adjusting coins."
+            )
+
         success = admin_adjust_coins(
             user_id=user_id,
             amount=request.coins,
             reason=request.reason,
-            validity_days=request.validity
         )
         
         if not success and request.coins < 0:

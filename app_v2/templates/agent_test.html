@@ -202,6 +202,7 @@
         let analyserAgent = null;
         let audioQueue = [];
         let isPlaying = false;
+        let currentSource = null;
         let gainNode = null;
 
         const connectBtn = document.getElementById('connectBtn');
@@ -319,7 +320,15 @@
             }
             analyserMic = null;
             micLevelDiv.style.width = "0%";
+            stopPlayback();
+        }
+
+        function stopPlayback() {
             audioQueue = [];
+            if (currentSource) {
+                try { currentSource.onended = null; currentSource.stop(); } catch (e) { }
+                currentSource = null;
+            }
             isPlaying = false;
         }
 
@@ -373,6 +382,9 @@
                             if (data.audio_event && data.audio_event.transcript && data.audio_event.transcript !== "string") {
                                 log(`Agent: ${data.audio_event.transcript}`, "agent");
                             }
+                        } else if (data.type === "interruption") {
+                            stopPlayback();
+                            log("Interrupted by user", "info");
                         }
                     } catch (e) { }
                 } else {
@@ -420,7 +432,8 @@
                     const source = audioContext.createBufferSource();
                     source.buffer = audioBuf;
                     source.connect(gainNode);
-                    source.onended = processQueue;
+                    source.onended = () => { currentSource = null; processQueue(); };
+                    currentSource = source;
                     source.start();
                 } else {
                     processQueue();

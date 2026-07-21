@@ -1,0 +1,1420 @@
+"""
+Widget router
+Structure:
+  validation/    → fetch_and_validate_widget(), check_owner_limits()
+  bridge/        → BrowserAudioInterface, run_widget_session()
+  storage/       → save_web_conversation(), maybe_send_notifications()
+  activity/      → log_web_chat_started(), log_web_chat_ended()
+  routes/        → embed_script, ws proxy, config, lead — all thin orchestrators
+"""
+
+from __future__ import annotations
+
+import asyncio
+import base64
+import os
+import traceback
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, Response
+from fastapi_sqlalchemy import db
+
+from app_v2.core.config import VoiceSettings
+from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
+from app_v2.core.logger import setup_logger
+from app_v2.databases.models import (
+    AgentModel,
+    CoinUsageSettingsModel,
+    ConversationsModel,
+    UnifiedAuthModel,
+    WidgetLeadModel,
+    WidgetModel,
+)
+from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum, PublicLogChannelEnum
+from app_v2.schemas.widget_schema import WidgetLeadCreate, WidgetPublicConfig
+from app_v2.utils.activity_logger import log_activity
+from app_v2.utils.coin_utils import get_user_coin_balance
+from app_v2.utils.conversation_lifecycle import (
+    start_conversation,
+    finalize_conversation,
+    mark_conversation_failed,
+    get_minimum_call_balance,
+    is_balance_exhausted,
+    is_agents_first_call,
+    is_first_call_duration_exceeded,
+    resolve_llm_cost_multiplier,
+    resolve_llm_rate_basis,
+    LOW_BALANCE_ERROR_MESSAGE,
+    FIRST_CALL_DURATION_LIMIT_ERROR_MESSAGE,
+)
+from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
+from app_v2.utils.email_service import send_conversation_notification_email, send_low_coins_email
+from app_v2.utils.feature_access import (
+    check_feature_limit_and_usage,
+    get_feature_limit,
+    get_feature_usage,
+)
+from app_v2.utils.jwt_utils import HTTPBearer, get_current_user
+from app_v2.routers.websocket_router import check_elevenlabs_credits
+from app_v2.utils.ws_call_log import start_ws_call_log, finalize_ws_call_log
+from app_v2.utils.log_sanitizer import sanitize_for_log
+
+logger = setup_logger(__name__)
+security = HTTPBearer()
+
+router = APIRouter(prefix="/api/v2/widget", tags=["widget"])
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Constants
+# ─────────────────────────────────────────────────────────────────────────────
+
+VOICE_NINJA_LOGO_SVG = """<svg width="62" height="21" viewBox="0 0 62 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path fill-rule="evenodd" clip-rule="evenodd" d="M0 20.7579C0 13.9598 5.51102 8.44873 12.3092 8.44873H48.9212C48.9212 15.2469 43.4102 20.7579 36.612 20.7579H0ZM20.3495 17.188C19.5605 18.7218 16.946 18.9494 14.5099 17.6963C12.0738 16.4432 10.2573 13.9279 11.0463 12.3941C11.8353 10.8602 16.0273 12.7191 18.4634 13.9722C18.556 14.0342 18.646 14.0941 18.7333 14.1523C20.4231 15.2785 21.0997 15.7294 20.3495 17.188ZM34.8439 17.6963C32.4078 18.9494 29.7933 18.7218 29.0043 17.188C28.2541 15.7294 28.9306 15.2785 30.6205 14.1523C30.7078 14.0941 30.7977 14.0342 30.8904 13.9722C33.3265 12.7191 37.5185 10.8602 38.3074 12.3941C39.0964 13.9279 37.28 16.4432 34.8439 17.6963Z" fill="url(#paint0_linear_113_516)"/>
+<path d="M49.8682 6.5552C49.8682 3.41757 52.4117 0.874023 55.5493 0.874023H61.5461C61.5461 4.01165 59.0026 6.5552 55.865 6.5552H49.8682Z" fill="url(#paint1_linear_113_516)"/>
+<defs>
+<linearGradient id="paint0_linear_113_516" x1="0" y1="14.6033" x2="48.9212" y2="14.6033" gradientUnits="userSpaceOnUse"><stop stop-color="#E06943"/><stop offset="0.425" stop-color="#AC1E7A"/><stop offset="0.775" stop-color="#562C7C"/><stop offset="1" stop-color="#34399B"/></linearGradient>
+<linearGradient id="paint1_linear_113_516" x1="49.8682" y1="3.71461" x2="61.5461" y2="3.71461" gradientUnits="userSpaceOnUse"><stop stop-color="#E06943"/><stop offset="0.425" stop-color="#AC1E7A"/><stop offset="0.775" stop-color="#562C7C"/><stop offset="1" stop-color="#34399B"/></linearGradient>
+</defs>
+</svg>"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Data containers
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class WidgetContext:
+    """All data needed to run a widget session, extracted before WS bridge starts."""
+    user_id: int
+    agent_id: int
+    agent_name: str
+    widget_name: str
+    public_id: str
+    elevenlabs_agent_id: str
+    initial_usage: float
+    minute_limit: Optional[float]
+    call_start_time: datetime
+    owner_balance: int
+    agent_llm_price: Optional[float] = None
+    limit_reached: bool = False
+    low_balance_reached: bool = False
+    first_call_limit_reached: bool = False
+    is_first_call: bool = False
+    llm_cost_multiplier: float = 1.0
+    llm_rate_basis: Optional[dict] = None
+    ws_log_id: Optional[int] = None
+
+
+@dataclass
+class OwnerNotificationSettings:
+    email: Optional[str]
+    name: str
+    email_notifications: bool
+    usage_alerts: bool
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Validation helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _reject_ws(websocket: WebSocket, message: str, code: int = 1008):
+    """Fire-and-forget WS rejection coroutine — caller must await."""
+    async def _inner():
+        await websocket.send_json({"type": "error", "message": message})
+        await websocket.close(code=code,reason=message)
+    return _inner()
+
+
+def _has_sufficient_coins(user_balance: int) -> tuple[bool, int]:
+    """Returns (is_sufficient, minimum_required). Must be inside db() context."""
+    minimum = get_minimum_call_balance()
+    return user_balance >= minimum, minimum
+
+
+async def fetch_and_validate_widget(
+    websocket: WebSocket,
+    public_id: str,
+    channel: ChannelEnum = ChannelEnum.widget,
+) -> Optional[WidgetContext]:
+    """
+    Loads WidgetModel, validates it and its owner's limits.
+    All DB calls in a single db() context.
+    Returns WidgetContext on success, None (after rejecting WS) on failure.
+    """
+    with db():
+        widget: Optional[WidgetModel] = (
+            db.session.query(WidgetModel)
+            .filter(WidgetModel.public_id == public_id)
+            .first()
+        )
+
+        if not widget:
+            # No owner is attributable at all — nothing to log against.
+            await _reject_ws(websocket, "Widget not found")
+            return None
+
+        # A user is attributable from here on — open the ws call log so every
+        # rejection below can be paired with a finalize call.
+        ws_log_id = start_ws_call_log(
+            user_id=widget.user_id,
+            channel=PublicLogChannelEnum.widget_websocket,
+            api_route="/api/v2/widget/ws/{public_id}",
+            request_params={"path_params": {"public_id": public_id}},
+        )
+
+        if not widget.is_enabled:
+            finalize_ws_call_log(ws_log_id, is_success=False, error_message="Widget is disabled")
+            await _reject_ws(websocket, "Widget is disabled")
+            return None
+
+        if not widget.agent or not widget.agent.is_enabled:
+            finalize_ws_call_log(ws_log_id, is_success=False, error_message="Voice Agent is disabled")
+            await _reject_ws(websocket, "Voice Agent is disabled")
+            return None
+
+        if not widget.agent.elevenlabs_agent_id:
+            finalize_ws_call_log(ws_log_id, is_success=False, error_message="Agent not configured")
+            await _reject_ws(websocket, "Agent not configured")
+            return None
+
+        user_id: int = widget.user_id
+        owner_balance = get_user_coin_balance(user_id)
+        sufficient, minimum_required = _has_sufficient_coins(owner_balance)
+
+        if not sufficient:
+            logger.error(
+                "Owner %s has insufficient coins (balance=%s, required=%s)",
+                user_id, owner_balance, minimum_required,
+            )
+            finalize_ws_call_log(
+                ws_log_id, is_success=False,
+                error_message=f"Insufficient coins. Minimum {minimum_required} coins required.",
+            )
+            await _reject_ws(
+                websocket,
+                f"Insufficient coins. Minimum {minimum_required} coins required.",
+            )
+            return None
+
+        try:
+            check_feature_limit_and_usage(user_id, "monthly_minutes")
+        except HTTPException as e:
+            conversation_row_id = start_conversation(user_id, widget.agent_id, channel)
+            mark_conversation_failed(conversation_row_id, "Monthly minutes limit reached")
+            finalize_ws_call_log(ws_log_id, is_success=False, error_message="Monthly minutes limit reached")
+            await _reject_ws(websocket, e.detail)
+            logger.error("Monthly minutes limit for owner %s: %s", user_id, e.detail)
+            return None
+
+        has_credits = await check_elevenlabs_credits(websocket, user_id, widget.agent_id, channel=ChannelEnum.call)
+        if not has_credits:
+            finalize_ws_call_log(ws_log_id, is_success=False, error_message="ElevenLabs credits check failed")
+            return None
+
+        settings = CoinUsageSettingsModel.get_settings()
+        is_first_call = is_agents_first_call(widget.agent_id)
+        return WidgetContext(
+            user_id=user_id,
+            agent_id=widget.agent_id,
+            agent_name=widget.agent.agent_name,
+            widget_name=widget.widget_name,
+            public_id=public_id,
+            elevenlabs_agent_id=widget.agent.elevenlabs_agent_id,
+            initial_usage=get_feature_usage(user_id, "monthly_minutes"),
+            minute_limit=get_feature_limit(user_id, "monthly_minutes"),
+            call_start_time=datetime.now(timezone.utc),
+            owner_balance=owner_balance,
+            agent_llm_price=widget.agent.llm_price_per_minute,
+            is_first_call=is_first_call,
+            llm_cost_multiplier=resolve_llm_cost_multiplier(widget.agent, settings),
+            llm_rate_basis=None if is_first_call else resolve_llm_rate_basis(widget.agent),
+            ws_log_id=ws_log_id,
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BrowserAudioInterface
+# ─────────────────────────────────────────────────────────────────────────────
+
+class BrowserAudioInterface:
+    """
+    Bridges ElevenLabs Conversation audio with the browser WebSocket.
+      output()          → sends PCM chunks to browser as base64 JSON
+      push_user_audio() → forwards browser audio into ElevenLabs input callback
+    """
+
+    def __init__(self, websocket: WebSocket, loop: asyncio.AbstractEventLoop, call_id: str):
+        self.websocket = websocket
+        self.loop = loop
+        self.call_id = call_id
+        self._input_cb = None
+
+    def _send(self, payload: dict) -> None:
+        """Thread-safe fire-and-forget send to the browser."""
+        try:
+            if self.websocket.client_state.name == "CONNECTED":
+                asyncio.run_coroutine_threadsafe(
+                    self.websocket.send_json(payload), self.loop
+                )
+        except Exception as e:
+            logger.error("BrowserAudioInterface send error: %s", e)
+
+    def start(self, input_callback) -> None:
+        self._input_cb = input_callback
+        logger.info("BrowserAudioInterface started for call_id=%s", self.call_id)
+        self._send({
+            "type": "audio_interface_ready",
+            "message": "Audio interface is now active",
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def stop(self) -> None:
+        self._input_cb = None
+        logger.info("BrowserAudioInterface stopped for call_id=%s", self.call_id)
+
+    def output(self, audio: bytes) -> None:
+        self._send({
+            "type": "audio_chunk",
+            "sample_rate": 16000,
+            "channels": 1,
+            "format": "pcm_s16le",
+            "data_b64": base64.b64encode(audio).decode("ascii"),
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def interrupt(self) -> None:
+        self._send({
+            "type": "interruption",
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
+
+    def push_user_audio(self, audio: bytes) -> None:
+        if self._input_cb and audio:
+            try:
+                self._input_cb(audio)
+            except Exception as e:
+                logger.error("Error delivering audio to ElevenLabs: %s", e)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ElevenLabs session helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _resolve_model(language: str, model: str) -> str:
+    """
+    Ensures model is compatible with the selected language.
+    English-only models are rejected for non-English languages.
+    """
+    en_codes = {"en", "en-US", "en-GB"}
+    en_models = {"eleven_turbo_v2", "eleven_flash_v2"}
+    multi_models = {"eleven_turbo_v2_5", "eleven_flash_v2_5", "eleven_multilingual_v2"}
+
+    if language in en_codes:
+        return model if model in en_models else "eleven_turbo_v2"
+    return model if model in multi_models else "eleven_turbo_v2_5"
+
+
+def _make_on_agent_response(websocket: WebSocket, loop: asyncio.AbstractEventLoop):
+    def on_agent_response(text: str) -> None:
+        try:
+            if websocket.client_state.name == "CONNECTED":
+                asyncio.run_coroutine_threadsafe(
+                    websocket.send_json({
+                        "type": "agent_response",
+                        "text": text,
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    }),
+                    loop,
+                )
+        except Exception as e:
+            logger.error("on_agent_response error: %s", e)
+    return on_agent_response
+
+
+def _make_on_user_transcript(websocket: WebSocket, loop: asyncio.AbstractEventLoop):
+    def on_user_transcript(text: str) -> None:
+        try:
+            if websocket.client_state.name == "CONNECTED":
+                asyncio.run_coroutine_threadsafe(
+                    websocket.send_json({
+                        "type": "user_transcript",
+                        "text": text,
+                        "ts": datetime.now(timezone.utc).isoformat(),
+                    }),
+                    loop,
+                )
+        except Exception as e:
+            logger.error("on_user_transcript error: %s", e)
+    return on_user_transcript
+
+
+async def _start_elevenlabs_conversation(
+    websocket: WebSocket,
+    audio_if: BrowserAudioInterface,
+    ctx: WidgetContext,
+    language: str,
+    model: str,
+    el_ended: asyncio.Event,
+) -> Optional[object]:
+    """
+    Initialises and starts an ElevenLabs Conversation session.
+    Returns the Conversation object on success, None on failure.
+    """
+    try:
+        from elevenlabs.client import ElevenLabs
+        from elevenlabs.conversational_ai.conversation import Conversation, ConversationInitiationData
+    except ImportError:
+        await websocket.send_json({"type": "error", "message": "ElevenLabs SDK not available"})
+        await websocket.close(code=1011)
+        return None
+
+    api_key = ELEVENLABS_API_KEY or os.environ.get("ELEVENLABS_API_KEY")
+    if not api_key:
+        await websocket.send_json({"type": "error", "message": "Server configuration error"})
+        await websocket.close(code=1011)
+        return None
+
+    loop = asyncio.get_running_loop()
+    call_id = f"web_{ctx.agent_id}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+
+    try:
+        el_client = ElevenLabs(api_key=api_key)
+        config = ConversationInitiationData(
+            user_id=f"web_{ctx.agent_id}",
+            extra_body={"model": _resolve_model(language, model)},
+            dynamic_variables={"call_id": call_id},
+        )
+        conversation = Conversation(
+            el_client,
+            ctx.elevenlabs_agent_id,
+            user_id=f"web_{ctx.agent_id}",
+            requires_auth=bool(api_key),
+            audio_interface=audio_if,
+            config=config,
+            callback_agent_response=_make_on_agent_response(websocket, loop),
+            callback_user_transcript=_make_on_user_transcript(websocket, loop),
+            callback_end_session=lambda: loop.call_soon_threadsafe(el_ended.set),
+        )
+        await asyncio.to_thread(conversation.start_session)
+        await asyncio.sleep(0.5)
+        await websocket.send_json({
+            "type": "conversation_ready",
+            "message": "Conversation ready",
+            "ts": datetime.now(timezone.utc).isoformat(),
+        })
+        return conversation
+    except Exception as e:
+        logger.exception("ElevenLabs conversation start failed: %s", e)
+        await websocket.send_json({"type": "error", "message": str(e)})
+        await websocket.close(code=1011)
+        return None
+
+
+def _is_minute_limit_exceeded(ctx: WidgetContext) -> bool:
+    if ctx.minute_limit is None:
+        return False
+    elapsed = (datetime.now(timezone.utc) - ctx.call_start_time).total_seconds() / 60
+    return (ctx.initial_usage + elapsed) >= ctx.minute_limit
+
+
+def _is_low_balance_exceeded(ctx: WidgetContext) -> bool:
+    with db():
+        return is_balance_exhausted(
+            ctx.call_start_time,
+            ctx.owner_balance,
+            agent_llm_price_per_minute=ctx.agent_llm_price,
+            llm_cost_multiplier=ctx.llm_cost_multiplier,
+            llm_rate_basis=ctx.llm_rate_basis,
+        )
+
+
+def _is_first_call_capped(ctx: WidgetContext) -> bool:
+    with db():
+        return is_first_call_duration_exceeded(ctx.call_start_time, ctx.is_first_call)
+
+
+async def run_widget_session(
+    websocket: WebSocket,
+    ctx: WidgetContext,
+) -> Optional[str]:
+    """
+    Main message loop for the widget WebSocket session.
+    Handles conversation_init, user_audio_chunk, end, and minute-limit checks.
+    Returns the ElevenLabs conversation_id (or None) after session ends.
+    """
+    loop = asyncio.get_running_loop()
+    call_id = f"web_{ctx.agent_id}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
+    audio_if = BrowserAudioInterface(websocket, loop, call_id)
+
+    conversation = None
+    conversation_ready = False
+    chunk_count = 0
+    el_ended = asyncio.Event()
+
+    while True:
+        # Periodic minute-limit / low-balance checks
+        chunk_count += 1
+        if chunk_count % 10 == 0 and _is_minute_limit_exceeded(ctx):
+            logger.warning("Auto-disconnect user %s: monthly minutes limit", ctx.user_id)
+            ctx.limit_reached = True
+            await websocket.send_json({
+                "type": "error",
+                "message": "Monthly minutes limit reached. Call disconnected.",
+            })
+            await websocket.close(code=1008)
+            break
+
+        if chunk_count % 10 == 0 and _is_low_balance_exceeded(ctx):
+            logger.warning("Auto-disconnect user %s: low balance", ctx.user_id)
+            ctx.low_balance_reached = True
+            await websocket.send_json({
+                "type": "error",
+                "message": "Low balance. Call ended to avoid exceeding your available credits.",
+            })
+            await websocket.close(code=1008)
+            break
+
+        if chunk_count % 10 == 0 and _is_first_call_capped(ctx):
+            logger.warning("Auto-disconnect user %s: first-call duration limit", ctx.user_id)
+            ctx.first_call_limit_reached = True
+            await websocket.send_json({
+                "type": "error",
+                "message": "First call duration limit reached. Call ended.",
+            })
+            await websocket.close(code=1008)
+            break
+
+        # Race the browser message against ElevenLabs ending the session
+        # (e.g. silence_end_call_timeout) — otherwise this loop only ever
+        # wakes up on browser traffic and never notices EL hung up.
+        recv_task = asyncio.create_task(websocket.receive_json())
+        end_task = asyncio.create_task(el_ended.wait())
+        done, pending = await asyncio.wait({recv_task, end_task}, return_when=asyncio.FIRST_COMPLETED)
+        for t in pending:
+            t.cancel()
+
+        if end_task in done:
+            logger.info("ElevenLabs ended call_id=%s — closing browser socket", call_id)
+            try:
+                await websocket.send_json({
+                    "type": "call_ended",
+                    "message": "The agent ended the call.",
+                    "ts": datetime.now(timezone.utc).isoformat(),
+                })
+                await websocket.close(code=1000)
+            except Exception:
+                pass
+            break
+
+        try:
+            data = recv_task.result()
+        except WebSocketDisconnect:
+            break
+        except Exception:
+            continue
+
+        msg_type = data.get("type")
+
+        if msg_type == "conversation_init" and not conversation_ready:
+            conversation = await _start_elevenlabs_conversation(
+                websocket=websocket,
+                audio_if=audio_if,
+                ctx=ctx,
+                language=data.get("language", "en"),
+                model=data.get("model", "eleven_turbo_v2"),
+                el_ended=el_ended,
+            )
+            if conversation is None:
+                break
+            conversation_ready = True
+
+        elif msg_type == "user_audio_chunk" and conversation_ready:
+            b64 = data.get("data_b64")
+            if b64:
+                try:
+                    audio_if.push_user_audio(base64.b64decode(b64))
+                except Exception as e:
+                    logger.debug("Audio decode error: %s", e)
+
+        elif msg_type == "end":
+            break
+
+    # End session and capture conversation_id
+    conv_id: Optional[str] = None
+    if conversation:
+        try:
+            if not el_ended.is_set():
+                conversation.end_session()
+            conversation.wait_for_session_end()
+            conv_id = conversation._conversation_id
+            if conv_id:
+                logger.info("Captured conversation_id: %s", conv_id)
+        except Exception:
+            logger.error("Error ending ElevenLabs session:\n%s", traceback.format_exc())
+
+    return conv_id
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Post-call storage helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _persist_web_conversation(
+    conversation_row_id: int,
+    metadata: dict,
+    conv_id: str,
+    lead_id: Optional[int],
+    error_message: Optional[str] = None,
+) -> ConversationsModel:
+    """
+    Finalizes the in_progress conversation row created at call start, deducts
+    coins, and links the lead if present. Must be called inside db() context.
+    """
+    record = finalize_conversation(conversation_row_id, metadata, conv_id, error_message=error_message)
+
+    if lead_id:
+        lead = db.session.query(WidgetLeadModel).get(lead_id)
+        if lead:
+            lead.conversation_id = record.id
+            db.session.add(lead)
+            db.session.commit()
+            logger.info("Linked lead %s to conversation %s", lead_id, record.id)
+
+    return record
+
+
+def _fetch_owner_notification_settings(user_id: int, lead_id: Optional[int]) -> tuple[OwnerNotificationSettings, str]:
+    """
+    Fetches owner notification prefs and lead name.
+    Must be called inside db() context.
+    Returns (OwnerNotificationSettings, lead_name).
+    """
+    settings = OwnerNotificationSettings(email=None, name="User", email_notifications=False, usage_alerts=False)
+    lead_name = "Anonymous"
+
+    owner = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.id == user_id).first()
+    if owner:
+        settings.email = owner.email
+        settings.name = owner.first_name or owner.name or "User"
+        if owner.notification_settings:
+            settings.email_notifications = owner.notification_settings.email_notifications
+            settings.usage_alerts = owner.notification_settings.useage_alerts
+
+    if lead_id:
+        lead = db.session.query(WidgetLeadModel).get(lead_id)
+        if lead and lead.name:
+            lead_name = lead.name
+
+    return settings, lead_name
+
+
+async def maybe_send_notifications(
+    ctx: WidgetContext,
+    record: ConversationsModel,
+    metadata: dict,
+    lead_id: Optional[int],
+) -> None:
+    """Sends conversation notification and low-coins alert emails if enabled."""
+    with db():
+        notif, lead_name = _fetch_owner_notification_settings(ctx.user_id, lead_id)
+        current_balance = get_user_coin_balance(ctx.user_id)
+
+    if notif.email and notif.email_notifications:
+        try:
+            await send_conversation_notification_email(
+                company_email=notif.email,
+                agent_name=ctx.widget_name,
+                conversation_id=str(record.id),
+                base_url=VoiceSettings.FRONTEND_URL,
+                user_name=lead_name,
+                summary=metadata.get("transcript_summary"),
+                occurred_at=datetime.now(timezone.utc),
+            )
+            logger.info("Conversation notification sent to %s", notif.email)
+        except Exception:
+            logger.error("Failed to send conversation email:\n%s", traceback.format_exc())
+
+    if notif.email and notif.usage_alerts and current_balance <= 1000:
+        try:
+            await send_low_coins_email(
+                user_email=notif.email,
+                current_coins=current_balance,
+                base_url=VoiceSettings.FRONTEND_URL,
+                user_name=notif.name,
+            )
+            logger.info("Low coins email sent to %s (balance=%s)", notif.email, current_balance)
+        except Exception:
+            logger.error("Failed to send low coins email:\n%s", traceback.format_exc())
+
+
+async def save_web_conversation(
+    ctx: WidgetContext,
+    conv_id: str,
+    lead_id: Optional[int],
+    conversation_row_id: int,
+    error_message: Optional[str] = None,
+) -> None:
+    """
+    Fetches ElevenLabs metadata, finalizes the in_progress conversation row
+    created at call start, deducts coins, links lead, and dispatches
+    notification emails.
+
+    error_message: passed through to finalize_conversation() when the call
+    still produced real metadata but was cut short for a known reason (e.g.
+    monthly minutes limit) — preserves transcript/history instead of
+    discarding it via mark_conversation_failed().
+    """
+    try:
+        el_conv = ElevenLabsConversation()
+        metadata = await asyncio.to_thread(el_conv.extract_conversation_metadata, conv_id)
+
+        if not metadata:
+            logger.error("Metadata extraction failed for conversation %s", conv_id)
+            with db():
+                mark_conversation_failed(conversation_row_id, error_message or "Metadata extraction failed")
+                finalize_ws_call_log(
+                    ctx.ws_log_id, is_success=False,
+                    error_message=error_message or "Metadata extraction failed",
+                )
+            return
+
+        with db():
+            record = _persist_web_conversation(conversation_row_id, metadata, conv_id, lead_id, error_message=error_message)
+            finalize_ws_call_log(
+                ctx.ws_log_id,
+                is_success=not error_message,
+                status_code=1000,
+                response_body=sanitize_for_log({"conversation_id": conv_id, "cost": record.cost}),
+                error_message=error_message,
+            )
+            # _persist_web_conversation's lead-link commit and
+            # finalize_ws_call_log's own commit both expire every object in
+            # this session (SQLAlchemy expire_on_commit default). Refresh
+            # record now, while the session is still open, so its attributes
+            # stay readable below and in maybe_send_notifications() after
+            # this block closes and detaches it — otherwise the next access
+            # raises DetachedInstanceError.
+            db.session.refresh(record)
+
+        logger.info(
+            "Conversation %s saved (duration=%ss, messages=%s, cost=%s)",
+            conv_id, metadata.get("duration"), metadata.get("message_count"), record.cost,
+        )
+
+        await maybe_send_notifications(ctx, record, metadata, lead_id)
+
+    except Exception:
+        logger.error("save_web_conversation failed:\n%s", traceback.format_exc())
+        with db():
+            mark_conversation_failed(conversation_row_id, "Failed to save conversation")
+            finalize_ws_call_log(ctx.ws_log_id, is_success=False, error_message="Failed to save conversation")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Activity logging helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+def log_web_chat_started(ctx: WidgetContext, lead_id: Optional[int]) -> None:
+    with db():
+        log_activity(
+            user_id=ctx.user_id,
+            event_type="widget_chat_started",
+            description=f"Public web chat started for agent: {ctx.agent_name}",
+            metadata={
+                "public_id": ctx.public_id,
+                "agent_id": ctx.agent_id,
+                "agent_name": ctx.agent_name,
+                "widget_name": ctx.widget_name,
+                "lead_id": lead_id,
+            },
+        )
+
+
+def log_web_chat_ended(ctx: WidgetContext, conv_id: Optional[str], lead_id: Optional[int]) -> None:
+    with db():
+        log_activity(
+            user_id=ctx.user_id,
+            event_type="widget_chat_ended",
+            description=f"Public web chat ended for agent: {ctx.agent_name}",
+            metadata={
+                "public_id": ctx.public_id,
+                "agent_id": ctx.agent_id,
+                "agent_name": ctx.agent_name,
+                "widget_name": ctx.widget_name,
+                "conversation_id": conv_id,
+                "lead_id": lead_id,
+            },
+        )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Embed script
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _build_embed_script(public_id: str) -> str:
+    """Returns the full widget + WebSocket client JS for a given public_id."""
+    return r"""
+(function() {
+  var publicId = '%s';
+  var script = document.currentScript;
+  var baseUrl;
+  if (script && script.src) {
+    var u = new URL(script.src);
+    baseUrl = u.origin + u.pathname.replace(/\/embed\.js\/[^\/]+$/, '');
+  } else {
+    baseUrl = window.location.origin + '/api/v2/widget';
+  }
+
+  var wsUrl     = (baseUrl.startsWith('https') ? 'wss:' : 'ws:') + baseUrl.split('://')[1] + '/ws/' + publicId;
+  var configUrl = baseUrl + '/config/' + publicId;
+  var leadUrl   = baseUrl + '/lead/'   + publicId;
+  var logoUrl   = baseUrl + '/logo.svg';
+
+  window.voiceNinjaPublicId = publicId;
+  window.voiceNinjaWsUrl    = wsUrl;
+
+  var vnStyles = '<style id="vn-widget-styles">' +
+    '.vn-root{font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,\'Helvetica Neue\',sans-serif;display:flex;flex-direction:column;align-items:center;}' +
+    '#vn-indicator-wrap{width:auto;height:48px;border-radius:24px;display:flex;align-items:center;justify-content:center;gap:0px;padding:0 12px;background:transparent;border:1px solid transparent;cursor:pointer;transition:width 0.35s cubic-bezier(.4,0,.2,1),border-radius 0.35s cubic-bezier(.4,0,.2,1),padding 0.35s cubic-bezier(.4,0,.2,1),gap 0.3s ease,box-shadow 0.35s ease,background 0.3s ease,border-color 0.3s ease;overflow:hidden;box-shadow:none;}' +
+    '#vn-indicator-wrap:hover{width:130px;border-radius:26px;padding:0 14px;gap:10px;background:linear-gradient(145deg,#fef8f6 0%%,#f6f4ff 100%%);border-color:rgba(86,44,124,0.08);box-shadow:0 6px 24px rgba(86,44,124,0.18);}' +
+    '#vn-indicator-wrap.vn-active,#vn-indicator-wrap.vn-connecting{width:130px;border-radius:26px;padding:0 14px;gap:10px;background:linear-gradient(145deg,#fef8f6 0%%,#f6f4ff 100%%);border-color:rgba(86,44,124,0.08);}' +
+    '#vn-indicator-wrap.vn-active{box-shadow:0 0 20px rgba(224,105,67,0.35);}' +
+    '#vn-indicator-wrap.vn-active:hover{box-shadow:0 0 24px rgba(220,50,50,0.40);}' +
+    '#vn-indicator-wrap .vn-end-hint{display:none;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%%;background:rgba(220,50,50,0.15);color:#dc3232;font-size:11px;font-weight:700;flex-shrink:0;line-height:1;transition:background 0.2s ease;}' +
+    '#vn-indicator-wrap.vn-active:hover .vn-end-hint{display:flex;}' +
+    '#vn-indicator-wrap.vn-active:hover .vn-end-hint:hover{background:rgba(220,50,50,0.25);}' +
+    '#vn-indicator-wrap.vn-connecting{animation:vn-pulse 1.8s ease-in-out infinite;}' +
+    '@keyframes vn-pulse{0%%,100%%{box-shadow:0 0 12px rgba(86,44,124,0.15);}50%%{box-shadow:0 0 24px rgba(86,44,124,0.35);}}' +
+    '#vn-indicator-wrap .vn-logo{height:28px;width:auto;object-fit:contain;display:block;flex-shrink:0;}' +
+    '#vn-indicator-wrap .vn-voice-bars{display:flex;align-items:flex-end;gap:3px;height:16px;max-width:0;overflow:hidden;transition:max-width 0.3s cubic-bezier(.4,0,.2,1);}' +
+    '#vn-indicator-wrap:hover .vn-voice-bars,#vn-indicator-wrap.vn-active .vn-voice-bars,#vn-indicator-wrap.vn-connecting .vn-voice-bars{max-width:50px;}' +
+    '#vn-indicator-wrap .vn-voice-bars span{width:4px;border-radius:2px;background:linear-gradient(180deg,#E06943,#562C7C);height:4px;opacity:0;transition:height 0.15s ease,opacity 0.25s ease;}' +
+    '#vn-indicator-wrap .vn-voice-bars span:nth-child(1){transition-delay:0s;}' +
+    '#vn-indicator-wrap .vn-voice-bars span:nth-child(2){transition-delay:0.05s;}' +
+    '#vn-indicator-wrap .vn-voice-bars span:nth-child(3){transition-delay:0.1s;}' +
+    '#vn-indicator-wrap .vn-voice-bars span:nth-child(4){transition-delay:0.15s;}' +
+    '#vn-indicator-wrap:hover .vn-voice-bars span,#vn-indicator-wrap.vn-active .vn-voice-bars span,#vn-indicator-wrap.vn-connecting .vn-voice-bars span{opacity:0.4;}' +
+    '#vn-indicator-wrap:hover .vn-voice-bars span{animation:vn-bounce 0.35s ease;}' +
+    '@keyframes vn-bounce{0%%{height:4px;}40%%{height:8px;}100%%{height:4px;}}' +
+    '#vn-indicator-wrap.vn-speaking .vn-voice-bars span:nth-child(1){animation:vn-bar 0.55s ease-in-out 0s infinite alternate;}' +
+    '#vn-indicator-wrap.vn-speaking .vn-voice-bars span:nth-child(2){animation:vn-bar 0.55s ease-in-out 0.12s infinite alternate;}' +
+    '#vn-indicator-wrap.vn-speaking .vn-voice-bars span:nth-child(3){animation:vn-bar 0.55s ease-in-out 0.24s infinite alternate;}' +
+    '#vn-indicator-wrap.vn-speaking .vn-voice-bars span:nth-child(4){animation:vn-bar 0.55s ease-in-out 0.36s infinite alternate;}' +
+    '@keyframes vn-bar{from{height:4px;}to{height:16px;}}' +
+    '#vn-indicator-wrap.vn-connecting .vn-voice-bars span:nth-child(1){animation:vn-bar 1.2s ease-in-out 0s infinite alternate;}' +
+    '#vn-indicator-wrap.vn-connecting .vn-voice-bars span:nth-child(2){animation:vn-bar 1.2s ease-in-out 0.2s infinite alternate;}' +
+    '#vn-indicator-wrap.vn-connecting .vn-voice-bars span:nth-child(3){animation:vn-bar 1.2s ease-in-out 0.4s infinite alternate;}' +
+    '#vn-indicator-wrap.vn-connecting .vn-voice-bars span:nth-child(4){animation:vn-bar 1.2s ease-in-out 0.6s infinite alternate;}' +
+    '#vn-prechat-card{position:absolute;background:#fff;border-radius:16px;padding:20px;min-width:260px;box-shadow:0 10px 40px rgba(86,44,124,0.14),0 2px 12px rgba(0,0,0,0.06);border:1px solid rgba(224,105,67,0.08);transform:scale(0.92);opacity:0;pointer-events:none;transition:transform 0.25s cubic-bezier(.4,0,.2,1),opacity 0.25s ease;}' +
+    '#vn-prechat-card.vn-show{transform:scale(1);opacity:1;pointer-events:auto;}' +
+    '#vn-prechat-card .vn-prechat-title{font-weight:700;font-size:16px;color:#1e293b;line-height:1.2;margin-bottom:4px;}' +
+    '#vn-prechat-card .vn-prechat-subtitle{font-size:12px;color:#64748b;line-height:1.4;margin-bottom:12px;}' +
+    '#vn-prechat input,#vn-prechat textarea{width:100%%;padding:10px;margin-bottom:0;border:1px solid #ddd;border-radius:8px;box-sizing:border-box;font-size:14px;font-family:inherit;}' +
+    '#vn-prechat textarea{resize:vertical;min-height:60px;}' +
+    '#vn-prechat input.vn-invalid,#vn-prechat textarea.vn-invalid{border-color:#dc3232;}' +
+    '#vn-prechat .vn-field{margin-bottom:8px;}' +
+    '#vn-prechat .vn-field-label{display:block;font-size:12px;font-weight:600;color:#334155;margin-bottom:4px;}' +
+    '#vn-prechat .vn-required-star{color:#dc3232;}' +
+    '#vn-prechat .vn-field-error{display:none;color:#dc3232;font-size:11px;line-height:1.3;margin:4px 0 0;}' +
+    '#vn-prechat .vn-field-error.vn-show{display:block;}' +
+    '#vn-start-prechat{width:100%%;background:#562C7C;color:#fff;border:none;padding:10px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;}' +
+    '#vn-start-prechat:disabled{opacity:0.5;cursor:not-allowed;}' +
+    '#vn-status-toast{position:absolute;background:#1e293b;color:#fff;font-size:12px;padding:8px 16px;border-radius:10px;white-space:nowrap;transform:scale(0.92);opacity:0;pointer-events:none;transition:transform 0.25s cubic-bezier(.4,0,.2,1),opacity 0.25s ease;}' +
+    '#vn-status-toast.vn-show{transform:scale(1);opacity:1;pointer-events:auto;}' +
+    '#vn-branding{font-size:8px;text-align:center;margin-top:6px;opacity:0.4;white-space:nowrap;transition:opacity 0.3s ease;}' +
+    '</style>';
+
+  var config = null;
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  async function init() {
+    try {
+      var resp = await fetch(configUrl);
+      config = await resp.json();
+      window.voiceNinjaLeadId = localStorage.getItem('vn_lead_' + publicId);
+      injectWidget();
+    } catch (e) {
+      console.error('Voice Ninja init failed:', e);
+    }
+  }
+
+  function injectWidget() {
+    if (document.getElementById('voice-ninja-widget')) return;
+
+    var pos = config.appearance.position || 'bottom-right';
+    var posStyles    = pos === 'bottom-right' ? 'bottom:24px;right:24px;'
+                     : pos === 'bottom-left'  ? 'bottom:24px;left:24px;'
+                     : pos === 'top-right'    ? 'top:24px;right:24px;'
+                     :                          'top:24px;left:24px;';
+    var prechatPos   = (pos.indexOf('bottom') !== -1 ? 'bottom:58px;' : 'top:58px;') +
+                       (pos.indexOf('right')  !== -1 ? 'right:0;'     : 'left:0;');
+
+    var customFieldsHtml = '';
+    (config.prechat.custom_fields || []).forEach(function(field) {
+      var safeId   = field.field_name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      var fldType  = (field.field_type || 'text').toLowerCase();
+      var labelTag = '<label class="vn-field-label" for="vn-custom-' + safeId + '">' + escapeHtml(field.field_name) +
+        (field.required ? ' <span class="vn-required-star">*</span>' : '') + '</label>';
+      var inputTag;
+      if (fldType === 'textarea') {
+        inputTag = '<textarea id="vn-custom-' + safeId + '" placeholder="' + escapeHtml(field.field_name) + '"' +
+          (field.required ? ' required' : '') + '></textarea>';
+      } else {
+        var htmlType = (fldType === 'email') ? 'email' : (fldType === 'number') ? 'number' : 'text';
+        inputTag = '<input type="' + htmlType + '" id="vn-custom-' + safeId + '" placeholder="' + escapeHtml(field.field_name) + '"' +
+          (field.required ? ' required' : '') + '>';
+      }
+      customFieldsHtml +=
+        '<div class="vn-field">' + labelTag + inputTag +
+          '<div class="vn-field-error" id="vn-custom-' + safeId + '-error"></div>' +
+        '</div>';
+    });
+
+    var div = document.createElement('div');
+    div.id = 'voice-ninja-widget';
+    div.innerHTML = vnStyles +
+      '<div class="vn-root" style="position:fixed;' + posStyles + 'z-index:99999;">' +
+        '<div id="vn-prechat-card" style="' + prechatPos + '">' +
+          (config.appearance.widget_title    ? '<div class="vn-prechat-title">'    + escapeHtml(config.appearance.widget_title)    + '</div>' : '') +
+          (config.appearance.widget_subtitle ? '<div class="vn-prechat-subtitle">' + escapeHtml(config.appearance.widget_subtitle) + '</div>' : '') +
+          '<div id="vn-prechat">' +
+            (config.prechat.require_name  ? '<div class="vn-field"><label class="vn-field-label" for="vn-lead-name">Name <span class="vn-required-star">*</span></label><input type="text"  id="vn-lead-name"  placeholder="Your Name"><div class="vn-field-error" id="vn-lead-name-error"></div></div>'     : '') +
+            (config.prechat.require_email ? '<div class="vn-field"><label class="vn-field-label" for="vn-lead-email">Email <span class="vn-required-star">*</span></label><input type="email" id="vn-lead-email" placeholder="Email Address"><div class="vn-field-error" id="vn-lead-email-error"></div></div>' : '') +
+            (config.prechat.require_phone ? '<div class="vn-field"><label class="vn-field-label" for="vn-lead-phone">Phone <span class="vn-required-star">*</span></label><input type="tel"   id="vn-lead-phone" placeholder="Phone Number"><div class="vn-field-error" id="vn-lead-phone-error"></div></div>'  : '') +
+            customFieldsHtml +
+          '</div>' +
+          '<button id="vn-start-prechat" disabled>Start Chat</button>' +
+        '</div>' +
+        '<div id="vn-status-toast" style="' + prechatPos + '"></div>' +
+        '<div id="vn-indicator-wrap" title="Click to start voice chat">' +
+          '<img class="vn-logo" src="' + logoUrl + '" alt="Voice Ninja"/>' +
+          '<div class="vn-voice-bars"><span></span><span></span><span></span><span></span></div>' +
+          '<div class="vn-end-hint">\u00d7</div>' +
+        '</div>' +
+        (config.appearance.show_branding ? '<div id="vn-branding">Powered by Voice Ninja</div>' : '') +
+      '</div>';
+    document.body.appendChild(div);
+
+    if (config.appearance.primary_color) {
+      var colorStyle = document.createElement('style');
+      colorStyle.textContent =
+        '#vn-indicator-wrap.vn-active{box-shadow:0 0 20px ' + config.appearance.primary_color + '66;}' +
+        '#vn-indicator-wrap.vn-active:hover{box-shadow:0 0 24px ' + config.appearance.primary_color + '99;border-color:' + config.appearance.primary_color + '4D;}' +
+        '#vn-start-prechat{background:' + config.appearance.primary_color + ';}';
+      div.appendChild(colorStyle);
+    }
+
+    var pill          = document.getElementById('vn-indicator-wrap');
+    var prechatCard   = document.getElementById('vn-prechat-card');
+    var statusToast   = document.getElementById('vn-status-toast');
+    var startBtn      = document.getElementById('vn-start-prechat');
+    var connected     = false;
+    var connecting    = false;
+    var client        = null;
+    var statusTimer   = null;
+
+    document.addEventListener('click', function(e) {
+      if (!connected && !connecting && prechatCard.classList.contains('vn-show') && !div.contains(e.target)) {
+        prechatCard.classList.remove('vn-show');
+      }
+    });
+
+    function showStatus(msg, duration) {
+      statusToast.textContent = msg;
+      statusToast.classList.add('vn-show');
+      if (statusTimer) { clearTimeout(statusTimer); statusTimer = null; }
+      if (duration > 0) statusTimer = setTimeout(function() { statusToast.classList.remove('vn-show'); }, duration);
+    }
+    function hideStatus() { statusToast.classList.remove('vn-show'); }
+    function setState(state) {
+      pill.classList.remove('vn-active', 'vn-connecting', 'vn-speaking');
+      pill.title = 'Click to start voice chat';
+      if (state === 'connecting') { pill.classList.add('vn-connecting'); pill.title = 'Connecting...'; }
+      else if (state === 'active') { pill.classList.add('vn-active');    pill.title = 'Click to end call'; }
+    }
+
+    // ── VoiceNinjaClient ──────────────────────────────────────────────────────
+    function VoiceNinjaClient(url) {
+      this.wsUrl        = url;
+      this.ws           = null;
+      this.audioContext = null;
+      this.mic          = null;
+      this.processor    = null;
+      this.audioReady   = false;
+      this.SAMPLE_RATE  = 16000;
+      this.audioQueue   = [];
+      this.isPlaying    = false;
+      this.currentSrc   = null;
+      this.stopped      = false;
+    }
+
+    VoiceNinjaClient.prototype.connect = function() {
+      var self = this;
+      return new Promise(function(resolve, reject) {
+        self.ws = new WebSocket(self.wsUrl);
+        self.ws.onopen = function() {
+          self.ws.send(JSON.stringify({ type: 'conversation_init', language: 'en', model: 'eleven_turbo_v2' }));
+          resolve();
+        };
+        self.ws.onmessage = function(ev) {
+          try {
+            var msg = JSON.parse(ev.data);
+            if (msg.type === 'audio_interface_ready') { self.audioReady = true; if (self.audioContext) self.startStreaming(); }
+            if (msg.type === 'audio_chunk' && msg.data_b64) {
+              self.queuePlay(Uint8Array.from(atob(msg.data_b64), function(c) { return c.charCodeAt(0); }));
+            }
+            if (msg.type === 'interruption') { self.stopPlayback(); }
+            if (msg.type === 'call_ended') {
+              self.stopPlayback();
+              self.releaseMic();
+              showStatus(msg.message || 'Call ended by the agent', 5000);
+            }
+            if (msg.type === 'error') {
+              connected = false;
+              connecting = false;
+              self.stopPlayback();
+              self.releaseMic();
+              setState('idle');
+              showStatus(msg.message || 'Connection error', 4000);
+            }
+          } catch (e) {}
+        };
+        self.ws.onclose = function() {
+          connected = false;
+          self.stopPlayback();
+          self.releaseMic();
+          connecting = false;
+          setState('idle');
+          if (!statusToast.classList.contains('vn-show')) showStatus('Disconnected', 3000);
+        };
+        self.ws.onerror = function() { reject(new Error('WebSocket error')); };
+      });
+    };
+
+    VoiceNinjaClient.prototype.unlockAndStream = function() {
+      var self = this;
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: this.SAMPLE_RATE });
+      this.audioContext.resume().then(function() {
+        navigator.mediaDevices.getUserMedia({ audio: { sampleRate: self.SAMPLE_RATE, channelCount: 1 } })
+          .then(function(stream) {
+            if (self.stopped) { stream.getTracks().forEach(function(t) { t.stop(); }); return; }
+            self.mic = stream; self.startStreaming();
+          })
+          .catch(function() { showStatus('Microphone access denied', 4000); });
+      });
+    };
+
+    VoiceNinjaClient.prototype.startStreaming = function() {
+      if (!this.mic || !this.audioContext || !this.audioReady) return;
+      var self = this;
+      var src = this.audioContext.createMediaStreamSource(this.mic);
+      this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+      this.processor.onaudioprocess = function(ev) {
+        if (!self.ws || self.ws.readyState !== 1) return;
+        var input = ev.inputBuffer.getChannelData(0);
+        var pcm   = new Int16Array(input.length);
+        for (var i = 0; i < input.length; i++) pcm[i] = Math.max(-32768, Math.min(32767, input[i] * 32767));
+        self.ws.send(JSON.stringify({ type: 'user_audio_chunk', data_b64: btoa(String.fromCharCode.apply(null, new Uint8Array(pcm.buffer))) }));
+      };
+      src.connect(this.processor);
+      this.processor.connect(this.audioContext.destination);
+    };
+
+    VoiceNinjaClient.prototype.queuePlay = function(buf) {
+      this.audioQueue.push(buf);
+      if (!this.isPlaying) this.playNext();
+    };
+
+    VoiceNinjaClient.prototype.playNext = function() {
+      var wrap = document.getElementById('vn-indicator-wrap');
+      if (!this.audioQueue.length) { this.isPlaying = false; this.currentSrc = null; if (wrap) wrap.classList.remove('vn-speaking'); return; }
+      this.isPlaying = true;
+      if (wrap) wrap.classList.add('vn-speaking');
+      var self   = this;
+      var int16  = new Int16Array((this.audioQueue.shift()).buffer);
+      var f32    = new Float32Array(int16.length);
+      for (var i = 0; i < int16.length; i++) f32[i] = int16[i] / 32768;
+      var ab  = this.audioContext.createBuffer(1, f32.length, this.SAMPLE_RATE);
+      ab.getChannelData(0).set(f32);
+      var src = this.audioContext.createBufferSource();
+      src.buffer = ab;
+      src.connect(this.audioContext.destination);
+      src.onended = function() { self.currentSrc = null; setTimeout(function() { self.playNext(); }, 0); };
+      this.currentSrc = src;
+      src.start();
+    };
+
+    VoiceNinjaClient.prototype.stopPlayback = function() {
+      this.audioQueue = [];
+      if (this.currentSrc) { try { this.currentSrc.stop(); } catch (e) {} this.currentSrc = null; }
+      this.isPlaying = false;
+    };
+
+    VoiceNinjaClient.prototype.releaseMic = function() {
+      this.stopped = true;
+      if (this.processor) { try { this.processor.disconnect(); } catch (e) {} this.processor = null; }
+      if (this.mic) { this.mic.getTracks().forEach(function(t) { t.stop(); }); this.mic = null; }
+    };
+
+    VoiceNinjaClient.prototype.disconnect = function() {
+      this.stopPlayback();
+      this.releaseMic();
+      if (this.ws) this.ws.close();
+    };
+
+    // ── Lead submission ───────────────────────────────────────────────────────
+    async function submitLead() {
+      var customData = (config.prechat.custom_fields || []).map(function(field) {
+        var el = document.getElementById('vn-custom-' + field.field_name.replace(/[^a-zA-Z0-9_-]/g, '_'));
+        return { field_name: field.field_name, field_type: field.field_type, value: el ? el.value : '' };
+      });
+      var resp = await fetch(leadUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name:        document.getElementById('vn-lead-name')  && document.getElementById('vn-lead-name').value,
+          email:       document.getElementById('vn-lead-email') && document.getElementById('vn-lead-email').value,
+          phone:       document.getElementById('vn-lead-phone') && document.getElementById('vn-lead-phone').value,
+          custom_data: customData,
+        }),
+      }).then(function(r) { return r.json(); });
+      if (resp && resp.id) { localStorage.setItem('vn_lead_' + publicId, resp.id); return resp; }
+      return null;
+    }
+
+    // ── Pre-chat validation ───────────────────────────────────────────────────
+    var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    var PHONE_RE = /^\+?[1-9]\d{1,14}$/;
+
+    var prechatFields = [];
+    if (config.prechat.require_name) {
+      prechatFields.push({ id: 'vn-lead-name', type: 'text', required: true, label: 'Name' });
+    }
+    if (config.prechat.require_email) {
+      prechatFields.push({ id: 'vn-lead-email', type: 'email', required: true, label: 'Email' });
+    }
+    if (config.prechat.require_phone) {
+      prechatFields.push({ id: 'vn-lead-phone', type: 'tel', required: true, label: 'Phone' });
+    }
+    (config.prechat.custom_fields || []).forEach(function(field) {
+      var safeId = field.field_name.replace(/[^a-zA-Z0-9_-]/g, '_');
+      prechatFields.push({
+        id:       'vn-custom-' + safeId,
+        type:     (field.field_type || 'text').toLowerCase(),
+        required: !!field.required,
+        label:    field.field_name,
+      });
+    });
+
+    function fieldError(fieldDef, rawValue) {
+      var val = (rawValue || '').trim();
+      if (!val) {
+        return fieldDef.required ? (fieldDef.label + ' is required') : null;
+      }
+      if (fieldDef.type === 'email' && !EMAIL_RE.test(val)) {
+        return 'Please enter a valid email address';
+      }
+      if (fieldDef.type === 'tel' && !PHONE_RE.test(val.replace(/[\s\(\)\-\.]/g, ''))) {
+        return 'Please enter a valid phone number';
+      }
+      if (fieldDef.type === 'number' && isNaN(Number(val))) {
+        return 'Please enter a valid number';
+      }
+      if ((fieldDef.type === 'text' || fieldDef.type === 'textarea') && /^\d+$/.test(val)) {
+        return fieldDef.label + ' should not contain only numbers';
+      }
+      return null;
+    }
+
+    function validateField(fieldDef) {
+      var el = document.getElementById(fieldDef.id);
+      if (!el) return true;
+      var errorEl = document.getElementById(fieldDef.id + '-error');
+      var msg = fieldError(fieldDef, el.value);
+      if (msg) {
+        el.classList.add('vn-invalid');
+        if (errorEl) { errorEl.textContent = msg; errorEl.classList.add('vn-show'); }
+        return false;
+      }
+      el.classList.remove('vn-invalid');
+      if (errorEl) { errorEl.textContent = ''; errorEl.classList.remove('vn-show'); }
+      return true;
+    }
+
+    function updateStartBtnState() {
+      var allValid = prechatFields.every(function(fieldDef) {
+        var el = document.getElementById(fieldDef.id);
+        return el ? !fieldError(fieldDef, el.value) : true;
+      });
+      startBtn.disabled = !allValid;
+      return allValid;
+    }
+
+    function validatePrechat() {
+      var allValid = true;
+      prechatFields.forEach(function(fieldDef) {
+        if (!validateField(fieldDef)) allValid = false;
+      });
+      startBtn.disabled = !allValid;
+      return allValid;
+    }
+
+    prechatFields.forEach(function(fieldDef) {
+      var el = document.getElementById(fieldDef.id);
+      if (!el) return;
+      el.addEventListener('input', function() { validateField(fieldDef); updateStartBtnState(); });
+      el.addEventListener('blur',  function() { validateField(fieldDef); updateStartBtnState(); });
+    });
+    updateStartBtnState();
+
+    // ── Event listeners ───────────────────────────────────────────────────────
+    pill.addEventListener('click', function() {
+      if (connected || connecting) return;
+      if (config.prechat.enable_prechat && !window.voiceNinjaLeadId) {
+        prechatCard.classList.toggle('vn-show');
+        if (prechatCard.classList.contains('vn-show')) updateStartBtnState();
+      } else {
+        startCall();
+      }
+    });
+
+    pill.querySelector('.vn-end-hint').addEventListener('click', function(e) {
+      e.stopPropagation();
+      if (connected && client) client.disconnect();
+    });
+
+    startBtn.addEventListener('click', async function() {
+      if (startBtn.disabled) return;
+      if (!validatePrechat()) return;
+      var resp = await submitLead();
+      if (resp && resp.id) window.voiceNinjaLeadId = resp.id;
+      prechatCard.classList.remove('vn-show');
+      startCall();
+    });
+
+    function startCall() {
+      connecting = true;
+      setState('connecting');
+      showStatus('Connecting...', 0);
+      var url = wsUrl + (window.voiceNinjaLeadId ? '?lead_id=' + window.voiceNinjaLeadId : '');
+      client = new VoiceNinjaClient(url);
+      client.connect()
+        .then(function() { connected = true; connecting = false; setState('active'); hideStatus(); client.unlockAndStream(); })
+        .catch(function() { connecting = false; setState('idle'); showStatus('Connection failed', 4000); });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+""" % (public_id,)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Routes
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/logo.svg", response_class=Response, summary="Voice Ninja logo")
+async def logo_svg():
+    return Response(
+        VOICE_NINJA_LOGO_SVG,
+        media_type="image/svg+xml",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
+@router.get("/preview/{public_id}", response_class=HTMLResponse, summary="Preview page for widget")
+async def preview_page(request: Request, public_id: str):
+    with db():
+        widget = db.session.query(WidgetModel).filter(WidgetModel.public_id == public_id).first()
+        if not widget:
+            raise HTTPException(status_code=404, detail="Widget not found")
+        if not widget.is_enabled:
+            return HTMLResponse("<html><body><h1>Widget is disabled</h1></body></html>", status_code=403)
+        if not widget.agent or not widget.agent.is_enabled:
+            return HTMLResponse("<html><body><h1>Voice Agent is disabled</h1></body></html>", status_code=403)
+        widget_name = widget.widget_name
+
+    base = str(request.base_url).rstrip("/")
+    script_url = f"{base}/api/v2/widget/embed.js/{public_id}"
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Voice Ninja – {widget_name}</title>
+  <style>
+    body {{ font-family: system-ui, sans-serif; margin: 0; min-height: 100vh; background: #f5f5f5; }}
+    .header {{ padding: 16px 24px; background: #1a1a1a; color: #fff; }}
+    .header h1 {{ margin: 0; font-size: 1.25rem; }}
+  </style>
+</head>
+<body>
+  <script src="{script_url}"></script>
+</body>
+</html>"""
+    return HTMLResponse(html)
+
+
+@router.get("/embed.js/{public_id}", response_class=Response, summary="Embed script for widget widget")
+async def embed_script(public_id: str):
+    # All ORM attribute access (including .agent relationship) must happen inside db()
+    with db():
+        widget = db.session.query(WidgetModel).filter(WidgetModel.public_id == public_id).first()
+        if not widget:
+            return Response("// Widget not found.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+        if not widget.is_enabled:
+            return Response("// Widget is disabled.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+        if not widget.agent or not widget.agent.is_enabled:
+            return Response("// Voice Agent is disabled.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+        if not widget.agent.elevenlabs_agent_id:
+            return Response("// Agent has no ElevenLabs configuration.", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+    return Response(
+        _build_embed_script(public_id),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@router.websocket("/ws/{public_id}")
+async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int] = None, source: Optional[str] = None):
+    """
+    Pure orchestration — zero business logic lives here.
+
+    Flow:
+      1. Accept connection
+      2. Validate widget + owner limits
+      3. Log chat start
+      4. Run audio bridge session
+      5. Log chat end
+      6. Save conversation + notify
+
+    `source` distinguishes callers that share this same WS route: the
+    embeddable widget script omits it (channel=widget), while the standalone
+    Web Agent page passes `source=web_agent` (channel=web_agent).
+    """
+    await websocket.accept()
+    logger.info("Widget WS connected for public_id=%s", public_id)
+
+    channel = ChannelEnum.web_agent if source == "web_agent" else ChannelEnum.widget
+
+    # ── 1. Validate ───────────────────────────────────────────────────────────
+    ctx = await fetch_and_validate_widget(websocket, public_id, channel)
+    if not ctx:
+        return
+
+    # ── 2. Log start ──────────────────────────────────────────────────────────
+    log_web_chat_started(ctx, lead_id)
+
+    with db():
+        conversation_row_id = start_conversation(ctx.user_id, ctx.agent_id, channel)
+
+    # ── 3. Run session ────────────────────────────────────────────────────────
+    failure_reason = None
+    try:
+        conv_id = await run_widget_session(websocket, ctx)
+    except Exception:
+        logger.error("run_widget_session failed:\n%s", traceback.format_exc())
+        conv_id = None
+        failure_reason = "Widget session failed"
+
+    if ctx.limit_reached:
+        limit_error = "Monthly minutes limit reached"
+    elif ctx.low_balance_reached:
+        limit_error = LOW_BALANCE_ERROR_MESSAGE
+    elif ctx.first_call_limit_reached:
+        limit_error = FIRST_CALL_DURATION_LIMIT_ERROR_MESSAGE
+    else:
+        limit_error = None
+
+    # ── 4. Log end ────────────────────────────────────────────────────────────
+    log_web_chat_ended(ctx, conv_id, lead_id)
+
+    # ── 5. Persist & notify ───────────────────────────────────────────────────
+    # Even when the monthly limit ended the call, a captured conv_id means
+    # real EL metadata exists — finalize normally (with the limit note
+    # attached) so transcript/history still shows up, instead of discarding
+    # it via mark_conversation_failed().
+    if conv_id:
+        await save_web_conversation(ctx, conv_id, lead_id, conversation_row_id, error_message=limit_error)
+    else:
+        with db():
+            mark_conversation_failed(conversation_row_id, limit_error or failure_reason or "No conversation ID captured")
+            finalize_ws_call_log(
+                ctx.ws_log_id, is_success=False,
+                error_message=limit_error or failure_reason or "No conversation ID captured",
+            )
+
+    # ── 6. Close ──────────────────────────────────────────────────────────────
+    try:
+        await websocket.close()
+    except Exception:
+        pass
+
+    logger.info("Widget WS closed for public_id=%s", public_id)
+
+
+@router.get("/config/{public_id}", response_model=WidgetPublicConfig)
+def get_public_config(public_id: str):
+    widget = db.session.query(WidgetModel).filter(WidgetModel.public_id == public_id).first()
+    if not widget:
+        raise HTTPException(status_code=404, detail="Widget not found")
+    if not widget.is_enabled:
+        raise HTTPException(status_code=403, detail="Widget is disabled")
+    if not widget.agent or not widget.agent.is_enabled:
+        raise HTTPException(status_code=403, detail="Voice Agent is disabled")
+
+    return WidgetPublicConfig(
+        public_id=widget.public_id,
+        widget_name=widget.widget_name,
+        appearance={
+            "widget_title":    widget.widget_title,
+            "widget_subtitle": widget.widget_subtitle,
+            "primary_color":   widget.primary_color,
+            "position":        widget.position,
+            "show_branding":   widget.show_branding,
+        },
+        prechat={
+            "enable_prechat": widget.enable_prechat,
+            "require_name":   widget.require_name,
+            "require_email":  widget.require_email,
+            "require_phone":  widget.require_phone,
+            "custom_fields":  widget.custom_fields or [],
+        },
+    )
+
+
+@router.post("/lead/{public_id}")
+def submit_lead(public_id: str, lead: WidgetLeadCreate):
+    widget = db.session.query(WidgetModel).filter(WidgetModel.public_id == public_id).first()
+    if not widget:
+        raise HTTPException(status_code=404, detail="Widget not found")
+    if not widget.is_enabled:
+        raise HTTPException(status_code=403, detail="Widget is disabled")
+    if not widget.agent or not widget.agent.is_enabled:
+        raise HTTPException(status_code=403, detail="Voice Agent is disabled")
+    if not widget.enable_prechat:
+        raise HTTPException(status_code=400, detail="Pre-chat is not enabled for this agent")
+
+    new_lead = WidgetLeadModel(
+        widget_id=widget.id,
+        name=lead.name,
+        email=lead.email,
+        phone=lead.phone,
+        custom_data=lead.custom_data,
+    )
+    db.session.add(new_lead)
+    db.session.commit()
+    db.session.refresh(new_lead)
+    return {"detail": "Lead captured", "id": new_lead.id}

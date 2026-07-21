@@ -1,88 +1,232 @@
 import sys
-import os
 import asyncio
-from datetime import datetime
-from sqlalchemy import text
-from dotenv import load_dotenv
+from datetime import datetime, timezone
+from elevenlabs import ElevenLabs
 
-# Add project root to sys.path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-load_dotenv(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../.env')))
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
-def get_base_url():
-    # Return FRONTEND_URL if set, else a fallback
-    return os.getenv("FRONTEND_URL")
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 587
+
+SMTP_USERNAME = ""
+SMTP_PASSWORD = ""
+
+FROM_EMAIL = SMTP_USERNAME
+TO_EMAIL = []
+
+FRONTEND_URL = ""
+ELEVENLABS_API_KEY = ""
+
+if not FRONTEND_URL or not ELEVENLABS_API_KEY or not TO_EMAIL or not SMTP_USERNAME or not SMTP_PASSWORD:
+    print("Error: TO_EMAIL, SMTP_USERNAME, and SMTP_PASSWORD,FRONTEND_URL,ELEVENLABS_API_KEY  must be set in the environment variables.")
+    sys.exit(1)
+
+try:
+    client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
+except Exception as ex:
+    print(f"Error initializing ElevenLabs client: {ex} with key : {ELEVENLABS_API_KEY}")
+    sys.exit(1)
+
+async def send_subscription_email(summary, credits_left):
+    """
+    Sends an HTML email containing ElevenLabs subscription details.
+    """
+
+    next_invoice = summary.get("next_invoice")
+
+    amount_due = (
+        f"${next_invoice['amount_due_usd']:.2f}"
+        if next_invoice and next_invoice.get("amount_due_usd") is not None
+        else "N/A"
+    )
+
+    next_payment = (
+        next_invoice.get("next_payment_attempt")
+        if next_invoice
+        else "N/A"
+    )
+
+    overage = summary.get("current_overage", {})
+
+    html = f"""
+    <html>
+    <body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:30px;">
+
+    <table width="650" align="center" style="background:white;border-radius:10px;padding:25px;border-collapse:collapse;box-shadow:0 0 10px rgba(0,0,0,0.1);">
+
+        <tr>
+            <td>
+                <h2 style="color:#1f2937;">
+                    ElevenLabs Credit Alert
+                </h2>
+
+                <p>
+                    Your ElevenLabs subscription summary is shown below.
+                </p>
+
+                <table width="100%" cellpadding="10" style="border-collapse:collapse;">
+
+                    <tr style="background:#f8f9fa;">
+                        <td><b>Subscription Tier</b></td>
+                        <td>{summary.get("tier")}</td>
+                    </tr>
+
+                    <tr>
+                        <td><b>Billing Period</b></td>
+                        <td>{summary.get("billing_period")}</td>
+                    </tr>
+
+                    <tr style="background:#f8f9fa;">
+                        <td><b>Characters Used</b></td>
+                        <td>{summary.get("character_count"):,}</td>
+                    </tr>
+
+                    <tr>
+                        <td><b>Character Limit</b></td>
+                        <td>{summary.get("character_limit"):,}</td>
+                    </tr>
+
+                    <tr style="background:#f8f9fa;">
+                        <td><b>Characters Remaining</b></td>
+                        <td><b>{credits_left:,}</b></td>
+                    </tr>
+
+                    <tr>
+                        <td><b>Current Overage</b></td>
+                        <td>{overage.get("amount")} {overage.get("currency") or ""}</td>
+                    </tr>
+
+                    <tr style="background:#f8f9fa;">
+                        <td><b>Open Invoices</b></td>
+                        <td>{summary.get("has_open_invoices")}</td>
+                    </tr>
+
+                    <tr>
+                        <td><b>Next Invoice Amount</b></td>
+                        <td>{amount_due}</td>
+                    </tr>
+
+                    <tr style="background:#f8f9fa;">
+                        <td><b>Next Payment Attempt</b></td>
+                        <td>{next_payment}</td>
+                    </tr>
+
+                </table>
+
+                <br>
+
+                <div style="padding:15px;background:#fff3cd;border-radius:6px;border-left:5px solid #ffc107;">
+                    <b>Warning</b><br>
+                    Your account has <b>{credits_left:,}</b> characters remaining.
+                    Consider purchasing additional credits if usage continues at the current rate.
+                </div>
+
+                <br>
+
+                <p style="font-size:12px;color:gray;">
+                    Generated automatically on {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
+                </p>
+
+            </td>
+        </tr>
+
+    </table>
+
+    </body>
+    </html>
+    """
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = "⚠ ElevenLabs Credit Alert"
+    msg["From"] = FROM_EMAIL
+    msg["To"] = ", ".join(TO_EMAIL)
+
+    msg.attach(MIMEText(html, "html"))
+
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USERNAME, SMTP_PASSWORD)
+
+        server.sendmail(
+            FROM_EMAIL,
+            TO_EMAIL,          # List of recipients
+            msg.as_string()    # Convert message to string
+        )
+
+    print("Email sent successfully.")
 
 async def run_expiry_alert():
     """
-    Cron job script to send warning emails to users whose coins are expiring
-    exactly between 2 to 3 days from now.
+    Cron job script to send warning emails when our Elevenlabs credits are about to expire.
+    This script fetches the current subscription details and billing summary from ElevenLabs and checks for 
+    any upcoming invoices or character count resets. If any issues arise during the process, it logs the error and 
+    exits the script.
     """
-    print(f"[{datetime.utcnow()}] Starting coin expiry alert process...")
-    
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from app_v2.core.config import VoiceSettings
-    from app_v2.utils.email_service import send_coin_expiry_alert_email
-    
-    engine = create_engine(VoiceSettings.DB_URL)
-    Session = sessionmaker(bind=engine)
-    session = Session()
-
     try:
-        # Find users with coins expiring in the next 2-3 days
-        # We target this window to avoid sending multiple alerts for the same cohort.
-        result = session.execute(text("""
-            SELECT 
-                ua.email, 
-                COALESCE(ua.name, ua.first_name || ' ' || ua.last_name, ua.username) as user_name,
-                SUM(cl.remaining_coins) as expiring_coins,
-                cl.expiry_at as expiry_date_raw
-            FROM coins_ledger cl
-            JOIN unified_auth ua ON cl.user_id = ua.id
-            WHERE cl.remaining_coins > 0
-              AND cl.expiry_at IS NOT NULL
-              -- Between 2 and 3 days from now
-              AND cl.expiry_at > CURRENT_TIMESTAMP + INTERVAL '2 days'
-              AND cl.expiry_at <= CURRENT_TIMESTAMP + INTERVAL '3 days'
-              AND ua.email IS NOT NULL 
-              AND LENGTH(TRIM(ua.email)) > 0
-            GROUP BY ua.id, ua.email, ua.name, ua.first_name, ua.last_name, ua.username, cl.expiry_at
-        """)).mappings().all()
+        next_reset = None
+        print(f"[{datetime.utcnow()}] Starting coin expiry alert process...")
+        subscription = client.user.subscription.get()
+        character_count = getattr(subscription, "character_count", 0)
+        character_limit = getattr(subscription, "character_limit", 0)
+        credits_left = character_limit - character_count
 
-        alert_count = 0
-        base_url = get_base_url()
-
-        for row in result:
-            user_email = row['email']
-            user_name = row['user_name']
-            expiring_coins = row['expiring_coins']
-            expiry_date_raw = row['expiry_date_raw']
-            
-            # Format the date safely in python
-            if isinstance(expiry_date_raw, str):
-                expiry_date = expiry_date_raw
-            else:
-                expiry_date = expiry_date_raw.strftime('%Y-%m-%d %H:%M:%S') if expiry_date_raw else 'Unknown'
-
-            print(f"[{datetime.utcnow()}] Alerting {user_email} about {expiring_coins} coins expiring on {expiry_date}")
-            
-            await send_coin_expiry_alert_email(
-                user_email=user_email,
-                expiring_coins=int(expiring_coins),
-                expiry_date=expiry_date,
-                base_url=base_url,
-                user_name=user_name
-            )
-            alert_count += 1
-
-        print(f"[{datetime.utcnow()}] Alerted {alert_count} users successfully.")
+        billing_summary = {
+                "tier": getattr(subscription, "tier", None),
+                "currency": getattr(subscription, "currency", None),
+                "billing_period": getattr(subscription, "billing_period", None),
+                "has_open_invoices": getattr(subscription, "has_open_invoices", None),
+                "character_count": getattr(subscription, "character_count", 0),
+                "character_limit": getattr(subscription, "character_limit", 0),
+                "next_character_count_reset": next_reset,
+                "current_overage": {
+                    "amount": getattr(getattr(subscription, "current_overage", None), "amount", None),
+                    "currency": getattr(getattr(subscription, "current_overage", None), "currency", None)
+                }
+            }
         
+        if getattr(subscription, "next_invoice", None):
+            inv = subscription.next_invoice
+
+            next_payment_attempt = None
+            if getattr(inv, "next_payment_attempt_unix", None):
+                try:
+                    next_payment_attempt = datetime.fromtimestamp(
+                        inv.next_payment_attempt_unix,
+                        tz=timezone.utc
+                    ).strftime("%Y-%m-%d %H:%M:%S %Z")
+                except Exception:
+                    next_payment_attempt = None
+
+            billing_summary["next_invoice"] = {
+                "amount_due_usd": (
+                    inv.amount_due_cents / 100
+                    if getattr(inv, "amount_due_cents", None)
+                    else None
+                ),
+                "next_payment_attempt": next_payment_attempt,
+            }
+        else:
+            billing_summary["next_invoice"] = None
+
+        if credits_left <= 10000:
+            print(f"[{datetime.utcnow()}] Warning: Character count is low.")
+
+            await send_subscription_email(
+                billing_summary,
+                credits_left
+            )
+
+        return {
+            "status": "success",
+            "credits used":character_count,
+            "subscription_billing": billing_summary,
+        }
+
     except Exception as e:
-        print(f"Error during coin expiry alert process: {e}")
+        print(f"Error during fetching current 11labs credits: {e}")
         sys.exit(1)
-    finally:
-        session.close()
 
 if __name__ == "__main__":
     asyncio.run(run_expiry_alert())
