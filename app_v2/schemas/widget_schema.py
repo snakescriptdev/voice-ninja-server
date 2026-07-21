@@ -1,0 +1,101 @@
+from pydantic import BaseModel,AnyHttpUrl, field_serializer
+from typing import Optional,Literal
+from app_v2.schemas.enum_types import WidgetPosition
+from datetime import datetime
+
+class AppearanceConfig(BaseModel):
+    widget_title: str | None = None
+    widget_subtitle: str | None = None
+    primary_color: str = "#562C7C"
+    position: WidgetPosition
+    show_branding: bool = True
+
+
+class AppearanceConfigUpdate(BaseModel):
+    widget_title: Optional[str] = None
+    widget_subtitle: Optional[str] = None
+    primary_color: Optional[str] = None
+    position: Optional[WidgetPosition] = None
+    show_branding: Optional[bool] = None
+
+class CustomFieldSchema(BaseModel):
+    field_name: str
+    required: bool = False
+    field_type: Literal["text", "number", "email", "textarea"] = "text"
+
+
+class PrechatConfig(BaseModel):
+    enable_prechat: bool = False
+    require_name: bool = False
+    require_email: bool = False
+    require_phone: bool = False
+    custom_fields: list[CustomFieldSchema] = []
+
+
+class PrechatConfigUpdate(BaseModel):
+    enable_prechat: Optional[bool] = None
+    require_name: Optional[bool] = None
+    require_email: Optional[bool] = None
+    require_phone: Optional[bool] = None
+    custom_fields: Optional[list[CustomFieldSchema]] = None
+
+
+
+class WidgetConfig(BaseModel):
+    widget_name: str
+    agent_id: int
+
+    appearance: AppearanceConfig
+    prechat: PrechatConfig
+
+
+
+class WidgetConfigResponse(BaseModel):
+    id: int
+    public_id: str
+    widget_name: str
+    shareable_link: str
+    agent_id: int
+    is_enabled: Optional[bool]
+
+    appearance: AppearanceConfig
+    prechat: PrechatConfig
+
+    model_config = {"from_attributes": True}
+
+
+class WidgetListResponse(BaseModel):
+    id:int
+    widget_name: str
+    public_id: str
+    shareable_link: str
+    is_enabled: bool | None = True
+    created_at: datetime
+    agent_id: int | None = None
+    agent_name: str
+
+    @field_serializer("created_at")
+    def serialize_datetime(self,dt:datetime):
+        return dt.date()
+
+
+
+class WidgetPublicConfig(BaseModel):
+    public_id: str
+    widget_name: str
+    appearance: AppearanceConfig
+    prechat: PrechatConfig
+
+class WidgetLeadCreate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    custom_data: Optional[list] = None
+
+class WidgetConfigUpdate(BaseModel):
+    widget_name: Optional[str] = None
+    agent_id: Optional[int] = None
+
+    appearance: Optional[AppearanceConfigUpdate] = None
+    prechat: Optional[PrechatConfigUpdate] = None
+    is_enabled: Optional[bool] = None

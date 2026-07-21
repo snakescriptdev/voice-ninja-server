@@ -1,100 +1,57 @@
-from pydantic import BaseModel,AnyHttpUrl, field_serializer
-from typing import Optional,Literal
-from app_v2.schemas.enum_types import WidgetPosition
+from pydantic import BaseModel, field_serializer
+from typing import Optional
 from datetime import datetime
-
-class AppearanceConfig(BaseModel):
-    widget_title: str | None = None
-    widget_subtitle: str | None = None
-    primary_color: str = "#562C7C"
-    position: WidgetPosition
-    show_branding: bool = True
+from app_v2.schemas.enum_types import WebAgentPosition
 
 
-class AppearanceConfigUpdate(BaseModel):
-    widget_title: Optional[str] = None
-    widget_subtitle: Optional[str] = None
-    primary_color: Optional[str] = None
-    position: Optional[WidgetPosition] = None
-    show_branding: Optional[bool] = None
-
-class CustomFieldSchema(BaseModel):
-    field_name: str
-    required: bool = False
-    field_type: Literal["text", "number", "email", "textarea"] = "text"
-
-
-class PrechatConfig(BaseModel):
-    enable_prechat: bool = False
-    require_name: bool = False
-    require_email: bool = False
-    require_phone: bool = False
-    custom_fields: list[CustomFieldSchema] = []
-
-
-class PrechatConfigUpdate(BaseModel):
-    enable_prechat: Optional[bool] = None
-    require_name: Optional[bool] = None
-    require_email: Optional[bool] = None
-    require_phone: Optional[bool] = None
-    custom_fields: Optional[list[CustomFieldSchema]] = None
-
-
-
-class WebAgentConfig(BaseModel):
+class WebAgentCreate(BaseModel):
     web_agent_name: str
     agent_id: int
+    widget_id: int
+    bg_color: str = "#0B0B0F"
+    agent_position: WebAgentPosition = WebAgentPosition.center
 
-    appearance: AppearanceConfig
-    prechat: PrechatConfig
+
+class WebAgentUpdate(BaseModel):
+    web_agent_name: Optional[str] = None
+    agent_id: Optional[int] = None
+    widget_id: Optional[int] = None
+    bg_color: Optional[str] = None
+    agent_position: Optional[WebAgentPosition] = None
+    is_enabled: Optional[bool] = None
 
 
-
-class WebAgentConfigResponse(BaseModel):
+class WebAgentResponse(BaseModel):
     id: int
     public_id: str
     web_agent_name: str
-    shareable_link: str
     agent_id: int
-    is_enabled: Optional[bool]
-
-    appearance: AppearanceConfig
-    prechat: PrechatConfig
+    agent_name: str
+    widget_id: int
+    widget_name: str
+    is_enabled: bool
+    bg_color: str
+    agent_position: WebAgentPosition
+    shareable_link: str
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
 class WebAgentListResponse(BaseModel):
-    id:int
-    web_agent_name: str
+    id: int
     public_id: str
-    shareable_link: str
-    is_enabled: bool | None = True
-    created_at: datetime
+    web_agent_name: str
+    is_enabled: bool
+    bg_color: str
+    agent_position: WebAgentPosition
+    agent_id: int
     agent_name: str
+    widget_id: int
+    widget_name: str
+    shareable_link: str
+    created_at: datetime
 
     @field_serializer("created_at")
-    def serialize_datetime(self,dt:datetime):
+    def serialize_datetime(self, dt: datetime):
         return dt.date()
-
-
-
-class WebAgentPublicConfig(BaseModel):
-    public_id: str
-    web_agent_name: str
-    appearance: AppearanceConfig
-    prechat: PrechatConfig
-
-class WebAgentLeadCreate(BaseModel):
-    name: Optional[str] = None
-    email: Optional[str] = None
-    phone: Optional[str] = None
-    custom_data: Optional[list] = None
-
-class WebAgentConfigUpdate(BaseModel):
-    web_agent_name: Optional[str] = None
-    agent_id: Optional[int] = None
-
-    appearance: Optional[AppearanceConfigUpdate] = None
-    prechat: Optional[PrechatConfigUpdate] = None
-    is_enabled: Optional[bool] = None

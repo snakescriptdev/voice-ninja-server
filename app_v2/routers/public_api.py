@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session, selectinload
 from fastapi_sqlalchemy import db
 from sqlalchemy import or_
 from typing import List
+import json
 import math
 import uuid
 import os
@@ -12,8 +13,9 @@ import shutil
 from datetime import datetime, timezone
 
 from app_v2.databases.models import (
-    AgentModel, 
-    WebAgentModel, 
+    AgentModel,
+    WidgetModel,
+    WebAgentPageModel,
     UnifiedAuthModel,
     VoiceModel,
     AIModels,
@@ -28,7 +30,8 @@ from app_v2.databases.models import (
     AgentLanguageBridge,
     AgentKnowledgeBaseBridge,
     AgentFunctionBridgeModel,
-    FunctionApiConfig
+    FunctionApiConfig,
+    TwilioUserCreds
 )
 from app_v2.schemas.function_schema import (
     FunctionCreateSchema,
@@ -40,7 +43,9 @@ from app_v2.schemas.function_schema import (
     PrimitiveField
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
-from app_v2.schemas.web_agent_schema import WebAgentConfig, WebAgentConfigResponse, WebAgentConfigUpdate, WebAgentListResponse
+from app_v2.schemas.widget_schema import WidgetConfig, WidgetConfigResponse, WidgetConfigUpdate, WidgetListResponse
+from app_v2.schemas.web_agent_schema import WebAgentCreate, WebAgentUpdate, WebAgentResponse, WebAgentListResponse
+from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
 from app_v2.schemas.language_schema import LanguageRead
 from app_v2.schemas.voice_schema import VoiceRead
 from app_v2.schemas.ai_model import AIModelRead
@@ -51,14 +56,17 @@ from app_v2.schemas.knowledge_base_schema import (
     KnowledgeBaseBind
 )
 from app_v2.schemas.pagination import PaginatedResponse
-from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum
+from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum, PublicLogChannelEnum
 from app_v2.utils.public_auth import get_public_api_user
 from app_v2.utils.crypto_utils import encrypt_data, decrypt_data
+from twilio.rest import Client as TwilioClient
+from twilio.base.exceptions import TwilioRestException
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.rate_limit import track_and_limit_api, log_public_api_call
-from app_v2.utils.feature_access import RequireFeaturePublic
+from app_v2.utils.log_sanitizer import sanitize_for_log
+from app_v2.utils.feature_access import RequireFeaturePublic, require_feature_enabled, check_can_enable_resource
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
-from app_v2.utils.elevenlabs import ElevenLabsKB
+from app_v2.utils.elevenlabs import ElevenLabsKB, describe_kb_sync_error
 from app_v2.utils.scraping_utils import scrape_webpage_title
 from app_v2.utils.activity_logger import log_activity
 from app_v2.core.logger import setup_logger
@@ -74,20 +82,38 @@ from fastapi.routing import APIRoute
 from typing import Callable
 from fastapi.responses import Response
 
+def _try_parse_json_bytes(raw: bytes):
+    """Best-effort JSON parse; returns None on empty/invalid/non-JSON bytes."""
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+
+
 class PublicAPIRoute(APIRoute):
     def get_route_handler(self) -> Callable:
         original = super().get_route_handler()
+        route_path = self.path  # path TEMPLATE (e.g. "/api/v2/public/agents/{agent_id}"), so logs group by endpoint
         async def custom(request: Request) -> Response:
             start_time = time.time()
             status_code = 500
+            error_message = None
+            response = None
+            # Cached by Starlette, so reading it here doesn't consume the
+            # handler's own await request.json()/request.body() calls.
+            raw_request_body = await request.body()
             try:
                 response = await original(request)
                 status_code = response.status_code
                 return response
             except HTTPException as e:
                 status_code = e.status_code
+                error_message = str(e.detail)
                 raise e
             except Exception as e:
+                error_message = str(e)
                 raise e
             finally:
                 process_time_ms = int((time.time() - start_time) * 1000)
@@ -98,7 +124,35 @@ class PublicAPIRoute(APIRoute):
                             from app_v2.databases.models import APIKeyModel
                             key = db.session.query(APIKeyModel).filter_by(client_id=client_id, is_active=True).first()
                             if key:
-                                log_public_api_call(key.user_id, request.url.path, status_code, process_time_ms, 0)
+                                content_type = request.headers.get("content-type", "")
+                                if "application/json" in content_type:
+                                    req_body_parsed = _try_parse_json_bytes(raw_request_body)
+                                elif raw_request_body:
+                                    req_body_parsed = {"_unloggable": True, "content_type": content_type}
+                                else:
+                                    req_body_parsed = None
+                                resp_body_parsed = (
+                                    _try_parse_json_bytes(getattr(response, "body", None))
+                                    if response is not None else None
+                                )
+                                log_public_api_call(
+                                    user_id=key.user_id,
+                                    api_route=route_path,
+                                    status_code=status_code,
+                                    response_time_ms=process_time_ms,
+                                    coins_used=0,
+                                    channel=PublicLogChannelEnum.public_api,
+                                    method=request.method,
+                                    request_params={
+                                        "path_params": dict(request.path_params),
+                                        "query_params": dict(request.query_params),
+                                    },
+                                    request_body=sanitize_for_log(req_body_parsed),
+                                    response_body=sanitize_for_log(resp_body_parsed),
+                                    is_success=status_code < 400,
+                                    error_message=error_message,
+                                    api_key_id=key.id,
+                                )
                     except Exception as e:
                         logger.error(f"Failed to log public API call in route handler: {e}")
 
@@ -107,7 +161,7 @@ class PublicAPIRoute(APIRoute):
 router = APIRouter(
     prefix="/api/v2/public",
     tags=["public-api"],
-    dependencies=[Depends(get_public_api_user), Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))],
+    dependencies=[Depends(get_public_api_user)],
     route_class=PublicAPIRoute
 )
 
@@ -133,9 +187,10 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         first_message=agent.first_message,
         system_prompt=agent.system_prompt,
         voice=agent.voice.voice_name,
+        is_enabled=agent.is_enabled,
         ai_model=ai_model,
         language=language,
-        updated_at=agent.modified_at,
+        updated_at=agent.modified_at.date(),
         elevenlabs_agent_id=agent.elevenlabs_agent_id,
         phone=phone_number,
         knowledgebase = [
@@ -144,35 +199,45 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         ],
         variables={var.variable_name: var.variable_value for var in agent.variables},
         tools=[
-            {"id": bridge.function.id, "name": bridge.function.name} 
+            {"id": bridge.function.id, "name": bridge.function.name}
             for bridge in agent.agent_functions
         ],
-        built_in_tools=agent.built_in_tools
+        built_in_tools=agent.built_in_tools,
+        timezone=agent.timezone
     )
 
-def web_agent_to_response(web_agent: WebAgentModel, request: Request = None) -> WebAgentConfigResponse:
+def widget_to_response(widget: WidgetModel, request: Request = None) -> WidgetConfigResponse:
     base_url = str(request.base_url).rstrip("/") if request else ""
-    return WebAgentConfigResponse(
-        id=web_agent.id,
-        public_id=web_agent.public_id,
-        web_agent_name=web_agent.web_agent_name,
-        shareable_link=f"{base_url}/api/v2/web-agent/preview/{web_agent.public_id}",
-        agent_id=web_agent.agent_id,
-        is_enabled=web_agent.is_enabled,
+    return WidgetConfigResponse(
+        id=widget.id,
+        public_id=widget.public_id,
+        widget_name=widget.widget_name,
+        shareable_link=f"{base_url}/api/v2/widget/preview/{widget.public_id}",
+        agent_id=widget.agent_id,
+        is_enabled=widget.is_enabled,
         appearance={
-            "widget_title": web_agent.widget_title,
-            "widget_subtitle": web_agent.widget_subtitle,
-            "primary_color": web_agent.primary_color,
-            "position": web_agent.position,
-            "show_branding": web_agent.show_branding
+            "widget_title": widget.widget_title,
+            "widget_subtitle": widget.widget_subtitle,
+            "primary_color": widget.primary_color,
+            "position": widget.position,
+            "show_branding": widget.show_branding
         },
         prechat={
-            "enable_prechat": web_agent.enable_prechat,
-            "require_name": web_agent.require_name,
-            "require_email": web_agent.require_email,
-            "require_phone": web_agent.require_phone,
-            "custom_fields": web_agent.custom_fields or []
+            "enable_prechat": widget.enable_prechat,
+            "require_name": widget.require_name,
+            "require_email": widget.require_email,
+            "require_phone": widget.require_phone,
+            "custom_fields": widget.custom_fields or []
         }
+    )
+
+def twilio_connector_to_response(connector: TwilioUserCreds) -> TwilioConnectorResponse:
+    return TwilioConnectorResponse(
+        id=connector.id,
+        name=connector.name,
+        account_sid=connector.account_sid,
+        auth_token=decrypt_data(connector.auth_token),
+        created_at=connector.created_at,
     )
 
 def voice_to_read(voice: VoiceModel) -> VoiceRead:
@@ -202,7 +267,7 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
 async def list_agents(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -216,7 +281,7 @@ async def list_agents(
 @router.get("/agents/{agent_id}", response_model=AgentRead)
 async def get_agent(
     agent_id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -225,12 +290,16 @@ async def get_agent(
         ).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
+
+        from app_v2.routers.agents import prune_stale_agent_transfers
+        prune_stale_agent_transfers(agent, db.session)
+
         return agent_to_read(agent)
 
 @router.post("/agents", response_model=AgentRead, status_code=status.HTTP_201_CREATED)
 async def create_agent(
     agent_in: AgentCreate,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     # Reusing original creation logic from agents.py would be ideal, but for public API 
@@ -251,6 +320,11 @@ async def create_agent(
         language = db.session.query(LanguageModel).filter(LanguageModel.lang_code == agent_in.language).first()
         if not language:
             raise HTTPException(status_code=400, detail="Invalid language")
+
+        from app_v2.routers.agents import resolve_phone_record, finalize_phone_assignment
+        phone_record, phone_connector = resolve_phone_record(
+            db.session, user_id, agent_in.phone, agent_in.twilio_connector_id
+        )
 
         # -------------------------------------------------
         # KB & Tools validation and lookup
@@ -294,8 +368,14 @@ async def create_agent(
             for tool_id in tool_ids_ordered:
                 el_tool_ids.append(tool_map[tool_id].elevenlabs_tool_id)
 
-        from app_v2.routers.agents import transform_built_in_tools
+        from app_v2.routers.agents import transform_built_in_tools, prompt_requires_timezone
         transformed_built_in = transform_built_in_tools(agent_in.built_in_tools, db.session, user_id)
+
+        if prompt_requires_timezone(agent_in.system_prompt) and not agent_in.timezone:
+            raise HTTPException(
+                status_code=400,
+                detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
+            )
 
         # Create in ElevenLabs
         el_client = ElevenLabsAgent()
@@ -309,7 +389,8 @@ async def create_agent(
             tool_ids=el_tool_ids,
             knowledge_base=el_kb_list,
             dynamic_variables=agent_in.variables,
-            built_in_tools=transformed_built_in
+            built_in_tools=transformed_built_in,
+            timezone=agent_in.timezone
         )
         if not el_response.status:
             raise HTTPException(status_code=424, detail="ElevenLabs failure")
@@ -323,11 +404,17 @@ async def create_agent(
             user_id=user_id,
             agent_voice=voice.id,
             elevenlabs_agent_id=elevenlabs_agent_id,
-            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {}
+            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {},
+            timezone=agent_in.timezone
         )
         db.session.add(new_agent)
         db.session.flush()
-        
+
+        # Best-effort store of the expected per-minute LLM price (live cutoff only).
+        new_agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
+            elevenlabs_agent_id, ai_model.model_name
+        )
+
         db.session.add(AgentAIModelBridge(agent_id=new_agent.id, ai_model_id=ai_model.id))
         db.session.add(AgentLanguageBridge(agent_id=new_agent.id, lang_id=language.id))
         
@@ -335,7 +422,9 @@ async def create_agent(
             db.session.add(AgentKnowledgeBaseBridge(agent_id=new_agent.id, kb_id=kb_id))
         for tool_id in tool_ids_ordered:
             db.session.add(AgentFunctionBridgeModel(agent_id=new_agent.id, function_id=tool_id))
-            
+
+        finalize_phone_assignment(phone_record, new_agent, phone_connector)
+
         db.session.commit()
         db.session.refresh(new_agent)
         return agent_to_read(new_agent)
@@ -344,7 +433,7 @@ async def create_agent(
 async def update_agent_public(
     agent_id: int,
     agent_in: AgentUpdate,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -358,6 +447,18 @@ async def update_agent_public(
         
         # Simplified update: name, prompt, first_message
         if agent_in.agent_name is not None:
+            # Same uniqueness rule as create: no OTHER agent of this user may
+            # share the name (case-insensitive).
+            name_taken = db.session.query(AgentModel).filter(
+                func.lower(AgentModel.agent_name) == agent_in.agent_name.lower(),
+                AgentModel.user_id == current_user.id,
+                AgentModel.id != agent_id,
+            ).first()
+            if name_taken:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Agent with this name already exists",
+                )
             agent.agent_name = agent_in.agent_name
             el_update_params["name"] = agent_in.agent_name
         if agent_in.system_prompt is not None:
@@ -366,6 +467,26 @@ async def update_agent_public(
         if agent_in.first_message is not None:
             agent.first_message = agent_in.first_message
             el_update_params["first_message"] = agent_in.first_message
+        if agent_in.timezone is not None:
+            agent.timezone = agent_in.timezone
+            el_update_params["timezone"] = agent_in.timezone
+
+        # ---- Phone Number Update ----
+        if agent_in.phone is not None:
+            from app_v2.routers.agents import resolve_phone_record, finalize_phone_assignment, unassign_phone
+
+            old_phone = db.session.query(PhoneNumberService).filter(
+                PhoneNumberService.assigned_to == agent_id
+            ).first()
+
+            new_phone_value = agent_in.phone.strip() if agent_in.phone else ""
+
+            if not (old_phone and old_phone.phone_number == new_phone_value):
+                unassign_phone(old_phone)
+                new_phone_record, new_phone_connector = resolve_phone_record(
+                    db.session, current_user.id, agent_in.phone, agent_in.twilio_connector_id, current_agent_id=agent_id
+                )
+                finalize_phone_assignment(new_phone_record, agent, new_phone_connector)
 
         # ---- Knowledge Base Update ----
         if agent_in.knowledgebase is not None:
@@ -435,9 +556,13 @@ async def update_agent_public(
 
         # ---- Built-in Tools Update ----
         if agent_in.built_in_tools is not None:
-            agent.built_in_tools = agent_in.built_in_tools.model_dump()
+            # transform_built_in_tools may drop invalid transfers (e.g. an agent_id
+            # that no longer resolves) from agent_in.built_in_tools in place, so run
+            # it before the model_dump() to keep the persisted config in sync with
+            # what was actually sent to ElevenLabs.
             from app_v2.routers.agents import transform_built_in_tools
-            el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id)
+            el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id, current_agent_id=agent_id)
+            agent.built_in_tools = agent_in.built_in_tools.model_dump()
 
         # ---- Variables Update ----
         if agent_in.variables is not None:
@@ -448,6 +573,13 @@ async def update_agent_public(
             ).delete()
             for key, value in agent_in.variables.items():
                 db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
+
+        from app_v2.routers.agents import prompt_requires_timezone
+        if prompt_requires_timezone(agent.system_prompt) and not agent.timezone:
+            raise HTTPException(
+                status_code=400,
+                detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
+            )
 
         # ---- Sync with ElevenLabs ----
         if el_update_params and agent.elevenlabs_agent_id:
@@ -462,6 +594,21 @@ async def update_agent_public(
                     raise HTTPException(
                         status_code=424,
                         detail=f"Failed to update agent in ElevenLabs: {el_response.error_message}"
+                    )
+
+                # Refresh the stored LLM price now that ElevenLabs has the new
+                # config (best-effort; prompt/KB/RAG/model all affect it).
+                effective_model = el_update_params.get("llm_model")
+                if not effective_model:
+                    effective_model = (
+                        db.session.query(AIModels.model_name)
+                        .join(AgentAIModelBridge, AgentAIModelBridge.ai_model_id == AIModels.id)
+                        .filter(AgentAIModelBridge.agent_id == agent_id)
+                        .scalar()
+                    )
+                if effective_model:
+                    agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
+                        agent.elevenlabs_agent_id, effective_model
                     )
             except HTTPException:
                 raise
@@ -479,7 +626,7 @@ async def update_agent_public(
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent_public(
     agent_id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -497,57 +644,57 @@ async def delete_agent_public(
     return None
 
 # -------------------------------------------------------------------
-# WEB AGENTS CRUD
+# WidgetS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/web-agents", response_model=PaginatedResponse[WebAgentListResponse])
-async def list_web_agents(
+@router.get("/widgets", response_model=PaginatedResponse[WidgetListResponse])
+async def list_widgets(
     request: Request,
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
     base_url = str(request.base_url).rstrip("/")
     with db():
-        query = db.session.query(WebAgentModel).filter(WebAgentModel.user_id == current_user.id)
+        query = db.session.query(WidgetModel).filter(WidgetModel.user_id == current_user.id)
         total = query.count()
-        web_agents = query.order_by(WebAgentModel.created_at.desc()).offset(skip).limit(size).all()
+        widgets = query.order_by(WidgetModel.created_at.desc()).offset(skip).limit(size).all()
         
         items = [
-            WebAgentListResponse(
+            WidgetListResponse(
                 id=wa.id,
-                web_agent_name=wa.web_agent_name,
+                widget_name=wa.widget_name,
                 public_id=wa.public_id,
-                shareable_link=f"{base_url}/api/v2/web-agent/preview/{wa.public_id}",
+                shareable_link=f"{base_url}/api/v2/widget/preview/{wa.public_id}",
                 is_enabled=wa.is_enabled,
                 created_at=wa.created_at,
                 agent_name=wa.agent.agent_name
-            ) for wa in web_agents
+            ) for wa in widgets
         ]
         return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total/size), items=items)
 
-@router.get("/web-agents/{public_id}", response_model=WebAgentConfigResponse)
-async def get_web_agent(
+@router.get("/widgets/{public_id}", response_model=WidgetConfigResponse)
+async def get_widget(
     public_id: str,
     request: Request,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
-        wa = db.session.query(WebAgentModel).filter(
-            WebAgentModel.public_id == public_id, WebAgentModel.user_id == current_user.id
+        wa = db.session.query(WidgetModel).filter(
+            WidgetModel.public_id == public_id, WidgetModel.user_id == current_user.id
         ).first()
         if not wa:
-            raise HTTPException(status_code=404, detail="Web Agent not found")
-        return web_agent_to_response(wa, request)
+            raise HTTPException(status_code=404, detail="Widget not found")
+        return widget_to_response(wa, request)
 
-@router.post("/web-agents", response_model=WebAgentConfigResponse, status_code=status.HTTP_201_CREATED)
-async def create_web_agent(
-    wa_in: WebAgentConfig,
+@router.post("/widgets", response_model=WidgetConfigResponse, status_code=status.HTTP_201_CREATED)
+async def create_widget(
+    wa_in: WidgetConfig,
     request: Request,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -556,11 +703,20 @@ async def create_web_agent(
         ).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        
-        new_wa = WebAgentModel(
+        if not agent.is_enabled:
+            raise HTTPException(status_code=403, detail="Agent is disabled")
+
+        existing = db.session.query(WidgetModel).filter(
+            WidgetModel.agent_id == wa_in.agent_id,
+            func.lower(WidgetModel.widget_name) == wa_in.widget_name.lower()
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Widget with same name already exists for this Voice Agent.")
+
+        new_wa = WidgetModel(
             user_id=current_user.id,
             agent_id=wa_in.agent_id,
-            web_agent_name=wa_in.web_agent_name,
+            widget_name=wa_in.widget_name,
             widget_title=wa_in.appearance.widget_title,
             widget_subtitle=wa_in.appearance.widget_subtitle,
             primary_color=wa_in.appearance.primary_color,
@@ -575,49 +731,417 @@ async def create_web_agent(
         db.session.add(new_wa)
         db.session.commit()
         db.session.refresh(new_wa)
-        return web_agent_to_response(new_wa, request)
+        return widget_to_response(new_wa, request)
 
-@router.put("/web-agents/{public_id}", response_model=WebAgentConfigResponse)
-async def update_web_agent(
+@router.put("/widgets/{public_id}", response_model=WidgetConfigResponse)
+async def update_widget(
     public_id: str,
-    wa_in: WebAgentConfigUpdate,
+    wa_in: WidgetConfigUpdate,
     request: Request,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     with db():
-        wa = db.session.query(WebAgentModel).filter(
-            WebAgentModel.public_id == public_id, WebAgentModel.user_id == current_user.id
+        wa = db.session.query(WidgetModel).filter(
+            WidgetModel.public_id == public_id, WidgetModel.user_id == current_user.id
         ).first()
         if not wa:
-            raise HTTPException(status_code=404, detail="Web Agent not found")
-        
-        if wa_in.web_agent_name: wa.web_agent_name = wa_in.web_agent_name
-        if wa_in.is_enabled is not None: wa.is_enabled = wa_in.is_enabled
-        if wa_in.appearance:
-            if wa_in.appearance.widget_title: wa.widget_title = wa_in.appearance.widget_title
-            if wa_in.appearance.widget_subtitle: wa.widget_subtitle = wa_in.appearance.widget_subtitle
-            if wa_in.appearance.primary_color: wa.primary_color = wa_in.appearance.primary_color
-            if wa_in.appearance.position: wa.position = wa_in.appearance.position
-            if wa_in.appearance.show_branding is not None: wa.show_branding = wa_in.appearance.show_branding
-        
+            raise HTTPException(status_code=404, detail="Widget not found")
+
+        update_data = wa_in.model_dump(exclude_unset=True)
+
+        if "agent_id" in update_data:
+            agent = db.session.query(AgentModel).filter(
+                AgentModel.id == update_data["agent_id"], AgentModel.user_id == current_user.id
+            ).first()
+            if not agent:
+                raise HTTPException(status_code=403, detail="Agent does not belong to user")
+            wa.agent_id = update_data["agent_id"]
+
+        if "widget_name" in update_data:
+            wa.widget_name = update_data["widget_name"]
+
+        if "is_enabled" in update_data:
+            if update_data["is_enabled"] and not wa.is_enabled:
+                voice_agent = db.session.query(AgentModel).filter(AgentModel.id == wa.agent_id).first()
+                if not voice_agent or not voice_agent.is_enabled:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Cannot enable widget: its Voice Agent is disabled",
+                    )
+                check_can_enable_resource(current_user.id, "widget_agent", allow_coin_fallback=True)
+            wa.is_enabled = update_data["is_enabled"]
+
+        if "appearance" in update_data:
+            appearance_data = update_data["appearance"]
+            if "widget_title" in appearance_data: wa.widget_title = appearance_data["widget_title"]
+            if "widget_subtitle" in appearance_data: wa.widget_subtitle = appearance_data["widget_subtitle"]
+            if "primary_color" in appearance_data: wa.primary_color = appearance_data["primary_color"]
+            if "position" in appearance_data: wa.position = appearance_data["position"]
+            if "show_branding" in appearance_data: wa.show_branding = appearance_data["show_branding"]
+
+        if "prechat" in update_data:
+            prechat_data = update_data["prechat"]
+            if "enable_prechat" in prechat_data: wa.enable_prechat = prechat_data["enable_prechat"]
+            if "require_name" in prechat_data: wa.require_name = prechat_data["require_name"]
+            if "require_email" in prechat_data: wa.require_email = prechat_data["require_email"]
+            if "require_phone" in prechat_data: wa.require_phone = prechat_data["require_phone"]
+            if "custom_fields" in prechat_data: wa.custom_fields = prechat_data["custom_fields"] or []
+
         db.session.commit()
         db.session.refresh(wa)
-        return web_agent_to_response(wa, request)
+        return widget_to_response(wa, request)
 
-@router.delete("/web-agents/{public_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_web_agent(
+@router.delete("/widgets/{public_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_widget(
     public_id: str,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
-        wa = db.session.query(WebAgentModel).filter(
-            WebAgentModel.public_id == public_id, WebAgentModel.user_id == current_user.id
+        wa = db.session.query(WidgetModel).filter(
+            WidgetModel.public_id == public_id, WidgetModel.user_id == current_user.id
         ).first()
         if not wa:
-            raise HTTPException(status_code=404, detail="Web Agent not found")
+            raise HTTPException(status_code=404, detail="Widget not found")
         db.session.delete(wa)
+        db.session.commit()
+    return None
+
+# -------------------------------------------------------------------
+# WEB AGENTS CRUD
+# -------------------------------------------------------------------
+
+@router.get("/web-agents", response_model=PaginatedResponse[WebAgentListResponse])
+async def list_web_agents_public(
+    request: Request,
+    page: int = 1,
+    size: int = 20,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.web_agent)
+    skip = (max(1, page) - 1) * size
+    with db():
+        from app_v2.routers.web_agent_config import _shareable_link
+
+        query = db.session.query(WebAgentPageModel).filter(WebAgentPageModel.user_id == current_user.id)
+        total = query.count()
+        web_agents = query.order_by(WebAgentPageModel.created_at.desc()).offset(skip).limit(size).all()
+        items = [
+            WebAgentListResponse(
+                id=wa.id,
+                public_id=wa.public_id,
+                web_agent_name=wa.web_agent_name,
+                is_enabled=wa.is_enabled,
+                bg_color=wa.bg_color,
+                agent_position=wa.agent_position,
+                agent_id=wa.agent_id,
+                agent_name=wa.agent.agent_name if wa.agent else "",
+                widget_id=wa.widget_id,
+                widget_name=wa.widget.widget_name if wa.widget else "",
+                shareable_link=_shareable_link(request, wa.public_id),
+                created_at=wa.created_at,
+            )
+            for wa in web_agents
+        ]
+        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total / size), items=items)
+
+
+@router.get("/web-agents/{public_id}", response_model=WebAgentResponse)
+async def get_web_agent_public(
+    public_id: str,
+    request: Request,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.web_agent)
+    with db():
+        from app_v2.routers.web_agent_config import _to_response
+
+        web_agent = db.session.query(WebAgentPageModel).filter(
+            WebAgentPageModel.public_id == public_id, WebAgentPageModel.user_id == current_user.id
+        ).first()
+        if not web_agent:
+            raise HTTPException(status_code=404, detail="Web agent not found")
+        return _to_response(request, web_agent)
+
+
+@router.post("/web-agents", response_model=WebAgentResponse, status_code=status.HTTP_201_CREATED)
+async def create_web_agent_public(
+    payload: WebAgentCreate,
+    request: Request,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.web_agent)
+    with db():
+        from app_v2.routers.web_agent_config import _to_response, _validate_widget_belongs_to_agent
+
+        agent = db.session.query(AgentModel).filter(
+            AgentModel.id == payload.agent_id, AgentModel.user_id == current_user.id
+        ).first()
+        if not agent:
+            raise HTTPException(status_code=403, detail="Agent does not belong to user")
+        if not agent.is_enabled:
+            raise HTTPException(status_code=403, detail="Agent is disabled")
+
+        _validate_widget_belongs_to_agent(current_user.id, payload.widget_id, payload.agent_id)
+
+        web_agent = WebAgentPageModel(
+            public_id=str(uuid.uuid4()),
+            user_id=current_user.id,
+            agent_id=payload.agent_id,
+            widget_id=payload.widget_id,
+            web_agent_name=payload.web_agent_name,
+            bg_color=payload.bg_color,
+            agent_position=payload.agent_position,
+        )
+        db.session.add(web_agent)
+        db.session.commit()
+        db.session.refresh(web_agent)
+
+        log_activity(
+            user_id=current_user.id,
+            event_type="web_agent_created",
+            description=f"Created web agent: {web_agent.web_agent_name}",
+            metadata={"web_agent_id": web_agent.id, "public_id": web_agent.public_id},
+        )
+
+        return _to_response(request, web_agent)
+
+
+@router.put("/web-agents/{public_id}", response_model=WebAgentResponse)
+async def update_web_agent_public(
+    public_id: str,
+    payload: WebAgentUpdate,
+    request: Request,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.web_agent)
+    with db():
+        from app_v2.routers.web_agent_config import _to_response, _validate_widget_belongs_to_agent
+
+        web_agent = db.session.query(WebAgentPageModel).filter(
+            WebAgentPageModel.public_id == public_id, WebAgentPageModel.user_id == current_user.id
+        ).first()
+        if not web_agent:
+            raise HTTPException(status_code=404, detail="Web agent not found")
+
+        update_data = payload.model_dump(exclude_unset=True)
+
+        new_agent_id = update_data.get("agent_id", web_agent.agent_id)
+        if "agent_id" in update_data:
+            agent = db.session.query(AgentModel).filter(
+                AgentModel.id == new_agent_id, AgentModel.user_id == current_user.id
+            ).first()
+            if not agent:
+                raise HTTPException(status_code=403, detail="Agent does not belong to user")
+            web_agent.agent_id = new_agent_id
+
+        if "widget_id" in update_data:
+            _validate_widget_belongs_to_agent(current_user.id, update_data["widget_id"], new_agent_id)
+            web_agent.widget_id = update_data["widget_id"]
+        elif "agent_id" in update_data:
+            # Agent changed but widget wasn't re-specified — the existing widget must
+            # still belong to the (new) agent for the record to stay consistent.
+            _validate_widget_belongs_to_agent(current_user.id, web_agent.widget_id, new_agent_id)
+
+        if "web_agent_name" in update_data:
+            web_agent.web_agent_name = update_data["web_agent_name"]
+        if "bg_color" in update_data:
+            web_agent.bg_color = update_data["bg_color"]
+        if "agent_position" in update_data:
+            web_agent.agent_position = update_data["agent_position"]
+
+        if "is_enabled" in update_data:
+            if update_data["is_enabled"] and not web_agent.is_enabled:
+                voice_agent = db.session.query(AgentModel).filter(AgentModel.id == web_agent.agent_id).first()
+                if not voice_agent or not voice_agent.is_enabled:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Cannot enable web agent: its Voice Agent is disabled",
+                    )
+            web_agent.is_enabled = update_data["is_enabled"]
+
+        db.session.commit()
+        db.session.refresh(web_agent)
+
+        log_activity(
+            user_id=current_user.id,
+            event_type="web_agent_updated",
+            description=f"Updated web agent: {web_agent.web_agent_name}",
+            metadata={"web_agent_id": web_agent.id, "public_id": web_agent.public_id},
+        )
+
+        return _to_response(request, web_agent)
+
+
+@router.delete("/web-agents/{public_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_web_agent_public(
+    public_id: str,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.web_agent)
+    with db():
+        web_agent = db.session.query(WebAgentPageModel).filter(
+            WebAgentPageModel.public_id == public_id, WebAgentPageModel.user_id == current_user.id
+        ).first()
+        if not web_agent:
+            raise HTTPException(status_code=404, detail="Web agent not found")
+        db.session.delete(web_agent)
+        db.session.commit()
+    return None
+
+# -------------------------------------------------------------------
+# TWILIO CONNECTORS CRUD
+# -------------------------------------------------------------------
+
+@router.get("/twilio-connectors", response_model=PaginatedResponse[TwilioConnectorResponse])
+async def list_twilio_connectors(
+    page: int = 1,
+    size: int = 20,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
+    skip = (max(1, page) - 1) * size
+    with db():
+        query = db.session.query(TwilioUserCreds).filter(TwilioUserCreds.user_id == current_user.id)
+        total = query.count()
+        connectors = query.order_by(TwilioUserCreds.created_at.desc()).offset(skip).limit(size).all()
+
+        items = [twilio_connector_to_response(c) for c in connectors]
+        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total / size), items=items)
+
+@router.get("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
+async def get_twilio_connector(
+    connector_id: int,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
+    with db():
+        connector = db.session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.id == connector_id, TwilioUserCreds.user_id == current_user.id
+        ).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Twilio connector not found")
+        return twilio_connector_to_response(connector)
+
+@router.post("/twilio-connectors", response_model=TwilioConnectorResponse, status_code=status.HTTP_201_CREATED)
+async def create_twilio_connector(
+    connector_in: TwilioConnectorCreate,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
+    with db():
+        existing_name = db.session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.user_id == current_user.id,
+            func.lower(TwilioUserCreds.name) == connector_in.name.lower()
+        ).first()
+        if existing_name:
+            raise HTTPException(status_code=400, detail=f"A connector with the name '{existing_name.name}' already exists.")
+
+        existing_sid = db.session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.user_id == current_user.id,
+            func.lower(TwilioUserCreds.account_sid) == connector_in.account_sid.lower()
+        ).first()
+        if existing_sid:
+            raise HTTPException(status_code=400, detail=f"This Twilio account is already connected as '{existing_sid.name}'.")
+
+    try:
+        client = TwilioClient(connector_in.account_sid, connector_in.auth_token)
+        client.api.accounts(connector_in.account_sid).fetch()
+    except TwilioRestException:
+        raise HTTPException(status_code=400, detail="Invalid Twilio Account SID or Auth Token.")
+
+    with db():
+        new_connector = TwilioUserCreds(
+            user_id=current_user.id,
+            name=connector_in.name,
+            account_sid=connector_in.account_sid,
+            auth_token=encrypt_data(connector_in.auth_token),
+        )
+        db.session.add(new_connector)
+        db.session.commit()
+        db.session.refresh(new_connector)
+        return twilio_connector_to_response(new_connector)
+
+@router.put("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
+async def update_twilio_connector(
+    connector_id: int,
+    connector_in: TwilioConnectorUpdate,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
+
+    if (connector_in.account_sid is None) != (connector_in.auth_token is None):
+        raise HTTPException(status_code=400, detail="Both Account SID and Auth Token must be provided together to update credentials.")
+
+    with db():
+        connector = db.session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.id == connector_id, TwilioUserCreds.user_id == current_user.id
+        ).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Twilio connector not found")
+
+        if connector_in.name is not None:
+            existing_name = db.session.query(TwilioUserCreds).filter(
+                TwilioUserCreds.user_id == current_user.id,
+                TwilioUserCreds.id != connector_id,
+                func.lower(TwilioUserCreds.name) == connector_in.name.lower()
+            ).first()
+            if existing_name:
+                raise HTTPException(status_code=400, detail=f"A connector with the name '{existing_name.name}' already exists.")
+
+        if connector_in.account_sid is not None:
+            existing_sid = db.session.query(TwilioUserCreds).filter(
+                TwilioUserCreds.user_id == current_user.id,
+                TwilioUserCreds.id != connector_id,
+                func.lower(TwilioUserCreds.account_sid) == connector_in.account_sid.lower()
+            ).first()
+            if existing_sid:
+                raise HTTPException(status_code=400, detail=f"This Twilio account is already connected as '{existing_sid.name}'.")
+
+        if connector_in.account_sid is not None and connector_in.auth_token is not None:
+            try:
+                client = TwilioClient(connector_in.account_sid, connector_in.auth_token)
+                client.api.accounts(connector_in.account_sid).fetch()
+            except TwilioRestException:
+                raise HTTPException(status_code=400, detail="Invalid Twilio Account SID or Auth Token.")
+            connector.account_sid = connector_in.account_sid
+            connector.auth_token = encrypt_data(connector_in.auth_token)
+
+        if connector_in.name is not None:
+            connector.name = connector_in.name
+
+        db.session.commit()
+        db.session.refresh(connector)
+        return twilio_connector_to_response(connector)
+
+@router.delete("/twilio-connectors/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_twilio_connector(
+    connector_id: int,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
+    with db():
+        connector = db.session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.id == connector_id, TwilioUserCreds.user_id == current_user.id
+        ).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Twilio connector not found")
+
+        from app_v2.routers.agents import unassign_phone_numbers_for_connector
+        unassign_phone_numbers_for_connector(db.session, current_user.id, connector)
+
+        db.session.delete(connector)
         db.session.commit()
     return None
 
@@ -629,7 +1153,7 @@ async def delete_web_agent(
 async def list_languages_public(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -642,7 +1166,7 @@ async def list_languages_public(
 @router.get("/languages/{id}", response_model=LanguageRead)
 async def get_language_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -659,7 +1183,7 @@ async def get_language_public(
 async def list_voices_public(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -680,7 +1204,7 @@ async def list_voices_public(
 @router.get("/voices/{id}", response_model=VoiceRead)
 async def get_voice_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -703,7 +1227,7 @@ async def get_voice_public(
 async def list_ai_models_public(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -760,7 +1284,7 @@ def sync_agent_kb_logic(agent_id: int):
 async def list_kb_public(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -773,7 +1297,7 @@ async def list_kb_public(
 @router.get("/kb/{id}", response_model=KnowledgeBaseResponse)
 async def get_kb_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -787,19 +1311,33 @@ async def get_kb_public(
 @router.post("/kb/url", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_kb_url_public(
     request: KnowledgeBaseURLCreate,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     url_str = str(request.url)
     with db():
+        existing_url = db.session.query(KnowledgeBaseModel).filter(
+            KnowledgeBaseModel.user_id == current_user.id,
+            KnowledgeBaseModel.kb_type == "url",
+            func.lower(KnowledgeBaseModel.content_path) == url_str.lower()
+        ).first()
+        if existing_url:
+            raise HTTPException(
+                status_code=400,
+                detail="This URL has already been added to your knowledge base."
+            )
+
+        # Validate the URL is actually reachable before bothering ElevenLabs.
+        title = scrape_webpage_title(url_str)
+
         kb_client = ElevenLabsKB()
         kb_response = kb_client.add_url_document(url_str)
         if not kb_response.status:
-            raise HTTPException(status_code=424, detail=f"ElevenLabs failure: {kb_response.error_message}")
-        
+            logger.error(f"ElevenLabs KB URL addition failed: {kb_response.error_message}")
+            raise HTTPException(status_code=424, detail=describe_kb_sync_error(kb_response.error_message))
+
         doc_id = kb_response.data.get("document_id")
         rag_id = kb_client.compute_rag_index(doc_id)
-        title = scrape_webpage_title(url_str)
 
         kb_entry = KnowledgeBaseModel(
             user_id=current_user.id,
@@ -817,10 +1355,21 @@ async def create_kb_url_public(
 @router.post("/kb/text", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_kb_text_public(
     request: KnowledgeBaseTextCreate,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
+        existing_text = db.session.query(KnowledgeBaseModel).filter(
+            KnowledgeBaseModel.user_id == current_user.id,
+            KnowledgeBaseModel.kb_type == "text",
+            KnowledgeBaseModel.title == request.title
+        ).first()
+        if existing_text:
+            raise HTTPException(
+                status_code=400,
+                detail="This exact text content has already been added to your knowledge base."
+            )
+
         kb_client = ElevenLabsKB()
         kb_response = kb_client.add_text_document(request.content, request.title)
         if not kb_response.status:
@@ -845,17 +1394,34 @@ async def create_kb_text_public(
 @router.post("/kb/file", response_model=List[KnowledgeBaseResponse], status_code=status.HTTP_201_CREATED)
 async def create_kb_file_public(
     files: List[UploadFile] = File(...),
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     responses = []
     
     with db():
         kb_client = ElevenLabsKB()
+        seen_filenames = set()
         for file in files:
             _, ext = os.path.splitext(file.filename)
             if ext.lower() not in ALLOWED_EXTENSIONS:
                 raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
+
+            filename_key = file.filename.lower()
+            if filename_key in seen_filenames:
+                raise HTTPException(status_code=400, detail=f"Duplicate file name '{file.filename}' in this upload request.")
+            seen_filenames.add(filename_key)
+
+            existing_file = db.session.query(KnowledgeBaseModel).filter(
+                KnowledgeBaseModel.user_id == current_user.id,
+                KnowledgeBaseModel.kb_type == "file",
+                func.lower(KnowledgeBaseModel.title) == filename_key
+            ).first()
+            if existing_file:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"A file named '{file.filename}' already exists in your knowledge base."
+                )
 
             file.file.seek(0, 2)
             file_size = file.file.tell()
@@ -899,7 +1465,7 @@ async def create_kb_file_public(
 @router.delete("/kb/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_kb_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -931,7 +1497,7 @@ async def delete_kb_public(
 @router.post("/kb/bind", status_code=status.HTTP_200_OK)
 async def bind_kb_public(
     request: KnowledgeBaseBind,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -959,7 +1525,7 @@ async def bind_kb_public(
 @router.get("/ai-models/{id}", response_model=AIModelRead)
 async def get_ai_model_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -1017,7 +1583,7 @@ def function_to_read(f: FunctionModel) -> FunctionRead:
 async def list_functions_public(
     page: int = 1,
     size: int = 20,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (max(1, page) - 1) * size
@@ -1037,7 +1603,7 @@ async def list_functions_public(
 @router.get("/functions/{id}", response_model=FunctionRead)
 async def get_function_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -1055,7 +1621,7 @@ async def get_function_public(
 @router.post("/functions", response_model=FunctionRead, status_code=status.HTTP_201_CREATED)
 async def create_function_public(
     function_in: FunctionCreateSchema,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     user_id = current_user.id
@@ -1132,7 +1698,7 @@ async def create_function_public(
 async def update_function_public(
     id: int,
     function_in: FunctionUpdateSchema,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -1223,7 +1789,7 @@ async def update_function_public(
 @router.delete("/functions/{id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_function_public(
     id: int,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     with db():
@@ -1246,7 +1812,7 @@ async def delete_function_public(
 @router.post("/functions/bind", status_code=status.HTTP_200_OK)
 async def bind_function_public(
     request: FunctionBind,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     agent_id = request.agent_id
@@ -1276,7 +1842,7 @@ async def bind_function_public(
 @router.post("/functions/unbind", status_code=status.HTTP_200_OK)
 async def unbind_function_public(
     request: FunctionUnbind,
-    current_user: UnifiedAuthModel = Depends(get_public_api_user)
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     agent_id = request.agent_id

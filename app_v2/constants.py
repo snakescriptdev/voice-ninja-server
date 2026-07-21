@@ -80,10 +80,10 @@ api_list = [
         "swagger_link":"docs#/public-api/list_agents_api_v2_public_agents_get"
     },
     {
-        "path":"api/v2/public/web-agents",
+        "path":"api/v2/public/widgets",
         "method":"POST",
-        "description": "Create a new web agent",
-        "swagger_link":"docs#/public-api/create_web_agent_api_v2_public_web_agents_post"
+        "description": "Create a new widget",
+        "swagger_link":"docs#/public-api/create_widget_api_v2_public_widgets_post"
     },
     {
         "path":"/api/v2/agents/{agent_id}",

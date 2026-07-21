@@ -1,9 +1,11 @@
 from fastapi import HTTPException, status
 from fastapi_sqlalchemy import db
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 from app_v2.databases.models import ActivityLogModel, APIDailyUsageModel, APICallLogModel
 from sqlalchemy import func
 from app_v2.utils.activity_logger import log_activity
+from app_v2.schemas.enum_types import PublicLogChannelEnum
 
 from app_v2.utils.feature_access import get_feature_limit
 
@@ -66,7 +68,22 @@ def track_and_limit_api(user_id: int):
         # but the original code had db.session.commit().
         db.session.commit()
 
-def log_public_api_call(user_id: int, api_route: str, status_code: int, response_time_ms: int, coins_used: int = 0):
+def log_public_api_call(
+    user_id: int,
+    api_route: str,
+    status_code: int,
+    response_time_ms: int,
+    coins_used: int = 0,
+    *,
+    channel: PublicLogChannelEnum = PublicLogChannelEnum.public_api,
+    method: Optional[str] = None,
+    request_params: Optional[dict] = None,
+    request_body: Optional[dict] = None,
+    response_body: Optional[dict] = None,
+    is_success: Optional[bool] = None,
+    error_message: Optional[str] = None,
+    api_key_id: Optional[int] = None,
+):
     """
     Logs a detailed public API call record.
     """
@@ -77,7 +94,15 @@ def log_public_api_call(user_id: int, api_route: str, status_code: int, response
                 api_route=api_route,
                 status_code=status_code,
                 response_time_ms=response_time_ms,
-                coins_used=coins_used
+                coins_used=coins_used,
+                channel=channel,
+                method=method,
+                request_params=request_params,
+                request_body=request_body,
+                response_body=response_body,
+                is_success=is_success if is_success is not None else status_code < 400,
+                error_message=error_message,
+                api_key_id=api_key_id,
             )
             db.session.add(log_entry)
             db.session.commit()
