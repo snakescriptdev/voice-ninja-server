@@ -1,18 +1,30 @@
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends, Query
 from app_v2.utils.jwt_utils import is_admin,HTTPBearer
-from datetime import datetime
-from typing import List, Literal
+from datetime import datetime, date
+from typing import List, Literal, Optional
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinPackageModel, CoinUsageSettingsModel, PlanModel, UserSubscriptionModel, SubscriptionStatusEnum, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinUsageSettingsModel, CoinUsageSettingsVersionModel, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel, APIKeyModel
 from app_v2.schemas.activity_schema import ActivityLogResponse
-from app_v2.schemas.admin_dashboard import UserCostItem, CoinBundleCreate, CoinBundleResponse
+from app_v2.schemas.admin_dashboard import (
+    UserCostItem,
+    AdminConversationItem,
+    ConversationSettingsSnapshot,
+    MonthlyProfitLossItem,
+    OverallProfitLossSummary,
+    ProfitLossAnalyticsResponse,
+    AdminPublicLogEndpointItem,
+    AdminPublicLogEndpointListResponse,
+    AdminPublicLogItem,
+    AdminPublicLogUserItem,
+    AdminPublicLogUserListResponse,
+)
+from app_v2.schemas.enum_types import CallStatusEnum, PublicLogChannelEnum
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
-from sqlalchemy import func
+from sqlalchemy import func, or_, case
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
-from elevenlabs import ElevenLabs
 from app_v2.core.config import VoiceSettings
 from elevenlabs import ElevenLabs
 from datetime import datetime, timezone
@@ -43,21 +55,6 @@ def get_overview_stats():
             UnifiedAuthModel.created_at < first_day_of_month
         ).count()
         total_users_change = calculate_percentage_change(curr_users_new, prev_users_new)
-
-        # 2. Active Subscriptions
-        active_subscriptions = db.session.query(UserSubscriptionModel).filter(
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active
-        ).count()
-        curr_subs_new = db.session.query(UserSubscriptionModel).filter(
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active,
-            UserSubscriptionModel.current_period_start >= first_day_of_month
-        ).count()
-        prev_subs_new = db.session.query(UserSubscriptionModel).filter(
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active,
-            UserSubscriptionModel.current_period_start >= first_day_prev_month,
-            UserSubscriptionModel.current_period_start < first_day_of_month
-        ).count()
-        active_subscriptions_change = calculate_percentage_change(curr_subs_new, prev_subs_new)
 
         # 3. Total Phone Numbers
         total_phone_numbers = db.session.query(PhoneNumberService).count()
@@ -110,8 +107,6 @@ def get_overview_stats():
             "stats": {
                 "total_users": total_users,
                 "total_users_change": float(total_users_change),
-                "active_subscriptions": active_subscriptions,
-                "active_subscriptions_change": float(active_subscriptions_change),
                 "total_phone_numbers": total_phone_numbers,
                 "total_agents": total_agents,
                 "active_agents": active_agents,
@@ -192,49 +187,6 @@ def get_revenue_graph():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)
         )
-
-@router.get("/analytics/subscription-distribution",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_subscription_distribution():
-    """
-    Subscription distribution by plan percentage.
-    """
-    try:
-        total_active = db.session.query(UserSubscriptionModel).filter(
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active
-        ).count()
-
-        if total_active == 0:
-            return {"status": "success", "distribution": []}
-
-        distribution_query = db.session.query(
-            PlanModel.display_name,
-            func.count(UserSubscriptionModel.id).label('count')
-        ).join(PlanModel, UserSubscriptionModel.plan_id == PlanModel.id).filter(
-            UserSubscriptionModel.status == SubscriptionStatusEnum.active
-        ).group_by(PlanModel.display_name).all()
-
-        distribution = [
-            {
-                "plan_name": d.display_name,
-                "count": d.count,
-                "percentage": round((d.count / total_active) * 100, 2)
-            } for d in distribution_query
-        ]
-
-        return {
-            "status": "success",
-            "total_active": total_active,
-            "distribution": distribution
-        }
-    except Exception as e:
-        logger.error(f"Error in get_subscription_distribution: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-
 
 
 @router.get("/elevenlabs/usage-and-billing",dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
@@ -346,7 +298,8 @@ def get_users_cost(
             UnifiedAuthModel.username,
             UnifiedAuthModel.email,
             total_cost_col.label("total_cost")
-        ).outerjoin(cost_query, UnifiedAuthModel.id == cost_query.c.user_id)
+        ).outerjoin(cost_query, UnifiedAuthModel.id == cost_query.c.user_id
+        ).filter(UnifiedAuthModel.is_admin == False)
 
         # Order by total_cost DESC
         query = query.order_by(total_cost_col.desc())
@@ -384,4 +337,386 @@ def get_users_cost(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch users cost data: {str(e)}"
         )
+
+
+@router.get(
+    "/elevenlabs/conversations",
+    response_model=PaginatedResponse[AdminConversationItem],
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def list_all_conversations_for_admin(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: Optional[str] = Query(None, description="Search by user name/email or agent name"),
+    date_after: Optional[date] = Query(None),
+    date_before: Optional[date] = Query(None),
+    user_id: Optional[int] = Query(None, description="Filter to a single user's conversations"),
+    agent_id: Optional[int] = Query(None, description="Filter to a single agent's conversations"),
+    call_status: Optional[CallStatusEnum] = Query(None, description="Filter by call status (success/failed/in_progress)"),
+    profit_type: Optional[Literal["profit", "loss"]] = Query(None, description="Filter to calls where profit_percentage >= 0 (profit) or < 0 (loss)"),
+):
+    """
+    Every conversation across every user, side by side with the raw
+    ElevenLabs cost we were charged (`ConversationsModel.cost`) and the coins
+    we actually deducted from the user for it (from `CoinsLedgerModel`) — so
+    admins can audit that the two line up as expected.
+    """
+    try:
+        q = (
+            db.session.query(ConversationsModel, UnifiedAuthModel, AgentModel)
+            .join(UnifiedAuthModel, ConversationsModel.user_id == UnifiedAuthModel.id)
+            .outerjoin(AgentModel, ConversationsModel.agent_id == AgentModel.id)
+        )
+
+        if search:
+            q = q.filter(
+                or_(
+                    UnifiedAuthModel.name.ilike(f"%{search}%"),
+                    UnifiedAuthModel.email.ilike(f"%{search}%"),
+                    AgentModel.agent_name.ilike(f"%{search}%"),
+                )
+            )
+        if date_after:
+            q = q.filter(ConversationsModel.created_at >= date_after)
+        if date_before:
+            q = q.filter(ConversationsModel.created_at <= date_before)
+        if user_id is not None:
+            q = q.filter(ConversationsModel.user_id == user_id)
+        if agent_id is not None:
+            q = q.filter(ConversationsModel.agent_id == agent_id)
+        if call_status:
+            q = q.filter(ConversationsModel.call_status == call_status)
+        if profit_type == "profit":
+            q = q.filter(ConversationsModel.profit_percentage >= 0)
+        elif profit_type == "loss":
+            q = q.filter(ConversationsModel.profit_percentage < 0)
+
+        q = q.order_by(ConversationsModel.created_at.desc())
+
+        total = q.count()
+        rows = q.offset((page - 1) * page_size).limit(page_size).all()
+
+        conv_ids = [conv.id for conv, _, _ in rows]
+        if conv_ids:
+            ledger_entries = db.session.query(
+                CoinsLedgerModel.reference_id, CoinsLedgerModel.coins
+            ).filter(
+                CoinsLedgerModel.reference_type == "conversation",
+                CoinsLedgerModel.reference_id.in_(conv_ids),
+                CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage,
+            ).all()
+            coins_deducted_map = {entry.reference_id: abs(entry.coins) for entry in ledger_entries}
+        else:
+            coins_deducted_map = {}
+
+        version_ids = {conv.settings_version_id for conv, _, _ in rows if conv.settings_version_id}
+        if version_ids:
+            versions = (
+                db.session.query(CoinUsageSettingsVersionModel)
+                .filter(CoinUsageSettingsVersionModel.id.in_(version_ids))
+                .all()
+            )
+            versions_map = {v.id: ConversationSettingsSnapshot.model_validate(v) for v in versions}
+        else:
+            versions_map = {}
+
+        items = [
+            AdminConversationItem(
+                id=conv.id,
+                created_at=conv.created_at,
+                user_id=user.id,
+                user_name=user.name or user.username or "Unknown",
+                user_email=user.email or "",
+                agent_name=agent.agent_name if agent else None,
+                elevenlabs_agent_id=agent.elevenlabs_agent_id if agent else None,
+                channel=conv.channel.value if conv.channel else None,
+                call_status=conv.call_status.name if conv.call_status else None,
+                duration=conv.duration,
+                elevenlabs_conv_id=conv.elevenlabs_conv_id,
+                elevenlabs_cost=float(conv.cost or 0),
+                coins_deducted=coins_deducted_map.get(conv.id, 0),
+                actual_conversation_credits=conv.actual_conversation_credits,
+                actual_llm_credits=conv.actual_llm_credits,
+                actual_telephony_cost=0.0,
+                calculated_conversation_cost=conv.calculated_conversation_cost,
+                calculated_llm_cost=conv.calculated_llm_cost,
+                calculated_telephony_cost=conv.calculated_telephony_cost or 0.0,
+                profit_percentage=conv.profit_percentage,
+                user_message_count=conv.user_message_count,
+                agent_message_count=conv.agent_message_count,
+                system_prompt_length=conv.system_prompt_length,
+                system_prompt_tokens=conv.system_prompt_tokens,
+                tool_count=conv.tool_count,
+                kb_total_pages=conv.kb_total_pages,
+                rag_enabled=conv.rag_enabled,
+                settings_version=versions_map.get(conv.settings_version_id),
+            )
+            for conv, user, agent in rows
+        ]
+
+        from math import ceil
+        total_pages = ceil(total / page_size) if page_size > 0 else 1
+
+        return PaginatedResponse(
+            total=total,
+            page=page,
+            size=page_size,
+            pages=total_pages,
+            items=items,
+        )
+
+    except Exception as e:
+        logger.error(f"Error in list_all_conversations_for_admin: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch conversations: {str(e)}"
+        )
+
+
+@router.get(
+    "/profit-loss/monthly",
+    response_model=ProfitLossAnalyticsResponse,
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def get_monthly_profit_loss():
+    """
+    Month-by-month split of every conversation with a computed
+    profit_percentage into "profit" (>= 0) and "loss" (< 0) buckets, plus an
+    overall summary across all months. Calls with no profit_percentage yet
+    (e.g. never finalized) are excluded entirely.
+
+    - profit_pct_share / loss_pct_share: what fraction of that month's
+      classified calls were profitable vs a loss (sums to ~100%).
+    - avg_profit_percentage / avg_loss_percentage: the mean profit_percentage
+      magnitude within each bucket — a different, complementary number from
+      the share above (e.g. a month can have a high profit SHARE but a small
+      profit MAGNITUDE per call, or vice versa).
+    """
+    try:
+        month_expr = func.date_trunc('month', ConversationsModel.created_at)
+        is_profit = ConversationsModel.profit_percentage >= 0
+        is_loss = ConversationsModel.profit_percentage < 0
+
+        rows = (
+            db.session.query(
+                month_expr.label("month"),
+                func.count(case((is_profit, 1))).label("profit_count"),
+                func.count(case((is_loss, 1))).label("loss_count"),
+                func.avg(case((is_profit, ConversationsModel.profit_percentage))).label("avg_profit_pct"),
+                func.avg(case((is_loss, ConversationsModel.profit_percentage))).label("avg_loss_pct"),
+            )
+            .filter(ConversationsModel.profit_percentage.isnot(None))
+            .group_by(month_expr)
+            .order_by(month_expr.desc())
+            .all()
+        )
+
+        months = []
+        for r in rows:
+            profit_count = r.profit_count or 0
+            loss_count = r.loss_count or 0
+            total_classified = profit_count + loss_count
+            months.append(MonthlyProfitLossItem(
+                month=r.month.strftime("%Y-%m"),
+                total_calls=total_classified,
+                profit_call_count=profit_count,
+                loss_call_count=loss_count,
+                profit_pct_share=round(profit_count / total_classified * 100, 2) if total_classified else 0.0,
+                loss_pct_share=round(loss_count / total_classified * 100, 2) if total_classified else 0.0,
+                avg_profit_percentage=round(r.avg_profit_pct, 2) if r.avg_profit_pct is not None else None,
+                avg_loss_percentage=round(r.avg_loss_pct, 2) if r.avg_loss_pct is not None else None,
+            ))
+
+        overall_row = (
+            db.session.query(
+                func.count(case((is_profit, 1))).label("profit_count"),
+                func.count(case((is_loss, 1))).label("loss_count"),
+                func.avg(case((is_profit, ConversationsModel.profit_percentage))).label("avg_profit_pct"),
+                func.avg(case((is_loss, ConversationsModel.profit_percentage))).label("avg_loss_pct"),
+            )
+            .filter(ConversationsModel.profit_percentage.isnot(None))
+            .first()
+        )
+        overall_profit_count = (overall_row.profit_count or 0) if overall_row else 0
+        overall_loss_count = (overall_row.loss_count or 0) if overall_row else 0
+        overall_total = overall_profit_count + overall_loss_count
+        months_count = len(months) or 1
+
+        overall = OverallProfitLossSummary(
+            total_calls=overall_total,
+            profit_call_count=overall_profit_count,
+            loss_call_count=overall_loss_count,
+            profit_pct_share=round(overall_profit_count / overall_total * 100, 2) if overall_total else 0.0,
+            loss_pct_share=round(overall_loss_count / overall_total * 100, 2) if overall_total else 0.0,
+            avg_profit_percentage=round(overall_row.avg_profit_pct, 2) if overall_row and overall_row.avg_profit_pct is not None else None,
+            avg_loss_percentage=round(overall_row.avg_loss_pct, 2) if overall_row and overall_row.avg_loss_pct is not None else None,
+            months_count=len(months),
+            avg_profit_call_count_per_month=round(overall_profit_count / months_count, 2),
+            avg_loss_call_count_per_month=round(overall_loss_count / months_count, 2),
+        )
+
+        return ProfitLossAnalyticsResponse(months=months, overall=overall)
+    except Exception as e:
+        logger.error(f"Error in get_monthly_profit_loss: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch monthly profit/loss: {str(e)}"
+        )
+
+
+# ---- Public API / Public Websocket Logs dashboard (admin-wide, all users) ----
+
+ADMIN_PUBLIC_LOG_CHANNELS = [
+    PublicLogChannelEnum.public_api,
+    PublicLogChannelEnum.public_websocket,
+    PublicLogChannelEnum.widget_websocket,
+]
+
+
+@router.get(
+    "/public-logs/endpoints",
+    response_model=AdminPublicLogEndpointListResponse,
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def list_public_log_endpoints_for_admin():
+    """All-time success/failure/total counts per (channel, route, method), across every user."""
+    try:
+        rows = (
+            db.session.query(
+                APICallLogModel.channel,
+                APICallLogModel.api_route,
+                APICallLogModel.method,
+                func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
+                func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
+                func.count(APICallLogModel.id).label("total_count"),
+            )
+            .filter(APICallLogModel.channel.in_(ADMIN_PUBLIC_LOG_CHANNELS))
+            .group_by(APICallLogModel.channel, APICallLogModel.api_route, APICallLogModel.method)
+            .all()
+        )
+        endpoints = [
+            AdminPublicLogEndpointItem(
+                channel=row.channel.value if row.channel else PublicLogChannelEnum.public_api.value,
+                route=row.api_route,
+                method=row.method,
+                success_count=int(row.success_count or 0),
+                failure_count=int(row.failure_count or 0),
+                total_count=int(row.total_count or 0),
+            )
+            for row in rows
+        ]
+        return AdminPublicLogEndpointListResponse(endpoints=endpoints)
+    except Exception as e:
+        logger.error(f"Error in list_public_log_endpoints_for_admin: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/public-logs/logs",
+    response_model=PaginatedResponse[AdminPublicLogItem],
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def list_public_logs_for_admin(
+    channel: PublicLogChannelEnum,
+    route: str,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    only_failures: bool = True,
+):
+    """Paginated call log rows (full request/response detail) for one endpoint, across every user."""
+    try:
+        from math import ceil
+
+        skip = (page - 1) * size
+        q = (
+            db.session.query(APICallLogModel, UnifiedAuthModel)
+            .join(UnifiedAuthModel, APICallLogModel.user_id == UnifiedAuthModel.id)
+            .filter(APICallLogModel.channel == channel, APICallLogModel.api_route == route)
+        )
+        if only_failures:
+            q = q.filter(APICallLogModel.is_success == False)
+
+        total = q.count()
+        rows = q.order_by(APICallLogModel.created_at.desc()).offset(skip).limit(size).all()
+        total_pages = ceil(total / size) if size > 0 else 1
+
+        key_ids = {log.api_key_id for log, _ in rows if log.api_key_id}
+        key_names = {}
+        if key_ids:
+            key_names = {
+                k.id: k.name or k.client_id
+                for k in db.session.query(APIKeyModel).filter(APIKeyModel.id.in_(key_ids)).all()
+            }
+
+        items = [
+            AdminPublicLogItem(
+                id=log.id,
+                channel=log.channel.value if log.channel else None,
+                api_route=log.api_route,
+                method=log.method,
+                status_code=log.status_code,
+                is_success=log.is_success,
+                request_params=log.request_params,
+                request_body=log.request_body,
+                response_body=log.response_body,
+                error_message=log.error_message,
+                response_time_ms=log.response_time_ms,
+                created_at=log.created_at,
+                api_key_id=log.api_key_id,
+                api_key_name=key_names.get(log.api_key_id),
+                user_id=user.id,
+                user_name=user.name,
+                user_email=user.email,
+            )
+            for log, user in rows
+        ]
+        return PaginatedResponse[AdminPublicLogItem](total=total, page=page, size=size, pages=total_pages, items=items)
+    except Exception as e:
+        logger.error(f"Error in list_public_logs_for_admin: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/public-logs/users",
+    response_model=AdminPublicLogUserListResponse,
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def list_public_log_users_for_admin(channel: PublicLogChannelEnum, route: str):
+    """Users who had at least one failure on this endpoint, with their failure/total counts."""
+    try:
+        failure_case = case((APICallLogModel.is_success == False, 1), else_=0)
+        rows = (
+            db.session.query(
+                UnifiedAuthModel.id.label("user_id"),
+                UnifiedAuthModel.name.label("user_name"),
+                UnifiedAuthModel.email.label("user_email"),
+                func.sum(failure_case).label("failure_count"),
+                func.count(APICallLogModel.id).label("total_count"),
+            )
+            .join(APICallLogModel, APICallLogModel.user_id == UnifiedAuthModel.id)
+            .filter(APICallLogModel.channel == channel, APICallLogModel.api_route == route)
+            .group_by(UnifiedAuthModel.id, UnifiedAuthModel.name, UnifiedAuthModel.email)
+            .having(func.sum(failure_case) > 0)
+            .order_by(func.sum(failure_case).desc())
+            .all()
+        )
+        users = [
+            AdminPublicLogUserItem(
+                user_id=row.user_id,
+                user_name=row.user_name,
+                user_email=row.user_email,
+                failure_count=int(row.failure_count or 0),
+                total_count=int(row.total_count or 0),
+            )
+            for row in rows
+        ]
+        return AdminPublicLogUserListResponse(users=users)
+    except Exception as e:
+        logger.error(f"Error in list_public_log_users_for_admin: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 

@@ -6,12 +6,49 @@ Handles document uploading, URL addition, processing status, and deletion.
 """
 
 import os
+import re
+import json
 import mimetypes
 from typing import Optional, Dict, Any, List
 from .base import BaseElevenLabs, ElevenLabsResponse
 from app_v2.core.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# Known ElevenLabs KB-sync failure statuses mapped to a short, actionable
+# message a user can actually do something with. Anything not in this map
+# falls back to a generic message — the raw ElevenLabs body (with its
+# request_id/stack-trace-like detail) is for logs only, never for users.
+_FRIENDLY_KB_SYNC_ERRORS = {
+    "ReadabilityError": (
+        "We couldn't extract readable content from this page. Make sure the "
+        "URL is publicly accessible and contains real text content — not a "
+        "login-gated page, a bare PDF/file link, or a page rendered entirely "
+        "by JavaScript."
+    ),
+}
+
+
+def describe_kb_sync_error(raw_error_message: Optional[str]) -> str:
+    """
+    Translate a raw ElevenLabs error (typically `Status <code>: <json body>`)
+    into a short, user-facing message. The raw body is logged by the caller
+    before this is used — this function only decides what the user sees.
+    """
+    match = re.search(r"\{.*\}", raw_error_message or "", re.DOTALL)
+    if match:
+        try:
+            body = json.loads(match.group(0))
+            detail = body.get("detail") if isinstance(body, dict) else None
+            error_status = detail.get("status") if isinstance(detail, dict) else None
+            if error_status in _FRIENDLY_KB_SYNC_ERRORS:
+                return _FRIENDLY_KB_SYNC_ERRORS[error_status]
+        except (ValueError, AttributeError, TypeError):
+            pass
+    return (
+        "We couldn't add this URL to your knowledge base right now. Please "
+        "double-check the link and try again."
+    )
 
 
 class ElevenLabsKB(BaseElevenLabs):
@@ -196,6 +233,58 @@ class ElevenLabsKB(BaseElevenLabs):
         else:
             logger.error(f"Failed to compute RAG index for document: {response.error_message}")
             return None
-        
 
-    
+    def get_agent_knowledge_base_size(self, agent_id: str) -> ElevenLabsResponse:
+        """
+        Fetch ElevenLabs' computed knowledge-base size (in pages) for all
+        documents attached to this agent.
+
+        Args:
+            agent_id: ElevenLabs agent ID.
+
+        Returns:
+            ElevenLabsResponse whose data contains the page-count payload.
+        """
+        logger.info(f"Fetching knowledge base size for agent: {agent_id}")
+        response = self._get(f"/convai/agent/{agent_id}/knowledge-base/size")
+
+        if response.status:
+            logger.info(f"✅ KB size fetched for agent {agent_id}")
+        else:
+            logger.error(f"Failed to fetch KB size for agent {agent_id}: {response.error_message}")
+
+        return response
+
+    @staticmethod
+    def _extract_page_count(data: Dict[str, Any]) -> Optional[int]:
+        """
+        Best-effort pull of the page count out of the KB-size response — the
+        exact key hasn't been confirmed against a live payload, so probe the
+        plausible candidates (mirrors _extract_llm_credits in
+        conversation_utils.py, which faced the same key-naming uncertainty).
+        """
+        if not isinstance(data, dict):
+            return None
+        for key in ("number_of_pages", "total_pages", "pages", "size"):
+            value = data.get(key)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    continue
+        return None
+
+    def get_kb_total_pages(self, agent_id: str) -> Optional[int]:
+        """
+        Convenience: total KB page count for an agent, or None on any failure.
+        Best-effort — callers should never let this block agent create/update.
+        """
+        try:
+            resp = self.get_agent_knowledge_base_size(agent_id)
+            if not resp.status or not resp.data:
+                return None
+            return self._extract_page_count(resp.data)
+        except Exception:
+            logger.exception(f"Failed to resolve KB total pages for agent {agent_id}")
+            return None
+

@@ -1,6 +1,7 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 from fastapi_sqlalchemy import db
 from app_v2.schemas.agent_config import AgentConfigGenerator, AgentConfigOut
 from app_v2.schemas.pagination import PaginatedResponse
@@ -8,7 +9,10 @@ from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 import math
 from app_v2.utils.llm_utils import generate_system_prompt_async
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
-from app_v2.utils.feature_access import check_can_enable_resource
+from app_v2.utils.elevenlabs.kb_utils import ElevenLabsKB
+from app_v2.utils.elevenlabs.phone_connection import ElevenLabsPhoneConnection
+from app_v2.utils.conversation_lifecycle import is_agents_first_call
+from app_v2.utils.feature_access import check_can_enable_resource, require_feature_enabled
 
 from app_v2.utils.jwt_utils import HTTPBearer,require_active_user
 from app_v2.databases.models import (
@@ -23,17 +27,27 @@ from app_v2.databases.models import (
     AgentLanguageBridge,
     UnifiedAuthModel,
     PhoneNumberService,
+    TwilioUserCreds,
     KnowledgeBaseModel,
     AgentKnowledgeBaseBridge,
     AgentFunctionBridgeModel,
     FunctionModel,
-    VariablesModel
+    VariablesModel,
+    WidgetModel,
+    WebAgentPageModel,
+    ConversationsModel,
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
+from app_v2.schemas.built_in_tools import BuiltInToolsParams
+from app_v2.schemas.enum_types import PlanFeatureEnum
 from typing import List, Optional, Any
 from app_v2.utils.activity_logger import log_activity
 from app_v2.core.logger import setup_logger
+from app_v2.core.config import VoiceSettings
 from app_v2.utils.feature_access import RequireFeature
+from app_v2.utils.crypto_utils import decrypt_data
+from app_v2.utils.twillio_phone_service import TwilioPhoneService
+from twilio.base.exceptions import TwilioRestException
 logger = setup_logger(__name__)
 
 router = APIRouter(
@@ -50,7 +64,7 @@ from sqlalchemy.orm import selectinload
 
 # -------------------- RESPONSE MAPPER --------------------
 
-def agent_to_read(agent: AgentModel) -> AgentRead:
+def agent_to_read(agent: AgentModel, is_first_call_pending: Optional[bool] = None) -> AgentRead:
     ai_model = (
         agent.agent_ai_models[0].ai_model.model_name
         if agent.agent_ai_models else None
@@ -64,6 +78,17 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         agent.phone_number[0].phone_number
         if agent.phone_number else None
     )
+
+    # Recompute from the live prompt (rather than trusting stored rows as-is)
+    # so agents predating this feature, or any drift between the prompt and
+    # persisted variables, still resolve correctly on read. system__ vars are
+    # excluded — they're ElevenLabs built-ins auto-populated at call time,
+    # never custom variables the user manages.
+    stored_variables = {v.variable_name: v.variable_value for v in agent.variables}
+    variables = {
+        name: stored_variables.get(name, "")
+        for name in extract_prompt_variable_names(agent.system_prompt)
+    }
 
     return AgentRead(
         id=agent.id,
@@ -85,21 +110,58 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
             }
             for bridge in agent.agent_knowledge_bases
         ],
-        variables={var.variable_name: var.variable_value for var in agent.variables},
+        variables=variables,
         tools=[
             {
                 "id": bridge.function.id,
                 "name": bridge.function.name
-            } 
+            }
             for bridge in agent.agent_functions
         ],
-        built_in_tools=agent.built_in_tools
+        built_in_tools=agent.built_in_tools,
+        timezone=agent.timezone,
+        is_first_call_pending=(
+            is_first_call_pending
+            if is_first_call_pending is not None
+            else is_agents_first_call(agent.id)
+        ),
     )
 
 
 # -------------------- HELPERS --------------------
 
-def transform_built_in_tools(built_in_tools_params, session: Session, user_id: int) -> dict:
+# Matches {{var_name}} placeholders in a prompt. "system__*" placeholders are
+# ElevenLabs built-in variables (e.g. system__time_utc) that are always
+# available and auto-populated by ElevenLabs at conversation time — they
+# must NOT be declared in dynamic_variable_placeholders (doing so would
+# submit an empty value that overrides the real runtime value), so they're
+# excluded whenever include_system=False.
+PROMPT_VARIABLE_PATTERN = re.compile(r"\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}")
+
+
+def extract_prompt_variable_names(*texts: Optional[str], include_system: bool = False) -> set[str]:
+    """Extracts {{var_name}} placeholder names from prompt text(s)."""
+    names = set()
+    for text in texts:
+        if not text:
+            continue
+        names.update(PROMPT_VARIABLE_PATTERN.findall(text))
+    if include_system:
+        return names
+    return {name for name in names if not name.startswith("system__")}
+
+
+# timezone is only required when the prompt actually renders time in it —
+# otherwise ElevenLabs has nothing to localize and the field is optional.
+TIMEZONE_REQUIRING_VARS = {"system__time_utc", "system__time", "system__timezone"}
+
+
+def prompt_requires_timezone(prompt: Optional[str]) -> bool:
+    """True if the prompt references a system time/timezone placeholder, making `timezone` mandatory."""
+    return bool(extract_prompt_variable_names(prompt, include_system=True) & TIMEZONE_REQUIRING_VARS)
+
+
+def transform_built_in_tools(built_in_tools_params, session: Session, user_id: int, current_agent_id: Optional[int] = None) -> dict:
     """Transform schema params to ElevenLabs payload structure."""
     if not built_in_tools_params:
         return None
@@ -125,10 +187,11 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
         config = built_in_tools_params.transfer_to_agent
         if config.enabled:
             el_transfers = []
+            valid_transfers = []
             for t in config.transfers:
                 transfer_data = t.model_dump()
                 requested_id = str(transfer_data.get("agent_id"))
-                
+
                 # Enforce numeric ID for internal lookups
                 if not requested_id.isdigit():
                     raise HTTPException(
@@ -136,30 +199,49 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
                         detail=f"Agent ID '{requested_id}' must be an internal numeric ID for transfer to agent tool"
                     )
 
+                # An agent can't transfer a call to itself
+                if current_agent_id is not None and int(requested_id) == current_agent_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="An agent cannot be configured to transfer a call to itself"
+                    )
+
                 # Dynamic lookup: find agent by internal ID
                 target_agent = session.query(AgentModel).filter(
                     AgentModel.id == int(requested_id),
                     AgentModel.user_id == user_id
                 ).first()
-                
+
                 if target_agent and target_agent.elevenlabs_agent_id:
                     transfer_data["agent_id"] = target_agent.elevenlabs_agent_id
                     logger.info(f"Resolved agent transfer ID: {requested_id} -> {target_agent.elevenlabs_agent_id}")
                 else:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Agent with internal ID {requested_id} not found or missing ElevenLabs ID"
-                    )
-                
-                el_transfers.append(transfer_data)
+                    logger.info(f"NOT FOUND agent transfer ID: {requested_id}, dropping this transfer")
+                    continue
 
-            el_tools["transfer_to_agent"] = {
-                "name": config.name or "transfer_to_agent",
-                "params": {
-                    "system_tool_type": "transfer_to_agent",
-                    "transfers": el_transfers
+                el_transfers.append(transfer_data)
+                valid_transfers.append(t)
+
+            # Drop invalid transfers from the source config too, so the caller
+            # persists the same set it just sent to ElevenLabs instead of
+            # keeping stale/unresolvable agent_id references in the DB.
+            config.transfers = valid_transfers
+
+            if valid_transfers:
+                el_tools["transfer_to_agent"] = {
+                    "name": config.name or "transfer_to_agent",
+                    "params": {
+                        "system_tool_type": "transfer_to_agent",
+                        "transfers": el_transfers
+                    }
                 }
-            }
+            else:
+                # None of the configured transfers resolved to a real agent —
+                # don't send the tool to ElevenLabs, and mark it disabled in
+                # what gets persisted so the frontend doesn't show transfer to
+                # agent as enabled with nothing to transfer to.
+                logger.info("No valid transfers remain for transfer_to_agent; disabling the tool")
+                config.enabled = False
             
     # Transfer to Number
     if built_in_tools_params.transfer_to_number:
@@ -194,6 +276,7 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
 
     # DTMF / Keypad
     if built_in_tools_params.play_keypad_touch_tone:
+        require_feature_enabled(user_id, PlanFeatureEnum.phone_numbers)
         config = built_in_tools_params.play_keypad_touch_tone
         if isinstance(config, bool):
              el_tools["play_keypad_touch_tone"] = {
@@ -209,6 +292,263 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
     return el_tools if el_tools else None
 
 
+def prune_stale_agent_transfers(agent: AgentModel, session: Session) -> None:
+    """
+    Re-validate agent.built_in_tools.transfer_to_agent on read: drop any transfer
+    whose target agent was deleted (or lost its elevenlabs_agent_id) since this
+    config was last saved, persist the cleaned config, and push the same cleanup
+    to ElevenLabs so a deleted agent can't linger as a transfer target.
+
+    Deliberately self-contained (doesn't call transform_built_in_tools) — that
+    function can raise HTTPException for unrelated reasons (e.g. a stale
+    transfer_to_number phone), which must never surface on a plain read.
+    """
+    tta = (agent.built_in_tools or {}).get("transfer_to_agent")
+    transfers = (tta or {}).get("transfers") or []
+    if not transfers:
+        return
+
+    requested_ids = {str(t.get("agent_id")) for t in transfers if str(t.get("agent_id")).isdigit()}
+    live_ids = set()
+    if requested_ids:
+        live_agents = session.query(AgentModel.id).filter(
+            AgentModel.id.in_([int(rid) for rid in requested_ids]),
+            AgentModel.user_id == agent.user_id,
+            AgentModel.elevenlabs_agent_id.isnot(None),
+            AgentModel.id != agent.id,
+        ).all()
+        live_ids = {str(row.id) for row in live_agents}
+
+    valid_transfers = [t for t in transfers if str(t.get("agent_id")) in live_ids]
+    if len(valid_transfers) == len(transfers):
+        return
+
+    stale_ids = requested_ids - live_ids
+    logger.info(f"Pruning stale transfer_to_agent targets {stale_ids} from agent {agent.id}")
+
+    new_built_in_tools = dict(agent.built_in_tools)
+    new_built_in_tools["transfer_to_agent"] = {
+        **tta,
+        "transfers": valid_transfers,
+        "enabled": tta.get("enabled", False) and bool(valid_transfers),
+    }
+    agent.built_in_tools = new_built_in_tools
+
+    if agent.elevenlabs_agent_id:
+        try:
+            parsed = BuiltInToolsParams(**new_built_in_tools)
+            el_payload = transform_built_in_tools(parsed, session, agent.user_id, current_agent_id=agent.id)
+            el_response = ElevenLabsAgent().update_agent(
+                agent_id=agent.elevenlabs_agent_id,
+                built_in_tools=el_payload,
+            )
+            if not el_response.status:
+                logger.error(
+                    f"Failed to sync pruned transfers to ElevenLabs for agent {agent.id}: {el_response.error_message}"
+                )
+        except Exception:
+            logger.exception(f"Unexpected error syncing pruned transfers to ElevenLabs for agent {agent.id}")
+
+    session.commit()
+
+
+def resolve_phone_record(
+    session: Session,
+    user_id: int,
+    phone: Optional[str],
+    twilio_connector_id: Optional[int],
+    current_agent_id: Optional[int] = None,
+):
+    """
+    Validate & resolve the PhoneNumberService row for `phone`, without assigning
+    it to an agent yet (the caller does that once the agent id is known).
+
+    If `twilio_connector_id` is given, the number is verified against that Twilio
+    account via the Twilio API and the local record is created/updated on the fly.
+    Otherwise falls back to requiring an already-owned, previously imported number.
+
+    Returns (phone_record_or_None, connector_or_None). Raises HTTPException on
+    any validation failure (feature not enabled, connector not found, number not
+    found in Twilio, number already assigned to a different agent).
+    """
+    if not phone or not phone.strip():
+        return None, None
+    # Normalize away any internal/leading/trailing whitespace (e.g. "+1 659 399 7159"
+    # -> "+16593997159") so numbers are matched and stored consistently regardless
+    # of how the user typed them.
+    phone = re.sub(r"\s+", "", phone)
+
+    connector = None
+    if twilio_connector_id:
+        require_feature_enabled(user_id, PlanFeatureEnum.phone_numbers)
+
+        connector = session.query(TwilioUserCreds).filter(
+            TwilioUserCreds.id == twilio_connector_id,
+            TwilioUserCreds.user_id == user_id,
+        ).first()
+        if not connector:
+            raise HTTPException(status_code=404, detail="Twilio connector not found")
+
+        twilio_number = None
+        try:
+            service = TwilioPhoneService(
+                account_sid=connector.account_sid,
+                auth_token=decrypt_data(connector.auth_token),
+            )
+            twilio_number = service.get_phone_number_details(phone)
+        except TwilioRestException as te:
+            logger.warning(f"Twilio verification failed for {phone}: {te}")
+
+        if not twilio_number:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Phone number {phone} was not found in the selected Twilio connector."
+            )
+
+        phone_record = session.query(PhoneNumberService).filter(
+            PhoneNumberService.phone_number == phone,
+            PhoneNumberService.user_id == user_id,
+        ).first()
+        if phone_record:
+            phone_record.sid = twilio_number["sid"]
+        else:
+            phone_record = PhoneNumberService(
+                phone_number=phone,
+                sid=twilio_number["sid"],
+                type="connector",
+                user_id=user_id,
+                assigned_to=None,
+                status=PhoneNumberAssignStatus.unassigned,
+                monthly_cost=0,
+            )
+            session.add(phone_record)
+            session.flush()
+    else:
+        phone_record = session.query(PhoneNumberService).filter(
+            PhoneNumberService.phone_number == phone,
+            PhoneNumberService.user_id == user_id,
+        ).first()
+        if not phone_record:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Phone number {phone} not found or not owned by you"
+            )
+
+    # Global uniqueness: no two agents can ever share the same Twilio number.
+    if phone_record.assigned_to is not None and phone_record.assigned_to != current_agent_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Phone number {phone} is already assigned to another agent"
+        )
+
+    return phone_record, connector
+
+
+def finalize_phone_assignment(phone_record: Optional[PhoneNumberService], agent: AgentModel, connector) -> None:
+    """Assign `phone_record` to `agent` and best-effort register/relink it with ElevenLabs."""
+    if not phone_record:
+        return
+
+    phone_record.assigned_to = agent.id
+    phone_record.status = PhoneNumberAssignStatus.assigned
+    logger.info(f"Assigned phone {phone_record.phone_number} to agent {agent.agent_name}")
+
+    if not agent.elevenlabs_agent_id:
+        return
+
+    def _import_fresh(el: ElevenLabsPhoneConnection) -> None:
+        account_sid = connector.account_sid if connector else VoiceSettings.TWILIO_ACCOUNT_SID
+        auth_token = decrypt_data(connector.auth_token) if connector else VoiceSettings.TWILIO_AUTH_TOKEN
+        resp = el.import_twilio_number(
+            phone_number=phone_record.phone_number,
+            label=agent.agent_name,
+            account_sid=account_sid,
+            auth_token=auth_token,
+            agent_id=agent.elevenlabs_agent_id,
+        )
+        if resp.status and resp.data:
+            phone_record.elevenlabs_phone_id = resp.data.get("phone_number_id")
+        else:
+            logger.warning(f"ElevenLabs phone import failed for {phone_record.phone_number}: {resp.error_message}")
+
+    try:
+        el = ElevenLabsPhoneConnection()
+        if phone_record.elevenlabs_phone_id:
+            resp = el.update_phone_number_agent(phone_record.elevenlabs_phone_id, agent.elevenlabs_agent_id)
+            if not resp.status:
+                # The stored elevenlabs_phone_id no longer exists on ElevenLabs
+                # (e.g. it was deleted when previously unassigned) — clear it and
+                # re-import the number fresh instead of silently leaving it unlinked.
+                logger.warning(
+                    f"Failed to relink ElevenLabs phone number {phone_record.elevenlabs_phone_id}: "
+                    f"{resp.error_message}; re-importing {phone_record.phone_number} fresh"
+                )
+                phone_record.elevenlabs_phone_id = None
+                _import_fresh(el)
+        else:
+            _import_fresh(el)
+    except Exception as e:
+        logger.error(f"ElevenLabs phone registration failed for {phone_record.phone_number}: {e}", exc_info=True)
+
+
+def unassign_phone(phone_record: Optional[PhoneNumberService]) -> None:
+    """Unassign a phone record from its agent and best-effort delete it from ElevenLabs."""
+    if not phone_record:
+        return
+    phone_record.assigned_to = None
+    phone_record.status = PhoneNumberAssignStatus.unassigned
+    if phone_record.elevenlabs_phone_id:
+        try:
+            response = ElevenLabsPhoneConnection().delete_phone_number(phone_record.elevenlabs_phone_id)
+            if response.status:
+                phone_record.elevenlabs_phone_id = None
+            else:
+                logger.warning(
+                    f"Failed to delete ElevenLabs phone number {phone_record.elevenlabs_phone_id}: {response.error_message}"
+                )
+        except Exception as e:
+            logger.warning(f"Failed to delete ElevenLabs phone number {phone_record.elevenlabs_phone_id}: {e}")
+
+
+def unassign_phone_numbers_for_connector(session: Session, user_id: int, connector: TwilioUserCreds) -> None:
+    """
+    Best-effort: when a Twilio connector is deleted, unassign every phone number
+    provisioned under that connector's Twilio account from whichever agent it's
+    linked to, both in the DB (`assigned_to`) and in ElevenLabs.
+
+    There's no persistent FK from PhoneNumberService to TwilioUserCreds (the
+    connector is only used transiently to verify/import a number), so the set of
+    numbers belonging to this connector is resolved by listing the connector's
+    Twilio account and matching against locally stored "connector" type records.
+    """
+    try:
+        service = TwilioPhoneService(
+            account_sid=connector.account_sid,
+            auth_token=decrypt_data(connector.auth_token),
+        )
+        connector_numbers = set(service.list_account_phone_numbers())
+    except TwilioRestException as te:
+        logger.warning(f"Could not list Twilio numbers for connector_id={connector.id}: {te}")
+        return
+
+    if not connector_numbers:
+        return
+
+    phone_records = session.query(PhoneNumberService).filter(
+        PhoneNumberService.user_id == user_id,
+        PhoneNumberService.type == "connector",
+        PhoneNumberService.phone_number.in_(connector_numbers),
+        PhoneNumberService.assigned_to.isnot(None),
+    ).all()
+
+    for phone_record in phone_records:
+        logger.info(
+            f"Unassigning phone {phone_record.phone_number} from agent_id={phone_record.assigned_to} "
+            f"due to deletion of connector_id={connector.id}"
+        )
+        unassign_phone(phone_record)
+
+
 # -------------------- CREATE --------------------
 
 @router.post(
@@ -219,25 +559,25 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
 )
 async def create_agent(
     agent_in: AgentCreate,
-    current_user: UnifiedAuthModel = Depends(RequireFeature("ai_voice_agents")),
+    current_user: UnifiedAuthModel = Depends(RequireFeature("ai_voice_agents", allow_coin_fallback=True)),
 ):
     user_id = current_user.id
     
     #removed the name uniqueness constraint may switch in future
 
     # #check for agent existence 
-    # agent_exists = (
-    #     db.session.query(AgentModel).filter(
-    #         AgentModel.agent_name ==agent_in.agent_name,
-    #         AgentModel.user_id == user_id
-    #     ).first()
-    # )
+    agent_exists = (
+        db.session.query(AgentModel).filter(
+            func.lower(AgentModel.agent_name) == agent_in.agent_name.lower(),
+            AgentModel.user_id == user_id
+        ).first()
+    )
 
-    # if agent_exists:
-    #     raise HTTPException(
-    #         status_code= status.HTTP_400_BAD_REQUEST,
-    #         detail= "Agent with this name already exists"
-    #     )
+    if agent_exists:
+        raise HTTPException(
+            status_code= status.HTTP_400_BAD_REQUEST,
+            detail= "Agent with this name already exists"
+        )
 
     # -------------------------------------------------
     # Voice validation: only allow voices that are synced with ElevenLabs
@@ -296,30 +636,11 @@ async def create_agent(
         raise HTTPException(status_code=400, detail="Invalid language code")
 
     # -------------------------------------------------
-    # Phone number lookup & validation 
+    # Phone number lookup & validation
     # -------------------------------------------------
-    phone_record = None
-    if agent_in.phone:
-        phone_record = (
-            db.session.query(PhoneNumberService)
-            .filter(
-                PhoneNumberService.phone_number == agent_in.phone,
-                PhoneNumberService.user_id == user_id,
-            )
-            .first()
-        )
-
-        if not phone_record:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Phone number {agent_in.phone} not found or not owned by you"
-            )
-
-        if phone_record.assigned_to is not None:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Phone number {agent_in.phone} is already assigned to another agent"
-            )
+    phone_record, phone_connector = resolve_phone_record(
+        db.session, user_id, agent_in.phone, agent_in.twilio_connector_id
+    )
 
     # -------------------------------------------------
     # KB & Tools validation and lookup
@@ -398,6 +719,21 @@ async def create_agent(
             el_tool_ids.append(tool.elevenlabs_tool_id)
 
     # -------------------------------------------------
+    # Merge explicit variables with {{var_name}} placeholders found in the
+    # system prompt, so anything referenced there gets persisted even if the
+    # caller didn't declare it explicitly.
+    # -------------------------------------------------
+    merged_variables = dict(agent_in.variables or {})
+    for var_name in extract_prompt_variable_names(agent_in.system_prompt):
+        merged_variables.setdefault(var_name, "")
+
+    if prompt_requires_timezone(agent_in.system_prompt) and not agent_in.timezone:
+        raise HTTPException(
+            status_code=400,
+            detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
+        )
+
+    # -------------------------------------------------
     # Create agent in ElevenLabs (only after validation)
     # -------------------------------------------------
     elevenlabs_agent_id = None
@@ -417,8 +753,9 @@ async def create_agent(
             llm_model=ai_model.model_name,
             tool_ids=el_tool_ids,
             knowledge_base=el_kb_list,
-            dynamic_variables=agent_in.variables,
-            built_in_tools=transform_built_in_tools(agent_in.built_in_tools, db.session, user_id)
+            dynamic_variables=merged_variables,
+            built_in_tools=transform_built_in_tools(agent_in.built_in_tools, db.session, user_id),
+            timezone=agent_in.timezone
         )
 
         if not el_response.status:
@@ -450,11 +787,28 @@ async def create_agent(
             user_id=user_id,
             agent_voice=voice.id,
             elevenlabs_agent_id=elevenlabs_agent_id,
-            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {}
+            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {},
+            timezone=agent_in.timezone
         )
 
         db.session.add(new_agent)
         db.session.flush()
+
+        # Store the expected per-minute LLM price for this agent's model
+        # (best-effort; used only for the live low-balance cutoff estimate).
+        new_agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
+            elevenlabs_agent_id, ai_model.model_name
+        )
+
+        # Cache LLM-cost calibration constants (best-effort; see
+        # ConversationsModel's calibration snapshot columns for how these get
+        # used per-call). rag.enabled is always sent as True to ElevenLabs
+        # (see ElevenLabsAgent.create_agent), so this just records that.
+        new_agent.rag_enabled = True
+        if el_kb_list:
+            new_agent.kb_total_pages = ElevenLabsKB().get_kb_total_pages(elevenlabs_agent_id)
+        else:
+            new_agent.kb_total_pages = 0
 
         # Bridge: AI Model
         db.session.add(
@@ -480,16 +834,11 @@ async def create_agent(
         for tool_id in tool_ids_ordered:
             db.session.add(AgentFunctionBridgeModel(agent_id=new_agent.id, function_id=tool_id))
 
-        # Variables
-        for key, value in (agent_in.variables or {}).items():
+        # Variables (explicit + auto-detected {{placeholders}} from the system prompt)
+        for key, value in merged_variables.items():
             db.session.add(VariablesModel(agent_id=new_agent.id, variable_name=key, variable_value=value))
 
-        if phone_record:
-            phone_record.assigned_to = new_agent.id
-            phone_record.status = PhoneNumberAssignStatus.assigned
-            logger.info(
-                f"Assigned phone {phone_record.phone_number} to agent {new_agent.agent_name}"
-            )
+        finalize_phone_assignment(phone_record, new_agent, phone_connector)
 
         db.session.commit()
         db.session.refresh(new_agent)
@@ -514,6 +863,87 @@ async def create_agent(
         )
 
     return agent_to_read(new_agent)
+
+
+@router.post(
+    "/{agent_id}/clone",
+    status_code=status.HTTP_201_CREATED,
+    summary="Clone agent",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def clone_agent(
+    agent_id: int,
+    current_user: UnifiedAuthModel = Depends(RequireFeature("ai_voice_agents", allow_coin_fallback=True)),
+):
+    """
+    Duplicate an existing agent into a brand-new agent (and a fresh ElevenLabs
+    agent), copying its prompt, first message, voice, AI model, language,
+    knowledge bases, tools, variables, built-in tools and timezone.
+
+    The phone assignment, conversations, widget and web-agent pages are NOT
+    copied. Implemented by rebuilding an AgentCreate from the source and
+    reusing create_agent(), so all validation / ElevenLabs / DB steps are
+    shared with normal creation.
+    """
+    user_id = current_user.id
+
+    source = (
+        db.session.query(AgentModel)
+        .options(
+            selectinload(AgentModel.agent_ai_models).selectinload(AgentAIModelBridge.ai_model),
+            selectinload(AgentModel.agent_languages).selectinload(AgentLanguageBridge.language),
+            selectinload(AgentModel.voice),
+            selectinload(AgentModel.variables),
+            selectinload(AgentModel.agent_knowledge_bases),
+            selectinload(AgentModel.agent_functions),
+        )
+        .filter(AgentModel.id == agent_id, AgentModel.user_id == user_id)
+        .first()
+    )
+    if not source:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    ai_model = source.agent_ai_models[0].ai_model.model_name if source.agent_ai_models else None
+    language = source.agent_languages[0].language.lang_code if source.agent_languages else None
+    if not ai_model or not language or not source.voice:
+        raise HTTPException(
+            status_code=400,
+            detail="Source agent is missing voice/model/language and cannot be cloned",
+        )
+
+    # Generate a unique clone name: "<name> (copy)", "<name> (copy) 2", ...
+    base_name = f"{source.agent_name} (copy)"
+    clone_name = base_name
+    suffix = 2
+    while (
+        db.session.query(AgentModel)
+        .filter(
+            func.lower(AgentModel.agent_name) == clone_name.lower(),
+            AgentModel.user_id == user_id,
+        )
+        .first()
+    ):
+        clone_name = f"{base_name} {suffix}"
+        suffix += 1
+
+    payload = AgentCreate(
+        agent_name=clone_name,
+        first_message=source.first_message,
+        system_prompt=source.system_prompt,
+        phone=None,               # unique per-agent assignment — never cloned
+        twilio_connector_id=None,
+        voice=source.voice.voice_name,
+        ai_model=ai_model,
+        language=language,
+        knowledgebase=[{"id": b.kb_id} for b in source.agent_knowledge_bases],
+        variables={v.variable_name: v.variable_value for v in source.variables},
+        tools=[{"id": b.function_id} for b in source.agent_functions],
+        built_in_tools=BuiltInToolsParams(**source.built_in_tools) if source.built_in_tools else None,
+        timezone=source.timezone,
+    )
+
+    return await create_agent(agent_in=payload, current_user=current_user)
+
 
 # -------------------- GET ALL --------------------
 
@@ -567,8 +997,25 @@ async def get_all_agents(
         .all()
     )
 
-    items = [agent_to_read(agent) for agent in agents]
-    
+    # Bulk-check which of this page's agents have ever had a conversation, so
+    # is_first_call_pending doesn't cost a query per agent (N+1) in the list view.
+    agent_ids = [a.id for a in agents]
+    agents_with_calls = (
+        {
+            row[0]
+            for row in db.session.query(ConversationsModel.agent_id)
+            .filter(ConversationsModel.agent_id.in_(agent_ids))
+            .distinct()
+            .all()
+        }
+        if agent_ids
+        else set()
+    )
+    items = [
+        agent_to_read(agent, is_first_call_pending=(agent.id not in agents_with_calls))
+        for agent in agents
+    ]
+
     return PaginatedResponse(
         total=total,
         page=page,
@@ -608,6 +1055,8 @@ async def get_agent_by_id(
 
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+
+    prune_stale_agent_transfers(agent, db.session)
 
     return agent_to_read(agent)
 
@@ -649,37 +1098,39 @@ async def update_agent(
     
     # ---- Phone Number Update ----
     if agent_in.phone is not None:
-        # First, unassign any currently assigned phone
         old_phone = db.session.query(PhoneNumberService).filter(
             PhoneNumberService.assigned_to == agent_id
         ).first()
-        
-        if old_phone:
-            old_phone.assigned_to = None
-            old_phone.status = PhoneNumberAssignStatus.unassigned
-            logger.info(f"Unassigned phone {old_phone.phone_number} from agent {agent.agent_name}")
-        
-        # Now assign new phone if provided (empty string means unassign only)
-        if agent_in.phone and agent_in.phone.strip():
-            # Lookup phone by phone number string
-            new_phone = db.session.query(PhoneNumberService).filter(
-                PhoneNumberService.phone_number == agent_in.phone,
-                PhoneNumberService.user_id == current_user.id
-            ).first()
-            
-            if not new_phone:
-                raise HTTPException(status_code=404, detail=f"Phone number {agent_in.phone} not found or not owned by you")
-            
-            if new_phone.assigned_to is not None and new_phone.assigned_to != agent_id:
-                raise HTTPException(status_code=400, detail=f"Phone number {agent_in.phone} is already assigned to another agent")
-            
-            new_phone.assigned_to = agent_id
-            new_phone.status = PhoneNumberAssignStatus.assigned
-            logger.info(f"Assigned phone {new_phone.phone_number} to agent {agent.agent_name}")
-        # else: empty string means unassign only (already done above)
+
+        new_phone_value = agent_in.phone.strip() if agent_in.phone else ""
+
+        if not (old_phone and old_phone.phone_number == new_phone_value):
+            # Actual change (or explicit unassign via empty string) — swap it over.
+            unassign_phone(old_phone)
+
+            new_phone_record, new_phone_connector = resolve_phone_record(
+                db.session, current_user.id, agent_in.phone, agent_in.twilio_connector_id, current_agent_id=agent_id
+            )
+            finalize_phone_assignment(new_phone_record, agent, new_phone_connector)
     
     # ---- Base Fields ----
     if agent_in.agent_name is not None:
+        # Same uniqueness rule as create: no OTHER agent of this user may share
+        # the name (case-insensitive).
+        name_taken = (
+            db.session.query(AgentModel)
+            .filter(
+                func.lower(AgentModel.agent_name) == agent_in.agent_name.lower(),
+                AgentModel.user_id == current_user.id,
+                AgentModel.id != agent_id,
+            )
+            .first()
+        )
+        if name_taken:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Agent with this name already exists",
+            )
         agent.agent_name = agent_in.agent_name
         el_update_params["name"] = agent_in.agent_name
     if agent_in.first_message is not None:
@@ -690,8 +1141,24 @@ async def update_agent(
         el_update_params["prompt"] = agent_in.system_prompt
     if agent_in.is_enabled is not None:
         if agent_in.is_enabled == True and agent.is_enabled == False:
-            check_can_enable_resource(current_user.id, "ai_voice_agents")
+            check_can_enable_resource(current_user.id, "ai_voice_agents", allow_coin_fallback=True)
+            db.session.query(WidgetModel).filter(
+                WidgetModel.agent_id == agent.id
+            ).update({WidgetModel.is_enabled: True})
+            db.session.query(WebAgentPageModel).filter(
+                WebAgentPageModel.agent_id == agent.id
+            ).update({WebAgentPageModel.is_enabled: True})
+        if agent_in.is_enabled == False and agent.is_enabled == True:
+            db.session.query(WidgetModel).filter(
+                WidgetModel.agent_id == agent.id
+            ).update({WidgetModel.is_enabled: False})
+            db.session.query(WebAgentPageModel).filter(
+                WebAgentPageModel.agent_id == agent.id
+            ).update({WebAgentPageModel.is_enabled: False})
         agent.is_enabled = agent_in.is_enabled
+    if agent_in.timezone is not None:
+        agent.timezone = agent_in.timezone
+        el_update_params["timezone"] = agent_in.timezone
 
     # ---- Voice ----
     if agent_in.voice is not None:
@@ -856,20 +1323,49 @@ async def update_agent(
             db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=tool_id))
 
     # ---- Variables Update ----
-    if agent_in.variables is not None:
-        el_update_params["dynamic_variables"] = agent_in.variables
-        
-        # Update DB variables
-        db.session.query(VariablesModel).filter(
-            VariablesModel.agent_id == agent_id
-        ).delete()
-        for key, value in agent_in.variables.items():
-            db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
+    # agent.system_prompt was already updated above (if provided), so this
+    # reflects whichever prompt will be live after this request. The prompt
+    # is the source of truth for which variables exist: whatever
+    # {{placeholder}} names it contains is exactly the variable set that
+    # survives — anything else (even if explicitly re-sent in the payload,
+    # e.g. because the frontend echoed back a stale value it fetched
+    # earlier) gets dropped. Explicit values in agent_in.variables still win
+    # for placeholders that ARE present; existing DB values are the fallback
+    # for ones untouched by this request.
+    if agent_in.variables is not None or agent_in.system_prompt is not None:
+        prompt_var_names = extract_prompt_variable_names(agent.system_prompt)
+        existing_variables = {v.variable_name: v.variable_value for v in agent.variables}
+        explicit_variables = agent_in.variables or {}
+
+        synced_variables = {
+            name: explicit_variables.get(name, existing_variables.get(name, ""))
+            for name in prompt_var_names
+        }
+
+        if synced_variables != existing_variables:
+            db.session.query(VariablesModel).filter(
+                VariablesModel.agent_id == agent_id
+            ).delete()
+            for key, value in synced_variables.items():
+                db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
+            el_update_params["dynamic_variables"] = synced_variables
 
     # ---- Builtin Tools Update ----
     if agent_in.built_in_tools is not None:
+        # transform_built_in_tools may drop invalid transfers (e.g. an agent_id
+        # that no longer resolves) from agent_in.built_in_tools in place, so run
+        # it before the model_dump() to keep the persisted config in sync with
+        # what was actually sent to ElevenLabs.
+        el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id, current_agent_id=agent_id)
         agent.built_in_tools = agent_in.built_in_tools.model_dump()
-        el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id)
+
+    # agent.system_prompt/agent.timezone already reflect this request's changes
+    # (if any) from the blocks above, so this check covers the effective state.
+    if prompt_requires_timezone(agent.system_prompt) and not agent.timezone:
+        raise HTTPException(
+            status_code=400,
+            detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
+        )
 
     # ---- Sync with ElevenLabs ----
     if el_update_params and agent.elevenlabs_agent_id:
@@ -888,7 +1384,35 @@ async def update_agent(
                     status_code=424,
                     detail=f"Failed to update agent in ElevenLabs: {el_response.error_message}"
                 )
+
             logger.info(f"✅ ElevenLabs agent '{agent.elevenlabs_agent_id}' updated successfully")
+
+            # Refresh the stored per-minute LLM price estimate now that
+            # ElevenLabs has the updated config (prompt / KB / RAG / model all
+            # affect it). Best-effort — never block the update on this.
+            effective_model = el_update_params.get("llm_model")
+            if not effective_model:
+                effective_model = (
+                    db.session.query(AIModels.model_name)
+                    .join(AgentAIModelBridge, AgentAIModelBridge.ai_model_id == AIModels.id)
+                    .filter(AgentAIModelBridge.agent_id == agent_id)
+                    .scalar()
+                )
+            if effective_model:
+                agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
+                    agent.elevenlabs_agent_id, effective_model
+                )
+
+            # Refresh LLM-cost calibration constants too (best-effort). Query
+            # current KB bridge rows directly rather than relying on
+            # el_kb_list, which is only set when this request touched KB.
+            agent.rag_enabled = True
+            has_kb = db.session.query(AgentKnowledgeBaseBridge.id).filter(
+                AgentKnowledgeBaseBridge.agent_id == agent_id
+            ).first() is not None
+            agent.kb_total_pages = (
+                ElevenLabsKB().get_kb_total_pages(agent.elevenlabs_agent_id) if has_kb else 0
+            )
         except HTTPException:
             raise
         except Exception as e:
@@ -940,12 +1464,9 @@ async def delete_agent(
     assigned_phone = db.session.query(PhoneNumberService).filter(
         PhoneNumberService.assigned_to == agent_id
     ).first()
-    
-    if assigned_phone:
-        assigned_phone.assigned_to = None
-        assigned_phone.status = PhoneNumberAssignStatus.unassigned
-        logger.info(f"Unassigned phone {assigned_phone.phone_number} from agent {agent.agent_name}")
-        db.session.flush()  # Use flush instead of commit to allow rollback if ElevenLabs fails
+
+    unassign_phone(assigned_phone)
+    db.session.flush()  # Use flush instead of commit to allow rollback if ElevenLabs fails
 
     # ---- Delete from ElevenLabs ----
     if agent.elevenlabs_agent_id:
@@ -958,27 +1479,36 @@ async def delete_agent(
                 logger.info(f"✅ Agent deleted from ElevenLabs: {agent.elevenlabs_agent_id}")
             else:
                 logger.warning(f"Failed to delete agent from ElevenLabs: {el_response.error_message}")
-                # if not deleted from elevenlabs then rollback the database
-                db.session.rollback()
-                raise HTTPException(
-                    status_code=424,
-                    detail=f"Failed to delete agent from ElevenLabs: {el_response.error_message}"
-                )
         except Exception as e:
             logger.error(f"Error deleting agent from ElevenLabs: {e}")
-            db.session.rollback()
-            raise HTTPException(
-                status_code=424,
-                detail=f"Failed to delete agent from ElevenLabs: {str(e)}"
-            )
-
+            
     db.session.delete(agent)
     db.session.commit()
 
-
-@router.post("/config",response_model=AgentConfigOut,status_code=status.HTTP_200_OK)
-async def generate_system_prompt_for_agent(agent_config:AgentConfigGenerator):
+@router.post(
+    "/config",
+    response_model=AgentConfigOut,
+    status_code=status.HTTP_200_OK,
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def generate_system_prompt_for_agent(
+    agent_config: AgentConfigGenerator,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
         try:
+            agent_exists = (
+                db.session.query(AgentModel).filter(
+                    func.lower(AgentModel.agent_name) == agent_config.agent_name.lower(),
+                    AgentModel.user_id == current_user.id
+                ).first()
+            )
+
+            if agent_exists:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Agent with this name already exists"
+                )
+
             system_prompt =  await generate_system_prompt_async(agent_config)
             
             if not system_prompt:

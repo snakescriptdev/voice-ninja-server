@@ -2,9 +2,9 @@ from fastapi import APIRouter, HTTPException, Query, Response,Depends
 from fastapi_sqlalchemy import db
 from sqlalchemy.orm import joinedload
 from sqlalchemy import or_
-from datetime import timedelta, date
+from datetime import date
 from typing import Optional
-from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WebAgentLeadModel, CoinsLedgerModel
+from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WidgetLeadModel, CoinsLedgerModel
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.activity_logger import log_activity
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum, CoinTransactionTypeEnum
@@ -25,13 +25,16 @@ def list_user_conversations(
 	date_after: Optional[date] = Query(None),
 	date_before: Optional[date] = Query(None),
 	call_status: Optional[CallStatusEnum] = Query(None),
+	channel: Optional[ChannelEnum] = Query(None),
+	agent_id: Optional[int] = Query(None, description="Filter to a single agent's conversations"),
+	low_balance_only: bool = Query(False, description="Only show calls that ended due to low coins balance"),
 	current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
 	with db():
 		q = (
 			db.session.query(ConversationsModel)
 			.outerjoin(AgentModel, ConversationsModel.agent_id == AgentModel.id)
-			.outerjoin(WebAgentLeadModel, WebAgentLeadModel.conversation_id == ConversationsModel.id)
+			.outerjoin(WidgetLeadModel, WidgetLeadModel.conversation_id == ConversationsModel.id)
 			.options(joinedload(ConversationsModel.agent), joinedload(ConversationsModel.lead))
 			.filter(ConversationsModel.user_id == current_user.id)
 		)
@@ -40,7 +43,7 @@ def list_user_conversations(
 			q = q.filter(
 				or_(
 					AgentModel.agent_name.ilike(f"%{search}%"),
-					WebAgentLeadModel.name.ilike(f"%{search}%")
+					WidgetLeadModel.name.ilike(f"%{search}%")
 				)
 			)
 			
@@ -52,6 +55,15 @@ def list_user_conversations(
 			
 		if call_status:
 			q = q.filter(ConversationsModel.call_status == call_status)
+
+		if channel:
+			q = q.filter(ConversationsModel.channel == channel)
+
+		if agent_id is not None:
+			q = q.filter(ConversationsModel.agent_id == agent_id)
+
+		if low_balance_only:
+			q = q.filter(ConversationsModel.ended_due_to_low_balance.is_(True))
 
 		q = q.order_by(ConversationsModel.created_at.desc())
 
@@ -71,21 +83,28 @@ def list_user_conversations(
 
 		def seconds_to_timer(secs):
 			if not secs:
-				return "0:00"
-			return str(timedelta(seconds=secs))[:-3] if secs >= 60 else f"0:{secs:02d}"
+				return "00:00:00"
+			secs = int(secs)
+			hours, remainder = divmod(secs, 3600)
+			minutes, seconds = divmod(remainder, 60)
+			return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 		results = []
 		for conv in conversations:
 			display_cost = ledger_cost_map.get(conv.id, conv.cost)
 			results.append({
 				"id": conv.id,
-				"date": conv.created_at.strftime("%Y-%m-%d"),
+				"date": conv.created_at.strftime("%b %d, %Y"),
+				"time": conv.created_at.strftime("%I:%M %p"),
+				"agent_id": conv.agent_id,
 				"agent_name": getattr(conv.agent, "agent_name", None),
 				"duration": seconds_to_timer(conv.duration),
 				"messages": conv.message_count,
 				"call_status": conv.call_status.name if conv.call_status else None,
+				"channel": conv.channel.value if conv.channel else None,
 				"lead_name": getattr(conv.lead, "name", None) if conv.lead else None,
-				"cost": display_cost
+				"cost": display_cost,
+				"ended_due_to_low_balance": conv.ended_due_to_low_balance,
 			})
 
 		return {
@@ -143,16 +162,21 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 
 	def seconds_to_timer(secs):
 		if not secs:
-			return "0:00"
-		return str(timedelta(seconds=secs))[:-3] if secs >= 60 else f"0:{secs:02d}"
+			return "00:00:00"
+		secs = int(secs)
+		hours, remainder = divmod(secs, 3600)
+		minutes, seconds = divmod(remainder, 60)
+		return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 	return {
 		"conversation_details": {
 			"datetime": conv.created_at.isoformat(),
 			"duration": seconds_to_timer(conv.duration),
 			"messages": conv.message_count,
-			"channel": conv.channel.name if conv.channel else None,
-			"cost": display_cost
+			"channel": conv.channel.value if conv.channel else None,
+			"cost": display_cost,
+            "error_message": conv.error_message,
+            "ended_due_to_low_balance": conv.ended_due_to_low_balance,
 		},
 		"call_info": {
 			"agent": getattr(conv.agent, "agent_name", None),

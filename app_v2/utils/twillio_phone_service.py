@@ -10,8 +10,8 @@ class TwilioPhoneService:
     def __init__(self, account_sid: str = None, auth_token: str = None):
         asid = account_sid or VoiceSettings.TWILIO_ACCOUNT_SID
         atoken = auth_token or VoiceSettings.TWILIO_AUTH_TOKEN
-        # self.client = Client(asid, atoken)
-        # logger.info(f"Twilio client initialized with account SID: {asid}")
+        self.client = Client(asid, atoken)
+        logger.info(f"Twilio client initialized with account SID: {asid}")
     
     def get_available_phone_numbers(
         self,
@@ -44,29 +44,6 @@ class TwilioPhoneService:
             raise
 
     
-    def buy_phone_number(
-        self,
-        phone_number: str,
-        voice_url: str,
-
-    ):
-        try:
-            number = self.client.incoming_phone_numbers.create(
-                phone_number= phone_number,
-                voice_url=voice_url,
-                voice_method="POST"
-            )
-            logger.info(f"Successfully bought phone number: {number.phone_number}")
-            return {
-                "sid": number.sid,
-                "phone_number": number.phone_number,
-                "friendly_name": number.friendly_name,
-                "capabilities": number.capabilities,
-            }
-        except TwilioRestException as e:
-            logger.error(f"Failed to buy phone number: {str(e)}")
-            raise
-
     def release_phone_number(self, sid: str):
         """Release a phone number from the Twilio account."""
         try:
@@ -93,6 +70,15 @@ class TwilioPhoneService:
             return True
         except TwilioRestException as e:
             logger.error(f"Failed to update webhooks for phone number {sid}: {str(e)}")
+            raise
+
+    def list_account_phone_numbers(self):
+        """List every phone number currently provisioned on this Twilio account."""
+        try:
+            numbers = self.client.incoming_phone_numbers.list()
+            return [n.phone_number for n in numbers]
+        except TwilioRestException as e:
+            logger.error(f"Failed to list phone numbers for account: {str(e)}")
             raise
 
     def get_phone_number_details(self, phone_number: str):

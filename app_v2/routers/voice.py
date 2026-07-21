@@ -4,7 +4,6 @@ This file has CRUD routes defined for the voice
 from fastapi import HTTPException, APIRouter, status, Depends, Form, UploadFile, File
 from app_v2.utils.jwt_utils import HTTPBearer, require_active_user
 from app_v2.utils.feature_access import RequireFeature
-from app_v2.utils.downgrade_utils import _get_system_default_voice
 from fastapi_sqlalchemy import db
 from typing import Optional, List
 from app_v2.schemas.voice_schema import VoiceRead, VoiceUpdate
@@ -14,7 +13,7 @@ import shutil
 from datetime import datetime, timezone
 from sqlalchemy import or_, and_
 from dataclasses import dataclass
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, Session
 
 from app_v2.databases.models import VoiceModel, UnifiedAuthModel, VoiceTraitsModel,AgentModel
 from app_v2.utils.email_service import send_voice_limit_email_to_admins
@@ -32,6 +31,37 @@ router = APIRouter(prefix="/api/v2", tags=["agent"], dependencies=[Depends(secur
 UPLOAD_DIR = "uploads/voices"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
+
+
+def _get_system_default_voice(session: Session) -> Optional[VoiceModel]:
+    """
+    Fetch the system-wide default voice (not owned by any user,
+    not a custom voice). Used as the fallback when detaching custom voices.
+
+    Preference order:
+      1. user_id IS NULL AND is_custom_voice = False  (global system voice)
+      2. is_custom_voice = False  (any non-custom voice as last resort)
+    """
+    default = (
+        session.query(VoiceModel)
+        .filter(
+            VoiceModel.user_id == None,
+            VoiceModel.is_custom_voice == False,
+        )
+        .order_by(VoiceModel.id.asc())
+        .first()
+    )
+
+    if default:
+        return default
+
+    # Fallback: any non-custom voice
+    return (
+        session.query(VoiceModel)
+        .filter(VoiceModel.is_custom_voice == False)
+        .order_by(VoiceModel.id.asc())
+        .first()
+    )
 
 MAX_FILE_SIZE = 10 * 1024 * 1024 # 10 MB
 ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a"}
