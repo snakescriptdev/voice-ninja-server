@@ -24,3 +24,4 @@ aiohttp==3.11.14
 alembic==1.14.1
 elevenlabs>=1.0.0
 razorpay==2.0.0
+tiktoken==0.13.0

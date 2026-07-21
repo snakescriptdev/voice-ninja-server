@@ -416,6 +416,13 @@ async def public_websocket_agent(
                     response_body=sanitize_for_log({"conversation_id": conversation_id, "cost": conversation_data.cost}),
                     error_message=limit_error,
                 )
+                # finalize_ws_call_log's own commit() expires every object in
+                # this session (SQLAlchemy expire_on_commit default). Refresh
+                # conversation_data now, while the session is still open, so
+                # its attributes stay readable below after this block closes
+                # and detaches it — otherwise the next access raises
+                # DetachedInstanceError.
+                db.session.refresh(conversation_data)
 
             logger.info(
                 f"✅ Public Conversation {conversation_id} stored successfully "

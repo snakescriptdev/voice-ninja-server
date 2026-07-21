@@ -19,9 +19,19 @@ Two very different numbers live here, and they must not be conflated:
 """
 from typing import Optional, Dict, Any
 
+import tiktoken
+
 from app_v2.core.logger import setup_logger
 
 logger = setup_logger(__name__)
+
+# A single fixed encoding used purely as a consistent RELATIVE proxy for
+# prompt size (not an exact per-model billing count — agents can run on
+# different LLM providers/models with their own tokenizers). What matters
+# for resolve_llm_rate_basis's staleness check is that the same text tokenizes
+# to the same count every time, not which exact tokenizer a given agent's
+# model uses.
+_TOKENIZER = tiktoken.get_encoding("cl100k_base")
 
 
 def _num(value, default=0.0) -> float:
@@ -29,6 +39,13 @@ def _num(value, default=0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def count_tokens(text: Optional[str]) -> int:
+    """Approximate token count for `text`, 0 for empty/None. See _TOKENIZER."""
+    if not text:
+        return 0
+    return len(_TOKENIZER.encode(text))
 
 
 def compute_live_charge_credits(
