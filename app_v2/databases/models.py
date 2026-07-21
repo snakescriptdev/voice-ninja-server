@@ -610,6 +610,11 @@ class ConversationsModel(Base):
     user_message_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     agent_message_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     system_prompt_length: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Token count (see app_v2.utils.cost_utils.count_tokens) of the system
+    # prompt at call time — used only by resolve_llm_rate_basis's staleness
+    # check, since token count tracks actual LLM cost far more closely than
+    # character length (system_prompt_length, kept as-is for the admin UI).
+    system_prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     tool_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     kb_total_pages: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     rag_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
