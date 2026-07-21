@@ -85,8 +85,14 @@ def log_public_api_call(
     api_key_id: Optional[int] = None,
 ):
     """
-    Logs a detailed public API call record.
+    Logs a detailed public API call record. Successful calls (is_success
+    True, or status_code < 400 when is_success wasn't given) are skipped
+    entirely — this log exists for error visibility/alerting, not a full
+    request audit trail, so 2xx/3xx traffic isn't worth the row.
     """
+    success = is_success if is_success is not None else status_code < 400
+    if success:
+        return
     try:
         with db():
             log_entry = APICallLogModel(
@@ -100,7 +106,7 @@ def log_public_api_call(
                 request_params=request_params,
                 request_body=request_body,
                 response_body=response_body,
-                is_success=is_success if is_success is not None else status_code < 400,
+                is_success=success,
                 error_message=error_message,
                 api_key_id=api_key_id,
             )

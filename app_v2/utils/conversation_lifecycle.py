@@ -550,6 +550,7 @@ def finalize_conversation(
         raise ValueError(f"Conversation row {conversation_row_id} not found")
     raw_cost = float(metadata.get("cost") or 0)
     calculated_cost = calculate_conversation_cost(raw_cost)
+    total_llm_usd_price = float(metadata.get("total_llm_usd_price") or 0)
 
     record.message_count = metadata.get("message_count")
     record.user_message_count = metadata.get("user_message_count")
@@ -557,6 +558,7 @@ def finalize_conversation(
     record.duration = metadata.get("duration")
     record.transcript_summary = metadata.get("transcript_summary")
     record.elevenlabs_conv_id = elevenlabs_conv_id
+    record.total_llm_usd_price = total_llm_usd_price
     record.cost = raw_cost
     if error_message:
         record.call_status = CallStatusEnum.failed
