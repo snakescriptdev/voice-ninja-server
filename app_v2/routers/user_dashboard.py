@@ -1,6 +1,6 @@
 from fastapi import APIRouter, status, Depends,HTTPException
 from fastapi.responses import HTMLResponse
-from typing import Optional
+from typing import Optional, List
 import os
 from fastapi.requests import Request
 from fastapi_sqlalchemy import db
@@ -8,14 +8,17 @@ from datetime import datetime, timezone, timedelta
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.utils.feature_access import RequireFeature
 from app_v2.databases.models import (
-    UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, 
-    ConversationsModel, PlanModel, UserSubscriptionModel, CoinsLedgerModel, 
-    PaymentModel, WebAgentModel, WebAgentLeadModel,APIDailyUsageModel,CoinPackageModel,
-    APICallLogModel
+    UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel,
+    ConversationsModel, CoinsLedgerModel,
+    PaymentModel, WidgetModel, WidgetLeadModel,APIDailyUsageModel,
+    APICallLogModel, APIKeyModel
 )
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
-from sqlalchemy import or_
-from app_v2.schemas.enum_types import CoinTransactionTypeEnum, PaymentStatusEnum,SubscriptionStatusEnum,PaymentTypeEnum
+from app_v2.schemas.enum_types import (
+    CoinTransactionTypeEnum, PaymentStatusEnum, PaymentTypeEnum,
+    SUBSCRIPTION_BILLING_EVENT_TYPES, SUBSCRIPTION_BILLING_EVENT_STATUS_LABELS,
+    PublicLogChannelEnum,
+)
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.constants import api_list
 
@@ -28,7 +31,6 @@ from app_v2.schemas.user_dashboard import (
     HourlyDistribution,
     AgentAnalytics,
     ChannelDistribution,
-    UserSubscriptionResponse,
     UserCoinUsageResponse,
     CoinBucketsResponse,
     CoinBucketItem,
@@ -43,28 +45,27 @@ from app_v2.schemas.user_dashboard import (
     APIUsageDailyItem,
     APIListItem,
     DashboardLeadItem,
-    DashboardLeadListResponse
+    DashboardLeadListResponse,
+    AgentSummaryItem,
+    PublicLogEndpointItem,
+    PublicLogEndpointListResponse,
+    DayOfMonthBucket,
+    PublicLogGraphResponse,
+    PublicLogItem,
+    PublicLogListResponse,
+    PublicLogOverviewResponse,
 )
+from app_v2.utils.agent_summary import build_agent_summaries
 from app_v2.core.logger import setup_logger
 from app_v2.utils.time_utils import format_time_ago
 from math import ceil
+import calendar
+from sqlalchemy import case
 
 logger = setup_logger(__name__)
 security = HTTPBearer()
 
 router = APIRouter(prefix="/api/v2/user-dashboard", tags=["User Dashboard"], dependencies=[Depends(security)])
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Active-like statuses (kept in sync with feature_access.py / subscriptions.py)
-# ──────────────────────────────────────────────────────────────────────────────
-# authenticated is included so the dashboard shows the correct plan immediately
-# after checkout, before the subscription.charged webhook fires.
-_ACTIVE_LIKE = (
-    SubscriptionStatusEnum.active,
-    SubscriptionStatusEnum.paused,
-    SubscriptionStatusEnum.authenticated,
-)
 
 
 @router.get("/agents-data", status_code=status.HTTP_200_OK,openapi_extra={"security":[{"BearerAuth":[]}]})
@@ -212,25 +213,25 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         ).scalar() or 0
         coin_used_this_month_change = calculate_percentage_change(coin_used_this_month, coin_used_prev_month)
 
-        active_leads_count = db.session.query(func.count(WebAgentLeadModel.id)).join(
-            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        active_leads_count = db.session.query(func.count(WidgetLeadModel.id)).join(
+            WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id
         ).filter(
-            WebAgentModel.user_id == current_user.id
+            WidgetModel.user_id == current_user.id
         ).scalar() or 0
         
-        curr_leads = db.session.query(func.count(WebAgentLeadModel.id)).join(
-            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        curr_leads = db.session.query(func.count(WidgetLeadModel.id)).join(
+            WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id
         ).filter(
-            WebAgentModel.user_id == current_user.id,
-            WebAgentLeadModel.created_at >= first_day_of_month
+            WidgetModel.user_id == current_user.id,
+            WidgetLeadModel.created_at >= first_day_of_month
         ).scalar() or 0
         
-        prev_leads = db.session.query(func.count(WebAgentLeadModel.id)).join(
-            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        prev_leads = db.session.query(func.count(WidgetLeadModel.id)).join(
+            WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id
         ).filter(
-            WebAgentModel.user_id == current_user.id,
-            WebAgentLeadModel.created_at >= first_day_prev_month,
-            WebAgentLeadModel.created_at < first_day_of_month
+            WidgetModel.user_id == current_user.id,
+            WidgetLeadModel.created_at >= first_day_prev_month,
+            WidgetLeadModel.created_at < first_day_of_month
         ).scalar() or 0
         active_leads_count_change = calculate_percentage_change(curr_leads, prev_leads)
         
@@ -359,104 +360,8 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         )
 
 
-@router.get("/get-user-subscription", response_model=UserSubscriptionResponse, openapi_extra={"security": [{"BearerAuth": []}]})
-def user_subscription(current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True))):
-    """
-    Returns the user's current subscription and plan details.
-
-    Priority order:
-      1. active/paused/authenticated with cancel_at_period_end=False
-         (the clean, canonical subscription — includes authenticated so the
-         dashboard reflects the new plan immediately after checkout)
-      2. active/paused/authenticated with cancel_at_period_end=True
-         (update or cancel in-flight — user still has access until period end)
-      3. Most recent row regardless of status
-         (expired/cancelled — show last known plan for display purposes)
-    """
-    try:
-        logger.info(f"Fetching user subscription for user: {current_user.id}")
-
-        # Priority 1: clean active/paused/authenticated subscription
-        user_subscription = (
-            db.session.query(UserSubscriptionModel)
-            .filter(
-                UserSubscriptionModel.user_id == current_user.id,
-                UserSubscriptionModel.status.in_(_ACTIVE_LIKE),
-                UserSubscriptionModel.cancel_at_period_end == False,
-            )
-            .order_by(UserSubscriptionModel.created_at.desc())
-            .first()
-        )
-
-        # Priority 2: active/paused/authenticated but cancel or update in-flight
-        if not user_subscription:
-            user_subscription = (
-                db.session.query(UserSubscriptionModel)
-                .filter(
-                    UserSubscriptionModel.user_id == current_user.id,
-                    UserSubscriptionModel.status.in_(_ACTIVE_LIKE),
-                )
-                .order_by(UserSubscriptionModel.created_at.desc())
-                .first()
-            )
-
-        # Priority 3: last resort — most recent regardless of status
-        if not user_subscription:
-            user_subscription = (
-                db.session.query(UserSubscriptionModel)
-                .filter(UserSubscriptionModel.user_id == current_user.id)
-                .order_by(UserSubscriptionModel.created_at.desc())
-                .first()
-            )
-
-        if not user_subscription:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="User subscription not found"
-            )
-
-        plan = user_subscription.plan
-        logger.info(f"User subscription found: {user_subscription}")
-        return UserSubscriptionResponse(
-            # ---- subscription ----
-            subscription_id=user_subscription.id,
-            status=user_subscription.status,
-            current_period_start=user_subscription.current_period_start.date(),
-            current_period_end=user_subscription.current_period_end.date(),
-            cancel_at_period_end=user_subscription.cancel_at_period_end,
-            provider=user_subscription.provider,
-            provider_subscription_id=user_subscription.provider_subscription_id,
-            marked_for_update=True if user_subscription.next_plan_id else False,
-            next_plan_id=user_subscription.next_plan_id or None,
-
-            # ---- plan ----
-            plan_id=plan.id,
-            plan_name=plan.display_name,
-            description=plan.description,
-            price=plan.price,
-            currency=plan.currency,
-            coins_included=plan.coins_included,
-            carry_forward_coins=plan.carry_forward_coins,
-            billing_period=plan.billing_period,
-            icon=plan.icon,
-            gradient_color=plan.gradient_color,
-            mark_as_popular=plan.mark_as_popular,
-            is_active=plan.is_active,
-
-            # ---- features ----
-            features=plan.features
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in user_subscription: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch user subscription data: {str(e)}"
-        )
-
 @router.get("/coin-usage", response_model=UserCoinUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(require_active_user())):
+def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True))):
     try:
         balance = get_user_coin_balance(current_user.id)
         
@@ -488,15 +393,10 @@ def get_coin_buckets(
 ):
     try:
         skip = (page - 1) * size
-        now = datetime.now(timezone.utc)
 
         base_query = db.session.query(CoinsLedgerModel).filter(
             CoinsLedgerModel.user_id == current_user.id,
             CoinsLedgerModel.remaining_coins > 0,
-            or_(
-                CoinsLedgerModel.expiry_at.is_(None),
-                CoinsLedgerModel.expiry_at > now
-            )
         )
 
         total_available = (
@@ -504,10 +404,6 @@ def get_coin_buckets(
             .filter(
                 CoinsLedgerModel.user_id == current_user.id,
                 CoinsLedgerModel.remaining_coins > 0,
-                or_(
-                    CoinsLedgerModel.expiry_at.is_(None),
-                    CoinsLedgerModel.expiry_at > now
-                )
             )
             .scalar() or 0
         )
@@ -516,20 +412,13 @@ def get_coin_buckets(
 
         buckets_query = (
             base_query
-            .order_by(CoinsLedgerModel.expiry_at.asc().nulls_last())
+            .order_by(CoinsLedgerModel.created_at.asc())
             .offset(skip)
             .limit(size)
             .all()
         )
 
         reference_ids = [item.reference_id for item in buckets_query if item.reference_id]
-
-        subscriptions = (
-            db.session.query(UserSubscriptionModel)
-            .filter(UserSubscriptionModel.id.in_(reference_ids))
-            .all()
-        )
-        subscription_map = {s.id: s for s in subscriptions}
 
         payments = (
             db.session.query(PaymentModel)
@@ -538,49 +427,19 @@ def get_coin_buckets(
         )
         payment_map = {p.id: p for p in payments}
 
-        bundle_ids = []
-        for p in payments:
-            metadata = p.metadata_json or {}
-            if p.payment_type == PaymentTypeEnum.coin_purchase:
-                bundle_id = metadata.get("bundle_id")
-                if bundle_id:
-                    bundle_ids.append(bundle_id)
-
-        bundles = (
-            db.session.query(CoinPackageModel)
-            .filter(CoinPackageModel.id.in_(bundle_ids))
-            .all()
-        )
-        bundle_map = {b.id: b for b in bundles}
-
         buckets = []
-        now = datetime.now(timezone.utc)
 
         for item in buckets_query:
             source_name = "Coins"
 
-            sub = subscription_map.get(item.reference_id)
-            if sub and sub.plan:
-                source_name = f"{sub.plan.display_name} Subscription"
-            else:
-                payment = payment_map.get(item.reference_id)
-                if payment and payment.payment_type == PaymentTypeEnum.coin_purchase:
-                    metadata = payment.metadata_json or {}
-                    bundle_id = metadata.get("bundle_id")
-                    bundle = bundle_map.get(bundle_id)
-                    if bundle:
-                        source_name = bundle.name
-
-            bucket_status = None
-            if item.expiry_at and now <= item.expiry_at <= now + timedelta(days=7):
-                bucket_status = "expiring soon"
+            payment = payment_map.get(item.reference_id)
+            if payment and payment.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
+                source_name = "Credit Purchase"
 
             buckets.append(
                 CoinBucketItem(
                     source=source_name,
                     amount=item.remaining_coins,
-                    expiry_date=item.expiry_at,
-                    status=bucket_status
                 )
             )
 
@@ -599,6 +458,17 @@ def get_coin_buckets(
         logger.exception("Error fetching coin buckets")
         raise HTTPException(status_code=500, detail="Failed to fetch coin buckets")
 
+@router.get("/agents-summary", response_model=List[AgentSummaryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_agents_summary(current_user: UnifiedAuthModel = Depends(require_active_user())):
+    """Per-agent summary for the logged-in user: web-agent / widget counts and
+    conversation success / failed counts."""
+    try:
+        return build_agent_summaries(current_user.id)
+    except Exception as e:
+        logger.error(f"Error in get_agents_summary: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/usage-history", response_model=UsageHistoryResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_usage_history(
     page: int = 1,
@@ -609,15 +479,27 @@ def get_usage_history(
     try:
         skip = (page - 1) * size
 
+        # All coin transactions (credits added, deductions, expiries, refunds,
+        # admin adjustments, resets) — not just usage — so the balance changes
+        # in the running history are fully accounted for.
         base_query = db.session.query(CoinsLedgerModel).filter(
             CoinsLedgerModel.user_id == current_user.id,
-            CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage
         )
 
         total_count = base_query.count()
 
         history_query = base_query.order_by(CoinsLedgerModel.created_at.desc()).offset(skip).limit(size).all()
-        
+
+        action_map = {
+            "debit_usage": "AI Interaction",
+            "credit_subscription": "Subscription Credits",
+            "credit_purchase": "Credits Purchased",
+            "refund": "Refund",
+            "expired": "Coins Expired",
+            "carry_forward_reset": "Unused Coins Reset",
+            "admin_adjustment": "Admin Adjustment",
+        }
+
         history = []
         for item in history_query:
             agent_name = "System"
@@ -625,21 +507,19 @@ def get_usage_history(
                 conv = db.session.query(ConversationsModel).filter(ConversationsModel.id == item.reference_id).first()
                 if conv and conv.agent:
                     agent_name = conv.agent.agent_name
-            
-            action_map = {
-                "debit_usage": "AI Interaction",
-                "expired": "Coins Expired",
-                "carry_forward_reset": "Unused Coins Reset"
-            }
+
             source_name = str(item.transaction_type.value if hasattr(item.transaction_type, 'value') else item.transaction_type)
             friendly_action = action_map.get(source_name, source_name.replace("_", " ").title())
 
             history.append(UsageHistoryItem(
                 date_time=item.created_at,
                 action=friendly_action,
+                transaction_type=source_name,
                 agent_name=agent_name,
-                coins_used=abs(item.coins),
-                balance=item.balance_after
+                coins=item.coins,                              # signed
+                balance_before=item.balance_after - item.coins,
+                balance_after=item.balance_after,
+                reason=item.notes,
             ))
             
         total_pages = ceil(total_count / size) if size > 0 else 1
@@ -661,45 +541,58 @@ def get_billing_history(
     size: int = 10,
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
-    """Lists past payments and billing events."""
+    """
+    Lists past payments plus non-payment subscription lifecycle events
+    (paused, cancelled by the user, or cancelled by admin because the plan
+    was deactivated/deleted) — merged and sorted by date since they come
+    from two different tables (PaymentModel and ActivityLogModel).
+    """
     try:
         skip = (page - 1) * size
 
-        base_query = db.session.query(PaymentModel).filter(
+        payments = db.session.query(PaymentModel).filter(
             PaymentModel.user_id == current_user.id
-        )
+        ).all()
 
-        total_count = base_query.count()
+        billing_events = db.session.query(ActivityLogModel).filter(
+            ActivityLogModel.user_id == current_user.id,
+            ActivityLogModel.event_type.in_(SUBSCRIPTION_BILLING_EVENT_TYPES),
+        ).all()
 
-        payments = base_query.order_by(PaymentModel.created_at.desc()).offset(skip).limit(size).all()
-        
-        plans = {p.id: p.display_name for p in db.session.query(PlanModel).all()}
-        from app_v2.databases.models import CoinPackageModel
-        bundles = {b.id: b.name for b in db.session.query(CoinPackageModel).all()}
-        
-        history = []
+        dated_items = []
         for p in payments:
-            description = "Miscellaneous Payment"
-            from app_v2.schemas.enum_types import PaymentTypeEnum
-            if p.payment_type == PaymentTypeEnum.subscription:
-                p_id = p.metadata_json.get("plan_id") if p.metadata_json else None
-                plan_name = plans.get(p_id, "Monthly Subscription")
-                description = f"Subscription: {plan_name}"
-            elif p.payment_type in [PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon]:
-                b_id = p.metadata_json.get("bundle_id") if p.metadata_json else None
-                bundle_name = bundles.get(b_id, "Coin Bundle")
-                description = f"Purchase: {bundle_name}"
-            
-            history.append(BillingHistoryItem(
+            if p.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
+                coins = p.metadata_json.get("coins") if p.metadata_json else None
+                description = f"Credit Purchase ({coins} credits)" if coins else "Credit Purchase"
+            elif p.payment_type == PaymentTypeEnum.subscription:
+                description = "Subscription Payment"
+            else:
+                description = "Miscellaneous Payment"
+
+            dated_items.append((p.created_at, BillingHistoryItem(
                 date=p.created_at,
                 description=description,
                 amount=p.amount,
                 currency=p.currency,
                 status=p.status,
                 invoice_url=p.invoice_url
-            ))
-            
+            )))
+
+        for log in billing_events:
+            dated_items.append((log.created_at, BillingHistoryItem(
+                date=log.created_at,
+                description=log.description,
+                amount=0.0,
+                currency="",
+                status=SUBSCRIPTION_BILLING_EVENT_STATUS_LABELS.get(log.event_type, log.event_type),
+                invoice_url=None
+            )))
+
+        dated_items.sort(key=lambda item: item[0], reverse=True)
+
+        total_count = len(dated_items)
         total_pages = ceil(total_count / size) if size > 0 else 1
+        history = [item for _, item in dated_items[skip: skip + size]]
 
         return BillingHistoryResponse(
             total=total_count,
@@ -721,13 +614,17 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
         now = datetime.now(timezone.utc)
         last_24h = now - timedelta(hours=24)
         
+        # Scoped to channel=public_api so websocket call rows (added for the
+        # Logs page) don't inflate these "Developer API" HTTP-only metrics.
         total_api_calls_this_month = db.session.query(func.count(APICallLogModel.id)).filter(
             APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == PublicLogChannelEnum.public_api,
             APICallLogModel.created_at >= first_day_of_month
         ).scalar() or 0
-        
+
         total_api_calls_prev_month = db.session.query(func.count(APICallLogModel.id)).filter(
             APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == PublicLogChannelEnum.public_api,
             APICallLogModel.created_at >= first_day_prev_month,
             APICallLogModel.created_at < first_day_of_month
         ).scalar() or 0
@@ -735,11 +632,13 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
 
         api_coins_used_this_month = db.session.query(func.sum(APICallLogModel.coins_used)).filter(
             APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == PublicLogChannelEnum.public_api,
             APICallLogModel.created_at >= first_day_of_month
         ).scalar() or 0
 
         avg_api_response_time_24h = db.session.query(func.avg(APICallLogModel.response_time_ms)).filter(
             APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == PublicLogChannelEnum.public_api,
             APICallLogModel.created_at >= last_24h
         ).scalar() or 0.0
 
@@ -792,7 +691,8 @@ def get_user_api_logs(
         skip = (page - 1) * size
         
         base_query = db.session.query(APICallLogModel).filter(
-            APICallLogModel.user_id == current_user.id
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == PublicLogChannelEnum.public_api,
         )
         
         total_count = base_query.count()
@@ -811,6 +711,265 @@ def get_user_api_logs(
         logger.error(f"Error in get_user_api_logs: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+PUBLIC_LOG_CHANNELS = [
+    PublicLogChannelEnum.public_api,
+    PublicLogChannelEnum.public_websocket,
+    PublicLogChannelEnum.widget_websocket,
+]
+
+
+def _parse_month_param(month: Optional[str]) -> tuple:
+    """Returns (year, month) for a "YYYY-MM" string, defaulting to the current UTC month."""
+    if month:
+        try:
+            parsed = datetime.strptime(month, "%Y-%m")
+            return parsed.year, parsed.month
+        except ValueError:
+            raise HTTPException(status_code=400, detail="month must be in YYYY-MM format")
+    now = datetime.now(timezone.utc)
+    return now.year, now.month
+
+
+def _day_of_month_graph(base_filters: list, year: int, month: int) -> PublicLogGraphResponse:
+    """Builds the full day-of-month range for `month`, filling gaps with 0 —
+    mirrors the fill-the-full-range pattern used by /analytics's daily trends."""
+    days_in_month = calendar.monthrange(year, month)[1]
+    month_start = datetime(year, month, 1, tzinfo=timezone.utc)
+    month_end = (
+        datetime(year + 1, 1, 1, tzinfo=timezone.utc) if month == 12
+        else datetime(year, month + 1, 1, tzinfo=timezone.utc)
+    )
+
+    rows = (
+        db.session.query(
+            func.extract("day", APICallLogModel.created_at).label("day"),
+            func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
+            func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
+        )
+        .filter(*base_filters, APICallLogModel.created_at >= month_start, APICallLogModel.created_at < month_end)
+        .group_by("day")
+        .all()
+    )
+    by_day = {int(r.day): r for r in rows}
+    buckets = [
+        DayOfMonthBucket(
+            day=d,
+            success_count=int(by_day[d].success_count or 0) if d in by_day else 0,
+            failure_count=int(by_day[d].failure_count or 0) if d in by_day else 0,
+        )
+        for d in range(1, days_in_month + 1)
+    ]
+    return PublicLogGraphResponse(month=f"{year:04d}-{month:02d}", buckets=buckets)
+
+
+@router.get("/public-logs/endpoints", response_model=PublicLogEndpointListResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_log_endpoints(current_user: UnifiedAuthModel = Depends(require_active_user())):
+    """
+    All-time success/failure/total counts per (channel, route, method) across
+    this user's public API + public websocket surfaces — backs the Logs
+    page's endpoint table. All-time (not month-scoped) so a chronically
+    broken endpoint set up months ago still surfaces here; the month view
+    lives in the graph endpoints below.
+    """
+    try:
+        rows = (
+            db.session.query(
+                APICallLogModel.channel,
+                APICallLogModel.api_route,
+                APICallLogModel.method,
+                func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
+                func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
+                func.count(APICallLogModel.id).label("total_count"),
+            )
+            .filter(
+                APICallLogModel.user_id == current_user.id,
+                APICallLogModel.channel.in_(PUBLIC_LOG_CHANNELS),
+            )
+            .group_by(APICallLogModel.channel, APICallLogModel.api_route, APICallLogModel.method)
+            .all()
+        )
+        endpoints = [
+            PublicLogEndpointItem(
+                channel=row.channel.value if row.channel else PublicLogChannelEnum.public_api.value,
+                route=row.api_route,
+                method=row.method,
+                success_count=int(row.success_count or 0),
+                failure_count=int(row.failure_count or 0),
+                total_count=int(row.total_count or 0),
+            )
+            for row in rows
+        ]
+        return PublicLogEndpointListResponse(endpoints=endpoints)
+    except Exception as e:
+        logger.error(f"Error in get_public_log_endpoints: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public-logs/summary-graph", response_model=PublicLogGraphResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_log_summary_graph(month: Optional[str] = None, current_user: UnifiedAuthModel = Depends(require_active_user())):
+    """Day-of-month success/failure counts across all this user's public endpoints, for `month` (YYYY-MM, default current month)."""
+    try:
+        year, mon = _parse_month_param(month)
+        base_filters = [
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel.in_(PUBLIC_LOG_CHANNELS),
+        ]
+        return _day_of_month_graph(base_filters, year, mon)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_public_log_summary_graph: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public-logs/overview", response_model=PublicLogOverviewResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_log_overview(current_user: UnifiedAuthModel = Depends(require_active_user())):
+    """All-time total/success/failure call counts across this user's public API + public websocket surfaces."""
+    try:
+        row = (
+            db.session.query(
+                func.count(APICallLogModel.id).label("total_calls"),
+                func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
+                func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
+            )
+            .filter(
+                APICallLogModel.user_id == current_user.id,
+                APICallLogModel.channel.in_(PUBLIC_LOG_CHANNELS),
+            )
+            .first()
+        )
+        return PublicLogOverviewResponse(
+            total_calls=int(row.total_calls or 0),
+            success_count=int(row.success_count or 0),
+            failure_count=int(row.failure_count or 0),
+        )
+    except Exception as e:
+        logger.error(f"Error in get_public_log_overview: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public-logs/hourly-distribution", response_model=List[HourlyDistribution], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_log_hourly_distribution(current_user: UnifiedAuthModel = Depends(require_active_user())):
+    """All-time hour-of-day distribution of this user's public API + public websocket calls, for spotting peak usage times."""
+    try:
+        hourly_data = (
+            db.session.query(
+                func.extract("hour", APICallLogModel.created_at).label("hour"),
+                func.count(APICallLogModel.id).label("count"),
+            )
+            .filter(
+                APICallLogModel.user_id == current_user.id,
+                APICallLogModel.channel.in_(PUBLIC_LOG_CHANNELS),
+            )
+            .group_by("hour")
+            .all()
+        )
+
+        def format_hour(h):
+            h = int(h)
+            if h == 0: return "12 AM"
+            if h == 12: return "12 PM"
+            if h < 12: return f"{h} AM"
+            return f"{h-12} PM"
+
+        by_hour = {int(r.hour): int(r.count) for r in hourly_data}
+        return [
+            HourlyDistribution(hour=h, time_label=format_hour(h), count=by_hour.get(h, 0))
+            for h in range(24)
+        ]
+    except Exception as e:
+        logger.error(f"Error in get_public_log_hourly_distribution: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public-logs/logs", response_model=PublicLogListResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_logs(
+    channel: PublicLogChannelEnum,
+    route: str,
+    page: int = 1,
+    size: int = 20,
+    only_failures: bool = True,
+    api_key_id: Optional[int] = None,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    """Paginated call log rows (full request/response detail) for one endpoint; defaults to failures only."""
+    try:
+        skip = (page - 1) * size
+        base_query = db.session.query(APICallLogModel).filter(
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == channel,
+            APICallLogModel.api_route == route,
+        )
+        if only_failures:
+            base_query = base_query.filter(APICallLogModel.is_success == False)
+        if api_key_id is not None:
+            base_query = base_query.filter(APICallLogModel.api_key_id == api_key_id)
+
+        total_count = base_query.count()
+        logs = base_query.order_by(APICallLogModel.created_at.desc()).offset(skip).limit(size).all()
+        total_pages = ceil(total_count / size) if size > 0 else 1
+
+        key_ids = {log.api_key_id for log in logs if log.api_key_id}
+        key_names = {}
+        if key_ids:
+            key_names = {
+                k.id: k.name or k.client_id
+                for k in db.session.query(APIKeyModel).filter(APIKeyModel.id.in_(key_ids)).all()
+            }
+
+        return PublicLogListResponse(
+            total=total_count,
+            page=page,
+            size=size,
+            pages=total_pages,
+            items=[
+                PublicLogItem(
+                    id=log.id,
+                    channel=log.channel.value if log.channel else None,
+                    api_route=log.api_route,
+                    method=log.method,
+                    status_code=log.status_code,
+                    is_success=log.is_success,
+                    request_params=log.request_params,
+                    request_body=log.request_body,
+                    response_body=log.response_body,
+                    error_message=log.error_message,
+                    response_time_ms=log.response_time_ms,
+                    created_at=log.created_at,
+                    api_key_id=log.api_key_id,
+                    api_key_name=key_names.get(log.api_key_id),
+                )
+                for log in logs
+            ],
+        )
+    except Exception as e:
+        logger.error(f"Error in get_public_logs: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/public-logs/graph", response_model=PublicLogGraphResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_public_log_graph(
+    channel: PublicLogChannelEnum,
+    route: str,
+    month: Optional[str] = None,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    """Day-of-month success/failure counts scoped to one (channel, route), for `month` (YYYY-MM, default current month)."""
+    try:
+        year, mon = _parse_month_param(month)
+        base_filters = [
+            APICallLogModel.user_id == current_user.id,
+            APICallLogModel.channel == channel,
+            APICallLogModel.api_route == route,
+        ]
+        return _day_of_month_graph(base_filters, year, mon)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in get_public_log_graph: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/leads", response_model=DashboardLeadListResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_leads(
     page: int = 1,
@@ -821,22 +980,22 @@ def get_user_leads(
     try:
         skip = (page - 1) * size
         
-        query = db.session.query(WebAgentLeadModel).join(
-            WebAgentModel, WebAgentLeadModel.web_agent_id == WebAgentModel.id
+        query = db.session.query(WidgetLeadModel).join(
+            WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id
         ).filter(
-            WebAgentModel.user_id == current_user.id
+            WidgetModel.user_id == current_user.id
         )
         
         if search:
             term = f"%{search}%"
             query = query.filter(
-                (WebAgentLeadModel.name.ilike(term)) |
-                (WebAgentLeadModel.email.ilike(term)) |
-                (WebAgentLeadModel.phone.ilike(term))
+                (WidgetLeadModel.name.ilike(term)) |
+                (WidgetLeadModel.email.ilike(term)) |
+                (WidgetLeadModel.phone.ilike(term))
             )
             
         total = query.count()
-        leads = query.order_by(WebAgentLeadModel.created_at.desc()).offset(skip).limit(size).all()
+        leads = query.order_by(WidgetLeadModel.created_at.desc()).offset(skip).limit(size).all()
         
         total_pages = ceil(total / size) if size > 0 else 1
         
@@ -848,8 +1007,9 @@ def get_user_leads(
             leads=[
                 DashboardLeadItem(
                     id=lead.id,
-                    web_agent_id=lead.web_agent_id,
-                    web_agent_name=lead.web_agent.web_agent_name,
+                    widget_id=lead.widget_id,
+                    widget_name=lead.widget.widget_name,
+                    widget_public_id=lead.widget.public_id if lead.widget else None,
                     name=lead.name,
                     email=lead.email,
                     phone=lead.phone,

@@ -34,19 +34,17 @@ class ContentTypeEnum(str, Enum):
 
 
 class UseCases(str,Enum):
-    email_assistant = "email_assistant"
-    task_execution = "task_execution"
-    system_assistant = "system_assistant"
     knowledge_lookup = "knowledge_lookup"
     customer_support = "customer_support"
+    healthcare_assistant = "healthcare_assistant"
     custom = "custom"
 
 
 class Capebilites(str,Enum):
-    email_integration = "email_integration"
-    calendar_management = "calendar_management"
     knowledge_base = "knowledge_base"
     api_integration = "api_integration"
+    agent_transfer = "agent_transfer"
+    end_call = "end_call"
 
 class ResponseStyleEnum(str, Enum):
     professional = "professional"
@@ -66,12 +64,24 @@ class PhoneNumberAssignStatus(str,Enum):
 class CallStatusEnum(str,Enum):
     success = "success"
     failed = "failed"
+    in_progress = "in_progress"
 
 class ChannelEnum(str,Enum):
-    chat = "chat"
+    test_voice = "Test voice"
     call= "call"
     widget = "widget"
     api = "api"
+    web_agent = "Web Agent"
+
+class PublicLogChannelEnum(str, Enum):
+    """
+    Which public surface a logged api_call_logs row came from. Distinct from
+    ChannelEnum (which describes ConversationsModel.channel and already has
+    an unrelated "api" value) to avoid collision/confusion.
+    """
+    public_api = "public_api"
+    public_websocket = "public_websocket"
+    widget_websocket = "widget_websocket"
 
 class WidgetPosition(str,Enum):
     top_left = "top-left"
@@ -79,28 +89,14 @@ class WidgetPosition(str,Enum):
     bottom_left = "bottom-left"
     bottom_right = "bottom-right"
 
-class BillingPeriodEnum(str, Enum):
-    monthly = "monthly"
-    annual = "annual"
-
-class PlanIconEnum(str, Enum):
-    zap = "zap"
-    sparkles = "sparkles"
-    crown = "crown"
+class WebAgentPosition(str, Enum):
+    left = "left"
+    center = "center"
+    right = "right"
 
 class PaymentProviderEnum(str, Enum):
     razorpay = "razorpay"
     stripe = "stripe"
-
-class SubscriptionStatusEnum(str, Enum):
-    active    = "active"
-    cancelled = "cancelled"
-    pending   = "pending"
-    halted    = "halted"
-    paused    = "paused"
-    expired   = "expired"
-    completed = "completed"
-    authenticated = "authenticated"
 
 class PaymentStatusEnum(str, Enum):
     pending = "pending"
@@ -127,17 +123,43 @@ class PlanFeatureEnum(str,Enum):
     phone_numbers = "phone_numbers"
     monthly_minutes = "monthly_minutes"
     knowledge_base = "knowledge_base"
-    web_voice_agent = "web_voice_agent"
+    widget_agent = "widget_agent"
     api_access = "api_access"
     analytics_dashboard= "analytics_dashboard"
     custom_voice_cloning= "custom_voice_cloning"
+    web_agent = "web_agent"
 
-class ScheduledDowngradeStatusEnum(str, Enum):
-    pending = "pending"
-    completed = "completed"
-    failed = "failed"
-    cancelled = "cancelled"
 
-class ScheduledDowngradeTriggerEnum(str, Enum):
-    plan_change = "plan_change"
-    admin_edit = "admin_edit"
+# Features that are pure on/off gates with no numeric usage tracking behind
+# them (no entry in FEATURE_USAGE_HANDLERS). A "limit" has no meaning for
+# these — enabled always means unlimited, so storing/returning anything but
+# None for them is misleading.
+BOOLEAN_ONLY_PLAN_FEATURES = {PlanFeatureEnum.analytics_dashboard, PlanFeatureEnum.web_agent}
+
+
+class SubscriptionBillingEventEnum(str, Enum):
+    """
+    ActivityLogModel.event_type values for subscription lifecycle changes
+    that have no associated PaymentModel row (pause/cancel), but still need
+    to show up in the user's billing history.
+    """
+    paused = "subscription_paused"
+    cancellation_scheduled = "subscription_cancellation_scheduled"
+    cancelled = "subscription_cancelled"
+    cancelled_admin_inactive = "subscription_cancelled_admin_inactive"
+    cancelled_admin_deleted = "subscription_cancelled_admin_deleted"
+
+
+# All event_types billing history should pull in from ActivityLogModel.
+SUBSCRIPTION_BILLING_EVENT_TYPES = {e.value for e in SubscriptionBillingEventEnum}
+
+# Display status shown to the user for each event — kept coarse (paused /
+# cancellation_scheduled / cancelled); the *reason* for admin-triggered
+# cancellations lives in the event's description text instead.
+SUBSCRIPTION_BILLING_EVENT_STATUS_LABELS = {
+    SubscriptionBillingEventEnum.paused.value: "paused",
+    SubscriptionBillingEventEnum.cancellation_scheduled.value: "cancellation_scheduled",
+    SubscriptionBillingEventEnum.cancelled.value: "cancelled",
+    SubscriptionBillingEventEnum.cancelled_admin_inactive.value: "cancelled",
+    SubscriptionBillingEventEnum.cancelled_admin_deleted.value: "cancelled",
+}

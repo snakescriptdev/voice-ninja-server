@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
-from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, BillingPeriodEnum, PlanIconEnum, PaymentProviderEnum, SubscriptionStatusEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, ScheduledDowngradeStatusEnum, ScheduledDowngradeTriggerEnum
+from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, PaymentProviderEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, PublicLogChannelEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -144,20 +144,30 @@ class UnifiedAuthModel(Base):
     created_at = Column(DateTime(timezone=True), default=func.now())
     updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
 
+    # Persisted dismissal for the two low-credit header banners, so a user's
+    # "x" click sticks across devices/sessions. `_recovered` tracks whether the
+    # balance has gone back above the banner's threshold at least once since it
+    # was dismissed — once it drops below the threshold again after that, the
+    # dismissal is cleared (re-armed) so the warning resurfaces for the new
+    # low-balance episode instead of staying hidden forever.
+    low_credits_banner_dismissed = Column(Boolean, default=False, server_default="false")
+    low_credits_banner_recovered = Column(Boolean, default=False, server_default="false")
+    critical_credits_banner_dismissed = Column(Boolean, default=False, server_default="false")
+    critical_credits_banner_recovered = Column(Boolean, default=False, server_default="false")
+
     agents = relationship("AgentModel", back_populates="user")
     voices = relationship("VoiceModel", back_populates="user")
     notification_settings = relationship("UserNotificationSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
-    twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", cascade="all, delete-orphan")
     knowledge_bases = relationship("KnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
     functions = relationship("FunctionModel",back_populates="user",cascade="all, delete-orphan")
     conversations = relationship("ConversationsModel",back_populates="user",cascade="all, delete-orphan")
-    web_agents = relationship("WebAgentModel", back_populates="user",cascade="all, delete-orphan")
-    subscriptions = relationship("UserSubscriptionModel", back_populates="user",cascade="all, delete-orphan")
+    widgets = relationship("WidgetModel", back_populates="user",cascade="all, delete-orphan")
+    web_agent_pages = relationship("WebAgentPageModel", back_populates="user",cascade="all, delete-orphan")
     payments = relationship("PaymentModel", back_populates="user",cascade="all, delete-orphan")
     coins_ledger = relationship("CoinsLedgerModel", back_populates="user",cascade="all, delete-orphan")
     api_keys = relationship("APIKeyModel", back_populates="user", cascade="all, delete-orphan")
     api_usage = relationship("APIDailyUsageModel", back_populates="user", cascade="all, delete-orphan")
-    scheduled_downgrades = relationship("ScheduledDowngradeModel", back_populates="user", cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -260,7 +270,38 @@ class AgentModel(Base):
     modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
     built_in_tools: Mapped[dict] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True, default={})
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True,server_default="true")
-    
+    timezone: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # Static, pre-call expected LLM cost (USD per minute) for this agent's
+    # selected model, refreshed from ElevenLabs' llm-usage/calculate endpoint on
+    # every create/edit. This is a FLOOR estimate (config-only; ignores tool /
+    # RAG runtime) used solely for the live low-balance cutoff — never for
+    # billing, which reconciles against the real reported credits after a call.
+    llm_price_per_minute: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
+    # ─── LLM cost calibration constants (current-config cache) ─────────────
+    # Total KB pages ElevenLabs has indexed across this agent's attached
+    # documents, from GET /convai/agent/{id}/knowledge-base/size. Cached here
+    # (refreshed on create/edit like llm_price_per_minute) since it requires
+    # an external call — re-fetching it on every conversation would be
+    # wasteful. 0 when no KB is attached, None if the fetch hasn't run yet.
+    kb_total_pages: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
+    # Whether RAG is enabled for this agent's knowledge base. This platform
+    # always sends rag.enabled=true to ElevenLabs on create/update (see
+    # ElevenLabsAgent.create_agent), so this is currently always True — stored
+    # explicitly (rather than assumed) so calibration data stays correct if a
+    # toggle is ever added.
+    rag_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+    # Estimated credits needed for a hypothetical 1-minute call on this agent
+    # right now, via compute_live_charge_credits(elapsed_minutes=1). Refreshed
+    # after every one of the agent's calls finalizes — see
+    # finalize_conversation() in app_v2/utils/conversation_lifecycle.py. Used
+    # to warn a user when their balance can't cover even one more minute with
+    # this specific agent (see _maybe_alert_low_agent_balance()).
+    avg_credits_per_minute: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+
     user = relationship("UnifiedAuthModel",back_populates="agents")
 
     voice = relationship("VoiceModel",back_populates="agents")
@@ -273,7 +314,8 @@ class AgentModel(Base):
     phone_number = relationship("PhoneNumberService",back_populates="agent")
     agent_knowledge_bases = relationship("AgentKnowledgeBaseBridge",back_populates="agent",cascade="all, delete-orphan", order_by="AgentKnowledgeBaseBridge.id")
     conversations = relationship("ConversationsModel",back_populates="agent",cascade="all, delete-orphan")
-    web_agent = relationship("WebAgentModel",back_populates="agent",cascade="all, delete-orphan")
+    widget = relationship("WidgetModel",back_populates="agent",cascade="all, delete-orphan")
+    web_agent_pages = relationship("WebAgentPageModel",back_populates="agent",cascade="all, delete-orphan")
 
 
 
@@ -506,6 +548,9 @@ class PhoneNumberService(Base):
     #sid
     sid: Mapped[str] = mapped_column(String)
 
+    # ElevenLabs phone_number_id once this number has been imported into ElevenLabs
+    elevenlabs_phone_id: Mapped[str] = mapped_column(String, nullable=True)
+
     #relationships
     user = relationship("UnifiedAuthModel", backref="phone_numbers")
     agent = relationship("AgentModel", back_populates="phone_number")
@@ -514,10 +559,12 @@ class TwilioUserCreds(Base):
     __tablename__ = "twilio_user_creds"
 
     id: Mapped[int] = mapped_column(Integer,primary_key=True,autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"),unique=True) #enusre 1:1 
+    user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"))
 
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
     account_sid: Mapped[str] = mapped_column(String,nullable=False)
     auth_token: Mapped[str] = mapped_column(String,nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     user = relationship("UnifiedAuthModel", back_populates="twilio_user_creds")
 
@@ -536,14 +583,57 @@ class ConversationsModel(Base):
     transcript_summary: Mapped[str] = mapped_column(String,nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     elevenlabs_conv_id: Mapped[str] = mapped_column(String,nullable=True)
+    # Actual TOTAL ElevenLabs cost for the call, in EL credits (from metadata.cost).
     cost: Mapped[int] = mapped_column(Integer,nullable=True)
+    error_message : Mapped[str] = mapped_column(String,nullable=True)
+
+    # ---- Cost audit columns (see app_v2/utils/cost_utils.py) ----
+    # Live estimates accumulated during the call, stored in ₹ for the admin audit.
+    calculated_conversation_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    calculated_llm_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    calculated_telephony_cost: Mapped[Optional[float]] = mapped_column(Float, nullable=True, default=0.0)
+    # Actual ElevenLabs charge split from post-call metadata, in EL credits.
+    actual_llm_credits: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    actual_conversation_credits: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # What we actually deducted from the user (their coins) and the resulting margin.
+    coins_charged_to_user: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    profit_percentage: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    # True when the call was cut short because the user ran out of coins mid-call
+    # (call_status is failed and error_message says so). Used for filtering.
+    ended_due_to_low_balance: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
+    # ─── LLM cost calibration snapshot (captured at finalize time) ─────────
+    # These freeze what the agent's cost drivers WERE when this call ran, so
+    # later agent edits don't retroactively change a past call's context —
+    # a per-call stand-in for real agent-version history, which doesn't exist
+    # yet. See app_v2/utils/conversation_lifecycle.py finalize_conversation().
+    user_message_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    agent_message_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    system_prompt_length: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # Token count (see app_v2.utils.cost_utils.count_tokens) of the system
+    # prompt at call time — used only by resolve_llm_rate_basis's staleness
+    # check, since token count tracks actual LLM cost far more closely than
+    # character length (system_prompt_length, kept as-is for the admin UI).
+    system_prompt_tokens: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tool_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    kb_total_pages: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    rag_enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+
+    # Which CoinUsageSettingsVersionModel snapshot was in effect when this
+    # call was finalized/charged — see conversation_lifecycle.py's
+    # get_or_create_current_settings_version().
+    settings_version_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("coin_usage_settings_versions.id"), nullable=True
+    )
+
     #relationships
     agent = relationship("AgentModel",back_populates="conversations")
     user = relationship("UnifiedAuthModel",back_populates="conversations")
-    lead = relationship("WebAgentLeadModel", back_populates="conversation", uselist=False)
+    lead = relationship("WidgetLeadModel", back_populates="conversation", uselist=False)
+    settings_version = relationship("CoinUsageSettingsVersionModel", back_populates="conversations")
 
-class WebAgentModel(Base):
-    __tablename__ = "web_agents"
+class WidgetModel(Base):
+    __tablename__ = "widgets"
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
@@ -564,7 +654,7 @@ class WebAgentModel(Base):
         nullable=False
     )
 
-    web_agent_name: Mapped[str] = mapped_column(String(255))
+    widget_name: Mapped[str] = mapped_column(String(255))
     is_enabled: Mapped[bool] = mapped_column(Boolean,default=True)
 
     # Appearance
@@ -590,18 +680,19 @@ class WebAgentModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
     # Relationships
-    user = relationship("UnifiedAuthModel", back_populates="web_agents")
-    agent = relationship("AgentModel",back_populates="web_agent")
-    leads = relationship("WebAgentLeadModel", back_populates="web_agent",cascade="all, delete-orphan")
+    user = relationship("UnifiedAuthModel", back_populates="widgets")
+    agent = relationship("AgentModel",back_populates="widget")
+    leads = relationship("WidgetLeadModel", back_populates="widget",cascade="all, delete-orphan")
+    web_agent_pages = relationship("WebAgentPageModel", back_populates="widget",cascade="all, delete-orphan")
 
 
-class WebAgentLeadModel(Base):
-    __tablename__ = "web_agent_leads"
+class WidgetLeadModel(Base):
+    __tablename__ = "widget_leads"
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
-    web_agent_id: Mapped[int] = mapped_column(
-        ForeignKey("web_agents.id"),
+    widget_id: Mapped[int] = mapped_column(
+        ForeignKey("widgets.id"),
         nullable=False
     )
 
@@ -615,8 +706,54 @@ class WebAgentLeadModel(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
-    web_agent = relationship("WebAgentModel", back_populates="leads")
+    widget = relationship("WidgetModel", back_populates="leads")
     conversation = relationship("ConversationsModel", back_populates="lead")
+
+
+class WebAgentPageModel(Base):
+    __tablename__ = "web_agent_pages"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    public_id: Mapped[str] = mapped_column(
+        String(36),
+        unique=True,
+        index=True,
+        default=lambda: str(uuid.uuid4())
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("unified_auth.id"),
+        nullable=False
+    )
+
+    agent_id: Mapped[int] = mapped_column(
+        ForeignKey("agents.id"),
+        nullable=False
+    )
+
+    widget_id: Mapped[int] = mapped_column(
+        ForeignKey("widgets.id"),
+        nullable=False
+    )
+
+    web_agent_name: Mapped[str] = mapped_column(String(255))
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    bg_color: Mapped[str] = mapped_column(String(20), default="#0B0B0F")
+
+    agent_position: Mapped[str] = mapped_column(
+        Enum("left", "center", "right", name="web_agent_position"),
+        default="center"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    # Relationships
+    user = relationship("UnifiedAuthModel", back_populates="web_agent_pages")
+    agent = relationship("AgentModel", back_populates="web_agent_pages")
+    widget = relationship("WidgetModel", back_populates="web_agent_pages")
+
 
 class ActivityLogModel(Base):
     __tablename__ = "activity_logs"
@@ -636,152 +773,6 @@ class ActivityLogModel(Base):
 
 
 ############## Payments and related models ##############
-
-class PlanModel(Base):
-    __tablename__ = "plans"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-
-    display_name: Mapped[str] = mapped_column(String(100), nullable=False)
-    description: Mapped[str] = mapped_column(String(255), nullable=True)
-
-    price: Mapped[float] = mapped_column(Float, nullable=False)
-    currency: Mapped[str] = mapped_column(String(10), default="INR")
-
-    coins_included: Mapped[int] = mapped_column(Integer, default=0)
-    carry_forward_coins: Mapped[bool] = mapped_column(Boolean, default=False,server_default="false")
-
-    billing_period: Mapped[BillingPeriodEnum] = mapped_column(
-        Enum(BillingPeriodEnum),
-        nullable=False
-    )
-
-    icon: Mapped[PlanIconEnum] = mapped_column(
-        Enum(PlanIconEnum),
-        nullable=False
-    )
-
-    gradient_color: Mapped[str] = mapped_column(String(50))
-    mark_as_popular: Mapped[bool] = mapped_column(Boolean, default=False)
-
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    is_deleted:Mapped[bool] = mapped_column(Boolean,default=False,server_default="false")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-    features = relationship("PlanFeatureModel", back_populates="plan", cascade="all, delete-orphan")
-    subscriptions = relationship(
-        "UserSubscriptionModel",
-        back_populates="plan",
-        foreign_keys="UserSubscriptionModel.plan_id"
-    )
-    providers = relationship(
-        "PlanProviderModel",
-        back_populates="plan",
-        cascade="all, delete-orphan"
-    )
-
-
-class PlanFeatureModel(Base):
-    __tablename__ = "plan_features"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-
-    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=False)
-
-    feature_key: Mapped[str] = mapped_column(String(100), nullable=False)
-    # Examples:
-    # "ai_voice_agents"
-    # "phone_numbers"
-    # "monthly_knowledgebases"
-    # "web_voice_agents"
-    # "api_access"
-    # "analytics_dashboard"
-
-    limit: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # NULL = unlimited
-
-    plan = relationship("PlanModel", back_populates="features")
-
-    __table_args__ = (
-        UniqueConstraint("plan_id", "feature_key", name="uq_plan_feature"),
-    )
-
-
-class PlanProviderModel(Base):
-    __tablename__ = "plan_providers"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-
-    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=False)
-
-    provider: Mapped[PaymentProviderEnum] = mapped_column(
-        Enum(PaymentProviderEnum),
-        nullable=False
-    )
-
-    provider_plan_id: Mapped[str] = mapped_column(String(255), nullable=False)
-    # Razorpay plan_id OR Stripe product_id
-
-    provider_price_id: Mapped[str | None] = mapped_column(String(255))
-    # Stripe price_id (optional)
-
-    provider_metadata: Mapped[dict | None] = mapped_column(
-        MutableDict.as_mutable(JSONB),
-        nullable=True
-    )
-
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-
-    plan = relationship("PlanModel", back_populates="providers")
-
-    __table_args__ = (
-        UniqueConstraint("plan_id", "provider", name="uq_plan_provider"),
-    )
-
-class UserSubscriptionModel(Base):
-    __tablename__ = "user_subscriptions"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-
-    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
-    plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=True)
-
-    status: Mapped[SubscriptionStatusEnum] = mapped_column(
-        Enum(SubscriptionStatusEnum),
-        default=SubscriptionStatusEnum.active
-    )
-
-    current_period_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    current_period_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-
-    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
-
-    provider: Mapped[str] = mapped_column(String(50))  # razorpay / stripe
-    provider_subscription_id: Mapped[str] = mapped_column(String(255), nullable=True)
-
-    subscription_metadata: Mapped[dict | None] = mapped_column(
-        MutableDict.as_mutable(JSONB),
-        nullable=True
-    )
-
-    next_plan_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("plans.id"), nullable=True)
-
-    # Holds the new Razorpay subscription id while a plan-change checkout is
-    # in-flight (between POST /update and POST /verify).  verify() promotes
-    # this value into provider_subscription_id and clears this field.
-    # Migration: ALTER TABLE user_subscriptions
-    #              ADD COLUMN pending_provider_subscription_id VARCHAR(255);
-    pending_provider_subscription_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-
-    user = relationship("UnifiedAuthModel",back_populates="subscriptions")
-    plan = relationship("PlanModel", foreign_keys=[plan_id], back_populates="subscriptions")
-    next_plan = relationship("PlanModel", foreign_keys=[next_plan_id])
 
 class PaymentModel(Base):
     __tablename__ = "payments"
@@ -834,36 +825,29 @@ class CoinsLedgerModel(Base):
     reference_id: Mapped[int | None] = mapped_column(Integer)
 
     balance_after: Mapped[int] = mapped_column(Integer, nullable=False)
-    
-    # New fields for FIFO and Expiry
-    expiry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    # Tracks partial consumption of a credit batch across FIFO deductions.
+    # Credits never expire — this is purely a drain counter, not an expiry mechanism.
     remaining_coins: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True, default=0)
+
+    # Free-text reason, populated for admin_adjustment entries (why an admin
+    # added/removed coins) so it's visible in usage history — null otherwise.
+    notes: Mapped[str | None] = mapped_column(String(1000), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
     user = relationship("UnifiedAuthModel",back_populates="coins_ledger")
 
-class CoinPackageModel(Base):
-    __tablename__ = "coin_packages"
-
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-
-    name: Mapped[str] = mapped_column(String(100))
-    coins: Mapped[int] = mapped_column(Integer)
-    price: Mapped[float] = mapped_column(Float)
-    currency: Mapped[str] = mapped_column(String(10), default="INR")
-
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    validity_days: Mapped[int] = mapped_column(Integer,nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    is_deleted: Mapped[bool] = mapped_column(Boolean, default=False,server_default="false")
-
 class AddOnCoinOrderModel(Base):
+    """
+    One-time pay-as-you-go credit purchase. `amount` (rupees, user-entered)
+    and `coins` (computed from `CoinUsageSettingsModel.credits_per_rupee` at
+    order-creation time) are stored directly — there is no bundle to look up.
+    """
     __tablename__ = "addon_coin_orders"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False)
-    bundle_id: Mapped[int] = mapped_column(ForeignKey("coin_packages.id"), nullable=False)
-    
+
     # Generic provider fields
     provider: Mapped[PaymentProviderEnum] = mapped_column(Enum(PaymentProviderEnum), nullable=False)
     provider_order_id: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
@@ -876,23 +860,78 @@ class AddOnCoinOrderModel(Base):
     status: Mapped[PaymentStatusEnum] = mapped_column(Enum(PaymentStatusEnum), default=PaymentStatusEnum.pending)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
-    
+
     user = relationship("UnifiedAuthModel")
-    bundle = relationship("CoinPackageModel")
     payment = relationship("PaymentModel", back_populates="addon_order")
 
 class CoinUsageSettingsModel(Base):
     __tablename__ = "coin_usage_settings"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    phone_number_purchase_cost: Mapped[int] = mapped_column(Integer, default=500)
-    elevenlabs_multiplier: Mapped[float] = mapped_column(Float, default=1.0)
-    static_conversation_cost: Mapped[int] = mapped_column(Integer, default=0)
-    cost_per_minute_in_coins: Mapped[int] = mapped_column(Integer,server_default="0")
-    
+
+    # ─── What ElevenLabs charges us ──────────────────────────────────────────
+    # EL credits ElevenLabs charges us per minute of CONVERSATION (STT+TTS+turn
+    # taking) — NOT LLM, which is billed separately. Drives the conversation
+    # portion of the live ongoing-call cost estimate.
+    elevenlabs_conversation_credits_per_minute: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    # How many EL credits equal 1 USD. The ElevenLabs LLM-usage calculate
+    # endpoint returns price_per_minute in USD, so this converts the stored
+    # per-agent LLM price into credits for the live estimate. Admin-tuned.
+    usd_to_credits: Mapped[float] = mapped_column(Float, default=10000.0, server_default="10000.0")
+
+    # ─── What we charge our users ────────────────────────────────────────────
+    # How much more (in %) we deduct from the user than what ElevenLabs
+    # actually charged us for the conversation, e.g. 30 = charge 30% more
+    # than the raw ElevenLabs cost. This is the sole input to actual billing.
+    markup_percentage: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
+
+    # Minimum coins a user must have PER MINUTE of call before we open the
+    # ElevenLabs socket. The pre-call gate requires
+    # minimum_credits_per_minute × minimum_call_minutes coins.
+    minimum_credits_per_minute: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    # How many minutes' worth of minimum_credits_per_minute a user must be
+    # able to afford before we even open the ElevenLabs socket.
+    minimum_call_minutes: Mapped[int] = mapped_column(Integer, default=3, server_default="3")
+
+    # ─── First-call safety cap & LLM cost multipliers ───────────────────────
+    # Max duration (seconds) allowed for an agent's very FIRST call ever
+    # (across any user) — a safety cap while a freshly configured agent's LLM
+    # price / KB / tool multipliers are still unproven. 0 disables the cap.
+    first_call_max_duration_seconds: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    # Multiplier applied to the LLM cost estimate when the agent has a
+    # knowledge base attached (KB retrieval adds prompt tokens beyond
+    # ElevenLabs' bare per-minute LLM price). 1.0 = no adjustment.
+    knowledge_base_llm_cost_multiplier: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
+
+    # Multiplier applied to the LLM cost estimate when the agent has any
+    # custom tool attached (tool round-trips add extra LLM calls beyond
+    # ElevenLabs' bare per-minute LLM price). 1.0 = no adjustment. When an
+    # agent has both a KB and tools, the higher of the two multipliers is
+    # used rather than compounding them.
+    tool_llm_cost_multiplier: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
+
+    # Pay-as-you-go purchase rate: how many coins a user receives per ₹1 paid.
+    credits_per_rupee: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
+
+    # Minimum rupee amount a user must spend in a single pay-as-you-go
+    # purchase. Admin-set (not derived) — see MIN_PURCHASE_AMOUNT in
+    # schemas/coin_purchase.py for the absolute floor enforced regardless.
+    minimum_purchase_amount_inr: Mapped[float] = mapped_column(Float, default=500.0, server_default="500.0")
+
+    # Points at the CoinUsageSettingsVersionModel snapshot currently in
+    # effect. A new version is created (and this repointed) only when a
+    # billing-relevant field actually changes value on PUT — see
+    # conversation_lifecycle.py's maybe_create_new_settings_version().
+    current_version_id: Mapped[Optional[int]] = mapped_column(
+        Integer, ForeignKey("coin_usage_settings_versions.id"), nullable=True
+    )
+
     # Singleton guard: only one row can have this value
     singleton_guard: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
-    
+
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     __table_args__ = (
@@ -915,6 +954,34 @@ class CoinUsageSettingsModel(Base):
                     db.session.rollback()
                     settings = db.session.query(cls).first()
             return settings
+
+class CoinUsageSettingsVersionModel(Base):
+    """
+    Immutable snapshot of every billing-relevant CoinUsageSettingsModel field,
+    created whenever an admin actually changes one of them (see
+    conversation_lifecycle.py's maybe_create_new_settings_version()). Each
+    ConversationsModel row links to the version that was current when it was
+    finalized, so a call's charge can always be traced back to exactly the
+    rates it was computed under — without needing full agent-level version
+    history, which doesn't exist yet.
+    """
+    __tablename__ = "coin_usage_settings_versions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
+
+    elevenlabs_conversation_credits_per_minute: Mapped[int] = mapped_column(Integer, nullable=False)
+    usd_to_credits: Mapped[float] = mapped_column(Float, nullable=False)
+    markup_percentage: Mapped[float] = mapped_column(Float, nullable=False)
+    minimum_credits_per_minute: Mapped[int] = mapped_column(Integer, nullable=False)
+    minimum_call_minutes: Mapped[int] = mapped_column(Integer, nullable=False)
+    first_call_max_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    knowledge_base_llm_cost_multiplier: Mapped[float] = mapped_column(Float, nullable=False)
+    tool_llm_cost_multiplier: Mapped[float] = mapped_column(Float, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    conversations = relationship("ConversationsModel", back_populates="settings_version")
 
 class APIKeyModel(Base):
     __tablename__ = "api_keys"
@@ -949,12 +1016,30 @@ class APICallLogModel(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
     api_route: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Route path TEMPLATE (e.g. "/api/v2/public/agents/{agent_id}"), not the
+    # resolved path — so the Logs page groups one row per endpoint.
     status_code: Mapped[int] = mapped_column(Integer, nullable=False)
     response_time_ms: Mapped[int] = mapped_column(Integer, nullable=True) # in milliseconds
     coins_used: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), index=True)
 
+    channel: Mapped[Optional[PublicLogChannelEnum]] = mapped_column(Enum(PublicLogChannelEnum, name="publiclogchannelenum"), nullable=True, index=True)
+    method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    request_params: Mapped[Optional[dict]] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
+    request_body: Mapped[Optional[dict]] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
+    response_body: Mapped[Optional[dict]] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
+    is_success: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Which API key made the call — only meaningful for public_api/public_websocket
+    # (widget_websocket calls aren't authenticated via an API key).
+    api_key_id: Mapped[Optional[int]] = mapped_column(ForeignKey("api_keys.id"), nullable=True, index=True)
+
     user = relationship("UnifiedAuthModel")
+    api_key = relationship("APIKeyModel")
+
+    __table_args__ = (
+        Index("ix_api_call_logs_channel_route_created", "channel", "api_route", "created_at"),
+    )
 
 class WebhookEventLogModel(Base):
     """
@@ -1014,25 +1099,3 @@ class EmailSubscriberModel(Base):
 
     subscribed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-class ScheduledDowngradeModel(Base):
-    __tablename__ = "scheduled_downgrades"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("unified_auth.id"), nullable=False, index=True)
-    old_plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plans.id"), nullable=False)
-    new_plan_id: Mapped[int] = mapped_column(Integer, ForeignKey("plans.id"), nullable=False)
-    subscription_id: Mapped[int] = mapped_column(Integer, ForeignKey("user_subscriptions.id"), nullable=False)
-    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
-    status: Mapped[ScheduledDowngradeStatusEnum] = mapped_column(
-        Enum(ScheduledDowngradeStatusEnum), default=ScheduledDowngradeStatusEnum.pending, nullable=False, index=True
-    )
-    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    trigger_source: Mapped[ScheduledDowngradeTriggerEnum] = mapped_column(
-        Enum(ScheduledDowngradeTriggerEnum), nullable=False
-    )
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    executed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    # Relationships
-    user = relationship("UnifiedAuthModel", back_populates="scheduled_downgrades")
