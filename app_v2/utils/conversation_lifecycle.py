@@ -30,6 +30,7 @@ from app_v2.utils.cost_utils import (
     compute_live_charge_credits,
     estimate_costs_credits,
     compute_actual_breakdown,
+    count_tokens,
 )
 from app_v2.utils.email_service import (
     send_cost_overrun_email,
@@ -264,22 +265,52 @@ def is_first_call_duration_exceeded(call_start_time: datetime, is_first_call: bo
     return elapsed_seconds >= cap_seconds
 
 
+# Tolerances for deciding a past call's frozen cost-driver snapshot is still
+# "close enough" to the agent's CURRENT config to trust its learned rate.
+# Exact equality is too brittle — a typo fix or one extra sentence shouldn't
+# discard an otherwise-good learned rate.
+#
+# System prompt closeness is measured in TOKENS, not characters — token count
+# tracks actual LLM cost far more closely than character length (two prompts
+# of near-identical length can differ hugely in token count/complexity: dense
+# instructions vs. padding, different languages, structured JSON vs. prose).
+# See count_tokens() in app_v2/utils/cost_utils.py.
+LLM_RATE_BASIS_SYSTEM_PROMPT_TOKENS_TOLERANCE = 10
+LLM_RATE_BASIS_TOOL_COUNT_TOLERANCE = 1
+LLM_RATE_BASIS_KB_TOTAL_PAGES_TOLERANCE = 10
+
+
 def resolve_llm_rate_basis(agent: Optional[AgentModel]) -> Optional[dict]:
     """
-    Learns an LLM-cost-per-turn rate from the agent's own last completed call,
-    to project the live mid-call LLM estimate from instead of the flat
-    admin-configured multiplier (resolve_llm_cost_multiplier) — turn count
-    tracks LLM cost far more precisely than a one-size-fits-all multiplier,
-    and every agent's own history already reflects its actual system-prompt
-    length, tool count, KB pages, and RAG usage.
+    Learns an LLM-cost-per-turn rate from the most recent of the agent's own
+    completed calls whose cost-driver snapshot is within tolerance of its
+    CURRENT config, to project the live mid-call LLM estimate from instead of
+    the flat admin-configured multiplier (resolve_llm_cost_multiplier) — turn
+    count tracks LLM cost far more precisely than a one-size-fits-all
+    multiplier, and every agent's own history already reflects its actual
+    system-prompt length, tool count, KB pages, and RAG usage.
+
+    All tolerance comparisons run in the WHERE clause so the DB returns only
+    the single most recent matching row (ORDER BY created_at DESC LIMIT 1)
+    instead of shipping candidate rows over the wire to filter in Python —
+    exact equality would be too brittle (a typo fix or one extra sentence
+    shouldn't discard an otherwise-good learned rate), so each driver gets a
+    small tolerance instead. rag_enabled has no tolerance (boolean) — it's a
+    categorical switch, not a magnitude. Calls predating the
+    system_prompt_tokens column (NULL) never match — there's no sound way to
+    compare, so they're conservatively treated as stale.
+
+    System prompt closeness is measured in TOKENS, not characters — token
+    count tracks actual LLM cost far more closely than character length (two
+    prompts of near-identical length can differ hugely in token
+    count/complexity: dense instructions vs. padding, different languages,
+    structured JSON vs. prose). See count_tokens() in app_v2/utils/cost_utils.py.
 
     Returns {"turns_per_minute": float, "credits_per_turn": float}, or None
     (meaning: fall back to the flat multiplier) when:
     - agent is None,
     - there's no completed prior call with usable turn/duration/cost data, or
-    - the agent's CURRENT config (system prompt length, tool count, KB pages,
-      RAG flag) no longer matches what that last call ran under — the agent
-      was edited since, so the learned rate is stale.
+    - no call's config is within tolerance of the agent's CURRENT config.
 
     Only ever used for the LIVE estimate; the post-call audit estimate
     (estimate_costs_credits, calculated_llm_cost) is intentionally left on
@@ -289,7 +320,12 @@ def resolve_llm_rate_basis(agent: Optional[AgentModel]) -> Optional[dict]:
     if agent is None:
         return None
 
-    last_call = (
+    current_system_prompt_tokens = count_tokens(agent.system_prompt)
+    current_tool_count = len(agent.agent_functions)
+    current_kb_total_pages = agent.kb_total_pages or 0
+    total_turns_expr = ConversationsModel.user_message_count + ConversationsModel.agent_message_count
+
+    match = (
         db.session.query(ConversationsModel)
         .filter(
             ConversationsModel.agent_id == agent.id,
@@ -299,31 +335,26 @@ def resolve_llm_rate_basis(agent: Optional[AgentModel]) -> Optional[dict]:
             ConversationsModel.user_message_count.isnot(None),
             ConversationsModel.agent_message_count.isnot(None),
             ConversationsModel.actual_llm_credits.isnot(None),
+            total_turns_expr > 0,
+            ConversationsModel.system_prompt_tokens.isnot(None),
+            func.abs(current_system_prompt_tokens - ConversationsModel.system_prompt_tokens)
+            <= LLM_RATE_BASIS_SYSTEM_PROMPT_TOKENS_TOLERANCE,
+            func.abs(current_tool_count - func.coalesce(ConversationsModel.tool_count, 0))
+            <= LLM_RATE_BASIS_TOOL_COUNT_TOLERANCE,
+            func.abs(current_kb_total_pages - func.coalesce(ConversationsModel.kb_total_pages, 0))
+            <= LLM_RATE_BASIS_KB_TOTAL_PAGES_TOLERANCE,
+            ConversationsModel.rag_enabled == agent.rag_enabled,
         )
         .order_by(ConversationsModel.created_at.desc())
         .first()
     )
-    if last_call is None:
+    if match is None:
         return None
 
-    total_turns = (last_call.user_message_count or 0) + (last_call.agent_message_count or 0)
-    if total_turns <= 0:
-        return None
-
-    current_system_prompt_length = len(agent.system_prompt) if agent.system_prompt else 0
-    current_tool_count = len(agent.agent_functions)
-    config_matches = (
-        current_system_prompt_length == last_call.system_prompt_length
-        and current_tool_count == last_call.tool_count
-        and agent.kb_total_pages == last_call.kb_total_pages
-        and agent.rag_enabled == last_call.rag_enabled
-    )
-    if not config_matches:
-        return None
-
+    total_turns = match.user_message_count + match.agent_message_count
     return {
-        "turns_per_minute": total_turns / (last_call.duration / 60.0),
-        "credits_per_turn": last_call.actual_llm_credits / total_turns,
+        "turns_per_minute": total_turns / (match.duration / 60.0),
+        "credits_per_turn": match.actual_llm_credits / total_turns,
     }
 
 
@@ -555,6 +586,7 @@ def finalize_conversation(
     # WERE at call time (no agent-versioning table exists yet to pull this
     # from historically). ----
     record.system_prompt_length = len(agent.system_prompt) if agent and agent.system_prompt else None
+    record.system_prompt_tokens = count_tokens(agent.system_prompt) if agent else None
     record.tool_count = len(agent.agent_functions) if agent else None
     record.kb_total_pages = agent.kb_total_pages if agent else None
     record.rag_enabled = agent.rag_enabled if agent else None

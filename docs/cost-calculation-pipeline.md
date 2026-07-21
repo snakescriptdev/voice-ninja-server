@@ -6,7 +6,7 @@ ElevenLabs field, and every database column involved, in the order they
 actually run.
 
 Source files: `app_v2/utils/cost_utils.py`, `app_v2/utils/conversation_lifecycle.py`,
-`app_v2/utils/coin_utils.py`, `app_v2/routers/agents.py`,
+`app_v2/utils/coin_utils.py`, `app_v2/utils/email_service.py`, `app_v2/routers/agents.py`,
 `app_v2/utils/elevenlabs/conversation_utils.py`, `app_v2/utils/elevenlabs/kb_utils.py`,
 `app_v2/routers/admin_dashboard.py`.
 
@@ -28,7 +28,7 @@ flowchart TB
     A["Pre-call gate<br/>get_minimum_call_balance()"] --> B["Call start<br/>start_conversation()"]
     B --> B1{"is_agents_first_call()?"}
     B1 -->|"yes"| B2["llm_cost_multiplier = resolve_llm_cost_multiplier()<br/>llm_rate_basis = None"]
-    B1 -->|"no"| B3["llm_rate_basis = resolve_llm_rate_basis()<br/>turns-based, or None if stale/no history"]
+    B1 -->|"no"| B3["llm_rate_basis = resolve_llm_rate_basis()<br/>turns-based, tolerance-matched, or None"]
     B2 --> C{"Live loop<br/>every 10 audio chunks"}
     B3 --> C
     C -->|"balance OK"| C
@@ -39,10 +39,12 @@ flowchart TB
     F --> G["estimate_costs_credits()<br/>calculated_* columns (flat-multiplier, always)"]
     F --> H["compute_actual_breakdown()<br/>actual_* + profit_percentage"]
     F --> I["calculate_conversation_cost()<br/>coins_charged_to_user"]
+    F --> M["agent.avg_credits_per_minute =<br/>compute_live_charge_credits(1 min)<br/>refreshed on every call, this agent"]
     I --> J["deduct_coins()<br/>ledger debit, overdraft allowed"]
     G --> K["_maybe_alert_cost_overrun()"]
     H --> K
     J --> L["_maybe_alert_insufficient_call_balance()"]
+    M --> N["_maybe_alert_low_agent_balance()"]
 ```
 
 ---
@@ -85,7 +87,7 @@ it ends — and returns its id.
 |---|---|---|
 | `is_agents_first_call(agent_id)` | bool | `true` iff this agent has zero prior `ConversationsModel` rows. Must run *before* `start_conversation()`, or the row it just inserted would count against itself. Gates which LLM-estimate mechanism below applies. |
 | `resolve_llm_cost_multiplier(agent, settings)` | float, default `1.0` | `max(1.0, knowledge_base_llm_cost_multiplier` if agent has any KB, `tool_llm_cost_multiplier` if agent has any custom tool`)`. The two never compound — the higher one wins. **Always** resolved, as the fallback. |
-| `resolve_llm_rate_basis(agent)` | `{turns_per_minute, credits_per_turn}` or `None` | Only called when **not** the first call (see [§03a](#03a--turns-based-llm-rate-non-first-calls)). `None` if there's no usable prior call, or the agent's config has changed since it ran. |
+| `resolve_llm_rate_basis(agent)` | `{turns_per_minute, credits_per_turn}` or `None` | Only called when **not** the first call (see [§03a](#03a--turns-based-llm-rate-non-first-calls)). `None` if there's no usable prior call within tolerance of the agent's *current* config. |
 
 All three are cached on the router's per-call context object
 (`CallContext.is_first_call` / `.llm_cost_multiplier` / `.llm_rate_basis` in
@@ -136,33 +138,62 @@ reflects its actual prompt length, tool count, KB size, and RAG usage.
 
 **`resolve_llm_rate_basis(agent)`** — `conversation_lifecycle.py`
 
+Not "the last call" anymore — a single SQL query finds the **most recent call
+whose frozen cost-driver snapshot is within tolerance of the agent's CURRENT
+config**, with every tolerance comparison pushed into the `WHERE` clause
+(`ORDER BY created_at DESC` + `.first()`), so one call that doesn't match
+(a small prompt tweak) doesn't discard a good learned rate that's still
+sitting further back in the agent's history:
+
 ```
-last_call = agent's most recent ConversationsModel row where:
-              call_status != in_progress
-              AND duration > 0
-              AND user_message_count / agent_message_count / actual_llm_credits are all set
+match = agent's most recent ConversationsModel row where:
+          call_status != in_progress
+          AND duration > 0
+          AND user_message_count / agent_message_count / actual_llm_credits are all set
+          AND (user_message_count + agent_message_count) > 0
+          AND system_prompt_tokens IS NOT NULL
+          AND |current_system_prompt_tokens − system_prompt_tokens| ≤ 10
+          AND |current_tool_count       − COALESCE(tool_count, 0)|       ≤ 1
+          AND |current_kb_total_pages   − COALESCE(kb_total_pages, 0)|   ≤ 10
+          AND rag_enabled = current_rag_enabled
+        ORDER BY created_at DESC LIMIT 1
 
-total_turns = last_call.user_message_count + last_call.agent_message_count
+total_turns = match.user_message_count + match.agent_message_count
 
-turns_per_minute = total_turns / (last_call.duration / 60)
-credits_per_turn = last_call.actual_llm_credits / total_turns
+turns_per_minute = total_turns / (match.duration / 60)
+credits_per_turn = match.actual_llm_credits / total_turns
 ```
 
-**Staleness gate** — the learned rate above is only trusted if the agent's
-*current* config still matches what `last_call` ran under, i.e. all four match
-exactly:
+**Staleness gate** — exact equality was too brittle (a typo fix or one extra
+sentence would discard an otherwise-good learned rate), so each cost driver
+now gets a small tolerance instead. `rag_enabled` has none — it's a
+categorical switch, not a magnitude. `system_prompt_tokens` (see
+[`count_tokens()`](#ref--conversations-cost-relevant-fields)) replaced
+`system_prompt_length` (character count) as the prompt-closeness measure —
+two prompts of near-identical length can differ hugely in token
+count/complexity (dense instructions vs. padding, different languages,
+structured JSON vs. prose), and token count tracks actual LLM cost far more
+closely.
 
-| Current (`AgentModel`) | Snapshotted on `last_call` |
-|---|---|
-| `len(agent.system_prompt)` | `system_prompt_length` |
-| `len(agent.agent_functions)` | `tool_count` |
-| `agent.kb_total_pages` | `kb_total_pages` |
-| `agent.rag_enabled` | `rag_enabled` |
+| Current (`AgentModel`) | Snapshotted column | Tolerance |
+|---|---|---|
+| `count_tokens(agent.system_prompt)` | `system_prompt_tokens` | ±10 tokens |
+| `len(agent.agent_functions)` | `tool_count` | ±1 |
+| `agent.kb_total_pages` | `kb_total_pages` | ±10 pages |
+| `agent.rag_enabled` | `rag_enabled` | exact |
 
-If the agent was edited since `last_call` (longer prompt, KB added, etc.), or
-there's no usable prior call at all, `resolve_llm_rate_basis()` returns `None`
-and the call **falls back to the flat-multiplier formula above** — same as a
-first call.
+`resolve_llm_rate_basis()` returns `None` — falling back to the
+flat-multiplier formula above, same as a first call — when:
+
+- the agent has **no** completed call with usable turn/duration/cost data at all,
+- **every** such call has `system_prompt_tokens IS NULL` — i.e. it finalized
+  before this column existed. There is no backfill: existing rows keep this
+  NULL forever, so every agent falls back to the flat multiplier until its
+  *next* call finalizes and populates a fresh snapshot; from then on that new
+  call becomes eligible as a match for future calls, or
+- every completed call's snapshot falls **outside** tolerance of the agent's
+  current config (system prompt token count drifted by more than 10, tool
+  count by more than 1, KB pages by more than 10, or RAG was toggled).
 
 When a rate basis *is* available, `estimate_llm_credits_from_turns()` projects
 the live estimate as:
@@ -278,10 +309,36 @@ and it's exactly this snapshot that §03a's staleness gate compares against.
 
 | Column | Source at finalize time |
 |---|---|
-| `system_prompt_length` | `len(agent.system_prompt)` |
+| `system_prompt_length` | `len(agent.system_prompt)` — character count, kept only for the admin UI display; not used in any cost comparison |
+| `system_prompt_tokens` | `count_tokens(agent.system_prompt)` — token count; this is what §03a's staleness gate actually compares |
 | `tool_count` | `len(agent.agent_functions)` — custom tools only, not built-in toggles |
 | `kb_total_pages` | copied from `agent.kb_total_pages` (cached; see [agents reference](#ref--agents-cost-relevant-fields)) |
 | `rag_enabled` | copied from `agent.rag_enabled` |
+
+### ⑤ Agent's live 1-minute projection — `agent.avg_credits_per_minute`
+
+Not a conversation column — this writes back onto the **`AgentModel`** row
+itself, refreshed on *every one* of this agent's calls (there's no cron for
+this; it was one earlier in development, deliberately replaced by this
+per-call write so the column never has two writers disagreeing on its
+meaning):
+
+```
+agent.avg_credits_per_minute = compute_live_charge_credits(
+    agent.llm_price_per_minute, elapsed_minutes=1.0, settings, llm_cost_multiplier,
+)
+```
+
+i.e. exactly the same live-estimate formula as §03/§03a, just evaluated for a
+hypothetical 1-minute call happening *right now* — same current
+`llm_price_per_minute`, same currently-active `CoinUsageSettingsModel` rates
+and markup, same resolved `llm_cost_multiplier`. It always uses the flat
+multiplier, never the turns-based rate basis (§03a is a live mid-call
+projection tied to elapsed real turns; there's no "elapsed turns" for a
+call that hasn't happened).
+
+Used by `_maybe_alert_low_agent_balance()` (§06) to tell a user their balance
+can't cover even one more minute with *this specific* agent.
 
 ---
 
@@ -299,7 +356,19 @@ already happened, so the debt is recorded rather than silently dropped.
 | Alert | Fires when |
 |---|---|
 | `_maybe_alert_cost_overrun(record)` | Actual exceeds calculated by **more than 10%** (`COST_OVERRUN_ALERT_THRESHOLD_PCT`) on conversation and/or LLM — underruns never alert, no matter the size. Emails every admin via `send_cost_overrun_email()`. |
-| `_maybe_alert_insufficient_call_balance(record, settings)` | The user's *post-deduction* balance drops below `get_minimum_call_balance()` and their usage-alert preference is on. Emails the user via `send_insufficient_call_balance_email()`. |
+| `_maybe_alert_insufficient_call_balance(record, settings)` | The user's *post-deduction* balance drops below `get_minimum_call_balance()` (admin-wide minimum) and their usage-alert preference is on. Emails the user via `send_insufficient_call_balance_email()`. |
+| `_maybe_alert_low_agent_balance(record, agent)` | The user's *post-deduction* balance drops below **this agent's own** `avg_credits_per_minute` (§05⑤) — a per-agent complement to the row above, since different agents cost very differently per minute — and their usage-alert preference is on. Emails the user via `send_low_agent_balance_email()`. |
+
+All three go through `_dispatch_coro()` — fire-and-forget from sync code,
+since `finalize_conversation()` itself is sync. It keeps a strong reference
+to any task it schedules via `loop.create_task()` in a module-level
+`_background_tasks` set until the task completes: asyncio's event loop only
+holds a *weak* reference to tasks, so with nothing else referencing it, a
+scheduled task can be garbage-collected before the loop ever runs it —
+silently, no exception, no log. The email functions themselves also
+self-catch and log (`"Failed to send ... email"`), so a real send failure
+(SMTP/config) is distinguishable in logs from this GC issue (which produces
+no log at all).
 
 ---
 
@@ -331,6 +400,7 @@ the request if ElevenLabs is unavailable.
 | `kb_total_pages` | `ElevenLabsKB.get_kb_total_pages()` — `0` if no KB attached | `GET /convai/agent/{id}/knowledge-base/size` |
 | `rag_enabled` | hardcoded `true` — matches `rag.enabled` always sent on create | — |
 | `agent_functions` / `agent_knowledge_bases` | bridge-table relationships; `len(agent_functions)` is `tool_count` at finalize time | — |
+| `avg_credits_per_minute` | `finalize_conversation()` (§05⑤) — refreshed on **every** one of this agent's calls, not on agent create/update | — (local computation, no EL call) |
 
 ## Reference — `conversations` (cost-relevant fields)
 
@@ -344,7 +414,9 @@ the request if ElevenLabs is unavailable.
 | `profit_percentage` | actual | `compute_actual_breakdown()` |
 | `coins_charged_to_user` | actual | `calculate_conversation_cost()` |
 | `ended_due_to_low_balance` | flag | `finalize_conversation()` — true iff `error_message == LOW_BALANCE_ERROR_MESSAGE` |
-| `system_prompt_length` / `tool_count` / `kb_total_pages` / `rag_enabled` | snapshot | `finalize_conversation()` — copied from `AgentModel` at call time; compared against the *current* agent config by §03a's staleness gate |
+| `system_prompt_length` | snapshot | `finalize_conversation()` — `len(agent.system_prompt)`; character count, admin-UI display only, not used in any cost comparison |
+| `system_prompt_tokens` | snapshot | `finalize_conversation()` — `count_tokens(agent.system_prompt)` (fixed `tiktoken` `cl100k_base` encoding, used as a consistent *relative* proxy, not an exact per-model billing count); this is what §03a's staleness gate actually compares. `NULL` on every row that finalized before this column existed — no backfill |
+| `tool_count` / `kb_total_pages` / `rag_enabled` | snapshot | `finalize_conversation()` — copied from `AgentModel` at call time; compared (with tolerance, see §03a) against the *current* agent config |
 
 ## Reference — API surface
 
