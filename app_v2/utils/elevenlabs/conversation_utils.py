@@ -158,6 +158,11 @@ class ElevenLabsConversation(BaseElevenLabs):
             has_analysis = bool(conv_data.get("analysis"))
             transcript_data = conv_data.get("transcript", [])
             has_transcript = isinstance(transcript_data, list) and len(transcript_data) > 0
+            total_llm_usd_price = (
+                response.data.get("metadata", {})
+                    .get("charging", {})
+                    .get("llm_price")
+            )
 
             if has_metadata and has_analysis and has_transcript:
                 try:
@@ -175,6 +180,7 @@ class ElevenLabsConversation(BaseElevenLabs):
                         "cost": el_metadata.get("cost"),
                         # LLM portion of that cost (EL credits), 0 if unavailable.
                         "llm_credits": _extract_llm_credits(charging),
+                        "total_llm_usd_price":total_llm_usd_price
                     }
 
                     transcript_list = []

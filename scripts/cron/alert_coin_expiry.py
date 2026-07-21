@@ -10,14 +10,15 @@ from email.mime.text import MIMEText
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
-SMTP_USERNAME = ""
-SMTP_PASSWORD = ""
+SMTP_USERNAME = "itachisnakescript@gmail.com"
+SMTP_PASSWORD = "bctcpgmsyzgdwzjg"
 
 FROM_EMAIL = SMTP_USERNAME
-TO_EMAIL = []
+TO_EMAIL = ["shakir@snakescript.com","official@snakescript.com"]
 
-FRONTEND_URL = ""
-ELEVENLABS_API_KEY = ""
+
+FRONTEND_URL = "https://dev.voiceninja.ai"
+ELEVENLABS_API_KEY = "sk_f1e318f1cfa99deb40866e9bf4867210c67a5086dbeed513"
 
 if not FRONTEND_URL or not ELEVENLABS_API_KEY or not TO_EMAIL or not SMTP_USERNAME or not SMTP_PASSWORD:
     print("Error: TO_EMAIL, SMTP_USERNAME, and SMTP_PASSWORD,FRONTEND_URL,ELEVENLABS_API_KEY  must be set in the environment variables.")

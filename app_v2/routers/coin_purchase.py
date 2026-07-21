@@ -429,17 +429,24 @@ def get_coin_usage_settings():
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-@router.put("/settings/coin-usage", response_model=CoinUsageSettingsResponse, dependencies=[Depends(is_admin)],openapi_extra={"security": [{"BearerAuth": []}]})
-def update_coin_usage_settings(data: CoinUsageSettingsUpdate):
+@router.put("/settings/coin-usage", response_model=CoinUsageSettingsResponse, openapi_extra={"security": [{"BearerAuth": []}]})
+def update_coin_usage_settings(data: CoinUsageSettingsUpdate, admin: UnifiedAuthModel = Depends(is_admin)):
     try:
         settings = CoinUsageSettingsModel.get_settings()
         with db():
             db.session.add(settings)
             before = {field: getattr(settings, field) for field in SETTINGS_VERSION_FIELDS}
+            admin_identity = admin.email or admin.username or f"user#{admin.id}"
+            settings.updated_by = admin_identity
+            if settings.field_update_meta is None:
+                settings.field_update_meta = {}
+            field_update_stamp = {"updated_by": admin_identity, "updated_at": datetime.now(timezone.utc).isoformat()}
             if data.elevenlabs_conversation_credits_per_minute is not None:
                 settings.elevenlabs_conversation_credits_per_minute = data.elevenlabs_conversation_credits_per_minute
+                settings.field_update_meta["elevenlabs_conversation_credits_per_minute"] = field_update_stamp
             if data.usd_to_credits is not None:
                 settings.usd_to_credits = data.usd_to_credits
+                settings.field_update_meta["usd_to_credits"] = field_update_stamp
             if data.markup_percentage is not None:
                 settings.markup_percentage = data.markup_percentage
             if data.minimum_credits_per_minute is not None:

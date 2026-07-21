@@ -16,6 +16,10 @@ class CoinUsageSettingsResponse(BaseModel):
     credits_per_rupee: float
     minimum_purchase_amount_inr: float
     updated_at: datetime
+    updated_by: str | None = None
+    # Per-field attribution, e.g. {"elevenlabs_conversation_credits_per_minute":
+    # {"updated_by": "cron", "updated_at": "..."}} — see CoinUsageSettingsModel.field_update_meta.
+    field_update_meta: dict | None = None
 
     class Config:
         from_attributes = True
