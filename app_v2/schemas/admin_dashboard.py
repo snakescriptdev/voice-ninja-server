@@ -61,6 +61,7 @@ class AdminConversationItem(BaseModel):
     user_message_count: Optional[int] = None
     agent_message_count: Optional[int] = None
     system_prompt_length: Optional[int] = None
+    system_prompt_tokens: Optional[int] = None
     tool_count: Optional[int] = None
     kb_total_pages: Optional[int] = None
     rag_enabled: Optional[bool] = None

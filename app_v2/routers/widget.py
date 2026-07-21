@@ -690,6 +690,14 @@ async def save_web_conversation(
                 response_body=sanitize_for_log({"conversation_id": conv_id, "cost": record.cost}),
                 error_message=error_message,
             )
+            # _persist_web_conversation's lead-link commit and
+            # finalize_ws_call_log's own commit both expire every object in
+            # this session (SQLAlchemy expire_on_commit default). Refresh
+            # record now, while the session is still open, so its attributes
+            # stay readable below and in maybe_send_notifications() after
+            # this block closes and detaches it — otherwise the next access
+            # raises DetachedInstanceError.
+            db.session.refresh(record)
 
         logger.info(
             "Conversation %s saved (duration=%ss, messages=%s, cost=%s)",

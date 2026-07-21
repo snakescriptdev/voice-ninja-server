@@ -446,6 +446,7 @@ def list_all_conversations_for_admin(
                 user_message_count=conv.user_message_count,
                 agent_message_count=conv.agent_message_count,
                 system_prompt_length=conv.system_prompt_length,
+                system_prompt_tokens=conv.system_prompt_tokens,
                 tool_count=conv.tool_count,
                 kb_total_pages=conv.kb_total_pages,
                 rag_enabled=conv.rag_enabled,
