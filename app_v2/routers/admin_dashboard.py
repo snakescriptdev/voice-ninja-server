@@ -3,7 +3,7 @@ from app_v2.utils.jwt_utils import is_admin,HTTPBearer
 from datetime import datetime, date
 from typing import List, Literal, Optional
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinUsageSettingsModel, CoinUsageSettingsVersionModel, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel, APIKeyModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinUsageSettingsModel, CoinUsageSettingsVersionModel, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel, APIKeyModel, WebhookEventLogModel, AddOnCoinOrderModel
 from app_v2.schemas.activity_schema import ActivityLogResponse
 from app_v2.schemas.admin_dashboard import (
     UserCostItem,
@@ -17,6 +17,7 @@ from app_v2.schemas.admin_dashboard import (
     AdminPublicLogItem,
     AdminPublicLogUserItem,
     AdminPublicLogUserListResponse,
+    AdminWebhookEventItem,
 )
 from app_v2.schemas.enum_types import CallStatusEnum, PublicLogChannelEnum
 from app_v2.schemas.pagination import PaginatedResponse
@@ -677,6 +678,107 @@ def list_public_logs_for_admin(
         return PaginatedResponse[AdminPublicLogItem](total=total, page=page, size=size, pages=total_pages, items=items)
     except Exception as e:
         logger.error(f"Error in list_public_logs_for_admin: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/webhook-events",
+    response_model=PaginatedResponse[AdminWebhookEventItem],
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def list_webhook_events(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    provider: Optional[str] = None,
+    status_filter: Optional[str] = Query(None, alias="status"),
+    event_type: Optional[str] = None,
+    payment_id: Optional[str] = None,
+    order_id: Optional[str] = None,
+    user_id: Optional[int] = None,
+    email: Optional[str] = None,
+):
+    """
+    Paginated inbound webhook delivery log (Razorpay et al), newest first.
+
+    payment_id/order_id are extracted from the raw JSONB payload (Razorpay
+    doesn't give us dedicated columns for these), and user_id/email are
+    resolved by joining that extracted order_id against the addon order it
+    belongs to — so a webhook event can be traced back to the user/payment
+    it's about even though WebhookEventLogModel itself has no direct FK.
+    """
+    try:
+        from math import ceil
+
+        payment_id_col = func.jsonb_extract_path_text(
+            WebhookEventLogModel.payload, "payload", "payment", "entity", "id"
+        )
+        order_id_col = func.coalesce(
+            func.jsonb_extract_path_text(
+                WebhookEventLogModel.payload, "payload", "payment", "entity", "order_id"
+            ),
+            func.jsonb_extract_path_text(
+                WebhookEventLogModel.payload, "payload", "order", "entity", "id"
+            ),
+        )
+
+        q = (
+            db.session.query(
+                WebhookEventLogModel,
+                payment_id_col,
+                order_id_col,
+                AddOnCoinOrderModel.user_id,
+                UnifiedAuthModel.email,
+            )
+            .outerjoin(AddOnCoinOrderModel, AddOnCoinOrderModel.provider_order_id == order_id_col)
+            .outerjoin(UnifiedAuthModel, UnifiedAuthModel.id == AddOnCoinOrderModel.user_id)
+        )
+        if provider:
+            q = q.filter(WebhookEventLogModel.provider == provider)
+        if status_filter:
+            q = q.filter(WebhookEventLogModel.status == status_filter)
+        if event_type:
+            q = q.filter(WebhookEventLogModel.event_type == event_type)
+        if payment_id:
+            q = q.filter(payment_id_col == payment_id)
+        if order_id:
+            q = q.filter(order_id_col == order_id)
+        if user_id:
+            q = q.filter(AddOnCoinOrderModel.user_id == user_id)
+        if email:
+            q = q.filter(UnifiedAuthModel.email.ilike(f"%{email}%"))
+
+        total = q.count()
+        skip = (page - 1) * size
+        rows = (
+            q.order_by(WebhookEventLogModel.created_at.desc())
+            .offset(skip)
+            .limit(size)
+            .all()
+        )
+        total_pages = ceil(total / size) if size > 0 else 1
+
+        items = [
+            AdminWebhookEventItem(
+                id=log.id,
+                provider=log.provider,
+                event_id=log.event_id,
+                event_type=log.event_type,
+                status=log.status,
+                error_message=log.error_message,
+                created_at=log.created_at,
+                processed_at=log.processed_at,
+                payment_id=resolved_payment_id,
+                order_id=resolved_order_id,
+                user_id=resolved_user_id,
+                user_email=resolved_email,
+                payload=log.payload,
+            )
+            for log, resolved_payment_id, resolved_order_id, resolved_user_id, resolved_email in rows
+        ]
+        return PaginatedResponse[AdminWebhookEventItem](total=total, page=page, size=size, pages=total_pages, items=items)
+    except Exception as e:
+        logger.error(f"Error in list_webhook_events: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
