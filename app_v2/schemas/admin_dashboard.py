@@ -142,6 +142,24 @@ class AdminPublicLogItem(BaseModel):
 
     model_config = {"from_attributes": True}
 
+class AdminWebhookEventItem(BaseModel):
+    id: int
+    provider: str
+    event_id: str
+    event_type: str
+    status: str
+    error_message: Optional[str] = None
+    created_at: datetime
+    processed_at: Optional[datetime] = None
+    # Extracted from the raw payload / resolved via the addon order it belongs to.
+    payment_id: Optional[str] = None
+    order_id: Optional[str] = None
+    user_id: Optional[int] = None
+    user_email: Optional[str] = None
+    payload: Optional[dict] = None
+
+    model_config = {"from_attributes": True}
+
 class AdminPublicLogUserItem(BaseModel):
     user_id: int
     user_name: Optional[str] = None

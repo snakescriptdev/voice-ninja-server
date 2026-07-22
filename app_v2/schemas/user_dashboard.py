@@ -95,6 +95,9 @@ class UsageHistoryResponse(BaseModel):
     history: List[UsageHistoryItem]
 
 class BillingHistoryItem(BaseModel):
+    # Null for non-payment subscription lifecycle events (see below) — those
+    # have no PaymentModel row and therefore no invoice to download.
+    payment_id: Optional[int] = None
     date: datetime
     description: str
     amount: float
@@ -104,10 +107,8 @@ class BillingHistoryItem(BaseModel):
     # (paused/cancelled/cancellation_scheduled) — see SubscriptionBillingEventEnum.
     status: str
     invoice_url: Optional[str] = None
-
-    @field_serializer("date")
-    def serialize_datetime(self,dt:datetime):
-        return dt.date()
+    provider_payment_id: Optional[str] = None
+    provider_order_id: Optional[str] = None
 
 class BillingHistoryResponse(BaseModel):
     history: List[BillingHistoryItem]

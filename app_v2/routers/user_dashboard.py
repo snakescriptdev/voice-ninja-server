@@ -1,4 +1,4 @@
-from fastapi import APIRouter, status, Depends,HTTPException
+from fastapi import APIRouter, status, Depends,HTTPException, Response
 from fastapi.responses import HTMLResponse
 from typing import Optional, List
 import os
@@ -56,6 +56,7 @@ from app_v2.schemas.user_dashboard import (
     PublicLogOverviewResponse,
 )
 from app_v2.utils.agent_summary import build_agent_summaries
+from app_v2.utils.invoice_utils import generate_invoice_pdf
 from app_v2.core.logger import setup_logger
 from app_v2.utils.time_utils import format_time_ago
 from math import ceil
@@ -570,12 +571,15 @@ def get_billing_history(
                 description = "Miscellaneous Payment"
 
             dated_items.append((p.created_at, BillingHistoryItem(
+                payment_id=p.id,
                 date=p.created_at,
                 description=description,
                 amount=p.amount,
                 currency=p.currency,
                 status=p.status,
-                invoice_url=p.invoice_url
+                invoice_url=p.invoice_url,
+                provider_payment_id=p.provider_payment_id,
+                provider_order_id=p.provider_order_id,
             )))
 
         for log in billing_events:
@@ -604,6 +608,27 @@ def get_billing_history(
     except Exception as e:
         logger.error(f"Error in get_billing_history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/billing-history/{payment_id}/invoice", openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_billing_history_invoice(
+    payment_id: int,
+    current_user: UnifiedAuthModel = Depends(require_active_user())
+):
+    """Generates a PDF receipt for one of the current user's own payments, on demand."""
+    payment = db.session.query(PaymentModel).filter(
+        PaymentModel.id == payment_id,
+        PaymentModel.user_id == current_user.id,
+    ).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    pdf_bytes = generate_invoice_pdf(payment, current_user)
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="invoice-{payment.id}.pdf"'},
+    )
 
 @router.get("/public-api/usage", response_model=PublicAPIUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depends(require_active_user())):

@@ -17,10 +17,11 @@ import hashlib
 import hmac
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi_sqlalchemy import db
+from sqlalchemy.exc import IntegrityError
 
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
@@ -28,6 +29,7 @@ from app_v2.databases.models import (
     AddOnCoinOrderModel,
     CoinsLedgerModel,
     PaymentModel,
+    UnifiedAuthModel,
     WebhookEventLogModel,
 )
 from app_v2.schemas.enum_types import (
@@ -37,6 +39,8 @@ from app_v2.schemas.enum_types import (
     PaymentTypeEnum,
 )
 from app_v2.utils.coin_utils import get_user_coin_balance
+from app_v2.utils.email_service import send_payment_success_email, send_payment_failed_email
+from app_v2.utils.invoice_utils import generate_invoice_pdf
 
 logger = setup_logger(__name__)
 router = APIRouter(prefix="/api/v2/webhooks", tags=["Webhooks"])
@@ -147,30 +151,29 @@ async def razorpay_webhook(request: Request):
             return {"status": "duplicate"}
 
     # ── 3. Signature check ────────────────────────────────────────────────────
+    # Required for every event, payment.failed included — an unsigned/forged
+    # payment.failed can otherwise flip a real pending order to failed (the
+    # order_id is visible client-side during checkout, so it's guessable).
     rzp_signature = request.headers.get("X-Razorpay-Signature", "")
-    signature_valid = False
-
-    if rzp_signature and _verify_webhook_signature(raw_body, rzp_signature):
-        signature_valid = True
-    else:
-        if event_type == "payment.failed":
-            logger.warning(
-                f"Razorpay webhook: processing payment.failed with missing/invalid signature | id={event_id}"
-            )
-        else:
-            logger.warning(
-                f"Razorpay webhook: signature mismatch for {event_type} | id={event_id}"
-            )
-            raise HTTPException(status_code=400, detail="Invalid signature")
+    if not rzp_signature or not _verify_webhook_signature(raw_body, rzp_signature):
+        logger.warning(
+            f"Razorpay webhook: signature mismatch for {event_type} | id={event_id}"
+        )
+        try:
+            with db():
+                _log_event(event_id, event_type, payload, status="invalid_signature")
+                db.session.commit()
+        except Exception:
+            logger.exception("Razorpay webhook: failed to log invalid-signature event")
+        raise HTTPException(status_code=400, detail="Invalid signature")
 
     # ── 4. Dispatch ───────────────────────────────────────────────────────────
+    email_task: Optional[dict] = None
     try:
         with db():
             log = _log_event(event_id, event_type, payload)
-            if not signature_valid:
-                log.status = "invalid_signature"
 
-            _handle_order_event(event_type, payload, log)
+            email_task = _handle_order_event(event_type, payload, log)
 
             _mark_log(log, "processed")
             db.session.commit()
@@ -180,6 +183,35 @@ async def razorpay_webhook(request: Request):
             f"Razorpay webhook handler failed | event={event_type} | id={event_id} | error={exc}"
         )
         # Do NOT re-raise — return 200 so Razorpay doesn't retry infinitely.
+        # Also don't send an email below for a transaction that may not have committed.
+        email_task = None
+
+    # Sent after the commit succeeds, outside the DB transaction — a slow SMTP
+    # call has no business holding a DB session/lock open.
+    if email_task:
+        try:
+            if email_task["type"] == "success":
+                await send_payment_success_email(
+                    user_email=email_task["email"],
+                    user_name=email_task["name"],
+                    amount=email_task["amount"],
+                    currency=email_task["currency"],
+                    coins=email_task["coins"],
+                    provider_payment_id=email_task["provider_payment_id"],
+                    base_url=VoiceSettings.FRONTEND_URL,
+                    invoice_pdf=email_task.get("invoice_pdf"),
+                )
+            elif email_task["type"] == "failed":
+                await send_payment_failed_email(
+                    user_email=email_task["email"],
+                    user_name=email_task["name"],
+                    amount=email_task["amount"],
+                    currency=email_task["currency"],
+                    error_reason=email_task["error_reason"],
+                    base_url=VoiceSettings.FRONTEND_URL,
+                )
+        except Exception:
+            logger.exception("Razorpay webhook: failed to send payment email")
 
     return {"status": "ok"}
 
@@ -192,23 +224,24 @@ def _handle_order_event(
     event_type: str,
     payload: Dict[str, Any],
     log: "WebhookEventLogModel",
-) -> None:
+) -> Optional[dict]:
     payment_entity: Dict = payload.get("payload", {}).get("payment", {}).get("entity", {})
     order_entity: Dict = payload.get("payload", {}).get("order", {}).get("entity", {})
 
     if event_type == "payment.captured":
-        _order_payment_captured(payment_entity, order_entity, log)
+        return _order_payment_captured(payment_entity, order_entity, log)
     elif event_type == "payment.failed":
-        _order_payment_failed(payment_entity, order_entity, log)
+        return _order_payment_failed(payment_entity, order_entity, log)
     elif event_type == "order.paid":
-        _order_paid(payment_entity, order_entity, log)
+        return _order_paid(payment_entity, order_entity, log)
+    return None
 
 
 def _order_payment_captured(
     payment_entity: Dict,
     order_entity: Dict,
     log: "WebhookEventLogModel",
-) -> None:
+) -> Optional[dict]:
     """payment.captured is the source of truth for pay-as-you-go coin credits."""
     rzp_payment_id: str = payment_entity.get("id", "")
     rzp_order_id: str = payment_entity.get("order_id", "") or order_entity.get("id", "")
@@ -248,49 +281,75 @@ def _order_payment_captured(
     amount: float = float(payment_entity.get("amount", 0)) / 100.0
     currency: str = payment_entity.get("currency", "INR")
 
-    payment = PaymentModel(
-        user_id=addon_order.user_id,
-        amount=amount,
-        currency=currency,
-        status=PaymentStatusEnum.success,
-        provider=PaymentProviderEnum.razorpay,
-        provider_payment_id=rzp_payment_id,
-        provider_order_id=rzp_order_id,
-        payment_type=PaymentTypeEnum.coin_purchase,
-        metadata_json={"coins": addon_order.coins, "source": "webhook"},
-    )
-    db.session.add(payment)
-    db.session.flush()
+    # Savepoint: verify() (triggered by the browser) can be racing this exact
+    # webhook delivery. Whichever insert commits first wins; the other hits the
+    # unique index on provider_payment_id and backs off here instead of
+    # double-crediting the ledger.
+    try:
+        with db.session.begin_nested():
+            payment = PaymentModel(
+                user_id=addon_order.user_id,
+                amount=amount,
+                currency=currency,
+                status=PaymentStatusEnum.success,
+                provider=PaymentProviderEnum.razorpay,
+                provider_payment_id=rzp_payment_id or None,
+                provider_order_id=rzp_order_id,
+                payment_type=PaymentTypeEnum.coin_purchase,
+                metadata_json={"coins": addon_order.coins, "source": "webhook"},
+            )
+            db.session.add(payment)
+            db.session.flush()
 
-    current_balance = get_user_coin_balance(addon_order.user_id)
-    new_balance = current_balance + addon_order.coins
+            current_balance = get_user_coin_balance(addon_order.user_id)
+            new_balance = current_balance + addon_order.coins
 
-    ledger_entry = CoinsLedgerModel(
-        user_id=addon_order.user_id,
-        transaction_type=CoinTransactionTypeEnum.credit_purchase,
-        coins=addon_order.coins,
-        remaining_coins=addon_order.coins,
-        reference_type="payment",
-        reference_id=payment.id,
-        balance_after=new_balance,
-    )
-    db.session.add(ledger_entry)
+            ledger_entry = CoinsLedgerModel(
+                user_id=addon_order.user_id,
+                transaction_type=CoinTransactionTypeEnum.credit_purchase,
+                coins=addon_order.coins,
+                remaining_coins=addon_order.coins,
+                reference_type="payment",
+                reference_id=payment.id,
+                balance_after=new_balance,
+            )
+            db.session.add(ledger_entry)
 
-    addon_order.status = PaymentStatusEnum.success
-    addon_order.provider_payment_id = rzp_payment_id
-    addon_order.payment_id = payment.id
+            addon_order.status = PaymentStatusEnum.success
+            addon_order.provider_payment_id = rzp_payment_id
+            addon_order.payment_id = payment.id
+    except IntegrityError:
+        logger.info(
+            f"payment.captured: payment {rzp_payment_id} recorded concurrently "
+            f"(verify() won the race) – skipping credit"
+        )
+        return
 
     logger.info(
         f"payment.captured (addon) | order={rzp_order_id} | "
         f"payment={rzp_payment_id} | coins={addon_order.coins} | user={addon_order.user_id}"
     )
 
+    user = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.id == addon_order.user_id).first()
+    if not user or not user.email:
+        return None
+    return {
+        "type": "success",
+        "email": user.email,
+        "name": user.name,
+        "amount": amount,
+        "currency": currency,
+        "coins": addon_order.coins,
+        "provider_payment_id": rzp_payment_id,
+        "invoice_pdf": generate_invoice_pdf(payment, user),
+    }
+
 
 def _order_payment_failed(
     payment_entity: Dict,
     order_entity: Dict,
     log: "WebhookEventLogModel",
-) -> None:
+) -> Optional[dict]:
     """payment.failed for a pay-as-you-go credit purchase order."""
     rzp_payment_id: str = payment_entity.get("id", "")
     rzp_order_id: str = payment_entity.get("order_id", "") or order_entity.get("id", "")
@@ -328,30 +387,55 @@ def _order_payment_failed(
         )
         return
 
-    addon_order.status = PaymentStatusEnum.failed
-    addon_order.provider_payment_id = rzp_payment_id
+    try:
+        with db.session.begin_nested():
+            addon_order.status = PaymentStatusEnum.failed
+            addon_order.provider_payment_id = rzp_payment_id
 
-    failed_payment = PaymentModel(
-        user_id=addon_order.user_id,
-        amount=addon_order.amount,
-        currency="INR",
-        status=PaymentStatusEnum.failed,
-        provider=PaymentProviderEnum.razorpay,
-        provider_payment_id=rzp_payment_id,
-        provider_order_id=rzp_order_id,
-        payment_type=PaymentTypeEnum.coin_purchase,
-        metadata_json={
-            "error_code": payment_entity.get("error_code"),
-            "error_description": payment_entity.get("error_description"),
-            "error_reason": payment_entity.get("error_reason"),
-            "source": "webhook",
-        },
-    )
-    db.session.add(failed_payment)
+            failed_payment = PaymentModel(
+                user_id=addon_order.user_id,
+                amount=addon_order.amount,
+                currency="INR",
+                status=PaymentStatusEnum.failed,
+                provider=PaymentProviderEnum.razorpay,
+                provider_payment_id=rzp_payment_id or None,
+                provider_order_id=rzp_order_id,
+                payment_type=PaymentTypeEnum.coin_purchase,
+                metadata_json={
+                    "error_code": payment_entity.get("error_code"),
+                    "error_description": payment_entity.get("error_description"),
+                    "error_reason": payment_entity.get("error_reason"),
+                    "source": "webhook",
+                },
+            )
+            db.session.add(failed_payment)
+    except IntegrityError:
+        logger.info(
+            f"payment.failed: payment {rzp_payment_id} recorded concurrently – skipping"
+        )
+        return
+
     logger.warning(
         f"payment.failed (addon) | order={rzp_order_id} | payment={rzp_payment_id} | "
         f"user={addon_order.user_id}"
     )
+
+    user = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.id == addon_order.user_id).first()
+    if not user or not user.email:
+        return None
+    error_reason = (
+        payment_entity.get("error_description")
+        or payment_entity.get("error_reason")
+        or "Payment was not completed"
+    )
+    return {
+        "type": "failed",
+        "email": user.email,
+        "name": user.name,
+        "amount": addon_order.amount,
+        "currency": "INR",
+        "error_reason": error_reason,
+    }
 
 
 def _order_paid(
