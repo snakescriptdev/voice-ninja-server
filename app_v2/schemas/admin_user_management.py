@@ -4,6 +4,10 @@ from datetime import datetime
 
 class UserManagementStats(BaseModel):
     total_users: int
+    new_signups_this_month: int = 0
+    suspended_users: int = 0
+    # Sum of |coins| across all negative (debit) ledger entries, all users, all time.
+    total_coins_consumed: int = 0
 
 class UserManagementListItem(BaseModel):
     user_id: int
@@ -18,6 +22,9 @@ class UserManagementListItem(BaseModel):
     api_calls_monthly: int
     api_calls_weekly: int
     no_of_voices: int
+    # Sum of |coins| across this user's negative (debit) ledger entries, all time.
+    credits_consumed: int = 0
+    date_added: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -33,6 +40,17 @@ class AdminUserTransactionItem(BaseModel):
     balance_after: int
     # Reason an admin gave for this adjustment; null for non-admin entries.
     reason: Optional[str] = None
+
+class AdminUserBillingHistoryItem(BaseModel):
+    payment_id: int
+    date: datetime
+    description: str
+    amount: float
+    currency: str
+    status: str
+    invoice_url: Optional[str] = None
+    provider_payment_id: Optional[str] = None
+    provider_order_id: Optional[str] = None
 
 class SuspendUserRequest(BaseModel):
     is_suspended: bool

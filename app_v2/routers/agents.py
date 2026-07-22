@@ -1061,6 +1061,123 @@ async def get_agent_by_id(
     return agent_to_read(agent)
 
 
+# -------------------- TOOL ATTACH / DETACH --------------------
+# Scoped strictly to the (agent, tool) link — never touches the shared
+# FunctionModel row itself, so detaching a tool here can never affect any
+# other agent that also has it attached.
+
+def _sync_agent_tool_ids_with_elevenlabs(agent: AgentModel) -> None:
+    """Rebuilds the agent's full tool_ids list from bridge rows and pushes it
+    to ElevenLabs. Raises HTTPException(424) on failure — caller must rollback."""
+    if not agent.elevenlabs_agent_id:
+        return
+
+    bound_tool_ids = [
+        row.function_id
+        for row in db.session.query(AgentFunctionBridgeModel)
+        .filter(AgentFunctionBridgeModel.agent_id == agent.id)
+        .all()
+    ]
+    el_tool_ids = []
+    if bound_tool_ids:
+        tools = db.session.query(FunctionModel).filter(
+            FunctionModel.id.in_(bound_tool_ids),
+            FunctionModel.elevenlabs_tool_id.isnot(None),
+        ).all()
+        el_tool_ids = [t.elevenlabs_tool_id for t in tools]
+
+    el_client = ElevenLabsAgent()
+    el_response = el_client.update_agent(agent_id=agent.elevenlabs_agent_id, tool_ids=el_tool_ids)
+    if not el_response.status:
+        logger.error(f"❌ ElevenLabs agent tool resync failed: {el_response.error_message}")
+        raise HTTPException(
+            status_code=424,
+            detail=f"Failed to sync tools with ElevenLabs: {el_response.error_message}",
+        )
+
+
+@router.post(
+    "/{agent_id}/tools/{function_id}",
+    response_model=AgentRead,
+    summary="Attach an existing tool to this agent",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def attach_tool_to_agent(
+    agent_id: int,
+    function_id: int,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    agent = db.session.query(AgentModel).filter(
+        AgentModel.id == agent_id,
+        AgentModel.user_id == current_user.id,
+    ).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    tool = db.session.query(FunctionModel).filter(
+        FunctionModel.id == function_id,
+        FunctionModel.elevenlabs_tool_id.isnot(None),
+        or_(
+            FunctionModel.user_id == current_user.id,
+            FunctionModel.user_id.is_(None),
+        ),
+    ).first()
+    if not tool:
+        raise HTTPException(status_code=404, detail="Tool not found or not accessible")
+
+    existing_bridge = db.session.query(AgentFunctionBridgeModel).filter(
+        AgentFunctionBridgeModel.agent_id == agent_id,
+        AgentFunctionBridgeModel.function_id == function_id,
+    ).first()
+    if not existing_bridge:
+        db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=function_id))
+        db.session.flush()
+
+    try:
+        _sync_agent_tool_ids_with_elevenlabs(agent)
+    except HTTPException:
+        db.session.rollback()
+        raise
+
+    db.session.commit()
+    db.session.refresh(agent)
+    return agent_to_read(agent)
+
+
+@router.delete(
+    "/{agent_id}/tools/{function_id}",
+    response_model=AgentRead,
+    summary="Detach a tool from this agent (does not delete the tool itself)",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def detach_tool_from_agent(
+    agent_id: int,
+    function_id: int,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    agent = db.session.query(AgentModel).filter(
+        AgentModel.id == agent_id,
+        AgentModel.user_id == current_user.id,
+    ).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    db.session.query(AgentFunctionBridgeModel).filter(
+        AgentFunctionBridgeModel.agent_id == agent_id,
+        AgentFunctionBridgeModel.function_id == function_id,
+    ).delete()
+    db.session.flush()
+
+    try:
+        _sync_agent_tool_ids_with_elevenlabs(agent)
+    except HTTPException:
+        db.session.rollback()
+        raise
+
+    db.session.commit()
+    db.session.refresh(agent)
+    return agent_to_read(agent)
+
 
 # -------------------- UPDATE --------------------
 
