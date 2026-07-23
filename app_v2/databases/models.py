@@ -810,7 +810,7 @@ class PaymentModel(Base):
     # as the invoice number and used as the sole lookup key for the unauthenticated,
     # directly-navigable invoice PDF URL (see invoice_files.py). Never sequential/
     # guessable like `id`, so no separate auth token is needed on that URL.
-    invoice_reference: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
+    invoice_reference: Mapped[str] = mapped_column(String(32), nullable=True, unique=True, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
