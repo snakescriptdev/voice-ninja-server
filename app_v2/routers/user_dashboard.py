@@ -1044,17 +1044,21 @@ def get_user_leads(
     page: int = 1,
     size: int = 20,
     search: Optional[str] = None,
+    agent_id: Optional[int] = None,
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         skip = (page - 1) * size
-        
+
         query = db.session.query(WidgetLeadModel).join(
             WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id
         ).filter(
             WidgetModel.user_id == current_user.id
         )
-        
+
+        if agent_id is not None:
+            query = query.filter(WidgetModel.agent_id == agent_id)
+
         if search:
             term = f"%{search}%"
             query = query.filter(

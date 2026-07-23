@@ -1,7 +1,7 @@
 """OTP-related API endpoints.
 
 This module provides endpoints for OTP-based authentication:
-- Request OTP: Send OTP to user's email or phone
+- Request OTP: Send OTP to user's email
 - Verify OTP: Verify OTP and complete login
 """
 
@@ -17,10 +17,7 @@ from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthMo
 from app_v2.utils.otp_utils import (
     generate_otp,
     is_email,
-    is_phone,
-    normalize_phone,
     send_otp_email,
-    send_otp_sms,
 )
 from app_v2.utils.jwt_utils import (
     create_access_token,
@@ -36,11 +33,9 @@ from app_v2.constants import (
     HTTP_401_UNAUTHORIZED,
     HTTP_404_NOT_FOUND,
     HTTP_500_INTERNAL_SERVER_ERROR,
-    MSG_INVALID_EMAIL_OR_PHONE,
+    MSG_INVALID_EMAIL_FORMAT,
     MSG_USER_CREATED_OTP_SENT_EMAIL,
-    MSG_USER_CREATED_OTP_SENT_SMS,
     MSG_OTP_SENT_EMAIL,
-    MSG_OTP_SENT_SMS,
     MSG_FAILED_TO_SEND_OTP,
     MSG_USER_NOT_FOUND,
     MSG_USER_SIGNED_UP_WITH_GOOGLE,
@@ -49,11 +44,9 @@ from app_v2.constants import (
     MSG_LOGIN_SUCCESSFUL,
     MSG_FAILED_TO_SEND_OTP_VIA_METHOD,
     MSG_OTP_RESENT_EMAIL,
-    MSG_OTP_RESENT_SMS,
     MSG_NO_ACTIVE_OTP,
     OTP_EXPIRY_MINUTES,
     METHOD_EMAIL,
-    METHOD_SMS,
 )
 from app_v2.schemas.otp import (
     RequestOTPRequest,
@@ -72,7 +65,7 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
     '/login',
     status_code=status.HTTP_200_OK,
     summary='Request OTP',
-    description='Send OTP to user email or phone number for authentication',
+    description='Send OTP to user email for authentication',
     responses={
         200: {
             'description': 'OTP sent successfully',
@@ -94,7 +87,7 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
                     'example': {
                         'status': 'failed',
                         'status_code': 400,
-                        'message': 'Invalid email or phone format'
+                        'message': 'Invalid email format'
                     }
                 }
             }
@@ -114,13 +107,13 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
     }
 )
 async def request_otp(request: RequestOTPRequest):
-    """Request OTP to be sent to email or phone.
+    """Request OTP to be sent to email.
 
-    This endpoint validates the username (email or phone), generates an OTP,
-    and sends it via the appropriate channel.
+    This endpoint validates the username (email), generates an OTP,
+    and sends it via email.
 
     Args:
-        request: Request containing username (email or phone).
+        request: Request containing username (email).
 
     Returns:
         RequestOTPResponse with status and method information on success,
@@ -129,38 +122,31 @@ async def request_otp(request: RequestOTPRequest):
     try:
         username = request.username
 
-        # Validate email or phone format
-        is_email_login = is_email(username)
-        is_phone_login = is_phone(username)
-
-        if not is_email_login and not is_phone_login:
+        # Validate email format
+        if not is_email(username):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "status": STATUS_FAILED,
                     "status_code": HTTP_400_BAD_REQUEST,
-                    "message": MSG_INVALID_EMAIL_OR_PHONE
+                    "message": MSG_INVALID_EMAIL_FORMAT
                 }
             )
-
-        # Normalize phone if needed
-        if is_phone_login:
-            username = normalize_phone(username)
 
         # Check unified auth model first
         unified_user = UnifiedAuthModel.get_by_username(username)
         user_created = False
-        
+
         if not unified_user:
             # Create new user in unified auth
             unified_user = UnifiedAuthModel.create(
                 username=username,
-                email=username if is_email_login else None,
-                phone=username if is_phone_login else "",
+                email=username,
+                phone="",
                 has_otp_auth=True,
                 is_verified=False
             )
-            
+
             # Create default notification settings
             with db():
                 notification_settings = UserNotificationSettings(user_id=unified_user.id)
@@ -173,8 +159,8 @@ async def request_otp(request: RequestOTPRequest):
             with db():
                 old_user = UserModel(
                     username=username,
-                    email=username if is_email_login else None,
-                    phone=username if is_phone_login else "",
+                    email=username,
+                    phone="",
                     is_verified=False
                 )
                 db.session.add(old_user)
@@ -221,14 +207,9 @@ async def request_otp(request: RequestOTPRequest):
             )
 
         # Send OTP - show correct message based on whether user was actually created
-        if is_email_login:
-            success = await send_otp_email(username, otp)
-            method = METHOD_EMAIL
-            success_message = MSG_USER_CREATED_OTP_SENT_EMAIL if user_created else MSG_OTP_SENT_EMAIL
-        else:
-            success = send_otp_sms(username, otp)
-            method = METHOD_SMS
-            success_message = MSG_USER_CREATED_OTP_SENT_SMS if user_created else MSG_OTP_SENT_SMS
+        success = await send_otp_email(username, otp)
+        method = METHOD_EMAIL
+        success_message = MSG_USER_CREATED_OTP_SENT_EMAIL if user_created else MSG_OTP_SENT_EMAIL
 
         if not success:
             error_message = MSG_FAILED_TO_SEND_OTP_VIA_METHOD.format(method=method)
@@ -346,10 +327,6 @@ async def verify_otp(
     try:
         username = request.username
         otp = request.otp
-
-        # Normalize phone if needed
-        if is_phone(username):
-            username = normalize_phone(username)
 
         # Get user from unified model
         unified_user = UnifiedAuthModel.get_by_username(username)
@@ -474,7 +451,7 @@ async def verify_otp(
     '/resend-otp',
     status_code=status.HTTP_200_OK,
     summary='Resend OTP',
-    description='Resend OTP to user email or phone number',
+    description='Resend OTP to user email',
     responses={
         200: {
             'description': 'OTP resent successfully',
@@ -496,7 +473,7 @@ async def verify_otp(
                     'example': {
                         'status': 'failed',
                         'status_code': 400,
-                        'message': 'Invalid email or phone format'
+                        'message': 'Invalid email format'
                     }
                 }
             }
@@ -528,13 +505,13 @@ async def verify_otp(
     }
 )
 async def resend_otp(request: ResendOTPRequest):
-    """Resend OTP to user email or phone.
+    """Resend OTP to user email.
 
     This endpoint validates the username, checks for an existing user with
-    an active OTP, generates a new OTP, and resends it via the appropriate channel.
+    an active OTP, generates a new OTP, and resends it via email.
 
     Args:
-        request: Request containing username (email or phone).
+        request: Request containing username (email).
 
     Returns:
         RequestOTPResponse with status and method information on success,
@@ -543,23 +520,16 @@ async def resend_otp(request: ResendOTPRequest):
     try:
         username = request.username
 
-        # Validate email or phone format
-        is_email_login = is_email(username)
-        is_phone_login = is_phone(username)
-
-        if not is_email_login and not is_phone_login:
+        # Validate email format
+        if not is_email(username):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "status": STATUS_FAILED,
                     "status_code": HTTP_400_BAD_REQUEST,
-                    "message": MSG_INVALID_EMAIL_OR_PHONE
+                    "message": MSG_INVALID_EMAIL_FORMAT
                 }
             )
-
-        # Normalize phone if needed
-        if is_phone_login:
-            username = normalize_phone(username)
 
         # Get user from unified model
         unified_user = UnifiedAuthModel.get_by_username(username)
@@ -605,14 +575,9 @@ async def resend_otp(request: ResendOTPRequest):
             )
 
         # Send OTP
-        if is_email_login:
-            success = await send_otp_email(username, otp)
-            method = METHOD_EMAIL
-            success_message = MSG_OTP_RESENT_EMAIL
-        else:
-            success = send_otp_sms(username, otp)
-            method = METHOD_SMS
-            success_message = MSG_OTP_RESENT_SMS
+        success = await send_otp_email(username, otp)
+        method = METHOD_EMAIL
+        success_message = MSG_OTP_RESENT_EMAIL
 
         if not success:
             error_message = MSG_FAILED_TO_SEND_OTP_VIA_METHOD.format(method=method)
