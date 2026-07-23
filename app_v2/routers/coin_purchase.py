@@ -9,12 +9,15 @@ Razorpay — no bundles, no stored card, no recurring mandate.
     order and return success without double-crediting.
   • Pending order is created in create_coin_order; actual coin credit ONLY
     happens after signature verification succeeds in verify_coin_payment.
-  • Failed payment path: if order is already marked failed we 409 rather than
-    re-verifying.
+  • Razorpay lets a user retry a failed payment attempt against the SAME
+    order_id, so a prior payment.failed webhook marking addon_order as
+    'failed' is not terminal — verify_coin_payment must still accept a
+    later successful attempt on that order rather than reject it.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
+from sqlalchemy.exc import IntegrityError
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer, is_admin
 from app_v2.databases.models import (
     UnifiedAuthModel, PaymentModel,
@@ -31,6 +34,8 @@ from app_v2.schemas.enum_types import (
     PaymentTypeEnum, CoinTransactionTypeEnum,
 )
 from app_v2.utils.payment_utils import PaymentProviderFactory
+from app_v2.utils.email_service import send_payment_success_email
+from app_v2.utils.invoice_utils import generate_invoice_pdf, generate_invoice_reference
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone
@@ -291,7 +296,7 @@ def create_coin_order(
     dependencies=[Depends(security)],
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
-def verify_coin_payment(
+async def verify_coin_payment(
     data: OrderVerifyRequest,
     current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
@@ -302,8 +307,9 @@ def verify_coin_payment(
       • If the webhook (payment.captured) already fulfilled this order the
         addon_order.status will be 'success' → return success without any DB
         writes.
-      • If addon_order.status is 'failed' → 409 (user should retry with a new
-        order).
+      • addon_order.status of 'failed' is NOT terminal — Razorpay allows
+        retrying a payment against the same order_id, so a prior failed
+        attempt must not block crediting a later successful one.
       • Otherwise, verify signature, credit coins, record payment.
     """
     try:
@@ -327,12 +333,6 @@ def verify_coin_payment(
                 "message": "Coins already credited",
                 "new_balance": current_balance,
             }
-
-        if addon_order.status == PaymentStatusEnum.failed:
-            raise HTTPException(
-                status_code=409,
-                detail="This order was marked as failed. Please create a new order.",
-            )
 
         # ── Verify Razorpay signature ─────────────────────────────────────────
         rzp_provider = PaymentProviderFactory.get_provider("razorpay")
@@ -365,42 +365,82 @@ def verify_coin_payment(
             }
 
         # ── Record payment ────────────────────────────────────────────────────
-        payment = PaymentModel(
-            user_id=current_user.id,
-            amount=addon_order.amount,
-            currency="INR",
-            status=PaymentStatusEnum.success,
-            provider=PaymentProviderEnum.razorpay,
-            provider_payment_id=data.razorpay_payment_id,
-            provider_order_id=data.razorpay_order_id,
-            payment_type=PaymentTypeEnum.coin_purchase,
-            metadata_json={"coins": addon_order.coins},
-        )
-        db.session.add(payment)
-        db.session.flush()
+        # Savepoint: the payment.captured webhook can be racing this exact
+        # request. Whichever insert commits first wins the unique index on
+        # provider_payment_id; the loser falls back to the winner's row below
+        # instead of double-crediting the ledger.
+        try:
+            with db.session.begin_nested():
+                payment = PaymentModel(
+                    user_id=current_user.id,
+                    amount=addon_order.amount,
+                    currency="INR",
+                    status=PaymentStatusEnum.success,
+                    provider=PaymentProviderEnum.razorpay,
+                    provider_payment_id=data.razorpay_payment_id or None,
+                    provider_order_id=data.razorpay_order_id,
+                    payment_type=PaymentTypeEnum.coin_purchase,
+                    metadata_json={"coins": addon_order.coins},
+                    invoice_reference=generate_invoice_reference(),
+                )
+                db.session.add(payment)
+                db.session.flush()
 
-        # ── Credit coins ──────────────────────────────────────────────────────
-        current_balance = get_user_coin_balance(current_user.id)
-        new_balance = current_balance + addon_order.coins
+                # ── Credit coins ────────────────────────────────────────────────
+                current_balance = get_user_coin_balance(current_user.id)
+                new_balance = current_balance + addon_order.coins
 
-        ledger_entry = CoinsLedgerModel(
-            user_id=current_user.id,
-            transaction_type=CoinTransactionTypeEnum.credit_purchase,
-            coins=addon_order.coins,
-            remaining_coins=addon_order.coins,
-            reference_type="payment",
-            reference_id=payment.id,
-            balance_after=new_balance,
-        )
-        db.session.add(ledger_entry)
+                ledger_entry = CoinsLedgerModel(
+                    user_id=current_user.id,
+                    transaction_type=CoinTransactionTypeEnum.credit_purchase,
+                    coins=addon_order.coins,
+                    remaining_coins=addon_order.coins,
+                    reference_type="payment",
+                    reference_id=payment.id,
+                    balance_after=new_balance,
+                )
+                db.session.add(ledger_entry)
 
-        # ── Finalise addon order ──────────────────────────────────────────────
-        addon_order.status = PaymentStatusEnum.success
-        addon_order.provider_payment_id = data.razorpay_payment_id
-        addon_order.provider_signature = data.razorpay_signature
-        addon_order.payment_id = payment.id
+                # ── Finalise addon order ────────────────────────────────────────
+                addon_order.status = PaymentStatusEnum.success
+                addon_order.provider_payment_id = data.razorpay_payment_id
+                addon_order.provider_signature = data.razorpay_signature
+                addon_order.payment_id = payment.id
+        except IntegrityError:
+            # Webhook won the race — fall back to its row instead of double-crediting.
+            existing_payment = (
+                db.session.query(PaymentModel)
+                .filter(PaymentModel.provider_payment_id == data.razorpay_payment_id)
+                .first()
+            )
+            addon_order.status = PaymentStatusEnum.success
+            addon_order.provider_payment_id = data.razorpay_payment_id
+            addon_order.provider_signature = data.razorpay_signature
+            addon_order.payment_id = existing_payment.id if existing_payment else None
+            db.session.commit()
+            current_balance = get_user_coin_balance(current_user.id)
+            return {
+                "status": "success",
+                "message": "Coins credited (webhook processed first)",
+                "new_balance": current_balance,
+            }
 
         db.session.commit()
+
+        if current_user.email:
+            try:
+                await send_payment_success_email(
+                    user_email=current_user.email,
+                    user_name=current_user.name,
+                    amount=addon_order.amount,
+                    currency="INR",
+                    coins=addon_order.coins,
+                    provider_payment_id=data.razorpay_payment_id,
+                    base_url=VoiceSettings.FRONTEND_URL,
+                    invoice_pdf=generate_invoice_pdf(payment, current_user),
+                )
+            except Exception:
+                logger.exception("verify_coin_payment: failed to send payment success email")
 
         return {
             "status": "success",
@@ -429,17 +469,24 @@ def get_coin_usage_settings():
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
-@router.put("/settings/coin-usage", response_model=CoinUsageSettingsResponse, dependencies=[Depends(is_admin)],openapi_extra={"security": [{"BearerAuth": []}]})
-def update_coin_usage_settings(data: CoinUsageSettingsUpdate):
+@router.put("/settings/coin-usage", response_model=CoinUsageSettingsResponse, openapi_extra={"security": [{"BearerAuth": []}]})
+def update_coin_usage_settings(data: CoinUsageSettingsUpdate, admin: UnifiedAuthModel = Depends(is_admin)):
     try:
         settings = CoinUsageSettingsModel.get_settings()
         with db():
             db.session.add(settings)
             before = {field: getattr(settings, field) for field in SETTINGS_VERSION_FIELDS}
+            admin_identity = admin.email or admin.username or f"user#{admin.id}"
+            settings.updated_by = admin_identity
+            if settings.field_update_meta is None:
+                settings.field_update_meta = {}
+            field_update_stamp = {"updated_by": admin_identity, "updated_at": datetime.now(timezone.utc).isoformat()}
             if data.elevenlabs_conversation_credits_per_minute is not None:
                 settings.elevenlabs_conversation_credits_per_minute = data.elevenlabs_conversation_credits_per_minute
+                settings.field_update_meta["elevenlabs_conversation_credits_per_minute"] = field_update_stamp
             if data.usd_to_credits is not None:
                 settings.usd_to_credits = data.usd_to_credits
+                settings.field_update_meta["usd_to_credits"] = field_update_stamp
             if data.markup_percentage is not None:
                 settings.markup_percentage = data.markup_percentage
             if data.minimum_credits_per_minute is not None:

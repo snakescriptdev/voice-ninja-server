@@ -1,18 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_sqlalchemy import db
-from typing import List
+from sqlalchemy import func, or_
+from typing import List, Optional
 import math
 
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.databases.models import (
     FunctionModel,
     FunctionApiConfig,
-    UnifiedAuthModel
+    UnifiedAuthModel,
+    AgentModel,
+    AgentFunctionBridgeModel,
 )
 from app_v2.schemas.function_schema import (
     FunctionCreateSchema,
     FunctionUpdateSchema,
     FunctionRead,
+    FunctionAgentItem,
     ApiSchema,
     PrimitiveField
 )
@@ -38,7 +42,16 @@ from app_v2.databases.models import FunctionModel
 from app_v2.utils.crypto_utils import decrypt_data
 
 
-def function_to_read(f: FunctionModel) -> FunctionRead:
+def _get_agents_count(function_id: int) -> int:
+    return (
+        db.session.query(func.count(AgentFunctionBridgeModel.id))
+        .filter(AgentFunctionBridgeModel.function_id == function_id)
+        .scalar()
+        or 0
+    )
+
+
+def function_to_read(f: FunctionModel, agents_count: int = 0) -> FunctionRead:
 
     db_config = f.api_endpoint_url
 
@@ -80,7 +93,8 @@ def function_to_read(f: FunctionModel) -> FunctionRead:
         elevenlabs_tool_id=f.elevenlabs_tool_id,
         created_at=f.created_at,
         modified_at=f.modified_at,
-        api_config=api_schema
+        api_config=api_schema,
+        agents_count=agents_count,
     )
 
 @router.post(
@@ -204,22 +218,68 @@ async def create_function(
 async def get_all_functions(
     page: int = 1,
     size: int = 20,
+    name: Optional[str] = None,
+    method: Optional[str] = None,
+    agent_name: Optional[str] = None,
     current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     if page < 1:
         page = 1
     skip = (page - 1) * size
-    
+
     query = db.session.query(FunctionModel).filter(
         FunctionModel.user_id == current_user.id
-    ).options(joinedload(FunctionModel.api_endpoint_url)).order_by(FunctionModel.modified_at.desc())
-    
+    ).options(joinedload(FunctionModel.api_endpoint_url))
+
+    if name:
+        query = query.filter(FunctionModel.name.ilike(f"%{name}%"))
+
+    if method:
+        query = query.filter(
+            db.session.query(FunctionApiConfig.id)
+            .filter(
+                FunctionApiConfig.function_id == FunctionModel.id,
+                FunctionApiConfig.http_method == method,
+            )
+            .exists()
+        )
+
+    if agent_name:
+        query = query.filter(
+            db.session.query(AgentFunctionBridgeModel.id)
+            .join(AgentModel, AgentModel.id == AgentFunctionBridgeModel.agent_id)
+            .filter(
+                AgentFunctionBridgeModel.function_id == FunctionModel.id,
+                AgentModel.user_id == current_user.id,
+                AgentModel.agent_name.ilike(f"%{agent_name}%"),
+            )
+            .exists()
+        )
+
+    query = query.order_by(FunctionModel.modified_at.desc())
+
     total = query.count()
     pages = math.ceil(total / size)
     
     functions = query.offset(skip).limit(size).all()
-    
-    items = [function_to_read(f) for f in functions]
+
+    function_ids = [f.id for f in functions]
+    counts_by_function_id = {}
+    if function_ids:
+        counts_by_function_id = dict(
+            db.session.query(
+                AgentFunctionBridgeModel.function_id,
+                func.count(AgentFunctionBridgeModel.id),
+            )
+            .filter(AgentFunctionBridgeModel.function_id.in_(function_ids))
+            .group_by(AgentFunctionBridgeModel.function_id)
+            .all()
+        )
+
+    items = [
+        function_to_read(f, agents_count=counts_by_function_id.get(f.id, 0))
+        for f in functions
+    ]
     
     return PaginatedResponse(
         total=total,
@@ -251,8 +311,54 @@ async def get_function(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Function not found"
         )
-        
-    return function_to_read(function)
+
+    return function_to_read(function, agents_count=_get_agents_count(function.id))
+
+# -------------------- AGENTS USING THIS TOOL --------------------
+
+@router.get(
+    "/{function_id}/agents",
+    response_model=PaginatedResponse[FunctionAgentItem],
+    summary="List the current user's agents that have this tool attached, paginated",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def get_function_agents(
+    function_id: int,
+    page: int = 1,
+    size: int = 20,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    function = db.session.query(FunctionModel).filter(
+        FunctionModel.id == function_id,
+        or_(
+            FunctionModel.user_id == current_user.id,
+            FunctionModel.user_id.is_(None),
+        ),
+    ).first()
+    if not function:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Function not found")
+
+    if page < 1:
+        page = 1
+
+    # Scoped to the current user's OWN agents regardless of who owns the tool
+    # (a shared/global tool must never leak other users' agent names).
+    base = (
+        db.session.query(AgentModel.id, AgentModel.agent_name)
+        .join(AgentFunctionBridgeModel, AgentFunctionBridgeModel.agent_id == AgentModel.id)
+        .filter(
+            AgentFunctionBridgeModel.function_id == function_id,
+            AgentModel.user_id == current_user.id,
+        )
+        .order_by(AgentModel.agent_name)
+    )
+
+    total = base.count()
+    pages = math.ceil(total / size) if size > 0 else 1
+    rows = base.offset((page - 1) * size).limit(size).all()
+    items = [FunctionAgentItem(id=r.id, agent_name=r.agent_name) for r in rows]
+
+    return PaginatedResponse(total=total, page=page, size=size, pages=pages, items=items)
 
 # -------------------- UPDATE --------------------
 
@@ -412,7 +518,7 @@ async def update_function(
     try:
         db.session.commit()
         db.session.refresh(function)
-        return FunctionRead.model_validate(function)
+        return function_to_read(function, agents_count=_get_agents_count(function.id))
 
     except Exception as e:
         db.session.rollback()
@@ -445,6 +551,16 @@ async def delete_function(
             detail="Function not found"
         )
 
+    # This is a shared tool — deleting it detaches it from every agent that
+    # has it attached, not just the one the user happened to be looking at.
+    # Snapshot which agents are affected now, before the bridge rows cascade-delete.
+    affected_agents = (
+        db.session.query(AgentModel)
+        .join(AgentFunctionBridgeModel, AgentFunctionBridgeModel.agent_id == AgentModel.id)
+        .filter(AgentFunctionBridgeModel.function_id == function_id)
+        .all()
+    )
+
     # 1. Delete from ElevenLabs
     if function.elevenlabs_tool_id:
         el_client = ElevenLabsAgent()
@@ -453,7 +569,7 @@ async def delete_function(
             el_response = el_client.delete_tool(function.elevenlabs_tool_id)
             if not el_response.status:
                 logger.warning(f"Failed to delete ElevenLabs tool: {el_response.error_message}")
-                # We often proceed even if EL delete fails to keep DB clean, 
+                # We often proceed even if EL delete fails to keep DB clean,
                 # but let's be safe and let user know if it's a hard error.
         except Exception as e:
             logger.error(f"Error deleting ElevenLabs tool: {e}")
@@ -470,3 +586,15 @@ async def delete_function(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete function: {str(e)}"
         )
+
+    # 3. Resync every other agent that had this tool attached, so their
+    # ElevenLabs tool_ids list doesn't keep referencing the now-deleted tool.
+    # Best-effort — the delete above already succeeded and must not be undone.
+    from app_v2.routers.agents import _sync_agent_tool_ids_with_elevenlabs
+    for agent in affected_agents:
+        try:
+            _sync_agent_tool_ids_with_elevenlabs(agent)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            logger.warning(f"Failed to resync agent {agent.id} after tool {function_id} deletion: {e}")
