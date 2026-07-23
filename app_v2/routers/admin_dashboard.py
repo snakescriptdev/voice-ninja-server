@@ -3,7 +3,7 @@ from app_v2.utils.jwt_utils import is_admin,HTTPBearer
 from datetime import datetime, date
 from typing import List, Literal, Optional
 from app_v2.core.logger import setup_logger
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinUsageSettingsModel, CoinUsageSettingsVersionModel, PaymentModel, PaymentStatusEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel, APIKeyModel, WebhookEventLogModel, AddOnCoinOrderModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinUsageSettingsModel, CoinUsageSettingsVersionModel, PaymentModel, PaymentStatusEnum, PaymentTypeEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel, APIKeyModel, WebhookEventLogModel, AddOnCoinOrderModel
 from app_v2.schemas.activity_schema import ActivityLogResponse
 from app_v2.schemas.admin_dashboard import (
     UserCostItem,
@@ -18,12 +18,13 @@ from app_v2.schemas.admin_dashboard import (
     AdminPublicLogUserItem,
     AdminPublicLogUserListResponse,
     AdminWebhookEventItem,
+    AdminPaymentItem,
 )
 from app_v2.schemas.enum_types import CallStatusEnum, PublicLogChannelEnum
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
-from sqlalchemy import func, or_, case
+from sqlalchemy import func, or_, case, desc
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
 from app_v2.core.config import VoiceSettings
@@ -780,6 +781,153 @@ def list_webhook_events(
     except Exception as e:
         logger.error(f"Error in list_webhook_events: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _describe_payment(p: PaymentModel) -> str:
+    if p.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
+        coins = p.metadata_json.get("coins") if p.metadata_json else None
+        return f"Credit Purchase ({coins} credits)" if coins else "Credit Purchase"
+    elif p.payment_type == PaymentTypeEnum.subscription:
+        return "Subscription Payment"
+    return "Miscellaneous Payment"
+
+
+def _describe_admin_adjustment(coins: int) -> str:
+    sign = "+" if coins > 0 else ""
+    return f"Admin Adjustment ({sign}{coins} coins)"
+
+
+@router.get(
+    "/payments",
+    response_model=PaginatedResponse[AdminPaymentItem],
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def list_all_payments_for_admin(
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    status_filter: Optional[str] = Query(None, alias="status"),
+    email: Optional[str] = None,
+    amount_min: Optional[float] = None,
+    amount_max: Optional[float] = None,
+    date_after: Optional[str] = None,
+    date_before: Optional[str] = None,
+    entry_type: Optional[str] = Query(None, enum=["payment", "admin_adjustment"]),
+    sort_by: str = Query("payment_date", enum=["payment_date", "amount", "user_id"]),
+    sort_order: str = Query("desc", enum=["asc", "desc"]),
+):
+    """
+    Every credit-affecting transaction across every user, newest first by
+    default — both real payment transactions (PaymentModel) AND manual admin
+    coin adjustments (CoinsLedgerModel), merged into one feed so an admin
+    doesn't have to check two different places for "where did this user's
+    coins come from".
+
+    entry_type filters to just one source ("payment" = credits purchased,
+    "admin_adjustment" = credits added/removed by an admin). status/amount
+    range are payment-only concepts — setting either excludes admin
+    adjustments from the merged results entirely, since a ledger adjustment
+    has no processing status and its "amount" (coins) isn't the same unit as
+    a payment's currency amount.
+    """
+    try:
+        combined: List[AdminPaymentItem] = []
+
+        if entry_type != "admin_adjustment":
+            pq = (
+                db.session.query(PaymentModel, UnifiedAuthModel.email)
+                .join(UnifiedAuthModel, PaymentModel.user_id == UnifiedAuthModel.id)
+            )
+            if status_filter:
+                pq = pq.filter(PaymentModel.status == status_filter)
+            if email:
+                pq = pq.filter(UnifiedAuthModel.email.ilike(f"%{email}%"))
+            if amount_min is not None:
+                pq = pq.filter(PaymentModel.amount >= amount_min)
+            if amount_max is not None:
+                pq = pq.filter(PaymentModel.amount <= amount_max)
+            if date_after:
+                pq = pq.filter(PaymentModel.created_at >= date_after)
+            if date_before:
+                pq = pq.filter(PaymentModel.created_at <= date_before)
+
+            for p, user_email in pq.all():
+                combined.append(AdminPaymentItem(
+                    entry_type="payment",
+                    payment_id=p.id,
+                    user_id=p.user_id,
+                    user_email=user_email,
+                    date=p.created_at,
+                    description=_describe_payment(p),
+                    amount=p.amount,
+                    currency=p.currency,
+                    status=p.status.value if hasattr(p.status, "value") else p.status,
+                    provider=p.provider.value if hasattr(p.provider, "value") else p.provider,
+                    provider_payment_id=p.provider_payment_id,
+                    provider_order_id=p.provider_order_id,
+                ))
+
+        if entry_type != "payment" and not status_filter and amount_min is None and amount_max is None:
+            aq = (
+                db.session.query(CoinsLedgerModel, UnifiedAuthModel.email)
+                .join(UnifiedAuthModel, CoinsLedgerModel.user_id == UnifiedAuthModel.id)
+                .filter(CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.admin_adjustment)
+            )
+            if email:
+                aq = aq.filter(UnifiedAuthModel.email.ilike(f"%{email}%"))
+            if date_after:
+                aq = aq.filter(CoinsLedgerModel.created_at >= date_after)
+            if date_before:
+                aq = aq.filter(CoinsLedgerModel.created_at <= date_before)
+
+            for entry, user_email in aq.all():
+                combined.append(AdminPaymentItem(
+                    entry_type="admin_adjustment",
+                    payment_id=entry.id,
+                    user_id=entry.user_id,
+                    user_email=user_email,
+                    date=entry.created_at,
+                    description=_describe_admin_adjustment(entry.coins),
+                    coins=entry.coins,
+                    reason=entry.notes,
+                ))
+
+        def sort_key(item: AdminPaymentItem):
+            if sort_by == "amount":
+                return item.amount if item.amount is not None else (item.coins or 0)
+            if sort_by == "user_id":
+                return item.user_id
+            return item.date
+
+        combined.sort(key=sort_key, reverse=(sort_order == "desc"))
+
+        total = len(combined)
+        start = (page - 1) * size
+        items = combined[start:start + size]
+        total_pages = (total + size - 1) // size if size > 0 else 0
+
+        return PaginatedResponse(total=total, page=page, size=size, pages=total_pages, items=items)
+    except Exception as e:
+        logger.error(f"Error in list_all_payments_for_admin: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/payments/{payment_id}/invoice",
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def get_admin_payment_invoice(payment_id: int):
+    """
+    Resolves to the plain, directly-navigable invoice PDF URL for any payment
+    regardless of which user it belongs to (global admin lookup — the
+    per-user equivalent is admin_user_management.get_user_billing_invoice).
+    """
+    payment = db.session.query(PaymentModel).filter(PaymentModel.id == payment_id).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    return {"path": f"/invoices/{payment.invoice_reference}.pdf"}
 
 
 @router.get(

@@ -471,7 +471,13 @@ class KnowledgeBaseModel(Base):
     file_size: Mapped[float] = mapped_column(Float, nullable=True)
     elevenlabs_document_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     rag_index_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
-    
+
+    # Page count ElevenLabs computed for this single document, from
+    # GET /convai/knowledge-base/{document_id}. Cached here (best-effort,
+    # refreshed on create/update) since it requires an external call. None
+    # until the fetch has run or if it ever fails.
+    num_pages: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -800,6 +806,11 @@ class PaymentModel(Base):
 
     metadata_json: Mapped[dict | None] = mapped_column(MutableDict.as_mutable(JSONB))
     invoice_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Opaque, high-entropy public identifier for this payment's invoice — shown
+    # as the invoice number and used as the sole lookup key for the unauthenticated,
+    # directly-navigable invoice PDF URL (see invoice_files.py). Never sequential/
+    # guessable like `id`, so no separate auth token is needed on that URL.
+    invoice_reference: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
