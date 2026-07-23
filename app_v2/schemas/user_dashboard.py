@@ -36,6 +36,9 @@ class AgentSummaryItem(BaseModel):
     success_count: int
     failed_count: int
     total_credits_used: int
+    kb_count: int = 0
+    tool_count: int = 0
+    kb_total_pages: Optional[int] = None
 
 class ChannelDistribution(BaseModel):
     channel: str

@@ -66,9 +66,7 @@ def revoke_refresh_token(token: str):
 # Security scheme
 security = HTTPBearer()
 
-def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
-    """Get current user from token"""
-    token = credentials.credentials
+def _decode_access_token_str(token: str) -> UnifiedAuthModel:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "access":
@@ -80,7 +78,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
                     "status_code": 401
                 }
             )
-        
+
         user_id = payload.get("user_id")
         if not user_id:
             raise HTTPException(
@@ -91,7 +89,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
                     "status_code": 401
                 }
             )
-        
+
         from app_v2.databases.models import UnifiedAuthModel
         user = UnifiedAuthModel.get_by_id(user_id)
         if not user:
@@ -103,7 +101,7 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
                     "status_code": 401
                 }
             )
-        
+
         return user
     except JWTError:
         raise HTTPException(
@@ -114,6 +112,12 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
                 "status_code": 401
             }
         )
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Get current user from token"""
+    return _decode_access_token_str(credentials.credentials)
+
 
 def is_admin(
     current_user: UnifiedAuthModel = Depends(get_current_user),
