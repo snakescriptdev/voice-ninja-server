@@ -64,7 +64,10 @@ def finalize_ws_call_log(
     error_message: Optional[str] = None,
 ) -> None:
     """
-    Updates the row opened by start_ws_call_log() with the call's outcome.
+    Updates the row opened by start_ws_call_log() with the call's outcome —
+    unless the call succeeded, in which case the in-flight placeholder row is
+    deleted instead. This log exists for error visibility/alerting, not a
+    full request audit trail, so successful calls aren't worth keeping.
     No-op if log_id is None (e.g. the call was rejected before a user could
     be resolved). Never raises. Must be called inside db().
     """
@@ -73,6 +76,10 @@ def finalize_ws_call_log(
     try:
         record = db.session.query(APICallLogModel).get(log_id)
         if record is None:
+            return
+        if is_success:
+            db.session.delete(record)
+            db.session.commit()
             return
         record.status_code = status_code
         record.is_success = is_success

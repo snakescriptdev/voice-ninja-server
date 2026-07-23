@@ -74,5 +74,9 @@ class AgentRead(BaseModel):
     # first-call-duration-cap banner/icon on the frontend (see
     # CoinUsageSettingsModel.first_call_max_duration_seconds).
     is_first_call_pending: bool = True
+    kb_count: int = 0
+    tool_count: int = 0
+    conversation_count: int = 0
+    credits_used: int = 0
     class Config:
         from_attributes = True
