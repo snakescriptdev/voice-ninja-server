@@ -2,56 +2,47 @@
 
 from typing import Optional
 from pydantic import BaseModel, Field, field_validator
-from app_v2.utils.otp_utils import is_email
 
 class RequestOTPRequest(BaseModel):
     """Request schema for requesting OTP.
 
     Attributes:
-        username: Email address or phone number for OTP delivery.
+        username: Email address for OTP delivery.
     """
 
     username: str = Field(
         ...,
-        description='Email address or phone number',
+        description='Email address',
         min_length=1,
-        examples=['user@example.com', '+1234567890']
+        examples=['user@example.com']
     )
 
     @field_validator('username')
     @classmethod
     def validate_username(cls, v: str) -> str:
-        """Strip whitespace from username."""
-        return v.strip()
-
-    @field_validator('username')
-    @classmethod
-    def validate_username_case(cls, v: str) -> str:
-        """Convert email to lowercase."""
-        if is_email(v):
-            return v.lower()
-        return v
+        """Strip whitespace and lowercase the email."""
+        return v.strip().lower()
 
 
 class ResendOTPRequest(BaseModel):
     """Request schema for resending OTP.
 
     Attributes:
-        username: Email address or phone number for OTP delivery.
+        username: Email address for OTP delivery.
     """
 
     username: str = Field(
         ...,
-        description='Email address or phone number',
+        description='Email address',
         min_length=1,
-        examples=['user@example.com', '+1234567890']
+        examples=['user@example.com']
     )
 
     @field_validator('username')
     @classmethod
     def validate_username(cls, v: str) -> str:
-        """Strip whitespace from username."""
-        return v.strip()
+        """Strip whitespace and lowercase the email."""
+        return v.strip().lower()
 
 
 class OTPMethodInfo(BaseModel):
@@ -91,15 +82,15 @@ class VerifyOTPRequest(BaseModel):
     """Request schema for verifying OTP.
 
     Attributes:
-        username: Email address or phone number used to request OTP.
+        username: Email address used to request OTP.
         otp: One-time password to verify.
     """
 
     username: str = Field(
         ...,
-        description='Email address or phone number',
+        description='Email address',
         min_length=1,
-        examples=['user@example.com', '+1234567890']
+        examples=['user@example.com']
     )
     otp: str = Field(
         ...,
@@ -118,9 +109,7 @@ class VerifyOTPRequest(BaseModel):
     @classmethod
     def validate_username_case(cls, v: str) -> str:
         """Convert email to lowercase."""
-        if is_email(v):
-            return v.lower()
-        return v
+        return v.lower()
 
 
 class UserInfo(BaseModel):
