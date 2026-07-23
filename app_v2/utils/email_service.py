@@ -1,4 +1,7 @@
+from io import BytesIO
+
 from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+from starlette.datastructures import Headers, UploadFile
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone
@@ -17,12 +20,32 @@ email_config = ConnectionConfig(
 )
 
 
-async def send_email_async(subject: str, recipients: list, body: str):
+async def send_email_async(
+    subject: str,
+    recipients: list,
+    body: str,
+    attachments: list[tuple[str, bytes, str]] | None = None,
+):
+    """
+    attachments: list of (filename, content_bytes, mime_type), e.g.
+    [("invoice.pdf", pdf_bytes, "application/pdf")].
+    """
+    upload_attachments = []
+    for filename, content, mime_type in (attachments or []):
+        upload_attachments.append(
+            UploadFile(
+                file=BytesIO(content),
+                filename=filename,
+                headers=Headers({"content-type": mime_type}),
+            )
+        )
+
     message = MessageSchema(
         subject=subject,
         recipients=recipients,
         body=body,
-        subtype="html"
+        subtype="html",
+        attachments=upload_attachments,
     )
 
     fm = FastMail(email_config)
@@ -407,6 +430,175 @@ async def send_cost_overrun_email(
     <p>Review it under Admin → ElevenLabs Usage → Conversations.</p>
     """
     await send_email_async(subject=subject, recipients=recipients, body=body)
+
+
+async def send_payment_success_email(
+    user_email: str,
+    user_name: str | None,
+    amount: float,
+    currency: str,
+    coins: int,
+    provider_payment_id: str | None,
+    base_url: str,
+    invoice_pdf: bytes | None = None,
+):
+    """Sent once a credit purchase is confirmed (webhook or client-verify, whichever wins the race)."""
+    try:
+        subject = "✅ Payment Received — Credits Added"
+        billing_link = f"{base_url}/billing-wallet"
+
+        body = f"""
+        <html>
+        <body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:30px;margin:0;">
+        <table width="600" align="center" style="background:white;border-radius:10px;padding:30px;border-collapse:collapse;box-shadow:0 0 10px rgba(0,0,0,0.08);">
+            <tr>
+                <td>
+                    <h2 style="color:#1f2937;margin-top:0;">Payment Received ✅</h2>
+                    <p>Hi {user_name or "there"},</p>
+                    <p>Thanks for your purchase — your coins have been added to your wallet.</p>
+
+                    <table width="100%" cellpadding="10" style="border-collapse:collapse;margin:20px 0;">
+                        <tr style="background:#f8f9fa;">
+                            <td><b>Amount Paid</b></td>
+                            <td>{currency} {amount:,.2f}</td>
+                        </tr>
+                        <tr>
+                            <td><b>Credits Added</b></td>
+                            <td>{coins:,} coins</td>
+                        </tr>
+                        <tr style="background:#f8f9fa;">
+                            <td><b>Payment ID</b></td>
+                            <td>{provider_payment_id or "-"}</td>
+                        </tr>
+                    </table>
+
+                    <a href="{billing_link}"
+                       style="display:inline-block;padding:12px 22px;background:#22c55e;color:white;
+                              text-decoration:none;border-radius:6px;font-weight:bold;">
+                       View Billing &amp; Wallet
+                    </a>
+
+                    <br/><br/>
+                    <p style="color:#555;">
+                        {"Your invoice is attached to this email as a PDF." if invoice_pdf else "You can download an invoice for this payment anytime from Billing &amp; Wallet → Billing History."}
+                    </p>
+                    <p style="color:#555;">Thanks,<br/>Voice Ninja Team</p>
+                </td>
+            </tr>
+        </table>
+        </body>
+        </html>
+        """
+
+        attachments = [("invoice.pdf", invoice_pdf, "application/pdf")] if invoice_pdf else None
+        await send_email_async(
+            subject=subject,
+            recipients=[user_email],
+            body=body,
+            attachments=attachments,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send payment success email: {str(e)}")
+
+
+async def send_payment_failed_email(
+    user_email: str,
+    user_name: str | None,
+    amount: float,
+    currency: str,
+    error_reason: str | None,
+    base_url: str,
+    invoice_pdf: bytes | None = None,
+):
+    """Sent when Razorpay reports a payment attempt failed (webhook payment.failed)."""
+    try:
+        subject = "❌ Payment Failed"
+        billing_link = f"{base_url}/billing-wallet"
+
+        body = f"""
+        <html>
+        <body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:30px;margin:0;">
+        <table width="600" align="center" style="background:white;border-radius:10px;padding:30px;border-collapse:collapse;box-shadow:0 0 10px rgba(0,0,0,0.08);">
+            <tr>
+                <td>
+                    <h2 style="color:#1f2937;margin-top:0;">Payment Failed ❌</h2>
+                    <p>Hi {user_name or "there"},</p>
+                    <p>Your attempt to add credits didn't go through, and no coins were added to your wallet.</p>
+
+                    <div style="padding:18px 20px;background:#fdecea;border-radius:8px;border-left:5px solid #e53935;margin:20px 0;">
+                        <p style="margin:0 0 8px 0;"><b>Amount:</b> {currency} {amount:,.2f}</p>
+                        <p style="margin:0;"><b>Reason:</b> {error_reason or "Payment was not completed"}</p>
+                    </div>
+
+                    <p>No charge was made to your account for this attempt. You can try again anytime.</p>
+
+                    <a href="{billing_link}"
+                       style="display:inline-block;padding:12px 22px;background:#e53935;color:white;
+                              text-decoration:none;border-radius:6px;font-weight:bold;">
+                       Try Again
+                    </a>
+
+                    <br/><br/>
+                    <p style="color:#555;">
+                        {"A receipt for this attempt is attached to this email as a PDF." if invoice_pdf else ""}
+                    </p>
+                    <p style="color:#555;">Thanks,<br/>Voice Ninja Team</p>
+                </td>
+            </tr>
+        </table>
+        </body>
+        </html>
+        """
+
+        attachments = [("invoice.pdf", invoice_pdf, "application/pdf")] if invoice_pdf else None
+        await send_email_async(
+            subject=subject,
+            recipients=[user_email],
+            body=body,
+            attachments=attachments,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send payment failed email: {str(e)}")
+
+
+async def send_usage_history_export_email(
+    user_email: str,
+    user_name: str | None,
+    csv_bytes: bytes,
+    record_count: int,
+):
+    """Sent when a user exports their usage history (CSV attached)."""
+    try:
+        subject = "Your Usage History Export"
+
+        body = f"""
+        <html>
+        <body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:30px;margin:0;">
+        <table width="600" align="center" style="background:white;border-radius:10px;padding:30px;border-collapse:collapse;box-shadow:0 0 10px rgba(0,0,0,0.08);">
+            <tr>
+                <td>
+                    <h2 style="color:#1f2937;margin-top:0;">Usage History Export</h2>
+                    <p>Hi {user_name or "there"},</p>
+                    <p>
+                        As requested, here's your usage history export — {record_count}
+                        record{"s" if record_count != 1 else ""} — attached to this email as a CSV file.
+                    </p>
+                    <p style="color:#555;">Thanks,<br/>Voice Ninja Team</p>
+                </td>
+            </tr>
+        </table>
+        </body>
+        </html>
+        """
+
+        await send_email_async(
+            subject=subject,
+            recipients=[user_email],
+            body=body,
+            attachments=[("usage_history.csv", csv_bytes, "text/csv")],
+        )
+    except Exception as e:
+        logger.error(f"Failed to send usage history export email: {str(e)}")
 
 
 async def send_voice_limit_email_to_admins(db_session, user_identifier: str, user_id: int):

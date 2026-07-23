@@ -14,9 +14,10 @@ SMTP_USERNAME = ""
 SMTP_PASSWORD = ""
 
 FROM_EMAIL = SMTP_USERNAME
-TO_EMAIL = []
+TO_EMAIL = ["shakir@snakescript.com","official@snakescript.com"]
 
-FRONTEND_URL = ""
+
+FRONTEND_URL = "https://dev.voiceninja.ai"
 ELEVENLABS_API_KEY = ""
 
 if not FRONTEND_URL or not ELEVENLABS_API_KEY or not TO_EMAIL or not SMTP_USERNAME or not SMTP_PASSWORD:

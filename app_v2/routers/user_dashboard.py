@@ -2,6 +2,8 @@ from fastapi import APIRouter, status, Depends,HTTPException
 from fastapi.responses import HTMLResponse
 from typing import Optional, List
 import os
+import csv
+from io import StringIO
 from fastapi.requests import Request
 from fastapi_sqlalchemy import db
 from datetime import datetime, timezone, timedelta
@@ -20,6 +22,7 @@ from app_v2.schemas.enum_types import (
     PublicLogChannelEnum,
 )
 from app_v2.utils.coin_utils import get_user_coin_balance
+from app_v2.utils.email_service import send_usage_history_export_email
 from app_v2.constants import api_list
 
 from sqlalchemy import func
@@ -535,6 +538,49 @@ def get_usage_history(
         logger.error(f"Error in get_usage_history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@router.post("/usage-history/export", openapi_extra={"security":[{"BearerAuth":[]}]})
+async def export_usage_history(
+    page: int = 1,
+    size: int = 10,
+    current_user: UnifiedAuthModel = Depends(require_active_user())
+):
+    """Emails the user a CSV of exactly the usage-history records for the given
+    page/size — the same page currently shown in the UI, not the full history."""
+    if not current_user.email:
+        raise HTTPException(status_code=400, detail="No email on file for this account")
+
+    try:
+        result = get_usage_history(page=page, size=size, current_user=current_user)
+
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["Date & Time", "Action", "Agent", "Coins", "Before Credits", "After Credits", "Reason"])
+        for item in result.history:
+            writer.writerow([
+                item.date_time.strftime("%d %b %Y, %H:%M UTC"),
+                item.action,
+                item.agent_name,
+                item.coins,
+                item.balance_before,
+                item.balance_after,
+                item.reason or "",
+            ])
+
+        await send_usage_history_export_email(
+            user_email=current_user.email,
+            user_name=current_user.name,
+            csv_bytes=buffer.getvalue().encode("utf-8"),
+            record_count=len(result.history),
+        )
+
+        return {"status": "sent", "message": f"Usage history export sent to {current_user.email}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in export_usage_history: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to export usage history")
+
 @router.get("/billing-history", response_model=BillingHistoryResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_billing_history(
     page: int = 1,
@@ -570,12 +616,15 @@ def get_billing_history(
                 description = "Miscellaneous Payment"
 
             dated_items.append((p.created_at, BillingHistoryItem(
+                payment_id=p.id,
                 date=p.created_at,
                 description=description,
                 amount=p.amount,
                 currency=p.currency,
                 status=p.status,
-                invoice_url=p.invoice_url
+                invoice_url=p.invoice_url,
+                provider_payment_id=p.provider_payment_id,
+                provider_order_id=p.provider_order_id,
             )))
 
         for log in billing_events:
@@ -604,6 +653,26 @@ def get_billing_history(
     except Exception as e:
         logger.error(f"Error in get_billing_history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/billing-history/{payment_id}/invoice", openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_billing_history_invoice(
+    payment_id: int,
+    current_user: UnifiedAuthModel = Depends(require_active_user())
+):
+    """
+    Resolves to the plain, directly-navigable invoice PDF URL (a real backend
+    URL the frontend can window.open() straight to — not a blob), keyed by
+    the payment's own opaque invoice_reference rather than a JWT.
+    """
+    payment = db.session.query(PaymentModel).filter(
+        PaymentModel.id == payment_id,
+        PaymentModel.user_id == current_user.id,
+    ).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    return {"path": f"/invoices/{payment.invoice_reference}.pdf"}
 
 @router.get("/public-api/usage", response_model=PublicAPIUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depends(require_active_user())):

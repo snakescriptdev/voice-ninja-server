@@ -25,3 +25,4 @@ alembic==1.14.1
 elevenlabs>=1.0.0
 razorpay==2.0.0
 tiktoken==0.13.0
+fpdf2==2.8.7

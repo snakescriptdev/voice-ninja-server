@@ -288,3 +288,40 @@ class ElevenLabsKB(BaseElevenLabs):
             logger.exception(f"Failed to resolve KB total pages for agent {agent_id}")
             return None
 
+    @staticmethod
+    def _extract_document_page_count(data: Dict[str, Any]) -> Optional[int]:
+        """
+        Best-effort pull of a single document's page count out of
+        GET /convai/knowledge-base/{document_id} — the exact key hasn't been
+        confirmed against a live payload, so probe the plausible candidates
+        (mirrors _extract_page_count, which faced the same key-naming
+        uncertainty for the agent-level size endpoint).
+        """
+        if not isinstance(data, dict):
+            return None
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        for source in (metadata, data):
+            for key in ("number_of_pages", "total_pages", "pages", "size"):
+                value = source.get(key)
+                if value is not None:
+                    try:
+                        return int(value)
+                    except (TypeError, ValueError):
+                        continue
+        return None
+
+    def get_document_page_count(self, document_id: str) -> Optional[int]:
+        """
+        Convenience: page count for a single KB document, or None on any
+        failure. Best-effort — callers should never let this block KB
+        upload/update.
+        """
+        try:
+            resp = self.get_document_status(document_id)
+            if not resp.status or not resp.data:
+                return None
+            return self._extract_document_page_count(resp.data)
+        except Exception:
+            logger.exception(f"Failed to resolve page count for document {document_id}")
+            return None
+
