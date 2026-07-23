@@ -78,5 +78,6 @@ class AgentRead(BaseModel):
     tool_count: int = 0
     conversation_count: int = 0
     credits_used: int = 0
+    leads_count: int = 0
     class Config:
         from_attributes = True
