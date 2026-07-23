@@ -36,8 +36,11 @@ from app_v2.databases.models import (
     WidgetModel,
     WebAgentPageModel,
     ConversationsModel,
+    WidgetLeadModel,
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
+from app_v2.schemas.llm_pricing import LlmPricingResponse, LlmPriceItem
+from app_v2.utils.currency_utils import get_usd_to_inr_rate
 from app_v2.schemas.built_in_tools import BuiltInToolsParams
 from app_v2.schemas.enum_types import PlanFeatureEnum
 from typing import List, Optional, Any
@@ -69,6 +72,7 @@ def agent_to_read(
     is_first_call_pending: Optional[bool] = None,
     conversation_count: int = 0,
     credits_used: int = 0,
+    leads_count: int = 0,
 ) -> AgentRead:
     ai_model = (
         agent.agent_ai_models[0].ai_model.model_name
@@ -134,6 +138,7 @@ def agent_to_read(
         tool_count=len(agent.agent_functions),
         conversation_count=conversation_count,
         credits_used=credits_used,
+        leads_count=leads_count,
     )
 
 
@@ -1082,12 +1087,31 @@ async def get_all_agents(
         if agent_ids
         else {}
     )
+    # Leads aren't linked to agents directly — they hang off the widget that
+    # captured them (WidgetLeadModel.widget_id -> WidgetModel.agent_id) — so
+    # bulk-count via that join, same page-scoped-groupby shape as above.
+    leads_stats = (
+        {
+            row[0]: row[1]
+            for row in db.session.query(
+                WidgetModel.agent_id,
+                func.count(WidgetLeadModel.id),
+            )
+            .join(WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id)
+            .filter(WidgetModel.agent_id.in_(agent_ids))
+            .group_by(WidgetModel.agent_id)
+            .all()
+        }
+        if agent_ids
+        else {}
+    )
     items = [
         agent_to_read(
             agent,
             is_first_call_pending=(agent.id not in agents_with_calls),
             conversation_count=conversation_stats.get(agent.id, (0, 0))[0],
             credits_used=int(conversation_stats.get(agent.id, (0, 0))[1] or 0),
+            leads_count=leads_stats.get(agent.id, 0),
         )
         for agent in agents
     ]
@@ -1099,6 +1123,65 @@ async def get_all_agents(
         pages=pages,
         items=items
     )
+
+
+# -------------------- LLM PRICING --------------------
+
+@router.get(
+    "/{agent_id}/llm-pricing",
+    response_model=LlmPricingResponse,
+    summary="Get per-minute price (USD + INR) for every supported LLM, for this agent",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def get_llm_pricing(
+    agent_id: int,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    """
+    Calls ElevenLabs' per-agent pricing endpoint
+    (POST /convai/agent/{agent_id}/llm-usage/calculate), which derives
+    prompt_length / number_of_pages / rag_enabled from the agent's own last-
+    saved ElevenLabs config — used to power the "AI Model" picker so users
+    can compare cost before choosing a model.
+
+    Requires the agent to already have an elevenlabs_agent_id, i.e. to have
+    been saved at least once (the create-agent form autosaves as soon as
+    name/prompt/voice/model/language are filled, so this is only briefly
+    unavailable right after opening a brand-new agent).
+    """
+    agent = (
+        db.session.query(AgentModel)
+        .filter(AgentModel.id == agent_id, AgentModel.user_id == current_user.id)
+        .first()
+    )
+    if not agent:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+
+    if not agent.elevenlabs_agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Agent has not been saved yet",
+        )
+
+    response = ElevenLabsAgent().calculate_llm_usage(agent.elevenlabs_agent_id)
+
+    if not response.status:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch LLM pricing from ElevenLabs",
+        )
+
+    usd_to_inr_rate = get_usd_to_inr_rate()
+    llm_prices = [
+        LlmPriceItem(
+            llm=item["llm"],
+            price_per_minute_usd=item["price_per_minute"],
+            price_per_minute_inr=round(item["price_per_minute"] * usd_to_inr_rate, 4),
+        )
+        for item in (response.data or {}).get("llm_prices", [])
+    ]
+
+    return LlmPricingResponse(llm_prices=llm_prices, usd_to_inr_rate=usd_to_inr_rate)
 
 
 # -------------------- GET BY ID --------------------
