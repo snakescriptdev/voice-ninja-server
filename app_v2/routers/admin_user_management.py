@@ -1,11 +1,11 @@
-from fastapi import APIRouter, HTTPException, status, Depends, Query, Response
+from fastapi import APIRouter, HTTPException, status, Depends, Query
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, desc, select
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, ConversationsModel, PaymentModel, PaymentTypeEnum
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, ConversationsModel, PaymentModel, PaymentTypeEnum, KnowledgeBaseModel
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
-from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest, AdminUserTransactionItem, AdminUserBillingHistoryItem
+from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest, AdminUserTransactionItem, AdminUserBillingHistoryItem, AdminKnowledgeBaseItem
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
@@ -13,7 +13,6 @@ from app_v2.core.logger import setup_logger
 from app_v2.utils.coin_utils import admin_adjust_coins, get_user_coin_balance
 from app_v2.utils.agent_summary import build_agent_summaries
 from app_v2.schemas.user_dashboard import AgentSummaryItem
-from app_v2.utils.invoice_utils import generate_invoice_pdf
 
 security = HTTPBearer()
 logger = setup_logger(__name__)
@@ -396,7 +395,11 @@ def get_user_billing_history(
 
 @router.get("/users/{user_id}/billing-history/{payment_id}/invoice", openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_billing_invoice(user_id: int, payment_id: int):
-    """Generates a PDF receipt for any user's payment, on demand — admin-only."""
+    """
+    Resolves to the plain, directly-navigable invoice PDF URL (a real backend
+    URL the frontend can window.open() straight to — not a blob), keyed by
+    the payment's own opaque invoice_reference rather than a JWT.
+    """
     payment = db.session.query(PaymentModel).filter(
         PaymentModel.id == payment_id,
         PaymentModel.user_id == user_id,
@@ -404,23 +407,34 @@ def get_user_billing_invoice(user_id: int, payment_id: int):
     if not payment:
         raise HTTPException(status_code=404, detail="Invoice not found")
 
-    user = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.id == user_id).first()
-    pdf_bytes = generate_invoice_pdf(payment, user)
-    return Response(
-        content=pdf_bytes,
-        media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="invoice-{payment.id}.pdf"'},
-    )
+    return {"path": f"/invoices/{payment.invoice_reference}.pdf"}
 
 
 @router.get("/users/{user_id}/agents-summary", response_model=List[AgentSummaryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_user_agents_summary(user_id: int):
+def get_user_agents_summary(user_id: int, sort_by: Optional[str] = None):
     """Per-agent summary (web-agent/widget counts, conversation success/failed
-    counts) for a specific user — for the admin user-detail Agents tab."""
+    counts, KB/tool counts) for a specific user — for the admin user-detail
+    Agents tab. sort_by: credits_desc | date_added_desc | kb_count_desc | tool_count_desc."""
     try:
-        return build_agent_summaries(user_id)
+        return build_agent_summaries(user_id, sort_by=sort_by)
     except Exception as e:
         logger.error(f"Error building agents summary for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users/{user_id}/knowledge-base", response_model=PaginatedResponse[AdminKnowledgeBaseItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_knowledge_base(user_id: int, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
+    """Knowledge base items created by a specific user — for the admin
+    user-detail Knowledge Base tab."""
+    try:
+        base = db.session.query(KnowledgeBaseModel).filter(KnowledgeBaseModel.user_id == user_id)
+        total = base.count()
+        items = base.order_by(KnowledgeBaseModel.modified_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+        total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
+        return PaginatedResponse(total=total, page=page, size=page_size, pages=total_pages, items=items)
+    except Exception as e:
+        logger.error(f"Error getting knowledge base for user {user_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

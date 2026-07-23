@@ -5,6 +5,8 @@ Generated at request time from the payment row itself (no pre-generation, no
 file storage) — there's nothing to keep in sync and nothing to clean up.
 """
 
+import secrets
+
 from fpdf import FPDF, XPos, YPos
 
 from app_v2.databases.models import PaymentModel, UnifiedAuthModel
@@ -17,6 +19,17 @@ FILL = (247, 246, 248)       # light table-header fill
 SUCCESS = (22, 163, 74)
 FAILED = (220, 38, 38)
 PENDING = (202, 138, 4)
+
+
+def generate_invoice_reference() -> str:
+    """
+    Opaque, high-entropy public identifier for one payment's invoice — not
+    sequential/guessable like the row's `id`. Doubles as the invoice number
+    shown to the user and as the sole lookup key for the unauthenticated,
+    directly-navigable invoice PDF URL (see invoice_files.py) — 80 bits of
+    entropy is what actually secures that URL, not a separate auth token.
+    """
+    return f"INV-{secrets.token_hex(10).upper()}"
 
 
 def _describe_payment(payment: PaymentModel) -> str:
@@ -93,7 +106,7 @@ def generate_invoice_pdf(payment: PaymentModel, user: UnifiedAuthModel | None) -
     pdf.set_x(15)
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(*MUTED)
-    pdf.cell(0, 6, f"INV-{payment.id:06d}", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    pdf.cell(0, 6, payment.invoice_reference, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
 
     pdf.ln(8)
 
@@ -172,8 +185,6 @@ def generate_invoice_pdf(payment: PaymentModel, user: UnifiedAuthModel | None) -
 
     details = [
         ("Payment ID", payment.provider_payment_id or "-"),
-        ("Order ID", payment.provider_order_id or "-"),
-        ("Payment Method", "Razorpay"),
     ]
     for label, value in details:
         pdf.set_x(15)

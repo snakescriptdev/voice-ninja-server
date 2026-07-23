@@ -41,6 +41,18 @@ class AdminUserTransactionItem(BaseModel):
     # Reason an admin gave for this adjustment; null for non-admin entries.
     reason: Optional[str] = None
 
+class AdminKnowledgeBaseItem(BaseModel):
+    id: int
+    title: Optional[str] = None
+    kb_type: str
+    num_pages: Optional[int] = None
+    elevenlabs_document_id: Optional[str] = None
+    created_at: datetime
+    modified_at: datetime
+
+    class Config:
+        from_attributes = True
+
 class AdminUserBillingHistoryItem(BaseModel):
     payment_id: int
     date: datetime

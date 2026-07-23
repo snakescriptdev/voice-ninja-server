@@ -9,8 +9,10 @@ Razorpay — no bundles, no stored card, no recurring mandate.
     order and return success without double-crediting.
   • Pending order is created in create_coin_order; actual coin credit ONLY
     happens after signature verification succeeds in verify_coin_payment.
-  • Failed payment path: if order is already marked failed we 409 rather than
-    re-verifying.
+  • Razorpay lets a user retry a failed payment attempt against the SAME
+    order_id, so a prior payment.failed webhook marking addon_order as
+    'failed' is not terminal — verify_coin_payment must still accept a
+    later successful attempt on that order rather than reject it.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -33,7 +35,7 @@ from app_v2.schemas.enum_types import (
 )
 from app_v2.utils.payment_utils import PaymentProviderFactory
 from app_v2.utils.email_service import send_payment_success_email
-from app_v2.utils.invoice_utils import generate_invoice_pdf
+from app_v2.utils.invoice_utils import generate_invoice_pdf, generate_invoice_reference
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone
@@ -305,8 +307,9 @@ async def verify_coin_payment(
       • If the webhook (payment.captured) already fulfilled this order the
         addon_order.status will be 'success' → return success without any DB
         writes.
-      • If addon_order.status is 'failed' → 409 (user should retry with a new
-        order).
+      • addon_order.status of 'failed' is NOT terminal — Razorpay allows
+        retrying a payment against the same order_id, so a prior failed
+        attempt must not block crediting a later successful one.
       • Otherwise, verify signature, credit coins, record payment.
     """
     try:
@@ -330,12 +333,6 @@ async def verify_coin_payment(
                 "message": "Coins already credited",
                 "new_balance": current_balance,
             }
-
-        if addon_order.status == PaymentStatusEnum.failed:
-            raise HTTPException(
-                status_code=409,
-                detail="This order was marked as failed. Please create a new order.",
-            )
 
         # ── Verify Razorpay signature ─────────────────────────────────────────
         rzp_provider = PaymentProviderFactory.get_provider("razorpay")
@@ -384,6 +381,7 @@ async def verify_coin_payment(
                     provider_order_id=data.razorpay_order_id,
                     payment_type=PaymentTypeEnum.coin_purchase,
                     metadata_json={"coins": addon_order.coins},
+                    invoice_reference=generate_invoice_reference(),
                 )
                 db.session.add(payment)
                 db.session.flush()
