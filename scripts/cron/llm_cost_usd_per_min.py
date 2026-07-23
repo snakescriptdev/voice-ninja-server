@@ -2,7 +2,7 @@ import sys
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, text
 
-DB_URL = "postgresql://postgres:admin@localhost/voice_ninja_server_db"
+DB_URL = ""
 
 if not DB_URL:
     print("Error: DB_URL must be set.")
@@ -39,6 +39,10 @@ def calculate_and_update_llm_usd_to_credits():
     total_llm_usd_price) ratio among eligible conversations, so the stored
     rate never undercharges relative to the most expensive real call.
 
+    Only updates coin_usage_settings.usd_to_credits if the freshly computed
+    rate is higher than the currently stored one — the rate is never
+    lowered by this job.
+
     The select, print, and update all run inside one transaction
     (engine.begin()) so a failure anywhere here rolls back cleanly and never
     leaves coin_usage_settings partially updated — and, since this script
@@ -74,6 +78,17 @@ def calculate_and_update_llm_usd_to_credits():
             f"conversation {best['id']} - {best['actual_llm_credits']} credits / ${best['total_llm_usd_price']:.4f} "
             f"= {best_ratio:.2f} credits/$ -> rounded to {usd_to_credits} credits/$"
         )
+
+        current_value = conn.execute(
+            text("SELECT usd_to_credits FROM coin_usage_settings")
+        ).scalar()
+
+        if current_value is not None and usd_to_credits <= current_value:
+            print(
+                f"[{datetime.now(timezone.utc)}] Computed usd_to_credits ({usd_to_credits}) is not "
+                f"greater than the current value ({current_value}), skipping update."
+            )
+            return
 
         conn.execute(
             text(
