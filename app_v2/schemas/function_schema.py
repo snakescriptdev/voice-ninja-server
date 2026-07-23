@@ -156,6 +156,10 @@ class ApiSchema(BaseModel):
             else:
                 if self.content_type:
                     raise ValueError("content_type cannot be set without request_body_schema")
+                # ElevenLabs rejects POST tools with no request body at tool-creation
+                # time — catch it here instead of surfacing that raw 422 to the user.
+                if self.method == HttpMethod.POST:
+                    raise ValueError("request_body_schema is required for POST requests")
 
         else:  # GET / DELETE
             if self.request_body_schema:
@@ -275,8 +279,14 @@ class FunctionRead(BaseModel):
     elevenlabs_tool_id: Optional[str] = None
     created_at: datetime
     modified_at: datetime
+    # Number of the current user's agents this tool is attached to.
+    agents_count: int = 0
 
     model_config = {"from_attributes": True}
+
+class FunctionAgentItem(BaseModel):
+    id: int
+    agent_name: str
 
 class FunctionBind(BaseModel):
     agent_id: int

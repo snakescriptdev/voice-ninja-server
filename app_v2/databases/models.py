@@ -471,7 +471,13 @@ class KnowledgeBaseModel(Base):
     file_size: Mapped[float] = mapped_column(Float, nullable=True)
     elevenlabs_document_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     rag_index_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
-    
+
+    # Page count ElevenLabs computed for this single document, from
+    # GET /convai/knowledge-base/{document_id}. Cached here (best-effort,
+    # refreshed on create/update) since it requires an external call. None
+    # until the fetch has run or if it ever fails.
+    num_pages: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
@@ -625,13 +631,13 @@ class ConversationsModel(Base):
     settings_version_id: Mapped[Optional[int]] = mapped_column(
         Integer, ForeignKey("coin_usage_settings_versions.id"), nullable=True
     )
+    total_llm_usd_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)    
 
     #relationships
     agent = relationship("AgentModel",back_populates="conversations")
     user = relationship("UnifiedAuthModel",back_populates="conversations")
     lead = relationship("WidgetLeadModel", back_populates="conversation", uselist=False)
     settings_version = relationship("CoinUsageSettingsVersionModel", back_populates="conversations")
-
 class WidgetModel(Base):
     __tablename__ = "widgets"
 
@@ -800,6 +806,11 @@ class PaymentModel(Base):
 
     metadata_json: Mapped[dict | None] = mapped_column(MutableDict.as_mutable(JSONB))
     invoice_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Opaque, high-entropy public identifier for this payment's invoice — shown
+    # as the invoice number and used as the sole lookup key for the unauthenticated,
+    # directly-navigable invoice PDF URL (see invoice_files.py). Never sequential/
+    # guessable like `id`, so no separate auth token is needed on that URL.
+    invoice_reference: Mapped[str] = mapped_column(String(32), nullable=False, unique=True, index=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -933,6 +944,22 @@ class CoinUsageSettingsModel(Base):
     singleton_guard: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    # Who last changed these settings — an admin's email, or "cron" when a
+    # scheduled job (e.g. scripts/cron/conv_credits_per_min_updations.py)
+    # updated a field directly. Surfaced on the admin billing-settings page.
+    updated_by: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # Per-field attribution, keyed by column name, e.g.
+    # {"elevenlabs_conversation_credits_per_minute": {"updated_by": "cron", "updated_at": "2026-07-21T12:41:58+00:00"}}.
+    # A single JSON column rather than an updated_by/updated_at pair per
+    # tracked field, since several fields here (currently
+    # elevenlabs_conversation_credits_per_minute and usd_to_credits) are each
+    # updated independently by their own cron job — see scripts/cron/
+    # conv_credits_per_min_updations.py and llm_cost_usd_per_min.py.
+    field_update_meta: Mapped[Optional[dict]] = mapped_column(
+        MutableDict.as_mutable(JSONB), nullable=True, default=dict, server_default="{}"
+    )
 
     __table_args__ = (
         UniqueConstraint("singleton_guard", name="uq_coin_usage_settings_singleton"),

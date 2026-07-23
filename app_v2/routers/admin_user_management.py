@@ -3,9 +3,9 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, desc, select
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, ConversationsModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, ConversationsModel, PaymentModel, PaymentTypeEnum, KnowledgeBaseModel
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
-from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest, AdminUserTransactionItem
+from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest, AdminUserTransactionItem, AdminUserBillingHistoryItem, AdminKnowledgeBaseItem
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
@@ -27,8 +27,28 @@ def get_user_management_stats():
         # Total users (non-admin)
         total_users = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.is_admin.is_(False)).count()
 
+        now = datetime.now(timezone.utc)
+        first_day_of_month = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        new_signups_this_month = db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.is_admin.is_(False),
+            UnifiedAuthModel.created_at >= first_day_of_month,
+        ).count()
+
+        suspended_users = db.session.query(UnifiedAuthModel).filter(
+            UnifiedAuthModel.is_admin.is_(False),
+            UnifiedAuthModel.is_suspended.is_(True),
+        ).count()
+
+        total_coins_consumed = db.session.query(
+            func.sum(func.abs(CoinsLedgerModel.coins))
+        ).filter(CoinsLedgerModel.coins < 0).scalar() or 0
+
         return {
-            "total_users": total_users
+            "total_users": total_users,
+            "new_signups_this_month": new_signups_this_month,
+            "suspended_users": suspended_users,
+            "total_coins_consumed": int(total_coins_consumed),
         }
     except Exception as e:
         logger.error(f"Error in get_user_management_stats: {str(e)}")
@@ -40,11 +60,12 @@ def list_users_managed(
     limit: int = Query(10, ge=1),
     search: Optional[str] = None,
     is_suspended: Optional[bool] = Query(None),
-    sort_order: str = Query("desc", enum=["asc", "desc"])
+    sort_order: str = Query("desc", enum=["asc", "desc"]),
+    sort_by: str = Query("last_active", enum=["last_active", "credits_consumed", "date_added"]),
 ):
     """
     Paginated, searchable, and filtered user listing for admin.
-    Default sorted by last login.
+    Default sorted by last active; also supports credits consumed and date added.
     """
     try:
         # Subqueries for counts
@@ -81,6 +102,16 @@ def list_users_managed(
             ActivityLogModel.user_id,
             func.max(ActivityLogModel.created_at).label("last_active")
         ).group_by(ActivityLogModel.user_id).subquery()
+
+        credits_consumed_subquery = (
+            db.session.query(
+                CoinsLedgerModel.user_id,
+                func.sum(func.abs(CoinsLedgerModel.coins)).label("credits_consumed"),
+            )
+            .filter(CoinsLedgerModel.coins < 0)
+            .group_by(CoinsLedgerModel.user_id)
+            .subquery()
+        )
 
         now = datetime.now(timezone.utc)
         month_ago = now - timedelta(days=30)
@@ -121,6 +152,8 @@ def list_users_managed(
             func.coalesce(calls_monthly_subquery.c.calls_monthly, 0).label("calls_monthly"),
             func.coalesce(calls_weekly_subquery.c.calls_weekly, 0).label("calls_weekly"),
             func.coalesce(voice_subquery.c.voice_count, 0).label("no_of_voices"),
+            func.coalesce(credits_consumed_subquery.c.credits_consumed, 0).label("credits_consumed"),
+            UnifiedAuthModel.created_at.label("date_added"),
         ).filter(UnifiedAuthModel.is_admin.is_(False))\
          .outerjoin(agent_subquery, UnifiedAuthModel.id == agent_subquery.c.user_id)\
          .outerjoin(phone_subquery, UnifiedAuthModel.id == phone_subquery.c.user_id)\
@@ -129,7 +162,8 @@ def list_users_managed(
          .outerjoin(calls_total_subquery, UnifiedAuthModel.id == calls_total_subquery.c.user_id)\
          .outerjoin(calls_monthly_subquery, UnifiedAuthModel.id == calls_monthly_subquery.c.user_id)\
          .outerjoin(calls_weekly_subquery, UnifiedAuthModel.id == calls_weekly_subquery.c.user_id)\
-         .outerjoin(voice_subquery, UnifiedAuthModel.id == voice_subquery.c.user_id)
+         .outerjoin(voice_subquery, UnifiedAuthModel.id == voice_subquery.c.user_id)\
+         .outerjoin(credits_consumed_subquery, UnifiedAuthModel.id == credits_consumed_subquery.c.user_id)
 
         # Search
         if search:
@@ -145,8 +179,13 @@ def list_users_managed(
         if is_suspended is not None:
             query = query.filter(UnifiedAuthModel.is_suspended == is_suspended)
 
-        # Default Sorting (Last Active)
-        order_attr = last_active_subquery.c.last_active
+        # Sorting — default last active, or credits consumed / date added on request.
+        sort_column_map = {
+            "last_active": last_active_subquery.c.last_active,
+            "credits_consumed": func.coalesce(credits_consumed_subquery.c.credits_consumed, 0),
+            "date_added": UnifiedAuthModel.created_at,
+        }
+        order_attr = sort_column_map.get(sort_by, last_active_subquery.c.last_active)
         if sort_order == "desc":
             query = query.order_by(desc(order_attr))
         else:
@@ -171,6 +210,8 @@ def list_users_managed(
                 api_calls_monthly=r.calls_monthly,
                 api_calls_weekly=r.calls_weekly,
                 no_of_voices=r.no_of_voices,
+                credits_consumed=int(r.credits_consumed),
+                date_added=r.date_added.isoformat() if r.date_added else None,
             ) for r in results
         ]
 
@@ -223,6 +264,12 @@ def get_user_detail(user_id: int):
         ).scalar()
         last_active = max([d for d in (user.last_login, last_activity) if d], default=None)
 
+        credits_consumed = db.session.query(
+            func.sum(func.abs(CoinsLedgerModel.coins))
+        ).filter(
+            CoinsLedgerModel.user_id == user_id, CoinsLedgerModel.coins < 0
+        ).scalar() or 0
+
         return UserManagementListItem(
             user_id=user.id,
             username=user.first_name or user.name or "Unknown",
@@ -236,6 +283,8 @@ def get_user_detail(user_id: int):
             api_calls_monthly=calls_monthly,
             api_calls_weekly=calls_weekly,
             no_of_voices=no_of_voices,
+            credits_consumed=int(credits_consumed),
+            date_added=user.created_at.isoformat() if user.created_at else None,
         )
     except HTTPException:
         raise
@@ -290,14 +339,102 @@ def get_user_transactions(user_id: int, page: int = Query(1, ge=1), page_size: i
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/users/{user_id}/agents-summary", response_model=List[AgentSummaryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_user_agents_summary(user_id: int):
-    """Per-agent summary (web-agent/widget counts, conversation success/failed
-    counts) for a specific user — for the admin user-detail Agents tab."""
+@router.get("/users/{user_id}/billing-history", response_model=PaginatedResponse[AdminUserBillingHistoryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_billing_history(
+    user_id: int,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    provider_payment_id: Optional[str] = None,
+    provider_order_id: Optional[str] = None,
+):
+    """
+    Payment records (success/failed/pending/etc) for a user, newest first.
+
+    provider_payment_id/provider_order_id let the webhook-events admin page
+    drill down to the exact billing record a given webhook delivery is about.
+    """
     try:
-        return build_agent_summaries(user_id)
+        base = db.session.query(PaymentModel).filter(PaymentModel.user_id == user_id)
+        if provider_payment_id:
+            base = base.filter(PaymentModel.provider_payment_id == provider_payment_id)
+        if provider_order_id:
+            base = base.filter(PaymentModel.provider_order_id == provider_order_id)
+        total = base.count()
+        rows = base.order_by(
+            PaymentModel.created_at.desc(), PaymentModel.id.desc()
+        ).offset((page - 1) * page_size).limit(page_size).all()
+
+        items = []
+        for p in rows:
+            if p.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
+                coins = p.metadata_json.get("coins") if p.metadata_json else None
+                description = f"Credit Purchase ({coins} credits)" if coins else "Credit Purchase"
+            elif p.payment_type == PaymentTypeEnum.subscription:
+                description = "Subscription Payment"
+            else:
+                description = "Miscellaneous Payment"
+
+            items.append(AdminUserBillingHistoryItem(
+                payment_id=p.id,
+                date=p.created_at,
+                description=description,
+                amount=p.amount,
+                currency=p.currency,
+                status=p.status.value if hasattr(p.status, "value") else p.status,
+                invoice_url=p.invoice_url,
+                provider_payment_id=p.provider_payment_id,
+                provider_order_id=p.provider_order_id,
+            ))
+
+        total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
+        return PaginatedResponse(total=total, page=page, size=page_size, pages=total_pages, items=items)
+    except Exception as e:
+        logger.error(f"Error getting billing history for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users/{user_id}/billing-history/{payment_id}/invoice", openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_billing_invoice(user_id: int, payment_id: int):
+    """
+    Resolves to the plain, directly-navigable invoice PDF URL (a real backend
+    URL the frontend can window.open() straight to — not a blob), keyed by
+    the payment's own opaque invoice_reference rather than a JWT.
+    """
+    payment = db.session.query(PaymentModel).filter(
+        PaymentModel.id == payment_id,
+        PaymentModel.user_id == user_id,
+    ).first()
+    if not payment:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    return {"path": f"/invoices/{payment.invoice_reference}.pdf"}
+
+
+@router.get("/users/{user_id}/agents-summary", response_model=List[AgentSummaryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_agents_summary(user_id: int, sort_by: Optional[str] = None):
+    """Per-agent summary (web-agent/widget counts, conversation success/failed
+    counts, KB/tool counts) for a specific user — for the admin user-detail
+    Agents tab. sort_by: credits_desc | date_added_desc | kb_count_desc | tool_count_desc."""
+    try:
+        return build_agent_summaries(user_id, sort_by=sort_by)
     except Exception as e:
         logger.error(f"Error building agents summary for user {user_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/users/{user_id}/knowledge-base", response_model=PaginatedResponse[AdminKnowledgeBaseItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_knowledge_base(user_id: int, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
+    """Knowledge base items created by a specific user — for the admin
+    user-detail Knowledge Base tab."""
+    try:
+        base = db.session.query(KnowledgeBaseModel).filter(KnowledgeBaseModel.user_id == user_id)
+        total = base.count()
+        items = base.order_by(KnowledgeBaseModel.modified_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+        total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
+        return PaginatedResponse(total=total, page=page, size=page_size, pages=total_pages, items=items)
+    except Exception as e:
+        logger.error(f"Error getting knowledge base for user {user_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
