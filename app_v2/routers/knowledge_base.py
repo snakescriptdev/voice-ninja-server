@@ -19,7 +19,8 @@ from app_v2.schemas.knowledge_base_schema import (
     KnowledgeBaseTextCreate,
     KnowledgeBaseURLUpdate,
     KnowledgeBaseTextUpdate,
-    KnowledgeBaseBind
+    KnowledgeBaseBind,
+    KnowledgeBaseAgentItem
 )
 from app_v2.utils.jwt_utils import HTTPBearer,require_active_user
 from app_v2.utils.feature_access import RequireFeature, get_feature_limit, get_feature_usage
@@ -166,6 +167,8 @@ async def upload_files(
                     logger.error(f"Error syncing with ElevenLabs: {e}")
                     raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
 
+                num_pages = kb_client.get_document_page_count(elevenlabs_document_id) if elevenlabs_document_id else None
+
                 kb_entry = KnowledgeBaseModel(
                     user_id=current_user.id,
                     kb_type="file",
@@ -173,7 +176,8 @@ async def upload_files(
                     content_path=file_path,
                     elevenlabs_document_id=elevenlabs_document_id,
                     rag_index_id=rag_index_id,
-                    file_size=round((file_size /(1024)),2)    #file size in kb
+                    file_size=round((file_size /(1024)),2),    #file size in kb
+                    num_pages=num_pages
                 )
                 db.session.add(kb_entry)
                 uploaded_entries.append(kb_entry)
@@ -234,13 +238,16 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
                 logger.error(f"Error syncing URL with ElevenLabs: {e}")
                 raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
 
+            num_pages = kb_client.get_document_page_count(elevenlabs_document_id) if elevenlabs_document_id else None
+
             kb_entry = KnowledgeBaseModel(
                 user_id=current_user.id,
                 kb_type="url",
                 content_path=url_str,
                 elevenlabs_document_id=elevenlabs_document_id,
                 rag_index_id=rag_index_id,
-                title=title
+                title=title,
+                num_pages=num_pages
             )
             db.session.add(kb_entry)
             db.session.commit()
@@ -291,13 +298,16 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
                 logger.error(f"Error syncing text with ElevenLabs: {e}")
                 raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
 
+            num_pages = kb_client.get_document_page_count(elevenlabs_document_id) if elevenlabs_document_id else None
+
             kb_entry = KnowledgeBaseModel(
                 user_id=current_user.id,
                 kb_type="text",
                 title=request.title,
                 content_text=request.content,
                 elevenlabs_document_id=elevenlabs_document_id,
-                rag_index_id=rag_index_id
+                rag_index_id=rag_index_id,
+                num_pages=num_pages
             )
             db.session.add(kb_entry)
             db.session.commit()
@@ -313,16 +323,47 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
         logger.error(f"Unexpected error during text addition: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+def _get_kb_agents_count(kb_id: int) -> int:
+    return (
+        db.session.query(func.count(AgentKnowledgeBaseBridge.id))
+        .filter(AgentKnowledgeBaseBridge.kb_id == kb_id)
+        .scalar()
+        or 0
+    )
+
+
+def kb_to_read(item: KnowledgeBaseModel, agents_count: int = 0) -> KnowledgeBaseResponse:
+    return KnowledgeBaseResponse(
+        id=item.id,
+        kb_type=item.kb_type,
+        title=item.title,
+        content_path=item.content_path,
+        content_text=item.content_text,
+        elevenlabs_document_id=item.elevenlabs_document_id,
+        file_size=item.file_size,
+        num_pages=item.num_pages,
+        created_at=item.created_at,
+        modified_at=item.modified_at,
+        agents_count=agents_count,
+    )
+
+
 @router.get("/", response_model=PaginatedResponse[KnowledgeBaseResponse], openapi_extra={"security": [{"BearerAuth": []}]})
 async def get_all_knowledge_base(
     page: int = 1,
     size: int = 20,
+    title: Optional[str] = None,
+    agent_name: Optional[str] = None,
+    kb_type: Optional[str] = None,
+    sort_by: Optional[str] = None,
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
+    """sort_by: date_added_asc | date_added_desc — anything else (including
+    absent) falls back to the default "last updated" order."""
     try:
         if page < 1:
             page = 1
-        
+
         skip = (page - 1) * size
 
         with db():
@@ -330,9 +371,33 @@ async def get_all_knowledge_base(
             query = (
                 db.session.query(KnowledgeBaseModel)
                 .filter(KnowledgeBaseModel.user_id == current_user.id)
-                .order_by(KnowledgeBaseModel.modified_at.desc())
             )
-            
+
+            if title:
+                query = query.filter(KnowledgeBaseModel.title.ilike(f"%{title}%"))
+
+            if kb_type:
+                query = query.filter(KnowledgeBaseModel.kb_type == kb_type)
+
+            if agent_name:
+                query = query.filter(
+                    db.session.query(AgentKnowledgeBaseBridge.id)
+                    .join(AgentModel, AgentModel.id == AgentKnowledgeBaseBridge.agent_id)
+                    .filter(
+                        AgentKnowledgeBaseBridge.kb_id == KnowledgeBaseModel.id,
+                        AgentModel.user_id == current_user.id,
+                        AgentModel.agent_name.ilike(f"%{agent_name}%"),
+                    )
+                    .exists()
+                )
+
+            if sort_by == "date_added_asc":
+                query = query.order_by(KnowledgeBaseModel.created_at.asc())
+            elif sort_by == "date_added_desc":
+                query = query.order_by(KnowledgeBaseModel.created_at.desc())
+            else:
+                query = query.order_by(KnowledgeBaseModel.modified_at.desc())
+
             total = query.count()
             pages = math.ceil(total / size)
 
@@ -342,13 +407,31 @@ async def get_all_knowledge_base(
                 .limit(size)
                 .all()
             )
-            
+
+            kb_ids = [item.id for item in kb_entries]
+            counts_by_kb_id = {}
+            if kb_ids:
+                counts_by_kb_id = dict(
+                    db.session.query(
+                        AgentKnowledgeBaseBridge.kb_id,
+                        func.count(AgentKnowledgeBaseBridge.id),
+                    )
+                    .filter(AgentKnowledgeBaseBridge.kb_id.in_(kb_ids))
+                    .group_by(AgentKnowledgeBaseBridge.kb_id)
+                    .all()
+                )
+
+            items = [
+                kb_to_read(item, agents_count=counts_by_kb_id.get(item.id, 0))
+                for item in kb_entries
+            ]
+
             return PaginatedResponse(
                 total=total,
                 page=page,
                 size=size,
                 pages=pages,
-                items=kb_entries
+                items=items
             )
     except HTTPException as e:
         raise e
@@ -410,6 +493,59 @@ async def get_agent_knowledge_base(
         raise e
     except Exception as e:
         logger.error(f"Error retrieving agent knowledge base: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/{kb_id}/agents",
+    response_model=PaginatedResponse[KnowledgeBaseAgentItem],
+    summary="List the current user's agents that this KB item is attached to, paginated",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def get_knowledge_base_agents(
+    kb_id: int,
+    page: int = 1,
+    size: int = 20,
+    current_user: UnifiedAuthModel = Depends(require_active_user())
+):
+    try:
+        with db():
+            kb_entry = db.session.query(KnowledgeBaseModel).filter(
+                KnowledgeBaseModel.id == kb_id,
+                KnowledgeBaseModel.user_id == current_user.id
+            ).first()
+            if not kb_entry:
+                raise HTTPException(status_code=404, detail="Knowledge base item not found")
+
+            if page < 1:
+                page = 1
+
+            base = (
+                db.session.query(AgentModel.id, AgentModel.agent_name)
+                .join(AgentKnowledgeBaseBridge, AgentKnowledgeBaseBridge.agent_id == AgentModel.id)
+                .filter(
+                    AgentKnowledgeBaseBridge.kb_id == kb_id,
+                    AgentModel.user_id == current_user.id,
+                )
+                .order_by(AgentModel.agent_name)
+            )
+
+            total = base.count()
+            pages = math.ceil(total / size) if size > 0 else 1
+            rows = base.offset((page - 1) * size).limit(size).all()
+            items = [KnowledgeBaseAgentItem(id=r.id, agent_name=r.agent_name) for r in rows]
+
+            return PaginatedResponse(
+                total=total,
+                page=page,
+                size=size,
+                pages=pages,
+                items=items
+            )
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving agents for KB item {kb_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.get("/{kb_id}/file", openapi_extra={"security": [{"BearerAuth": []}]})
@@ -605,6 +741,7 @@ async def update_file_knowledge_base(
                 kb_entry.title = new_title
                 kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
                 kb_entry.rag_index_id = kb_client.compute_rag_index(kb_entry.elevenlabs_document_id)
+                kb_entry.num_pages = kb_client.get_document_page_count(kb_entry.elevenlabs_document_id)
 
                 if new_file_path:
                     kb_entry.content_path = new_file_path
@@ -681,6 +818,7 @@ async def update_url_knowledge_base(
                 kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
                 # Compute new RAG index
                 kb_entry.rag_index_id = kb_client.compute_rag_index(kb_entry.elevenlabs_document_id)
+                kb_entry.num_pages = kb_client.get_document_page_count(kb_entry.elevenlabs_document_id)
                 if old_document_id:
                     kb_client.delete_document(old_document_id)
 
@@ -743,6 +881,7 @@ async def update_text_knowledge_base(
                 kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
                 # Compute new RAG index
                 kb_entry.rag_index_id = kb_client.compute_rag_index(kb_entry.elevenlabs_document_id)
+                kb_entry.num_pages = kb_client.get_document_page_count(kb_entry.elevenlabs_document_id)
                 if old_document_id:
                     kb_client.delete_document(old_document_id)
 

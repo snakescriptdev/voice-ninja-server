@@ -26,8 +26,11 @@ class KnowledgeBaseResponse(BaseModel):
     content_text: Optional[str] = None
     elevenlabs_document_id: Optional[str] = None
     file_size: Optional[float] = None
+    num_pages: Optional[int] = None
     created_at: datetime
     modified_at: datetime
+    # Number of the current user's agents this KB item is bound to.
+    agents_count: int = 0
 
     @field_serializer('created_at', 'modified_at')
     def serialize_datetime(self, dt: datetime):
@@ -39,3 +42,7 @@ class KnowledgeBaseResponse(BaseModel):
 class KnowledgeBaseBind(BaseModel):
     agent_id: int
     kb_id: int
+
+class KnowledgeBaseAgentItem(BaseModel):
+    id: int
+    agent_name: str

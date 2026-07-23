@@ -160,6 +160,27 @@ class AdminWebhookEventItem(BaseModel):
 
     model_config = {"from_attributes": True}
 
+class AdminPaymentItem(BaseModel):
+    # "payment" (a real PaymentModel transaction) or "admin_adjustment" (a
+    # manual CoinsLedgerModel credit/debit an admin made, no money involved).
+    entry_type: str
+    payment_id: int
+    user_id: int
+    user_email: str
+    date: datetime
+    description: str
+    # amount/currency populated for entry_type="payment" only.
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    # coins populated for entry_type="admin_adjustment" only (signed).
+    coins: Optional[int] = None
+    status: Optional[str] = None
+    provider: Optional[str] = None
+    provider_payment_id: Optional[str] = None
+    provider_order_id: Optional[str] = None
+    # Admin-provided reason for entry_type="admin_adjustment" only.
+    reason: Optional[str] = None
+
 class AdminPublicLogUserItem(BaseModel):
     user_id: int
     user_name: Optional[str] = None

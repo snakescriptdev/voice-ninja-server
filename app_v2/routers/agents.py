@@ -64,7 +64,12 @@ from sqlalchemy.orm import selectinload
 
 # -------------------- RESPONSE MAPPER --------------------
 
-def agent_to_read(agent: AgentModel, is_first_call_pending: Optional[bool] = None) -> AgentRead:
+def agent_to_read(
+    agent: AgentModel,
+    is_first_call_pending: Optional[bool] = None,
+    conversation_count: int = 0,
+    credits_used: int = 0,
+) -> AgentRead:
     ai_model = (
         agent.agent_ai_models[0].ai_model.model_name
         if agent.agent_ai_models else None
@@ -125,6 +130,10 @@ def agent_to_read(agent: AgentModel, is_first_call_pending: Optional[bool] = Non
             if is_first_call_pending is not None
             else is_agents_first_call(agent.id)
         ),
+        kb_count=len(agent.agent_knowledge_bases),
+        tool_count=len(agent.agent_functions),
+        conversation_count=conversation_count,
+        credits_used=credits_used,
     )
 
 
@@ -958,13 +967,14 @@ async def get_all_agents(
     size: int = 20,
     name: Optional[str] = None,
     voice: Optional[str] = None,
+    sort_by: Optional[str] = None,
     current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     if page < 1:
         page = 1
-    
+
     skip = (page - 1) * size
-    
+
     query = (
         db.session.query(AgentModel)
         .options(
@@ -978,18 +988,62 @@ async def get_all_agents(
         )
         .filter(AgentModel.user_id == current_user.id)
     )
-    
+
     if name:
         query = query.filter(AgentModel.agent_name.ilike(f"%{name}%"))
-        
+
     if voice:
         query = query.join(AgentModel.voice).filter(VoiceModel.voice_name.ilike(f"%{voice}%"))
 
-    query = query.order_by(AgentModel.modified_at.desc())
-    
+    # sort_by requires aggregate columns (KB/tool/credits counts) that live on
+    # other tables — join in grouped subqueries (same shape as
+    # app_v2/utils/agent_summary.py) so ORDER BY happens in SQL, before
+    # LIMIT/OFFSET, instead of sorting only the current page in Python.
+    if sort_by in {"credits_desc", "kb_count_desc", "tool_count_desc"}:
+        kb_sub = (
+            db.session.query(
+                AgentKnowledgeBaseBridge.agent_id.label("agent_id"),
+                func.count(AgentKnowledgeBaseBridge.kb_id).label("cnt"),
+            )
+            .group_by(AgentKnowledgeBaseBridge.agent_id)
+            .subquery()
+        )
+        tool_sub = (
+            db.session.query(
+                AgentFunctionBridgeModel.agent_id.label("agent_id"),
+                func.count(AgentFunctionBridgeModel.function_id).label("cnt"),
+            )
+            .group_by(AgentFunctionBridgeModel.agent_id)
+            .subquery()
+        )
+        conv_sub = (
+            db.session.query(
+                ConversationsModel.agent_id.label("agent_id"),
+                func.coalesce(func.sum(ConversationsModel.coins_charged_to_user), 0).label("credits_used"),
+            )
+            .group_by(ConversationsModel.agent_id)
+            .subquery()
+        )
+        query = (
+            query
+            .outerjoin(kb_sub, AgentModel.id == kb_sub.c.agent_id)
+            .outerjoin(tool_sub, AgentModel.id == tool_sub.c.agent_id)
+            .outerjoin(conv_sub, AgentModel.id == conv_sub.c.agent_id)
+        )
+        if sort_by == "credits_desc":
+            query = query.order_by(func.coalesce(conv_sub.c.credits_used, 0).desc(), AgentModel.agent_name)
+        elif sort_by == "kb_count_desc":
+            query = query.order_by(func.coalesce(kb_sub.c.cnt, 0).desc(), AgentModel.agent_name)
+        elif sort_by == "tool_count_desc":
+            query = query.order_by(func.coalesce(tool_sub.c.cnt, 0).desc(), AgentModel.agent_name)
+    elif sort_by == "date_added_desc":
+        query = query.order_by(AgentModel.created_at.desc())
+    else:
+        query = query.order_by(AgentModel.modified_at.desc())
+
     total = query.count()
     pages = math.ceil(total / size)
-    
+
     agents = (
         query
         .offset(skip)
@@ -999,6 +1053,8 @@ async def get_all_agents(
 
     # Bulk-check which of this page's agents have ever had a conversation, so
     # is_first_call_pending doesn't cost a query per agent (N+1) in the list view.
+    # Also bulk-fetch per-agent conversation count + credits used for display,
+    # same "one grouped query scoped to this page's agent_ids" approach.
     agent_ids = [a.id for a in agents]
     agents_with_calls = (
         {
@@ -1011,8 +1067,28 @@ async def get_all_agents(
         if agent_ids
         else set()
     )
+    conversation_stats = (
+        {
+            row[0]: (row[1], row[2])
+            for row in db.session.query(
+                ConversationsModel.agent_id,
+                func.count(ConversationsModel.id),
+                func.coalesce(func.sum(ConversationsModel.coins_charged_to_user), 0),
+            )
+            .filter(ConversationsModel.agent_id.in_(agent_ids))
+            .group_by(ConversationsModel.agent_id)
+            .all()
+        }
+        if agent_ids
+        else {}
+    )
     items = [
-        agent_to_read(agent, is_first_call_pending=(agent.id not in agents_with_calls))
+        agent_to_read(
+            agent,
+            is_first_call_pending=(agent.id not in agents_with_calls),
+            conversation_count=conversation_stats.get(agent.id, (0, 0))[0],
+            credits_used=int(conversation_stats.get(agent.id, (0, 0))[1] or 0),
+        )
         for agent in agents
     ]
 

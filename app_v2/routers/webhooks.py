@@ -40,7 +40,7 @@ from app_v2.schemas.enum_types import (
 )
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.utils.email_service import send_payment_success_email, send_payment_failed_email
-from app_v2.utils.invoice_utils import generate_invoice_pdf
+from app_v2.utils.invoice_utils import generate_invoice_pdf, generate_invoice_reference
 
 logger = setup_logger(__name__)
 router = APIRouter(prefix="/api/v2/webhooks", tags=["Webhooks"])
@@ -209,6 +209,7 @@ async def razorpay_webhook(request: Request):
                     currency=email_task["currency"],
                     error_reason=email_task["error_reason"],
                     base_url=VoiceSettings.FRONTEND_URL,
+                    invoice_pdf=email_task.get("invoice_pdf"),
                 )
         except Exception:
             logger.exception("Razorpay webhook: failed to send payment email")
@@ -297,6 +298,7 @@ def _order_payment_captured(
                 provider_order_id=rzp_order_id,
                 payment_type=PaymentTypeEnum.coin_purchase,
                 metadata_json={"coins": addon_order.coins, "source": "webhook"},
+                invoice_reference=generate_invoice_reference(),
             )
             db.session.add(payment)
             db.session.flush()
@@ -407,6 +409,7 @@ def _order_payment_failed(
                     "error_reason": payment_entity.get("error_reason"),
                     "source": "webhook",
                 },
+                invoice_reference=generate_invoice_reference(),
             )
             db.session.add(failed_payment)
     except IntegrityError:
@@ -435,6 +438,7 @@ def _order_payment_failed(
         "amount": addon_order.amount,
         "currency": "INR",
         "error_reason": error_reason,
+        "invoice_pdf": generate_invoice_pdf(failed_payment, user),
     }
 
 
