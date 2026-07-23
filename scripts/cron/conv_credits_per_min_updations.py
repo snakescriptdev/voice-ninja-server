@@ -2,7 +2,7 @@ import sys
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, text
 
-DB_URL = "postgresql://postgres:admin@localhost/voice_ninja_server_db"
+DB_URL = ""
 
 if not DB_URL:
     print("Error: DB_URL must be set.")
@@ -46,6 +46,10 @@ def calculate_and_update_conversation_credits_per_minute():
     conversations, rather than an average, so the stored rate never
     undercharges relative to the most expensive real call.
 
+    Only updates coin_usage_settings.elevenlabs_conversation_credits_per_minute
+    if the freshly computed rate is higher than the currently stored one —
+    the rate is never lowered by this job.
+
     The select, print, and update all run inside one transaction
     (engine.begin()) so a failure anywhere here rolls back cleanly and never
     leaves coin_usage_settings partially updated — and, since this script
@@ -85,6 +89,17 @@ def calculate_and_update_conversation_credits_per_minute():
             f"conversation {best['id']} - {best['actual_conversation_credits']} credits / {best['duration']} sec "
             f"= {best_credits_per_minute:.2f} credits/min -> rounded to {credits_per_minute} credits/min"
         )
+
+        current_value = conn.execute(
+            text("SELECT elevenlabs_conversation_credits_per_minute FROM coin_usage_settings")
+        ).scalar()
+
+        if current_value is not None and credits_per_minute <= current_value:
+            print(
+                f"[{datetime.now(timezone.utc)}] Computed elevenlabs_conversation_credits_per_minute "
+                f"({credits_per_minute}) is not greater than the current value ({current_value}), skipping update."
+            )
+            return
 
         conn.execute(
             text(
