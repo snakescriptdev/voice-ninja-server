@@ -12,11 +12,22 @@ class PersonalKnowledgeBaseTextCreate(BaseModel):
     content: str
 
 
+class PersonalKnowledgeBaseURLUpdate(BaseModel):
+    title: Optional[str] = None
+    url: Optional[HttpUrl] = None
+
+
+class PersonalKnowledgeBaseTextUpdate(BaseModel):
+    title: Optional[str] = None
+    content: Optional[str] = None
+
+
 class PersonalKnowledgeBaseResponse(BaseModel):
     id: int
     kb_type: str
     title: Optional[str] = None
     content_path: Optional[str] = None
+    content_text: Optional[str] = None
     file_size: Optional[float] = None
     num_chunks: int = 0
     created_at: datetime
