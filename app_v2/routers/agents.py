@@ -50,6 +50,7 @@ from app_v2.core.config import VoiceSettings
 from app_v2.utils.feature_access import RequireFeature
 from app_v2.utils.crypto_utils import decrypt_data
 from app_v2.utils.twillio_phone_service import TwilioPhoneService
+from app_v2.utils.personal_kb_tool import ensure_personal_kb_tool
 from twilio.base.exceptions import TwilioRestException
 logger = setup_logger(__name__)
 
@@ -876,6 +877,14 @@ async def create_agent(
             detail=f"Failed to save agent: {str(db_error)}",
         )
 
+    # Best-effort: if this user already has an active personal knowledge
+    # base, make sure this brand-new agent picks up the search tool + prompt
+    # block too. Must never fail agent creation itself.
+    try:
+        ensure_personal_kb_tool(user_id)
+    except Exception as e:
+        logger.warning(f"Failed to sync personal KB tool onto new agent {new_agent.id}: {e}")
+
     return agent_to_read(new_agent)
 
 
@@ -1350,6 +1359,10 @@ async def detach_tool_from_agent(
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
 
+    tool = db.session.query(FunctionModel).filter(FunctionModel.id == function_id).first()
+    if tool and tool.is_system_managed:
+        raise HTTPException(status_code=403, detail="This tool is managed automatically and cannot be detached.")
+
     db.session.query(AgentFunctionBridgeModel).filter(
         AgentFunctionBridgeModel.agent_id == agent_id,
         AgentFunctionBridgeModel.function_id == function_id,
@@ -1737,6 +1750,15 @@ async def update_agent(
         description=f"Updated agent: {agent.agent_name}",
         metadata={"agent_id": agent.id, "elevenlabs_agent_id": agent.elevenlabs_agent_id}
     )
+
+    # Best-effort: this update may have replaced the agent's whole tool_ids
+    # list (via agent_in.functions) without knowing about the personal KB
+    # search tool. Re-attach it if the user has an active personal KB — must
+    # never fail the update itself.
+    try:
+        ensure_personal_kb_tool(current_user.id)
+    except Exception as e:
+        logger.warning(f"Failed to re-sync personal KB tool onto agent {agent.id} after update: {e}")
 
     return agent_to_read(agent)
 
