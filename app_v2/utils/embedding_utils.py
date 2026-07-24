@@ -19,6 +19,11 @@ def _get_model():
     """Lazily loads and caches the sentence-transformers model on first use."""
     global _model
     if _model is None:
+        import torch
+        # Pinned alongside faiss.omp_set_num_threads(1) in faiss_store.py —
+        # torch and faiss each bring their own OpenMP runtime, which segfaults
+        # when sharing a process unless both are limited to a single thread.
+        torch.set_num_threads(1)
         from sentence_transformers import SentenceTransformer
         logger.info(f"Loading embedding model: {EMBEDDING_MODEL_NAME}")
         _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
