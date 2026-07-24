@@ -5,15 +5,16 @@ This module provides endpoints for OTP-based authentication:
 - Verify OTP: Verify OTP and complete login
 """
 
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Union
 
-from fastapi import APIRouter, Request, HTTPException, status
+from fastapi import APIRouter, Request, HTTPException, status, Depends
 from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
-from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
+from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings, UserSessionModel
 from app_v2.utils.otp_utils import (
     generate_otp,
     is_email,
@@ -23,6 +24,10 @@ from app_v2.utils.jwt_utils import (
     create_access_token,
     create_refresh_token,
     verify_refresh_token,
+    create_user_session,
+    revoke_session_by_jti,
+    revoke_all_sessions,
+    require_active_user,
 )
 
 from app_v2.constants import (
@@ -59,6 +64,7 @@ from app_v2.schemas.otp import (
     VerifyOTPResponse,
     ErrorResponse,
     RefreshTokenRequest,
+    LogoutRequest,
 )
 
 router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
@@ -453,15 +459,22 @@ async def verify_otp(
             )
             
 
-        # Create tokens
+        # Create tokens. `jti` is minted once per login and embedded in both
+        # the access and refresh tokens, and used as the key for the
+        # server-side UserSessionModel row that makes revocation possible.
+        jti = uuid.uuid4().hex
         token_data = {
             'user_id': unified_user.id,
             'email': unified_user.email,
             'phone': unified_user.phone,
-            'role': 'admin' if unified_user.is_admin else 'user'
+            'role': 'admin' if unified_user.is_admin else 'user',
+            'jti': jti,
         }
         access_token = create_access_token(data=token_data)
-        refresh_token = create_refresh_token(unified_user.id)
+        refresh_token = create_refresh_token(unified_user.id, jti)
+
+        # Record this login as a trackable/revocable server-side session.
+        create_user_session(unified_user.id, jti, http_request)
 
         # Create session
         http_request.session['user'] = {
@@ -706,8 +719,8 @@ async def refresh_token(request: RefreshTokenRequest):
     and a new refresh token if valid.
     """
     try:
-        user_id = verify_refresh_token(request.refresh_token)
-        if not user_id:
+        user_id, jti = verify_refresh_token(request.refresh_token)
+        if user_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -738,14 +751,41 @@ async def refresh_token(request: RefreshTokenRequest):
                 }
             )
 
-        # Create new tokens
+        # Refresh tokens predating session tracking carry no jti - reject
+        # them the same way an unknown/revoked session would be, rather than
+        # silently minting a session-less access token that would just fail
+        # on its very first authenticated request anyway.
+        session_row = UserSessionModel.get_by_jti(jti) if jti else None
+        if not jti or not session_row or session_row.is_revoked:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_401_UNAUTHORIZED,
+                    "message": "Session has been revoked or does not exist"
+                }
+            )
+
+        # Create new access token, reusing the SAME jti (no rotation) so it
+        # keeps pointing at the same UserSessionModel row.
         token_data = {
             'user_id': unified_user.id,
             'email': unified_user.email,
             'phone': unified_user.phone,
-            'role': 'admin' if unified_user.is_admin else 'user'
+            'role': 'admin' if unified_user.is_admin else 'user',
+            'jti': jti,
         }
         access_token = create_access_token(data=token_data)
+
+        # Bump last_used_at for this session on refresh too.
+        try:
+            with db():
+                db.session.query(UserSessionModel).filter(
+                    UserSessionModel.id == session_row.id
+                ).update({"last_used_at": datetime.now(timezone.utc)})
+                db.session.commit()
+        except Exception as e:
+            logger.error(f'Failed to bump last_used_at on refresh for jti={jti}: {e}', exc_info=True)
 
         return {
             'status_code': HTTP_200_OK,
@@ -764,5 +804,62 @@ async def refresh_token(request: RefreshTokenRequest):
                 "status": STATUS_FAILED,
                 "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
                 "message": 'Failed to refresh token'
+            }
+        )
+
+
+@router.post(
+    '/logout',
+    status_code=status.HTTP_200_OK,
+    summary='Logout',
+    description='Revoke the current session, or all sessions, ending real server-side auth (not just client-side token clearing)',
+    responses={
+        200: {
+            'description': 'Logged out successfully',
+            'content': {
+                'application/json': {
+                    'example': {
+                        'message': 'Logged out'
+                    }
+                }
+            }
+        }
+    }
+)
+async def logout(
+    request: LogoutRequest,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    """Log out the current user.
+
+    - `revoke_all=True` revokes EVERY active session for this user,
+      including the one used to call this endpoint (log out everywhere).
+    - `revoke_all=False` (default) revokes only the session tied to the
+      access token used to call this endpoint.
+    """
+    try:
+        current_jti = getattr(current_user, "_current_jti", None)
+
+        if request.revoke_all:
+            revoke_all_sessions(current_user.id, exclude_jti=None)
+        elif current_jti:
+            revoke_session_by_jti(current_user.id, current_jti)
+
+        return {
+            'status': STATUS_SUCCESS,
+            'status_code': HTTP_200_OK,
+            'message': 'Logged out'
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'Error in logout: {e}', exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": STATUS_FAILED,
+                "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": 'Failed to log out'
             }
         )
