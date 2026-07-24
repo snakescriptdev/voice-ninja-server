@@ -137,6 +137,21 @@ class PlanFeatureEnum(str,Enum):
 BOOLEAN_ONLY_PLAN_FEATURES = {PlanFeatureEnum.analytics_dashboard, PlanFeatureEnum.web_agent}
 
 
+class SupportTicketCategoryEnum(str, Enum):
+    general = "general"
+    missing_language = "missing_language"
+    account_suspended = "account_suspended"
+    billing = "billing"
+    technical = "technical"
+
+
+class SupportTicketStatusEnum(str, Enum):
+    open = "open"
+    in_progress = "in_progress"
+    resolved = "resolved"
+    closed = "closed"
+
+
 class SubscriptionBillingEventEnum(str, Enum):
     """
     ActivityLogModel.event_type values for subscription lifecycle changes
