@@ -9,10 +9,15 @@ from pydantic import BaseModel, Field, field_validator
 # app-level limits chosen to keep the data sane and the error messages friendly.
 NAME_MAX_LENGTH = 50
 ADDRESS_MAX_LENGTH = 255
-PHONE_MIN_DIGITS = 10
-PHONE_MAX_DIGITS = 15
+# Phone numbers must be exactly 10 digits - no more, no less, and no leading
+# '+'/country code.
+PHONE_DIGITS_LENGTH = 10
+PHONE_REGEX = re.compile(r"^\d{10}$")
 # Letters, digits, spaces and common address punctuation.
 ADDRESS_PATTERN = re.compile(r"^[\w\s,.'\-#/]+$", re.UNICODE)
+# Address must contain at least one letter - digits alone (e.g. a bare
+# postal/PIN code) aren't a valid address; numbers are allowed but optional.
+ADDRESS_HAS_LETTER_PATTERN = re.compile(r"[^\W\d_]", re.UNICODE)
 PHONE_STRIP_CHARS_PATTERN = re.compile(r"[\s\-]")
 
 
@@ -57,12 +62,21 @@ class ProfileRequest(BaseModel):
     @field_validator('first_name', 'last_name')
     @classmethod
     def validate_name(cls, v: Optional[str]) -> Optional[str]:
-        """Validate name fields: strip whitespace, check length, and ensure only alphabetic characters."""
+        """Validate name fields: strip whitespace, check length, and ensure only alphabetic characters.
+
+        These fields are optional (last_name always; first_name is only
+        conditionally required, which is enforced in the router, not here).
+        A blank/whitespace-only string is treated the same as not having
+        provided the field at all - it must NOT block the rest of the
+        request, it just means "no value". Format/length checks only run
+        when a non-empty value is actually supplied.
+        """
         if v is None:
             return None
         v = v.strip()
         if not v:
-            raise ValueError('cannot be empty or only spaces')
+            # Optional field left blank - not an error.
+            return None
         if len(v) < 2:
             raise ValueError('must be at least 2 characters long')
         if len(v) > NAME_MAX_LENGTH:
@@ -74,22 +88,19 @@ class ProfileRequest(BaseModel):
     @field_validator('phone')
     @classmethod
     def validate_phone(cls, v: Optional[str]) -> Optional[str]:
-        """Validate phone: strip whitespace/hyphens, allow an optional leading
-        '+' country-code prefix, ensure the rest is digits, and check length."""
+        """Validate phone: optional field, but when a value IS provided it must
+        be exactly 10 digits (spaces/hyphens used as separators are stripped
+        before checking; no country code / '+' prefix is accepted)."""
         if v is None:
             return None
-        if not v.strip():
-            raise ValueError('cannot be empty or only spaces')
-        cleaned = PHONE_STRIP_CHARS_PATTERN.sub('', v.strip())
-        # Preserve a single leading '+' (E.164 country code) for the return
-        # value, but validate the digit portion without it.
-        has_plus = cleaned.startswith('+')
-        digits = cleaned[1:] if has_plus else cleaned
-        if not digits.isdigit():
-            raise ValueError('must contain only digits, optionally prefixed with a country code (e.g. +91)')
-        if len(digits) < PHONE_MIN_DIGITS or len(digits) > PHONE_MAX_DIGITS:
-            raise ValueError(f'must be between {PHONE_MIN_DIGITS} and {PHONE_MAX_DIGITS} digits long')
-        return f'+{digits}' if has_plus else digits
+        v = v.strip()
+        if not v:
+            # Optional field left blank - not an error.
+            return None
+        cleaned = PHONE_STRIP_CHARS_PATTERN.sub('', v)
+        if not PHONE_REGEX.match(cleaned):
+            raise ValueError(f'must be exactly {PHONE_DIGITS_LENGTH} digits')
+        return cleaned
 
     @field_validator('address')
     @classmethod
@@ -99,11 +110,14 @@ class ProfileRequest(BaseModel):
             return None
         v = v.strip()
         if not v:
-            raise ValueError('cannot be empty or only spaces')
+            # Optional field left blank - not an error.
+            return None
         if len(v) > ADDRESS_MAX_LENGTH:
             raise ValueError(f'must not exceed {ADDRESS_MAX_LENGTH} characters')
         if not ADDRESS_PATTERN.match(v):
             raise ValueError("can only contain letters, numbers, spaces, and , . ' - # / characters")
+        if not ADDRESS_HAS_LETTER_PATTERN.search(v):
+            raise ValueError('must contain letters (numbers alone are not a valid address)')
         return v
 
 

@@ -1,6 +1,6 @@
 """Pydantic schemas for OTP-related endpoints."""
 
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel, Field, field_validator
 
 class RequestOTPRequest(BaseModel):
@@ -8,6 +8,11 @@ class RequestOTPRequest(BaseModel):
 
     Attributes:
         username: Email address for OTP delivery.
+        mode: Which flow the OTP is being requested for - 'login' or 'signup'.
+            Defaults to 'login' to preserve existing behavior for older
+            clients that don't send this field. Used to distinguish an
+            existing-account error (signup) from a no-such-account error
+            (login) instead of silently creating/logging in either way.
     """
 
     username: str = Field(
@@ -15,6 +20,11 @@ class RequestOTPRequest(BaseModel):
         description='Email address',
         min_length=1,
         examples=['user@example.com']
+    )
+    mode: Literal['login', 'signup'] = Field(
+        default='login',
+        description="Flow requesting the OTP: 'login' or 'signup'",
+        examples=['login']
     )
 
     @field_validator('username')
