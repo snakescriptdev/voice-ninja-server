@@ -3,6 +3,16 @@ from dotenv import load_dotenv
 import certifi
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
+# torch (embeddings) and faiss (vector index) each bring their own OpenMP
+# runtime; sharing a process crashes (segfault, sometimes mid-request, always
+# on process exit) unless both are pinned to a single thread. Must be set
+# before either library is imported anywhere in the app — our per-request
+# workloads are tiny, so this costs nothing. See app_v2/utils/faiss_store.py
+# and app_v2/utils/embedding_utils.py for the matching in-process pins.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 # Load environment variables
 load_dotenv()
 
