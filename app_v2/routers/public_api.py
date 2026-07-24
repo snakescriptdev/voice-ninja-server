@@ -122,7 +122,13 @@ class PublicAPIRoute(APIRoute):
                     try:
                         with db():
                             from app_v2.databases.models import APIKeyModel
-                            key = db.session.query(APIKeyModel).filter_by(client_id=client_id, is_active=True).first()
+                            # Not filtering on is_active here: this is a diagnostic
+                            # lookup to attribute the log to its owning user, not an
+                            # authorization check (that already happened/failed in
+                            # get_public_api_user). Filtering on is_active meant a
+                            # request made with a deactivated key never got logged
+                            # at all, even though we know exactly whose key it was.
+                            key = db.session.query(APIKeyModel).filter_by(client_id=client_id).first()
                             if key:
                                 content_type = request.headers.get("content-type", "")
                                 if "application/json" in content_type:
@@ -149,7 +155,7 @@ class PublicAPIRoute(APIRoute):
                                     },
                                     request_body=sanitize_for_log(req_body_parsed),
                                     response_body=sanitize_for_log(resp_body_parsed),
-                                    is_success=status_code < 400,
+                                    is_success=(200 <= status_code < 300),
                                     error_message=error_message,
                                     api_key_id=key.id,
                                 )

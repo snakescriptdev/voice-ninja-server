@@ -45,6 +45,9 @@ from app_v2.constants import (
     MSG_FAILED_TO_SEND_OTP_VIA_METHOD,
     MSG_OTP_RESENT_EMAIL,
     MSG_NO_ACTIVE_OTP,
+    MSG_ACCOUNT_ALREADY_EXISTS,
+    MSG_USER_NOT_FOUND_SIGNUP_PROMPT,
+    HTTP_409_CONFLICT,
     OTP_EXPIRY_MINUTES,
     METHOD_EMAIL,
 )
@@ -92,6 +95,30 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
                 }
             }
         },
+        404: {
+            'description': "Login mode - no account exists for this email",
+            'content': {
+                'application/json': {
+                    'example': {
+                        'status': 'failed',
+                        'status_code': 404,
+                        'message': 'User not found. Please check your email or sign up.'
+                    }
+                }
+            }
+        },
+        409: {
+            'description': 'Signup mode - an account already exists for this email',
+            'content': {
+                'application/json': {
+                    'example': {
+                        'status': 'failed',
+                        'status_code': 409,
+                        'message': 'Account already exists. Please login.'
+                    }
+                }
+            }
+        },
         500: {
             'description': 'Internal server error',
             'content': {
@@ -112,8 +139,13 @@ async def request_otp(request: RequestOTPRequest):
     This endpoint validates the username (email), generates an OTP,
     and sends it via email.
 
+    The `mode` field ('login' or 'signup', default 'login') tells the two
+    flows apart: 'signup' rejects with 409 if an account already exists for
+    the email, and 'login' rejects with 404 if no account exists yet -
+    instead of silently creating an account or resending a code either way.
+
     Args:
-        request: Request containing username (email).
+        request: Request containing username (email) and mode.
 
     Returns:
         RequestOTPResponse with status and method information on success,
@@ -121,6 +153,7 @@ async def request_otp(request: RequestOTPRequest):
     """
     try:
         username = request.username
+        mode = request.mode
 
         # Validate email format
         if not is_email(username):
@@ -136,6 +169,33 @@ async def request_otp(request: RequestOTPRequest):
         # Check unified auth model first
         unified_user = UnifiedAuthModel.get_by_username(username)
         user_created = False
+
+        # An account only really "exists" once it has completed at least one
+        # signup (OTP verification or Google auth both set is_verified=True).
+        # A row that exists but is_verified=False just means a previous
+        # signup attempt was started but never finished, so it's fine to
+        # treat it like a fresh signup and let the OTP be (re)sent.
+        account_exists = bool(unified_user and unified_user.is_verified)
+
+        if mode == 'signup' and account_exists:
+            raise HTTPException(
+                status_code=HTTP_409_CONFLICT,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_409_CONFLICT,
+                    "message": MSG_ACCOUNT_ALREADY_EXISTS
+                }
+            )
+
+        if mode == 'login' and not account_exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_404_NOT_FOUND,
+                    "message": MSG_USER_NOT_FOUND_SIGNUP_PROMPT
+                }
+            )
 
         if not unified_user:
             # Create new user in unified auth

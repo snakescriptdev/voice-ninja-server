@@ -6,6 +6,10 @@ from typing import Optional, Dict, Any, Literal
 # route handlers, so it stays authoritative even if set below this value.
 MIN_PURCHASE_AMOUNT = 1.0
 
+# Hard ceiling on a single add-credits purchase, enforced regardless of what
+# the admin-configured minimum is set to.
+MAX_PURCHASE_AMOUNT = 100000.0
+
 class CreditEstimateResponse(BaseModel):
     amount: float
     credits: int
@@ -40,7 +44,12 @@ class DismissCreditBannerRequest(BaseModel):
     banner: BannerType
 
 class OrderCreateRequest(BaseModel):
-    amount: float = Field(..., ge=MIN_PURCHASE_AMOUNT)
+    amount: float = Field(
+        ...,
+        gt=0,
+        le=MAX_PURCHASE_AMOUNT,
+        description=f"Amount in INR. Must be greater than 0 and at most {MAX_PURCHASE_AMOUNT:.0f}.",
+    )
 
 class OrderCreateResponse(BaseModel):
     order_id: str

@@ -601,6 +601,46 @@ async def send_usage_history_export_email(
         logger.error(f"Failed to send usage history export email: {str(e)}")
 
 
+async def send_billing_history_export_email(
+    user_email: str,
+    user_name: str | None,
+    csv_bytes: bytes,
+    record_count: int,
+):
+    """Sent when a user exports their full billing history (CSV attached)."""
+    try:
+        subject = "Your Billing History Export"
+
+        body = f"""
+        <html>
+        <body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:30px;margin:0;">
+        <table width="600" align="center" style="background:white;border-radius:10px;padding:30px;border-collapse:collapse;box-shadow:0 0 10px rgba(0,0,0,0.08);">
+            <tr>
+                <td>
+                    <h2 style="color:#1f2937;margin-top:0;">Billing History Export</h2>
+                    <p>Hi {user_name or "there"},</p>
+                    <p>
+                        As requested, here's your complete billing history — {record_count}
+                        record{"s" if record_count != 1 else ""} — attached to this email as a CSV file.
+                    </p>
+                    <p style="color:#555;">Thanks,<br/>Voice Ninja Team</p>
+                </td>
+            </tr>
+        </table>
+        </body>
+        </html>
+        """
+
+        await send_email_async(
+            subject=subject,
+            recipients=[user_email],
+            body=body,
+            attachments=[("billing_history.csv", csv_bytes, "text/csv")],
+        )
+    except Exception as e:
+        logger.error(f"Failed to send billing history export email: {str(e)}")
+
+
 async def send_voice_limit_email_to_admins(db_session, user_identifier: str, user_id: int):
     """
     Sends an email to all admins notifying them about voice cloning limit reached.

@@ -4,6 +4,7 @@ from datetime import datetime, date
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .built_in_tools import BuiltInToolsParams
+from app_v2.utils.validation_utils import validate_entity_name, validate_entity_name_optional
 
 
 def _validate_timezone(value: Optional[str]) -> Optional[str]:
@@ -32,6 +33,7 @@ class AgentCreate(BaseModel):
     timezone: Optional[str] = Field(default=None, description="IANA timezone for the agent (must be valid for tzinfo, e.g. 'America/New_York')")
 
     _validate_timezone = field_validator("timezone")(_validate_timezone)
+    _validate_agent_name = field_validator("agent_name")(validate_entity_name)
 
 
 class AgentUpdate(BaseModel):
@@ -51,6 +53,7 @@ class AgentUpdate(BaseModel):
     timezone: Optional[str] = Field(default=None, description="IANA timezone for the agent (must be valid for tzinfo, e.g. 'America/New_York')")
 
     _validate_timezone = field_validator("timezone")(_validate_timezone)
+    _validate_agent_name = field_validator("agent_name")(validate_entity_name_optional)
 
 
 class AgentRead(BaseModel):
