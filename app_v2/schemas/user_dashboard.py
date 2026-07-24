@@ -23,8 +23,18 @@ class AgentAnalytics(BaseModel):
     agent_id: int
     agent_name: str
     call_count: int
-    avg_duration: float
+    total_duration: int
     coins_used: int
+
+class WebAgentSummaryRef(BaseModel):
+    id: int
+    public_id: str
+    web_agent_name: str
+
+class WidgetSummaryRef(BaseModel):
+    id: int
+    public_id: str
+    widget_name: str
 
 class AgentSummaryItem(BaseModel):
     agent_id: int
@@ -32,6 +42,8 @@ class AgentSummaryItem(BaseModel):
     elevenlabs_agent_id: Optional[str] = None
     web_agent_count: int
     widget_count: int
+    web_agents: List[WebAgentSummaryRef] = []
+    widgets: List[WidgetSummaryRef] = []
     total_conversations: int
     success_count: int
     failed_count: int

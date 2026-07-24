@@ -86,11 +86,12 @@ def log_public_api_call(
 ):
     """
     Logs a detailed public API call record. Successful calls (is_success
-    True, or status_code < 400 when is_success wasn't given) are skipped
+    True, or a 2xx status_code when is_success wasn't given) are skipped
     entirely — this log exists for error visibility/alerting, not a full
-    request audit trail, so 2xx/3xx traffic isn't worth the row.
+    request audit trail, so only 2xx traffic is skipped; 3xx/4xx/5xx are
+    all logged as failures.
     """
-    success = is_success if is_success is not None else status_code < 400
+    success = is_success if is_success is not None else (200 <= status_code < 300)
     if success:
         return
     try:
