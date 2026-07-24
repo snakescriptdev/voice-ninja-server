@@ -22,7 +22,7 @@ from app_v2.schemas.enum_types import (
     PublicLogChannelEnum,
 )
 from app_v2.utils.coin_utils import get_user_coin_balance
-from app_v2.utils.email_service import send_usage_history_export_email
+from app_v2.utils.email_service import send_usage_history_export_email, send_billing_history_export_email
 from app_v2.constants import api_list
 
 from sqlalchemy import func
@@ -304,8 +304,8 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             AgentModel.id.label('agent_id'),
             AgentModel.agent_name,
             func.count(ConversationsModel.id).label('call_count'),
-            func.avg(ConversationsModel.duration).label('avg_duration'),
-            func.sum(ConversationsModel.cost).label('total_cost')
+            func.sum(ConversationsModel.duration).label('total_duration'),
+            func.coalesce(func.sum(ConversationsModel.coins_charged_to_user), 0).label('coins_charged')
         ).join(ConversationsModel, AgentModel.id == ConversationsModel.agent_id)\
          .filter(ConversationsModel.user_id == current_user.id)\
          .group_by(AgentModel.id, AgentModel.agent_name).all()
@@ -315,8 +315,8 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
                 agent_id=a.agent_id,
                 agent_name=a.agent_name,
                 call_count=a.call_count,
-                avg_duration=round(float(a.avg_duration or 0), 2),
-                coins_used=int(a.total_cost or 0)
+                total_duration=int(a.total_duration or 0),
+                coins_used=int(a.coins_charged or 0)
             ) for a in agent_data
         ]
         
@@ -653,6 +653,84 @@ def get_billing_history(
     except Exception as e:
         logger.error(f"Error in get_billing_history: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/billing-history/export", openapi_extra={"security":[{"BearerAuth":[]}]})
+async def export_billing_history(
+    current_user: UnifiedAuthModel = Depends(require_active_user())
+):
+    """
+    Emails the user a CSV of their FULL billing history — every payment plus
+    every non-payment subscription lifecycle event, not just the current page
+    shown in the UI. Uses the exact same merge/sort logic as get_billing_history,
+    just without the pagination slice, since this endpoint has no filters to
+    respect (the on-screen list has none either).
+    """
+    if not current_user.email:
+        raise HTTPException(status_code=400, detail="No email on file for this account")
+
+    try:
+        payments = db.session.query(PaymentModel).filter(
+            PaymentModel.user_id == current_user.id
+        ).all()
+
+        billing_events = db.session.query(ActivityLogModel).filter(
+            ActivityLogModel.user_id == current_user.id,
+            ActivityLogModel.event_type.in_(SUBSCRIPTION_BILLING_EVENT_TYPES),
+        ).all()
+
+        dated_rows = []
+        for p in payments:
+            if p.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
+                coins = p.metadata_json.get("coins") if p.metadata_json else None
+                description = f"Credit Purchase ({coins} credits)" if coins else "Credit Purchase"
+            elif p.payment_type == PaymentTypeEnum.subscription:
+                description = "Subscription Payment"
+            else:
+                description = "Miscellaneous Payment"
+
+            status_value = p.status.value if hasattr(p.status, "value") else p.status
+            dated_rows.append((p.created_at, [
+                p.created_at.strftime("%d %b %Y, %H:%M UTC"),
+                description,
+                f"{p.amount:.2f}",
+                p.currency,
+                status_value,
+                p.provider_payment_id or "",
+            ]))
+
+        for log in billing_events:
+            status_label = SUBSCRIPTION_BILLING_EVENT_STATUS_LABELS.get(log.event_type, log.event_type)
+            dated_rows.append((log.created_at, [
+                log.created_at.strftime("%d %b %Y, %H:%M UTC"),
+                log.description,
+                "0.00",
+                "",
+                status_label,
+                "",
+            ]))
+
+        dated_rows.sort(key=lambda row: row[0], reverse=True)
+
+        buffer = StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(["Date & Time", "Description", "Amount", "Currency", "Status", "Payment ID"])
+        for _, row in dated_rows:
+            writer.writerow(row)
+
+        await send_billing_history_export_email(
+            user_email=current_user.email,
+            user_name=current_user.name,
+            csv_bytes=buffer.getvalue().encode("utf-8"),
+            record_count=len(dated_rows),
+        )
+
+        return {"status": "sent", "message": f"Billing history export sent to {current_user.email}"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in export_billing_history: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to export billing history")
 
 
 @router.get("/billing-history/{payment_id}/invoice", openapi_extra={"security":[{"BearerAuth":[]}]})

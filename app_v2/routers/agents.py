@@ -959,6 +959,35 @@ async def clone_agent(
     return await create_agent(agent_in=payload, current_user=current_user)
 
 
+# -------------------- CHECK NAME AVAILABILITY --------------------
+# Lightweight lookup so the frontend can surface "name already exists" as soon
+# as the user enters/blurs the name field, instead of only at final submit
+# (used by the multi-step Personal Assistant flow — see AgentBasics.tsx).
+
+@router.get(
+    "/check-name",
+    summary="Check whether an agent name is already taken by the current user",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def check_agent_name(
+    name: str,
+    exclude_agent_id: Optional[int] = None,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    trimmed = (name or "").strip()
+    if not trimmed:
+        return {"exists": False}
+
+    query = db.session.query(AgentModel).filter(
+        func.lower(AgentModel.agent_name) == trimmed.lower(),
+        AgentModel.user_id == current_user.id,
+    )
+    if exclude_agent_id:
+        query = query.filter(AgentModel.id != exclude_agent_id)
+
+    return {"exists": query.first() is not None}
+
+
 # -------------------- GET ALL --------------------
 
 @router.get(

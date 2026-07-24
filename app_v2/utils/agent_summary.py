@@ -20,7 +20,7 @@ from app_v2.databases.models import (
     AgentFunctionBridgeModel,
 )
 from app_v2.schemas.enum_types import CallStatusEnum
-from app_v2.schemas.user_dashboard import AgentSummaryItem
+from app_v2.schemas.user_dashboard import AgentSummaryItem, WebAgentSummaryRef, WidgetSummaryRef
 
 # sort_by values accepted by build_agent_summaries — anything else (including
 # None) falls back to the default alphabetical-by-name order.
@@ -118,6 +118,28 @@ def build_agent_summaries(user_id: int, sort_by: Optional[str] = None) -> List[A
 
     rows = query.all()
 
+    # Actual web-agent / widget rows (id, public_id, name) per agent, so the
+    # frontend can render clickable links instead of just a count.
+    widgets_by_agent = {}
+    for agent_id, wid, public_id, widget_name in (
+        db.session.query(WidgetModel.agent_id, WidgetModel.id, WidgetModel.public_id, WidgetModel.widget_name)
+        .filter(WidgetModel.agent_id.in_([r[0] for r in rows]))
+        .all()
+    ):
+        widgets_by_agent.setdefault(agent_id, []).append(
+            WidgetSummaryRef(id=wid, public_id=public_id, widget_name=widget_name)
+        )
+
+    web_agents_by_agent = {}
+    for agent_id, wa_id, public_id, web_agent_name in (
+        db.session.query(WebAgentPageModel.agent_id, WebAgentPageModel.id, WebAgentPageModel.public_id, WebAgentPageModel.web_agent_name)
+        .filter(WebAgentPageModel.agent_id.in_([r[0] for r in rows]))
+        .all()
+    ):
+        web_agents_by_agent.setdefault(agent_id, []).append(
+            WebAgentSummaryRef(id=wa_id, public_id=public_id, web_agent_name=web_agent_name)
+        )
+
     return [
         AgentSummaryItem(
             agent_id=r[0],
@@ -128,6 +150,8 @@ def build_agent_summaries(user_id: int, sort_by: Optional[str] = None) -> List[A
             failed_count=int(r[5] or 0),
             widget_count=int(r[6] or 0),
             web_agent_count=int(r[7] or 0),
+            web_agents=web_agents_by_agent.get(r[0], []),
+            widgets=widgets_by_agent.get(r[0], []),
             total_credits_used=int(r[8] or 0),
             kb_count=int(r[9] or 0),
             tool_count=int(r[10] or 0),
