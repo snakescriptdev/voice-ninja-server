@@ -26,3 +26,11 @@ elevenlabs>=1.0.0
 razorpay==2.0.0
 tiktoken==0.13.0
 fpdf2==2.8.7
+faiss-cpu==1.9.0
+sentence-transformers==3.3.1
+crewai==0.121.1
+crewai-tools==0.17.0
+pypdfium2<5
+setuptools
+numpy<2
+pandas<3
