@@ -10,6 +10,7 @@ from .language import router as lang_router
 from .voice import router as voice_router
 from .functions import router as function_router
 from .knowledge_base import router as knowledge_base_router
+from .personal_knowledge_base import router as personal_knowledge_base_router
 from .phone_router import router as phone_router
 from .widget import router as widget_router
 from .websocket_router import router as websocket_router
@@ -24,5 +25,5 @@ from .web_agent_config import router as web_agent_config_router
 from .web_agent import router as web_agent_router
 from .support import router as support_router
 from .sessions import router as sessions_router
-__all__ = ['otp_router', 'health_router', 'google_auth_router', 'profile_router', "agent_router", "ai_model_router", "lang_router", "voice_router", "function_router", "knowledge_base_router", "phone_router", "widget_router", "websocket_router","conversation_router","widget_config_router", "user_dashboard_router","admin_dashboard_router", "coin_purchase_router", "payment_insights_router", "twilio_connector_router", "web_agent_config_router", "web_agent_router", "support_router", "sessions_router"]
+__all__ = ['otp_router', 'health_router', 'google_auth_router', 'profile_router', "agent_router", "ai_model_router", "lang_router", "voice_router", "function_router", "knowledge_base_router", "personal_knowledge_base_router", "phone_router", "widget_router", "websocket_router","conversation_router","widget_config_router", "user_dashboard_router","admin_dashboard_router", "coin_purchase_router", "payment_insights_router", "twilio_connector_router", "web_agent_config_router", "web_agent_router", "support_router", "sessions_router"]
 

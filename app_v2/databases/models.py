@@ -160,6 +160,7 @@ class UnifiedAuthModel(Base):
     notification_settings = relationship("UserNotificationSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
     twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", cascade="all, delete-orphan")
     knowledge_bases = relationship("KnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
+    personal_knowledge_bases = relationship("PersonalKnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
     functions = relationship("FunctionModel",back_populates="user",cascade="all, delete-orphan")
     conversations = relationship("ConversationsModel",back_populates="user",cascade="all, delete-orphan")
     widgets = relationship("WidgetModel", back_populates="user",cascade="all, delete-orphan")
@@ -457,6 +458,11 @@ class FunctionModel(Base):
     elevenlabs_tool_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"),nullable=True)
 
+    # True for backend-provisioned tools (e.g. the personal knowledge base
+    # search tool) that users must not be able to edit, detach, or delete
+    # through the normal functions/tools API — see app_v2/utils/personal_kb_tool.py.
+    is_system_managed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
     #audit fields
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
@@ -564,6 +570,48 @@ class AgentKnowledgeBaseBridge(Base):
     __table_args__ = (
         UniqueConstraint("agent_id","kb_id",name="agent_kb_bridge"),
     )
+
+
+class PersonalKnowledgeBaseModel(Base):
+    """
+    Self-hosted knowledge base source (file/url/text). Chunked text lives in
+    PersonalKnowledgeBaseChunkModel; the corresponding embeddings live in a
+    per-user FAISS index on disk (see app_v2/utils/faiss_store.py), keyed by
+    chunk id — independent of the ElevenLabs-backed KnowledgeBaseModel above.
+    """
+    __tablename__ = "personal_knowledge_base"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("unified_auth.id"))
+    kb_type: Mapped[str] = mapped_column(String, nullable=False)  # 'file', 'url', 'text'
+    title: Mapped[str] = mapped_column(String, nullable=True)  # file name, url title, or text title
+    content_path: Mapped[str] = mapped_column(String, nullable=True)  # file path or url
+    content_text: Mapped[str] = mapped_column(Text, nullable=True)  # for text type, or scraped/extracted text
+    file_size: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # stored in KB, matches KnowledgeBaseModel convention
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    user = relationship("UnifiedAuthModel", back_populates="personal_knowledge_bases")
+    chunks = relationship("PersonalKnowledgeBaseChunkModel", back_populates="knowledge_base", cascade="all, delete-orphan", order_by="PersonalKnowledgeBaseChunkModel.chunk_index")
+
+
+class PersonalKnowledgeBaseChunkModel(Base):
+    """
+    A single text chunk belonging to a PersonalKnowledgeBaseModel source. Its
+    embedding is not stored here — it lives in the user's FAISS index on disk,
+    keyed by this row's `id` (see app_v2/utils/faiss_store.py).
+    """
+    __tablename__ = "personal_knowledge_base_chunk"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
+    kb_id: Mapped[int] = mapped_column(Integer, ForeignKey("personal_knowledge_base.id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    knowledge_base = relationship("PersonalKnowledgeBaseModel", back_populates="chunks")
 
 
 
