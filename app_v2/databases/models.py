@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
-from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, PaymentProviderEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, PublicLogChannelEnum
+from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, PaymentProviderEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, PublicLogChannelEnum, SupportTicketCategoryEnum, SupportTicketStatusEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -168,6 +168,8 @@ class UnifiedAuthModel(Base):
     coins_ledger = relationship("CoinsLedgerModel", back_populates="user",cascade="all, delete-orphan")
     api_keys = relationship("APIKeyModel", back_populates="user", cascade="all, delete-orphan")
     api_usage = relationship("APIDailyUsageModel", back_populates="user", cascade="all, delete-orphan")
+    support_tickets = relationship("SupportTicketModel", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("UserSessionModel", back_populates="user", cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -219,6 +221,65 @@ class UnifiedAuthModel(Base):
                 db.session.refresh(user)
                 return user
             return None
+
+
+class UserSessionModel(Base):
+    """A single logged-in session (one login/device) for a UnifiedAuthModel user.
+
+    The `jti` is minted once per login and embedded in both the access and
+    refresh JWTs issued for that login. It is NOT rotated on `/auth/refresh`
+    calls, so a single row here represents one continuous "device session"
+    from login until it is explicitly revoked (or its refresh token expires).
+    This is what makes real revocation possible: `_decode_access_token_str`
+    checks this table's `is_revoked` flag on every authenticated request.
+    """
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
+    jti: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+
+    device_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    is_revoked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("UnifiedAuthModel", back_populates="sessions")
+
+    @classmethod
+    def get_by_jti(cls, jti: str) -> Optional["UserSessionModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.jti == jti).first()
+
+    @classmethod
+    def get_by_id_for_user(cls, session_id: int, user_id: int) -> Optional["UserSessionModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.id == session_id, cls.user_id == user_id).first()
+
+    @classmethod
+    def list_active_for_user(cls, user_id: int) -> List["UserSessionModel"]:
+        with db():
+            return (
+                db.session.query(cls)
+                .filter(cls.user_id == user_id, cls.is_revoked == False)  # noqa: E712
+                .order_by(cls.last_used_at.desc())
+                .all()
+            )
+
+    @classmethod
+    def create(cls, **kwargs) -> "UserSessionModel":
+        with db():
+            session_row = cls(**kwargs)
+            db.session.add(session_row)
+            db.session.commit()
+            db.session.refresh(session_row)
+            return session_row
+
 
 class AdminTokenModel(Base):
     __tablename__ = "admin_tokens"
@@ -1126,3 +1187,37 @@ class EmailSubscriberModel(Base):
 
     subscribed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SupportTicketModel(Base):
+    """A user-submitted support ticket (bug report, billing question, account
+    issue, etc.) reviewed and responded to by admins via the admin support inbox."""
+    __tablename__ = "support_tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
+
+    category: Mapped[SupportTicketCategoryEnum] = mapped_column(Enum(SupportTicketCategoryEnum), nullable=False)
+
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    status: Mapped[SupportTicketStatusEnum] = mapped_column(
+        Enum(SupportTicketStatusEnum),
+        nullable=False,
+        default=SupportTicketStatusEnum.open,
+        server_default=SupportTicketStatusEnum.open.value,
+    )
+
+    admin_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("UnifiedAuthModel", back_populates="support_tickets")
