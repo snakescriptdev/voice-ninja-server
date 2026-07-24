@@ -15,6 +15,12 @@ from app_v2.core.logger import setup_logger
 
 logger = setup_logger(__name__)
 
+# faiss and torch each bring their own OpenMP runtime; sharing a process
+# (as this app does — embedding via torch, indexing via faiss) segfaults on
+# interpreter/process exit unless faiss is pinned to a single thread. Our
+# per-request index sizes are tiny, so this costs nothing in practice.
+faiss.omp_set_num_threads(1)
+
 FAISS_INDEX_DIR = "faiss_indexes"
 if not os.path.exists(FAISS_INDEX_DIR):
     os.makedirs(FAISS_INDEX_DIR)

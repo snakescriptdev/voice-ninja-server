@@ -22,6 +22,8 @@ from app_v2.databases.models import (
     LanguageModel,
     PhoneNumberService,
     KnowledgeBaseModel,
+    PersonalKnowledgeBaseModel,
+    PersonalKnowledgeBaseChunkModel,
     FunctionModel,
     VariablesModel,
     AgentAIModelBridge,
@@ -50,10 +52,17 @@ from app_v2.schemas.language_schema import LanguageRead
 from app_v2.schemas.voice_schema import VoiceRead
 from app_v2.schemas.ai_model import AIModelRead
 from app_v2.schemas.knowledge_base_schema import (
-    KnowledgeBaseResponse, 
-    KnowledgeBaseURLCreate, 
-    KnowledgeBaseTextCreate, 
+    KnowledgeBaseResponse,
+    KnowledgeBaseURLCreate,
+    KnowledgeBaseTextCreate,
     KnowledgeBaseBind
+)
+from app_v2.schemas.personal_knowledge_base_schema import (
+    PersonalKnowledgeBaseResponse,
+    PersonalKnowledgeBaseURLCreate,
+    PersonalKnowledgeBaseTextCreate,
+    PersonalKnowledgeBaseURLUpdate,
+    PersonalKnowledgeBaseTextUpdate,
 )
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum, PublicLogChannelEnum
@@ -69,6 +78,18 @@ from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.utils.elevenlabs import ElevenLabsKB, describe_kb_sync_error
 from app_v2.utils.scraping_utils import scrape_webpage_title
 from app_v2.utils.activity_logger import log_activity
+from app_v2.utils.text_extraction import extract_text_from_file
+from app_v2.utils.web_scraper import scrape_url
+from app_v2.utils.faiss_store import remove_embeddings
+from app_v2.utils.personal_kb_tool import ensure_personal_kb_tool, remove_personal_kb_tool_if_empty
+from app_v2.routers.personal_knowledge_base import (
+    _store_kb_entry as _store_personal_kb_entry,
+    _kb_to_read as _personal_kb_to_read,
+    _replace_kb_content as _replace_personal_kb_content,
+    UPLOAD_DIR as PERSONAL_KB_UPLOAD_DIR,
+    ALLOWED_EXTENSIONS as PERSONAL_KB_ALLOWED_EXTENSIONS,
+    MAX_FILE_SIZE_IN_MB as PERSONAL_KB_MAX_FILE_SIZE_IN_MB,
+)
 from app_v2.core.logger import setup_logger
 from fastapi import UploadFile, File, Form
 import time
@@ -433,6 +454,15 @@ async def create_agent(
 
         db.session.commit()
         db.session.refresh(new_agent)
+
+        # Best-effort: if this user already has an active personal knowledge
+        # base, make sure this brand-new agent picks up the search tool +
+        # prompt block too. Must never fail agent creation itself.
+        try:
+            ensure_personal_kb_tool(user_id)
+        except Exception as e:
+            logger.warning(f"Failed to sync personal KB tool onto new agent {new_agent.id}: {e}")
+
         return agent_to_read(new_agent)
 
 @router.put("/agents/{agent_id}", response_model=AgentRead)
@@ -627,6 +657,15 @@ async def update_agent_public(
 
         db.session.commit()
         db.session.refresh(agent)
+
+        # Best-effort: this update may have replaced the agent's whole
+        # tool_ids list without knowing about the personal KB search tool.
+        # Re-attach it if the user has an active personal KB.
+        try:
+            ensure_personal_kb_tool(current_user.id)
+        except Exception as e:
+            logger.warning(f"Failed to re-sync personal KB tool onto agent {agent.id} after update: {e}")
+
         return agent_to_read(agent)
 
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1527,6 +1566,325 @@ async def bind_kb_public(
             sync_agent_kb_logic(request.agent_id)
 
     return {"message": "Knowledge base bound successfully"}
+
+# -------------------------------------------------------------------
+# PERSONAL KNOWLEDGE BASE (pgvector/FAISS-backed, independent of ElevenLabs)
+#
+# Automatically available to all of a user's agents once they have at least
+# one item — see ensure_personal_kb_tool()/remove_personal_kb_tool_if_empty()
+# hooked into the agent create/update endpoints above and the create/delete
+# endpoints below. No per-agent bind/unbind (unlike the legacy /kb above).
+# -------------------------------------------------------------------
+
+@router.get("/personal-kb", response_model=PaginatedResponse[PersonalKnowledgeBaseResponse])
+async def list_personal_kb_public(
+    page: int = 1,
+    size: int = 20,
+    title: str = None,
+    kb_type: str = None,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    with db():
+        query = db.session.query(PersonalKnowledgeBaseModel).filter(
+            PersonalKnowledgeBaseModel.user_id == current_user.id
+        )
+        if title:
+            query = query.filter(PersonalKnowledgeBaseModel.title.ilike(f"%{title}%"))
+        if kb_type:
+            query = query.filter(PersonalKnowledgeBaseModel.kb_type == kb_type)
+
+        total = query.count()
+        skip = (max(1, page) - 1) * size
+        items = query.order_by(PersonalKnowledgeBaseModel.id.asc()).offset(skip).limit(size).all()
+        return PaginatedResponse(
+            total=total, page=page, size=size, pages=math.ceil(total / size) if size else 1,
+            items=[_personal_kb_to_read(item) for item in items],
+        )
+
+
+@router.get("/personal-kb/{id}", response_model=PersonalKnowledgeBaseResponse)
+async def get_personal_kb_public(
+    id: int,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    with db():
+        kb_entry = db.session.query(PersonalKnowledgeBaseModel).filter(
+            PersonalKnowledgeBaseModel.id == id, PersonalKnowledgeBaseModel.user_id == current_user.id
+        ).first()
+        if not kb_entry:
+            raise HTTPException(status_code=404, detail="Knowledge Base item not found")
+        return _personal_kb_to_read(kb_entry)
+
+
+@router.post("/personal-kb/url", response_model=PersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+async def create_personal_kb_url_public(
+    request: PersonalKnowledgeBaseURLCreate,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    url_str = str(request.url)
+    with db():
+        existing = db.session.query(PersonalKnowledgeBaseModel).filter(
+            PersonalKnowledgeBaseModel.user_id == current_user.id,
+            PersonalKnowledgeBaseModel.kb_type == "url",
+            func.lower(PersonalKnowledgeBaseModel.content_path) == url_str.lower(),
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="This URL has already been added to your knowledge base.")
+
+        title, text = scrape_url(url_str)
+        kb_entry = _store_personal_kb_entry(user_id=current_user.id, kb_type="url", title=title, text=text, content_path=url_str)
+        result = _personal_kb_to_read(kb_entry)
+
+    try:
+        ensure_personal_kb_tool(current_user.id)
+    except Exception as e:
+        logger.warning(f"Failed to sync personal KB tool for user {current_user.id}: {e}")
+    return result
+
+
+@router.post("/personal-kb/text", response_model=PersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+async def create_personal_kb_text_public(
+    request: PersonalKnowledgeBaseTextCreate,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    with db():
+        existing = db.session.query(PersonalKnowledgeBaseModel).filter(
+            PersonalKnowledgeBaseModel.user_id == current_user.id,
+            PersonalKnowledgeBaseModel.kb_type == "text",
+            PersonalKnowledgeBaseModel.title == request.title,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="This exact text content has already been added to your knowledge base.")
+
+        kb_entry = _store_personal_kb_entry(user_id=current_user.id, kb_type="text", title=request.title, text=request.content)
+        result = _personal_kb_to_read(kb_entry)
+
+    try:
+        ensure_personal_kb_tool(current_user.id)
+    except Exception as e:
+        logger.warning(f"Failed to sync personal KB tool for user {current_user.id}: {e}")
+    return result
+
+
+@router.post("/personal-kb/file", response_model=List[PersonalKnowledgeBaseResponse], status_code=status.HTTP_201_CREATED)
+async def create_personal_kb_file_public(
+    files: List[UploadFile] = File(...),
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    with db():
+        uploaded_entries = []
+        seen_filenames = set()
+        for file in files:
+            _, ext = os.path.splitext(file.filename)
+            if ext.lower() not in PERSONAL_KB_ALLOWED_EXTENSIONS:
+                raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
+
+            filename_key = file.filename.lower()
+            if filename_key in seen_filenames:
+                raise HTTPException(status_code=400, detail=f"Duplicate file name '{file.filename}' in this upload request.")
+            seen_filenames.add(filename_key)
+
+            file.file.seek(0, 2)
+            file_size = file.file.tell()
+            file.file.seek(0)
+            if file_size == 0:
+                raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
+            if file_size > PERSONAL_KB_MAX_FILE_SIZE_IN_MB * 1024 * 1024:
+                raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds {PERSONAL_KB_MAX_FILE_SIZE_IN_MB}MB limit")
+
+            file_path = os.path.join(PERSONAL_KB_UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
+            with open(file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+            try:
+                text = extract_text_from_file(file_path)
+                kb_entry = _store_personal_kb_entry(
+                    user_id=current_user.id, kb_type="file", title=file.filename, text=text,
+                    content_path=file_path, file_size=round(file_size / 1024, 2),
+                )
+            except HTTPException:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                raise
+            except Exception as e:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                logger.error(f"Error processing file '{file.filename}' for public personal KB: {e}")
+                raise HTTPException(status_code=422, detail=f"Could not process file {file.filename}")
+
+            uploaded_entries.append(kb_entry)
+
+        result = [_personal_kb_to_read(entry) for entry in uploaded_entries]
+
+    try:
+        ensure_personal_kb_tool(current_user.id)
+    except Exception as e:
+        logger.warning(f"Failed to sync personal KB tool for user {current_user.id}: {e}")
+    return result
+
+
+@router.put("/personal-kb/{id}/url", response_model=PersonalKnowledgeBaseResponse)
+async def update_personal_kb_url_public(
+    id: int,
+    request: PersonalKnowledgeBaseURLUpdate,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    with db():
+        kb_entry = db.session.query(PersonalKnowledgeBaseModel).filter(
+            PersonalKnowledgeBaseModel.id == id,
+            PersonalKnowledgeBaseModel.user_id == current_user.id,
+            PersonalKnowledgeBaseModel.kb_type == "url",
+        ).first()
+        if not kb_entry:
+            raise HTTPException(status_code=404, detail="URL Knowledge Base item not found")
+
+        if request.url is not None:
+            new_url = str(request.url)
+            title, text = scrape_url(new_url)
+            _replace_personal_kb_content(kb_entry, text)
+            kb_entry.content_path = new_url
+            kb_entry.title = request.title if request.title is not None else title
+        elif request.title is not None:
+            kb_entry.title = request.title
+
+        db.session.commit()
+        db.session.refresh(kb_entry)
+        return _personal_kb_to_read(kb_entry)
+
+
+@router.put("/personal-kb/{id}/text", response_model=PersonalKnowledgeBaseResponse)
+async def update_personal_kb_text_public(
+    id: int,
+    request: PersonalKnowledgeBaseTextUpdate,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    with db():
+        kb_entry = db.session.query(PersonalKnowledgeBaseModel).filter(
+            PersonalKnowledgeBaseModel.id == id,
+            PersonalKnowledgeBaseModel.user_id == current_user.id,
+            PersonalKnowledgeBaseModel.kb_type == "text",
+        ).first()
+        if not kb_entry:
+            raise HTTPException(status_code=404, detail="Text Knowledge Base item not found")
+
+        if request.content is not None:
+            _replace_personal_kb_content(kb_entry, request.content)
+        if request.title is not None:
+            kb_entry.title = request.title
+
+        db.session.commit()
+        db.session.refresh(kb_entry)
+        return _personal_kb_to_read(kb_entry)
+
+
+@router.put("/personal-kb/{id}/file", response_model=PersonalKnowledgeBaseResponse)
+async def update_personal_kb_file_public(
+    id: int,
+    title: str = Form(None),
+    file: UploadFile = File(None),
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
+):
+    track_and_limit_api(current_user.id)
+    with db():
+        kb_entry = db.session.query(PersonalKnowledgeBaseModel).filter(
+            PersonalKnowledgeBaseModel.id == id,
+            PersonalKnowledgeBaseModel.user_id == current_user.id,
+            PersonalKnowledgeBaseModel.kb_type == "file",
+        ).first()
+        if not kb_entry:
+            raise HTTPException(status_code=404, detail="File Knowledge Base item not found")
+
+        if file is not None:
+            _, ext = os.path.splitext(file.filename)
+            if ext.lower() not in PERSONAL_KB_ALLOWED_EXTENSIONS:
+                raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
+
+            file.file.seek(0, 2)
+            file_size = file.file.tell()
+            file.file.seek(0)
+            if file_size == 0:
+                raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
+            if file_size > PERSONAL_KB_MAX_FILE_SIZE_IN_MB * 1024 * 1024:
+                raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds {PERSONAL_KB_MAX_FILE_SIZE_IN_MB}MB limit")
+
+            new_file_path = os.path.join(PERSONAL_KB_UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
+            with open(new_file_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
+
+            try:
+                text = extract_text_from_file(new_file_path)
+                _replace_personal_kb_content(kb_entry, text)
+            except HTTPException:
+                if os.path.exists(new_file_path):
+                    os.remove(new_file_path)
+                raise
+            except Exception as e:
+                if os.path.exists(new_file_path):
+                    os.remove(new_file_path)
+                logger.error(f"Error processing file update for personal kb {id}: {e}")
+                raise HTTPException(status_code=422, detail="Could not process file")
+
+            old_path = kb_entry.content_path
+            kb_entry.content_path = new_file_path
+            kb_entry.file_size = round(file_size / 1024, 2)
+            kb_entry.title = title if title is not None else file.filename
+            if old_path and os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except OSError:
+                    pass
+        elif title is not None:
+            kb_entry.title = title
+
+        db.session.commit()
+        db.session.refresh(kb_entry)
+        return _personal_kb_to_read(kb_entry)
+
+
+@router.delete("/personal-kb/{id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_personal_kb_public(
+    id: int,
+    current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
+):
+    track_and_limit_api(current_user.id)
+    with db():
+        kb_entry = db.session.query(PersonalKnowledgeBaseModel).filter(
+            PersonalKnowledgeBaseModel.id == id, PersonalKnowledgeBaseModel.user_id == current_user.id
+        ).first()
+        if not kb_entry:
+            raise HTTPException(status_code=404, detail="Knowledge Base item not found")
+
+        chunk_ids = [
+            row.id for row in db.session.query(PersonalKnowledgeBaseChunkModel.id)
+            .filter(PersonalKnowledgeBaseChunkModel.kb_id == kb_entry.id).all()
+        ]
+
+        if kb_entry.kb_type == "file" and kb_entry.content_path and os.path.exists(kb_entry.content_path):
+            try:
+                os.remove(kb_entry.content_path)
+            except OSError:
+                pass
+
+        db.session.delete(kb_entry)
+        db.session.commit()
+
+    try:
+        remove_embeddings(current_user.id, chunk_ids)
+    except Exception as e:
+        logger.warning(f"Failed to remove FAISS vectors for deleted public KB item {id}: {e}")
+
+    try:
+        remove_personal_kb_tool_if_empty(current_user.id)
+    except Exception as e:
+        logger.warning(f"Failed to sync personal KB tool removal for user {current_user.id}: {e}")
+    return None
 
 @router.get("/ai-models/{id}", response_model=AIModelRead)
 async def get_ai_model_public(

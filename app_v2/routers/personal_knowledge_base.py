@@ -118,11 +118,58 @@ def _kb_to_read(item: PersonalKnowledgeBaseModel) -> PersonalKnowledgeBaseRespon
         kb_type=item.kb_type,
         title=item.title,
         content_path=item.content_path,
+        content_text=item.content_text,
         file_size=item.file_size,
         num_chunks=num_chunks,
         created_at=item.created_at,
         modified_at=item.modified_at,
     )
+
+
+def _replace_kb_content(kb_entry: PersonalKnowledgeBaseModel, new_text: str) -> None:
+    """
+    Re-chunk and re-embed a KB item's content in place. Writes the new chunks
+    and FAISS vectors first and only removes the old ones once the new ones
+    are safely persisted, so a mid-update failure never leaves the item
+    without embeddings. Does not commit — caller owns the transaction.
+    """
+    chunks = chunk_text(new_text)
+    if not chunks:
+        raise HTTPException(status_code=400, detail="No content to embed.")
+    embeddings = generate_embeddings(chunks)
+
+    old_chunk_ids = [
+        row.id for row in db.session.query(PersonalKnowledgeBaseChunkModel.id)
+        .filter(PersonalKnowledgeBaseChunkModel.kb_id == kb_entry.id).all()
+    ]
+
+    new_rows = []
+    for index, chunk in enumerate(chunks):
+        row = PersonalKnowledgeBaseChunkModel(kb_id=kb_entry.id, chunk_index=index, content=chunk)
+        db.session.add(row)
+        new_rows.append(row)
+    db.session.flush()
+
+    try:
+        add_embeddings(kb_entry.user_id, ids=[row.id for row in new_rows], embeddings=embeddings)
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Failed to persist updated embeddings for kb {kb_entry.id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to store embeddings.")
+
+    if old_chunk_ids:
+        db.session.query(PersonalKnowledgeBaseChunkModel).filter(
+            PersonalKnowledgeBaseChunkModel.id.in_(old_chunk_ids)
+        ).delete(synchronize_session=False)
+        db.session.flush()
+
+    kb_entry.content_text = new_text
+
+    if old_chunk_ids:
+        try:
+            remove_embeddings(kb_entry.user_id, old_chunk_ids)
+        except Exception as e:
+            logger.warning(f"Failed to remove stale FAISS vectors for kb {kb_entry.id}: {e}")
 
 
 def _search_personal_kb(user_id: int, query: str, top_k: int = 5) -> List[PersonalKnowledgeBaseQueryResult]:
