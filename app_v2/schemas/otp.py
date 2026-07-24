@@ -186,7 +186,7 @@ class ErrorResponse(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     """Request schema for refreshing an access token.
-    
+
     Attributes:
         refresh_token: The refresh token issued during login.
     """
@@ -194,5 +194,19 @@ class RefreshTokenRequest(BaseModel):
         ...,
         description='Refresh token for issuing a new access token',
         min_length=1
+    )
+
+
+class LogoutRequest(BaseModel):
+    """Request schema for logging out.
+
+    Attributes:
+        revoke_all: If True, revoke every active session for this user
+            ("log out everywhere"). If False (default), revoke only the
+            session tied to the access token used to call this endpoint.
+    """
+    revoke_all: bool = Field(
+        default=False,
+        description='Revoke all sessions (log out everywhere) instead of just the current one'
     )
 

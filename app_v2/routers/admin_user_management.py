@@ -13,6 +13,7 @@ from app_v2.core.logger import setup_logger
 from app_v2.utils.coin_utils import admin_adjust_coins, get_user_coin_balance
 from app_v2.utils.agent_summary import build_agent_summaries
 from app_v2.schemas.user_dashboard import AgentSummaryItem
+from app_v2.utils.email_service import send_account_suspended_email, send_account_reactivated_email
 
 security = HTTPBearer()
 logger = setup_logger(__name__)
@@ -439,7 +440,7 @@ def get_user_knowledge_base(user_id: int, page: int = Query(1, ge=1), page_size:
 
 
 @router.post("/users/{user_id}/suspend",openapi_extra={"security":[{"BearerAuth":[]}]})
-def suspend_user(user_id:int,request:SuspendUserRequest):
+async def suspend_user(user_id:int,request:SuspendUserRequest):
     try:
         user= (db.session.query(UnifiedAuthModel).filter(
             UnifiedAuthModel.id == user_id,
@@ -466,6 +467,15 @@ def suspend_user(user_id:int,request:SuspendUserRequest):
         db.session.add(user)
         db.session.commit()
         db.session.refresh(user)
+
+        # Notify the user by email. A failure to send must not affect the
+        # suspend/reactivate operation itself, which has already been committed.
+        user_name = user.name or user.first_name or None
+        if request.is_suspended:
+            await send_account_suspended_email(user.email, user_name, request.reason)
+        else:
+            await send_account_reactivated_email(user.email, user_name)
+
         return {"message":f"User {'suspended' if request.is_suspended else 'unsuspend'} successfully"}
     except HTTPException:
         raise

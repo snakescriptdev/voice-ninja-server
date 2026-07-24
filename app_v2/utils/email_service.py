@@ -641,6 +641,87 @@ async def send_billing_history_export_email(
         logger.error(f"Failed to send billing history export email: {str(e)}")
 
 
+async def send_account_suspended_email(
+    user_email: str,
+    user_name: str | None,
+    reason: str | None,
+):
+    """Sent when an admin suspends a user's account."""
+    try:
+        subject = "Your Account Has Been Suspended"
+
+        reason_block = f"""
+                    <div style="padding:18px 20px;background:#fdecea;border-radius:8px;border-left:5px solid #e53935;margin:20px 0;">
+                        <p style="margin:0;"><b>Reason:</b> {reason}</p>
+                    </div>
+        """ if reason else ""
+
+        body = f"""
+        <html>
+        <body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:30px;margin:0;">
+        <table width="600" align="center" style="background:white;border-radius:10px;padding:30px;border-collapse:collapse;box-shadow:0 0 10px rgba(0,0,0,0.08);">
+            <tr>
+                <td>
+                    <h2 style="color:#1f2937;margin-top:0;">Account Suspended</h2>
+                    <p>Hi {user_name or "there"},</p>
+                    <p>Your Voice Ninja account has been suspended and you will not be able to access your account until it is reactivated.</p>
+                    {reason_block}
+                    <p>If you have any questions or believe this was a mistake, please contact our support team for more details.</p>
+
+                    <br/>
+                    <p style="color:#555;">Thanks,<br/>Voice Ninja Team</p>
+                </td>
+            </tr>
+        </table>
+        </body>
+        </html>
+        """
+
+        await send_email_async(
+            subject=subject,
+            recipients=[user_email],
+            body=body,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send account suspended email: {str(e)}")
+
+
+async def send_account_reactivated_email(
+    user_email: str,
+    user_name: str | None,
+):
+    """Sent when an admin reactivates a previously suspended user's account."""
+    try:
+        subject = "Your Account Has Been Reactivated"
+
+        body = f"""
+        <html>
+        <body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:30px;margin:0;">
+        <table width="600" align="center" style="background:white;border-radius:10px;padding:30px;border-collapse:collapse;box-shadow:0 0 10px rgba(0,0,0,0.08);">
+            <tr>
+                <td>
+                    <h2 style="color:#1f2937;margin-top:0;">Account Reactivated ✅</h2>
+                    <p>Hi {user_name or "there"},</p>
+                    <p>Good news — your Voice Ninja account is active again and you can resume using the service as normal.</p>
+
+                    <br/>
+                    <p style="color:#555;">Thanks,<br/>Voice Ninja Team</p>
+                </td>
+            </tr>
+        </table>
+        </body>
+        </html>
+        """
+
+        await send_email_async(
+            subject=subject,
+            recipients=[user_email],
+            body=body,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send account reactivated email: {str(e)}")
+
+
 async def send_voice_limit_email_to_admins(db_session, user_identifier: str, user_id: int):
     """
     Sends an email to all admins notifying them about voice cloning limit reached.
