@@ -1,4 +1,4 @@
-from pydantic import BaseModel, HttpUrl, field_serializer, Field
+from pydantic import BaseModel, HttpUrl, Field
 from typing import List, Optional
 from datetime import datetime
 
@@ -32,10 +32,6 @@ class PersonalKnowledgeBaseResponse(BaseModel):
     num_chunks: int = 0
     created_at: datetime
     modified_at: datetime
-
-    @field_serializer('created_at', 'modified_at')
-    def serialize_datetime(self, dt: datetime):
-        return dt.date()
 
     class Config:
         from_attributes = True
@@ -72,4 +68,3 @@ class PersonalKnowledgeBaseAnswerResponse(BaseModel):
     a ready-to-speak answer synthesized from the retrieved KB excerpts, plus
     the raw excerpts themselves for transparency/debugging."""
     answer: str
-    results: List[PersonalKnowledgeBaseQueryResult]
