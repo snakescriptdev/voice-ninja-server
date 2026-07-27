@@ -616,14 +616,25 @@ async def resend_otp(request: ResendOTPRequest):
                 }
             )
 
-        # Check if user has an active OTP (not expired)
-        if not unified_user.otp_code or not unified_user.otp_expires_at or datetime.now(timezone.utc) > unified_user.otp_expires_at:
+        # Check if user has ever requested an OTP
+        if not unified_user.otp_code or not unified_user.otp_expires_at:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "status": STATUS_FAILED,
                     "status_code": HTTP_400_BAD_REQUEST,
                     "message": MSG_NO_ACTIVE_OTP
+                }
+            )
+
+        # Check if that OTP has since expired
+        if datetime.now(timezone.utc) > unified_user.otp_expires_at:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_400_BAD_REQUEST,
+                    "message": MSG_OTP_EXPIRED
                 }
             )
 
