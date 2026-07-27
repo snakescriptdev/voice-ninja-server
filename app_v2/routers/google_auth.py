@@ -7,6 +7,7 @@ This module provides endpoints for Google OAuth authentication:
 
 import os
 import secrets
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Union
 from urllib.parse import urlencode
@@ -20,7 +21,7 @@ from app_v2.core.logger import setup_logger
 from app_v2.core.config import VoiceSettings
 logger = setup_logger(__name__)
 from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
-from app_v2.utils.jwt_utils import create_access_token, create_refresh_token
+from app_v2.utils.jwt_utils import create_access_token, create_refresh_token, create_user_session
 
 from app_v2.constants import (
     STATUS_SUCCESS,
@@ -309,15 +310,24 @@ async def google_callback(code: str, http_request: Request):
                 update_kwargs["username"] = google_email
             UserModel.update(oauth_record.user_id, **update_kwargs)
         
-        # Create JWT tokens
+        # Create JWT tokens. `jti` is minted once per login and embedded in
+        # both the access and refresh tokens, and used as the key for the
+        # server-side UserSessionModel row that makes revocation possible.
+        jti = uuid.uuid4().hex
         token_data = {
             'user_id': user_id,
             'email': user_email,
             'phone': user_phone,
-            'role': 'admin' if user_is_admin else 'user'
+            'role': 'admin' if user_is_admin else 'user',
+            'jti': jti,
         }
         access_token_jwt = create_access_token(data=token_data)
-        refresh_token_jwt = create_refresh_token(user_id)
+        refresh_token_jwt = create_refresh_token(user_id, jti)
+
+        # Record this login as a trackable/revocable server-side session.
+        # http_request here is the actual browser hitting the OAuth
+        # redirect callback, so its User-Agent/IP reflect the real device.
+        create_user_session(user_id, jti, http_request)
         
         # Generate one-time authorization code
         app_code = secrets.token_urlsafe(32)

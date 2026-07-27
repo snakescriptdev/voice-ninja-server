@@ -1,57 +1,58 @@
 """Pydantic schemas for OTP-related endpoints."""
 
-from typing import Optional
+from typing import Optional, Literal
 from pydantic import BaseModel, Field, field_validator
-from app_v2.utils.otp_utils import is_email
 
 class RequestOTPRequest(BaseModel):
     """Request schema for requesting OTP.
 
     Attributes:
-        username: Email address or phone number for OTP delivery.
+        username: Email address for OTP delivery.
+        mode: Which flow the OTP is being requested for - 'login' or 'signup'.
+            Defaults to 'login' to preserve existing behavior for older
+            clients that don't send this field. Used to distinguish an
+            existing-account error (signup) from a no-such-account error
+            (login) instead of silently creating/logging in either way.
     """
 
     username: str = Field(
         ...,
-        description='Email address or phone number',
+        description='Email address',
         min_length=1,
-        examples=['user@example.com', '+1234567890']
+        examples=['user@example.com']
+    )
+    mode: Literal['login', 'signup'] = Field(
+        default='login',
+        description="Flow requesting the OTP: 'login' or 'signup'",
+        examples=['login']
     )
 
     @field_validator('username')
     @classmethod
     def validate_username(cls, v: str) -> str:
-        """Strip whitespace from username."""
-        return v.strip()
-
-    @field_validator('username')
-    @classmethod
-    def validate_username_case(cls, v: str) -> str:
-        """Convert email to lowercase."""
-        if is_email(v):
-            return v.lower()
-        return v
+        """Strip whitespace and lowercase the email."""
+        return v.strip().lower()
 
 
 class ResendOTPRequest(BaseModel):
     """Request schema for resending OTP.
 
     Attributes:
-        username: Email address or phone number for OTP delivery.
+        username: Email address for OTP delivery.
     """
 
     username: str = Field(
         ...,
-        description='Email address or phone number',
+        description='Email address',
         min_length=1,
-        examples=['user@example.com', '+1234567890']
+        examples=['user@example.com']
     )
 
     @field_validator('username')
     @classmethod
     def validate_username(cls, v: str) -> str:
-        """Strip whitespace from username."""
-        return v.strip()
+        """Strip whitespace and lowercase the email."""
+        return v.strip().lower()
 
 
 class OTPMethodInfo(BaseModel):
@@ -91,15 +92,15 @@ class VerifyOTPRequest(BaseModel):
     """Request schema for verifying OTP.
 
     Attributes:
-        username: Email address or phone number used to request OTP.
+        username: Email address used to request OTP.
         otp: One-time password to verify.
     """
 
     username: str = Field(
         ...,
-        description='Email address or phone number',
+        description='Email address',
         min_length=1,
-        examples=['user@example.com', '+1234567890']
+        examples=['user@example.com']
     )
     otp: str = Field(
         ...,
@@ -118,9 +119,7 @@ class VerifyOTPRequest(BaseModel):
     @classmethod
     def validate_username_case(cls, v: str) -> str:
         """Convert email to lowercase."""
-        if is_email(v):
-            return v.lower()
-        return v
+        return v.lower()
 
 
 class UserInfo(BaseModel):
@@ -187,7 +186,7 @@ class ErrorResponse(BaseModel):
 
 class RefreshTokenRequest(BaseModel):
     """Request schema for refreshing an access token.
-    
+
     Attributes:
         refresh_token: The refresh token issued during login.
     """
@@ -195,5 +194,19 @@ class RefreshTokenRequest(BaseModel):
         ...,
         description='Refresh token for issuing a new access token',
         min_length=1
+    )
+
+
+class LogoutRequest(BaseModel):
+    """Request schema for logging out.
+
+    Attributes:
+        revoke_all: If True, revoke every active session for this user
+            ("log out everywhere"). If False (default), revoke only the
+            session tied to the access token used to call this endpoint.
+    """
+    revoke_all: bool = Field(
+        default=False,
+        description='Revoke all sessions (log out everywhere) instead of just the current one'
     )
 

@@ -228,7 +228,8 @@ async def get_all_functions(
     skip = (page - 1) * size
 
     query = db.session.query(FunctionModel).filter(
-        FunctionModel.user_id == current_user.id
+        FunctionModel.user_id == current_user.id,
+        FunctionModel.is_system_managed.is_(False),
     ).options(joinedload(FunctionModel.api_endpoint_url))
 
     if name:
@@ -377,11 +378,17 @@ async def update_function(
         FunctionModel.id == function_id,
         FunctionModel.user_id == current_user.id
     ).first()
-    
+
     if not function:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Function not found"
+        )
+
+    if function.is_system_managed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This tool is managed automatically and cannot be edited."
         )
 
     # 0. Name Uniqueness Check (if changed)
@@ -544,11 +551,17 @@ async def delete_function(
         FunctionModel.id == function_id,
         FunctionModel.user_id == current_user.id
     ).first()
-    
+
     if not function:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Function not found"
+        )
+
+    if function.is_system_managed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This tool is managed automatically and cannot be deleted."
         )
 
     # This is a shared tool — deleting it detaches it from every agent that

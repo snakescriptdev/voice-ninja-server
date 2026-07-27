@@ -20,6 +20,7 @@ HTTP_201_CREATED = 201
 HTTP_400_BAD_REQUEST = 400
 HTTP_401_UNAUTHORIZED = 401
 HTTP_404_NOT_FOUND = 404
+HTTP_409_CONFLICT = 409
 HTTP_500_INTERNAL_SERVER_ERROR = 500
 
 # Response Messages
@@ -40,6 +41,8 @@ MSG_FAILED_TO_SEND_OTP_VIA_METHOD = 'Failed to send OTP via {method}'
 MSG_OTP_RESENT_EMAIL = 'OTP resent to your email'
 MSG_OTP_RESENT_SMS = 'OTP resent to your SMS'
 MSG_NO_ACTIVE_OTP = 'No active OTP found. Please request a new OTP.'
+MSG_ACCOUNT_ALREADY_EXISTS = 'Account already exists. Please login.'
+MSG_USER_NOT_FOUND_SIGNUP_PROMPT = 'User not found. Please check your email or sign up.'
 
 # Register Messages
 MSG_REGISTRATION_SUCCESSFUL = 'User registered successfully'
@@ -55,7 +58,10 @@ MSG_PROFILE_RETRIEVED = 'Profile retrieved successfully'
 MSG_INVALID_DATA = 'Invalid data provided'
 
 # OTP Configuration
-OTP_EXPIRY_MINUTES = 5
+# 10 minutes to absorb real-world email delivery delays — a 5 minute window
+# was getting eaten alive by delivery latency before users even opened the
+# email, causing "expired" errors on codes that were only a couple minutes old.
+OTP_EXPIRY_MINUTES = 10
 OTP_LENGTH = 6
 
 # Delivery Methods

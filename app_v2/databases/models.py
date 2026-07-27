@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
-from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, PaymentProviderEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, PublicLogChannelEnum
+from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, PaymentProviderEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, PublicLogChannelEnum, SupportTicketCategoryEnum, SupportTicketStatusEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -160,6 +160,7 @@ class UnifiedAuthModel(Base):
     notification_settings = relationship("UserNotificationSettings", back_populates="user", uselist=False, cascade="all, delete-orphan")
     twilio_user_creds = relationship("TwilioUserCreds", back_populates="user", cascade="all, delete-orphan")
     knowledge_bases = relationship("KnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
+    personal_knowledge_bases = relationship("PersonalKnowledgeBaseModel",back_populates="user",cascade="all, delete-orphan")
     functions = relationship("FunctionModel",back_populates="user",cascade="all, delete-orphan")
     conversations = relationship("ConversationsModel",back_populates="user",cascade="all, delete-orphan")
     widgets = relationship("WidgetModel", back_populates="user",cascade="all, delete-orphan")
@@ -168,6 +169,8 @@ class UnifiedAuthModel(Base):
     coins_ledger = relationship("CoinsLedgerModel", back_populates="user",cascade="all, delete-orphan")
     api_keys = relationship("APIKeyModel", back_populates="user", cascade="all, delete-orphan")
     api_usage = relationship("APIDailyUsageModel", back_populates="user", cascade="all, delete-orphan")
+    support_tickets = relationship("SupportTicketModel", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("UserSessionModel", back_populates="user", cascade="all, delete-orphan")
     
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UnifiedAuthModel"]:
@@ -219,6 +222,65 @@ class UnifiedAuthModel(Base):
                 db.session.refresh(user)
                 return user
             return None
+
+
+class UserSessionModel(Base):
+    """A single logged-in session (one login/device) for a UnifiedAuthModel user.
+
+    The `jti` is minted once per login and embedded in both the access and
+    refresh JWTs issued for that login. It is NOT rotated on `/auth/refresh`
+    calls, so a single row here represents one continuous "device session"
+    from login until it is explicitly revoked (or its refresh token expires).
+    This is what makes real revocation possible: `_decode_access_token_str`
+    checks this table's `is_revoked` flag on every authenticated request.
+    """
+    __tablename__ = "user_sessions"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
+    jti: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+
+    device_label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    is_revoked: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("UnifiedAuthModel", back_populates="sessions")
+
+    @classmethod
+    def get_by_jti(cls, jti: str) -> Optional["UserSessionModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.jti == jti).first()
+
+    @classmethod
+    def get_by_id_for_user(cls, session_id: int, user_id: int) -> Optional["UserSessionModel"]:
+        with db():
+            return db.session.query(cls).filter(cls.id == session_id, cls.user_id == user_id).first()
+
+    @classmethod
+    def list_active_for_user(cls, user_id: int) -> List["UserSessionModel"]:
+        with db():
+            return (
+                db.session.query(cls)
+                .filter(cls.user_id == user_id, cls.is_revoked == False)  # noqa: E712
+                .order_by(cls.last_used_at.desc())
+                .all()
+            )
+
+    @classmethod
+    def create(cls, **kwargs) -> "UserSessionModel":
+        with db():
+            session_row = cls(**kwargs)
+            db.session.add(session_row)
+            db.session.commit()
+            db.session.refresh(session_row)
+            return session_row
+
 
 class AdminTokenModel(Base):
     __tablename__ = "admin_tokens"
@@ -316,6 +378,7 @@ class AgentModel(Base):
     conversations = relationship("ConversationsModel",back_populates="agent",cascade="all, delete-orphan")
     widget = relationship("WidgetModel",back_populates="agent",cascade="all, delete-orphan")
     web_agent_pages = relationship("WebAgentPageModel",back_populates="agent",cascade="all, delete-orphan")
+    personal_kb_agent_bridges = relationship("PersonalKnowledgeBaseAgentBridgeModel",back_populates="agent",cascade="all, delete-orphan", order_by="PersonalKnowledgeBaseAgentBridgeModel.id")
 
 
 
@@ -395,6 +458,11 @@ class FunctionModel(Base):
     description: Mapped[str] = mapped_column(String,nullable=False)
     elevenlabs_tool_id: Mapped[str] = mapped_column(String, nullable=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer,ForeignKey("unified_auth.id"),nullable=True)
+
+    # True for backend-provisioned tools (e.g. the personal knowledge base
+    # search tool) that users must not be able to edit, detach, or delete
+    # through the normal functions/tools API — see app_v2/utils/personal_kb_tool.py.
+    is_system_managed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     #audit fields
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
@@ -503,6 +571,72 @@ class AgentKnowledgeBaseBridge(Base):
     __table_args__ = (
         UniqueConstraint("agent_id","kb_id",name="agent_kb_bridge"),
     )
+
+
+class PersonalKnowledgeBaseModel(Base):
+    """
+    Self-hosted knowledge base source (file/url/text). Chunked text lives in
+    PersonalKnowledgeBaseChunkModel; the corresponding embeddings live in a
+    per-user FAISS index on disk (see app_v2/utils/faiss_store.py), keyed by
+    chunk id — independent of the ElevenLabs-backed KnowledgeBaseModel above.
+    """
+    __tablename__ = "personal_knowledge_base"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("unified_auth.id"))
+    kb_type: Mapped[str] = mapped_column(String, nullable=False)  # 'file', 'url', 'text'
+    title: Mapped[str] = mapped_column(String, nullable=True)  # file name, url title, or text title
+    content_path: Mapped[str] = mapped_column(String, nullable=True)  # file path or url
+    content_text: Mapped[str] = mapped_column(Text, nullable=True)  # for text type, or scraped/extracted text
+    file_size: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # stored in KB, matches KnowledgeBaseModel convention
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    user = relationship("UnifiedAuthModel", back_populates="personal_knowledge_bases")
+    chunks = relationship("PersonalKnowledgeBaseChunkModel", back_populates="knowledge_base", cascade="all, delete-orphan", order_by="PersonalKnowledgeBaseChunkModel.chunk_index")
+    agent_bridges = relationship("PersonalKnowledgeBaseAgentBridgeModel", back_populates="knowledge_base", cascade="all, delete-orphan", order_by="PersonalKnowledgeBaseAgentBridgeModel.id")
+
+
+class PersonalKnowledgeBaseAgentBridgeModel(Base):
+    """
+    Many-to-many attachment of a personal KB item to an agent. Search is
+    scoped per agent, not per user — this bridge determines which agents'
+    `search_personal_knowledge_base` tool (see app_v2/utils/personal_kb_tool.py)
+    can retrieve a given item, and whether that agent has the tool/prompt at all.
+    """
+    __tablename__ = "personal_knowledge_base_agent_bridge"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
+    kb_id: Mapped[int] = mapped_column(Integer, ForeignKey("personal_knowledge_base.id"), nullable=False)
+    agent_id: Mapped[int] = mapped_column(Integer, ForeignKey("agents.id"), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    knowledge_base = relationship("PersonalKnowledgeBaseModel", back_populates="agent_bridges")
+    agent = relationship("AgentModel", back_populates="personal_kb_agent_bridges")
+
+    __table_args__ = (
+        UniqueConstraint("agent_id", "kb_id", name="personal_kb_agent_bridge"),
+    )
+
+
+class PersonalKnowledgeBaseChunkModel(Base):
+    """
+    A single text chunk belonging to a PersonalKnowledgeBaseModel source. Its
+    embedding is not stored here — it lives in the user's FAISS index on disk,
+    keyed by this row's `id` (see app_v2/utils/faiss_store.py).
+    """
+    __tablename__ = "personal_knowledge_base_chunk"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
+    kb_id: Mapped[int] = mapped_column(Integer, ForeignKey("personal_knowledge_base.id", ondelete="CASCADE"), nullable=False, index=True)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    knowledge_base = relationship("PersonalKnowledgeBaseModel", back_populates="chunks")
 
 
 
@@ -1126,3 +1260,37 @@ class EmailSubscriberModel(Base):
 
     subscribed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     unsubscribed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SupportTicketModel(Base):
+    """A user-submitted support ticket (bug report, billing question, account
+    issue, etc.) reviewed and responded to by admins via the admin support inbox."""
+    __tablename__ = "support_tickets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
+
+    category: Mapped[SupportTicketCategoryEnum] = mapped_column(Enum(SupportTicketCategoryEnum), nullable=False)
+
+    subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+
+    status: Mapped[SupportTicketStatusEnum] = mapped_column(
+        Enum(SupportTicketStatusEnum),
+        nullable=False,
+        default=SupportTicketStatusEnum.open,
+        server_default=SupportTicketStatusEnum.open.value,
+    )
+
+    admin_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    user = relationship("UnifiedAuthModel", back_populates="support_tickets")
