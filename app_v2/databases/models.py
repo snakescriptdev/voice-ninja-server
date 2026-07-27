@@ -378,6 +378,7 @@ class AgentModel(Base):
     conversations = relationship("ConversationsModel",back_populates="agent",cascade="all, delete-orphan")
     widget = relationship("WidgetModel",back_populates="agent",cascade="all, delete-orphan")
     web_agent_pages = relationship("WebAgentPageModel",back_populates="agent",cascade="all, delete-orphan")
+    personal_kb_agent_bridges = relationship("PersonalKnowledgeBaseAgentBridgeModel",back_populates="agent",cascade="all, delete-orphan", order_by="PersonalKnowledgeBaseAgentBridgeModel.id")
 
 
 
@@ -594,6 +595,30 @@ class PersonalKnowledgeBaseModel(Base):
 
     user = relationship("UnifiedAuthModel", back_populates="personal_knowledge_bases")
     chunks = relationship("PersonalKnowledgeBaseChunkModel", back_populates="knowledge_base", cascade="all, delete-orphan", order_by="PersonalKnowledgeBaseChunkModel.chunk_index")
+    agent_bridges = relationship("PersonalKnowledgeBaseAgentBridgeModel", back_populates="knowledge_base", cascade="all, delete-orphan", order_by="PersonalKnowledgeBaseAgentBridgeModel.id")
+
+
+class PersonalKnowledgeBaseAgentBridgeModel(Base):
+    """
+    Many-to-many attachment of a personal KB item to an agent. Search is
+    scoped per agent, not per user — this bridge determines which agents'
+    `search_personal_knowledge_base` tool (see app_v2/utils/personal_kb_tool.py)
+    can retrieve a given item, and whether that agent has the tool/prompt at all.
+    """
+    __tablename__ = "personal_knowledge_base_agent_bridge"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True, index=True)
+    kb_id: Mapped[int] = mapped_column(Integer, ForeignKey("personal_knowledge_base.id"), nullable=False)
+    agent_id: Mapped[int] = mapped_column(Integer, ForeignKey("agents.id"), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+
+    knowledge_base = relationship("PersonalKnowledgeBaseModel", back_populates="agent_bridges")
+    agent = relationship("AgentModel", back_populates="personal_kb_agent_bridges")
+
+    __table_args__ = (
+        UniqueConstraint("agent_id", "kb_id", name="personal_kb_agent_bridge"),
+    )
 
 
 class PersonalKnowledgeBaseChunkModel(Base):

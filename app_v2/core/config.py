@@ -38,9 +38,12 @@ class Settings(BaseSettings):
     # ElevenLabs Configuration
     ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY")
 
-    # Shared secret ElevenLabs must send back when calling the personal
-    # knowledge base's tool-search webhook (see app_v2/utils/personal_kb_tool.py)
-    PERSONAL_KB_TOOL_SECRET: str = os.getenv("PERSONAL_KB_TOOL_SECRET", "")
+    # Shared secret for internal server-to-server webhooks — e.g. ElevenLabs
+    # must send this back (as `Authorization: Bearer <key>`) when calling the
+    # personal knowledge base's tool-search webhook (see
+    # app_v2/utils/personal_kb_tool.py). Not a per-user credential — one key
+    # authenticates any of our own internal-only endpoints.
+    INTERNAL_API_SECRET_KEY: str = os.getenv("INTERNAL_API_SECRET_KEY", "")
 
     # Frontend Configuration
     FRONTEND_URL: str = os.getenv("FRONTEND_URL")
