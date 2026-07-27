@@ -58,7 +58,10 @@ MSG_PROFILE_RETRIEVED = 'Profile retrieved successfully'
 MSG_INVALID_DATA = 'Invalid data provided'
 
 # OTP Configuration
-OTP_EXPIRY_MINUTES = 5
+# 10 minutes to absorb real-world email delivery delays — a 5 minute window
+# was getting eaten alive by delivery latency before users even opened the
+# email, causing "expired" errors on codes that were only a couple minutes old.
+OTP_EXPIRY_MINUTES = 10
 OTP_LENGTH = 6
 
 # Delivery Methods
