@@ -8,8 +8,8 @@ class PersonalKnowledgeBaseURLCreate(BaseModel):
 
 
 class PersonalKnowledgeBaseTextCreate(BaseModel):
-    title: str
-    content: str
+    title: str = Field(..., min_length=2, max_length=300)
+    content: str = Field(..., min_length=2, max_length=300)
 
 
 class PersonalKnowledgeBaseURLUpdate(BaseModel):
@@ -18,8 +18,8 @@ class PersonalKnowledgeBaseURLUpdate(BaseModel):
 
 
 class PersonalKnowledgeBaseTextUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
+    title: Optional[str] = Field(default=None, min_length=2, max_length=300)
+    content: Optional[str] = Field(default=None, min_length=2, max_length=300)
 
 
 class PersonalKnowledgeBaseResponse(BaseModel):
