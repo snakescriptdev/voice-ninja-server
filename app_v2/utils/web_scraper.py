@@ -3,6 +3,7 @@
 from fastapi import HTTPException
 from app_v2.core.logger import setup_logger
 from app_v2.utils.scraping_utils import scrape_webpage_title
+from crewai_tools import ScrapeWebsiteTool
 
 logger = setup_logger(__name__)
 
@@ -17,8 +18,6 @@ def scrape_url(url: str) -> tuple[str, str]:
     title = scrape_webpage_title(url)
 
     try:
-        from crewai_tools import ScrapeWebsiteTool
-
         tool = ScrapeWebsiteTool(website_url=url)
         text = tool.run()
     except HTTPException:

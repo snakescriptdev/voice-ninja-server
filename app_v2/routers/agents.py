@@ -50,7 +50,12 @@ from app_v2.core.config import VoiceSettings
 from app_v2.utils.feature_access import RequireFeature
 from app_v2.utils.crypto_utils import decrypt_data
 from app_v2.utils.twillio_phone_service import TwilioPhoneService
-from app_v2.utils.personal_kb_tool import ensure_personal_kb_tool
+from app_v2.utils.personal_kb_tool import (
+    resync_personal_kb_tool_for_agent,
+    delete_agent_personal_kb_tool,
+    strip_prompt_block,
+    apply_prompt_block_state,
+)
 from twilio.base.exceptions import TwilioRestException
 logger = setup_logger(__name__)
 
@@ -105,7 +110,11 @@ def agent_to_read(
         agent_name=agent.agent_name,
         is_enabled=agent.is_enabled,
         first_message=agent.first_message,
-        system_prompt=agent.system_prompt,
+        # The personal-KB tool prompt block is an implementation detail the
+        # user never typed and shouldn't see/edit — hidden here, reapplied
+        # on write via apply_prompt_block_state() if the agent still has an
+        # active tool (see update_agent below).
+        system_prompt=strip_prompt_block(agent.system_prompt),
         voice=agent.voice.voice_name,
         ai_model=ai_model,
         language=language,
@@ -877,14 +886,6 @@ async def create_agent(
             detail=f"Failed to save agent: {str(db_error)}",
         )
 
-    # Best-effort: if this user already has an active personal knowledge
-    # base, make sure this brand-new agent picks up the search tool + prompt
-    # block too. Must never fail agent creation itself.
-    try:
-        ensure_personal_kb_tool(user_id)
-    except Exception as e:
-        logger.warning(f"Failed to sync personal KB tool onto new agent {new_agent.id}: {e}")
-
     return agent_to_read(new_agent)
 
 
@@ -918,7 +919,7 @@ async def clone_agent(
             selectinload(AgentModel.voice),
             selectinload(AgentModel.variables),
             selectinload(AgentModel.agent_knowledge_bases),
-            selectinload(AgentModel.agent_functions),
+            selectinload(AgentModel.agent_functions).selectinload(AgentFunctionBridgeModel.function),
         )
         .filter(AgentModel.id == agent_id, AgentModel.user_id == user_id)
         .first()
@@ -949,10 +950,14 @@ async def clone_agent(
         clone_name = f"{base_name} {suffix}"
         suffix += 1
 
+    # The personal KB search tool is provisioned per-agent (its webhook URL
+    # and searchable content are scoped to the source agent specifically), so
+    # it can't just be copied onto the clone — exclude it and its prompt
+    # block; the clone gets its own once a KB item is attached to it.
     payload = AgentCreate(
         agent_name=clone_name,
         first_message=source.first_message,
-        system_prompt=source.system_prompt,
+        system_prompt=strip_prompt_block(source.system_prompt),
         phone=None,               # unique per-agent assignment — never cloned
         twilio_connector_id=None,
         voice=source.voice.voice_name,
@@ -960,7 +965,7 @@ async def clone_agent(
         language=language,
         knowledgebase=[{"id": b.kb_id} for b in source.agent_knowledge_bases],
         variables={v.variable_name: v.variable_value for v in source.variables},
-        tools=[{"id": b.function_id} for b in source.agent_functions],
+        tools=[{"id": b.function_id} for b in source.agent_functions if not b.function.is_system_managed],
         built_in_tools=BuiltInToolsParams(**source.built_in_tools) if source.built_in_tools else None,
         timezone=source.timezone,
     )
@@ -1455,8 +1460,14 @@ async def update_agent(
         agent.first_message = agent_in.first_message
         el_update_params["first_message"] = agent_in.first_message
     if agent_in.system_prompt is not None:
-        agent.system_prompt = agent_in.system_prompt
-        el_update_params["prompt"] = agent_in.system_prompt
+        # Re-apply (or keep absent) the personal-KB tool prompt block based
+        # on this agent's actual current tool state, independent of whether
+        # the client's submitted prompt happens to contain one — the client
+        # never sees the block (see agent_to_read), so it can't be trusted
+        # to round-trip it correctly on its own.
+        new_prompt = apply_prompt_block_state(agent.id, agent_in.system_prompt)
+        agent.system_prompt = new_prompt
+        el_update_params["prompt"] = new_prompt
     if agent_in.is_enabled is not None:
         if agent_in.is_enabled == True and agent.is_enabled == False:
             check_can_enable_resource(current_user.id, "ai_voice_agents", allow_coin_fallback=True)
@@ -1752,11 +1763,11 @@ async def update_agent(
     )
 
     # Best-effort: this update may have replaced the agent's whole tool_ids
-    # list (via agent_in.functions) without knowing about the personal KB
-    # search tool. Re-attach it if the user has an active personal KB — must
-    # never fail the update itself.
+    # list (via agent_in.functions) without knowing about its personal KB
+    # search tool (if it has one). Re-push it so it isn't silently dropped —
+    # must never fail the update itself.
     try:
-        ensure_personal_kb_tool(current_user.id)
+        resync_personal_kb_tool_for_agent(agent.id)
     except Exception as e:
         logger.warning(f"Failed to re-sync personal KB tool onto agent {agent.id} after update: {e}")
 
@@ -1808,7 +1819,14 @@ async def delete_agent(
                 logger.warning(f"Failed to delete agent from ElevenLabs: {el_response.error_message}")
         except Exception as e:
             logger.error(f"Error deleting agent from ElevenLabs: {e}")
-            
+
+    # Must run before the agent row is deleted — it looks up this agent's
+    # dedicated personal KB tool via its (about to cascade-delete) bridge row.
+    try:
+        delete_agent_personal_kb_tool(agent_id)
+    except Exception as e:
+        logger.warning(f"Failed to clean up personal KB tool for deleted agent {agent_id}: {e}")
+
     db.session.delete(agent)
     db.session.commit()
 
