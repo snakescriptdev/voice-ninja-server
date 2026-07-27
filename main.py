@@ -16,6 +16,7 @@ os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 # Load environment variables
 load_dotenv()
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -35,8 +36,31 @@ from fastapi.responses import HTMLResponse
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Kicks off loading the personal-KB embedding model in the background on
+    # startup, so it's warm by the time the first real request needs it —
+    # without blocking server startup itself on the (multi-second) load. Any
+    # request that needs the model before this finishes just waits on the
+    # same load instead of triggering a duplicate one (see the lock in
+    # embedding_utils.get_embeddings()).
+    import threading
+    from app_v2.utils.embedding_utils import get_embeddings
+    from app_v2.core.logger import setup_logger
+    logger = setup_logger(__name__)
+
+    def _preload():
+        try:
+            get_embeddings()
+        except Exception as e:
+            logger.warning(f"Failed to preload embedding model in background, will load lazily on first use: {e}")
+
+    threading.Thread(target=_preload, daemon=True, name="preload-embedding-model").start()
+    yield
+
+
 app = FastAPI(title="Voice Ninja V2 API", version="2.0.0",docs_url=None,
-    redoc_url=None)
+    redoc_url=None, lifespan=lifespan)
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -199,6 +223,7 @@ app.include_router(email_subscription_admin_router)
 app.include_router(support_router)
 app.include_router(admin_support.router)
 app.include_router(sessions_router)
+
 
 @app.get("/", tags=["System"])
 async def root():

@@ -24,6 +24,7 @@ from app_v2.databases.models import (
     KnowledgeBaseModel,
     PersonalKnowledgeBaseModel,
     PersonalKnowledgeBaseChunkModel,
+    PersonalKnowledgeBaseAgentBridgeModel,
     FunctionModel,
     VariablesModel,
     AgentAIModelBridge,
@@ -81,7 +82,13 @@ from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.text_extraction import extract_text_from_file
 from app_v2.utils.web_scraper import scrape_url
 from app_v2.utils.faiss_store import remove_embeddings
-from app_v2.utils.personal_kb_tool import ensure_personal_kb_tool, remove_personal_kb_tool_if_empty
+from app_v2.utils.personal_kb_tool import (
+    remove_personal_kb_tool_from_agent_if_empty,
+    resync_personal_kb_tool_for_agent,
+    delete_agent_personal_kb_tool,
+    strip_prompt_block,
+    apply_prompt_block_state,
+)
 from app_v2.routers.personal_knowledge_base import (
     _store_kb_entry as _store_personal_kb_entry,
     _kb_to_read as _personal_kb_to_read,
@@ -212,7 +219,11 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         id=agent.id,
         agent_name=agent.agent_name,
         first_message=agent.first_message,
-        system_prompt=agent.system_prompt,
+        # The personal-KB tool prompt block is an implementation detail the
+        # user never typed and shouldn't see/edit — hidden here, reapplied
+        # on write via apply_prompt_block_state() if the agent still has an
+        # active tool (see update_agent_public below).
+        system_prompt=strip_prompt_block(agent.system_prompt),
         voice=agent.voice.voice_name,
         is_enabled=agent.is_enabled,
         ai_model=ai_model,
@@ -455,14 +466,6 @@ async def create_agent(
         db.session.commit()
         db.session.refresh(new_agent)
 
-        # Best-effort: if this user already has an active personal knowledge
-        # base, make sure this brand-new agent picks up the search tool +
-        # prompt block too. Must never fail agent creation itself.
-        try:
-            ensure_personal_kb_tool(user_id)
-        except Exception as e:
-            logger.warning(f"Failed to sync personal KB tool onto new agent {new_agent.id}: {e}")
-
         return agent_to_read(new_agent)
 
 @router.put("/agents/{agent_id}", response_model=AgentRead)
@@ -498,8 +501,13 @@ async def update_agent_public(
             agent.agent_name = agent_in.agent_name
             el_update_params["name"] = agent_in.agent_name
         if agent_in.system_prompt is not None:
-            agent.system_prompt = agent_in.system_prompt
-            el_update_params["prompt"] = agent_in.system_prompt
+            # Re-apply (or keep absent) the personal-KB tool prompt block
+            # based on this agent's actual current tool state — the client
+            # never sees the block (see agent_to_read), so it can't be
+            # trusted to round-trip it correctly on its own.
+            new_prompt = apply_prompt_block_state(agent.id, agent_in.system_prompt)
+            agent.system_prompt = new_prompt
+            el_update_params["prompt"] = new_prompt
         if agent_in.first_message is not None:
             agent.first_message = agent_in.first_message
             el_update_params["first_message"] = agent_in.first_message
@@ -659,10 +667,10 @@ async def update_agent_public(
         db.session.refresh(agent)
 
         # Best-effort: this update may have replaced the agent's whole
-        # tool_ids list without knowing about the personal KB search tool.
-        # Re-attach it if the user has an active personal KB.
+        # tool_ids list without knowing about its personal KB search tool (if
+        # it has one). Re-push it so it doesn't get silently dropped.
         try:
-            ensure_personal_kb_tool(current_user.id)
+            resync_personal_kb_tool_for_agent(agent.id)
         except Exception as e:
             logger.warning(f"Failed to re-sync personal KB tool onto agent {agent.id} after update: {e}")
 
@@ -680,12 +688,22 @@ async def delete_agent_public(
         ).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        
+
         if agent.elevenlabs_agent_id:
             ElevenLabsAgent().delete_agent(agent.elevenlabs_agent_id)
-            
-        db.session.delete(agent)
-        db.session.commit()
+
+    try:
+        delete_agent_personal_kb_tool(agent_id)
+    except Exception as e:
+        logger.warning(f"Failed to clean up personal KB tool for deleted agent {agent_id}: {e}")
+
+    with db():
+        agent = db.session.query(AgentModel).filter(
+            AgentModel.id == agent_id, AgentModel.user_id == current_user.id
+        ).first()
+        if agent:
+            db.session.delete(agent)
+            db.session.commit()
     return None
 
 # -------------------------------------------------------------------
@@ -1570,10 +1588,11 @@ async def bind_kb_public(
 # -------------------------------------------------------------------
 # PERSONAL KNOWLEDGE BASE (pgvector/FAISS-backed, independent of ElevenLabs)
 #
-# Automatically available to all of a user's agents once they have at least
-# one item — see ensure_personal_kb_tool()/remove_personal_kb_tool_if_empty()
-# hooked into the agent create/update endpoints above and the create/delete
-# endpoints below. No per-agent bind/unbind (unlike the legacy /kb above).
+# Items are attached to agents many-to-many via
+# PersonalKnowledgeBaseAgentBridgeModel — see app_v2/routers/
+# personal_knowledge_base.py for the attach/detach endpoints. An agent only
+# gets its own search_personal_knowledge_base tool + prompt block once it has
+# at least one item attached (app_v2/utils/personal_kb_tool.py).
 # -------------------------------------------------------------------
 
 @router.get("/personal-kb", response_model=PaginatedResponse[PersonalKnowledgeBaseResponse])
@@ -1638,10 +1657,6 @@ async def create_personal_kb_url_public(
         kb_entry = _store_personal_kb_entry(user_id=current_user.id, kb_type="url", title=title, text=text, content_path=url_str)
         result = _personal_kb_to_read(kb_entry)
 
-    try:
-        ensure_personal_kb_tool(current_user.id)
-    except Exception as e:
-        logger.warning(f"Failed to sync personal KB tool for user {current_user.id}: {e}")
     return result
 
 
@@ -1660,13 +1675,12 @@ async def create_personal_kb_text_public(
         if existing:
             raise HTTPException(status_code=400, detail="This exact text content has already been added to your knowledge base.")
 
-        kb_entry = _store_personal_kb_entry(user_id=current_user.id, kb_type="text", title=request.title, text=request.content)
+        kb_entry = _store_personal_kb_entry(
+            user_id=current_user.id, kb_type="text", title=request.title, text=request.content,
+            embed_text=f"{request.title}\n\n{request.content}",
+        )
         result = _personal_kb_to_read(kb_entry)
 
-    try:
-        ensure_personal_kb_tool(current_user.id)
-    except Exception as e:
-        logger.warning(f"Failed to sync personal KB tool for user {current_user.id}: {e}")
     return result
 
 
@@ -1721,10 +1735,6 @@ async def create_personal_kb_file_public(
 
         result = [_personal_kb_to_read(entry) for entry in uploaded_entries]
 
-    try:
-        ensure_personal_kb_tool(current_user.id)
-    except Exception as e:
-        logger.warning(f"Failed to sync personal KB tool for user {current_user.id}: {e}")
     return result
 
 
@@ -1775,7 +1785,8 @@ async def update_personal_kb_text_public(
             raise HTTPException(status_code=404, detail="Text Knowledge Base item not found")
 
         if request.content is not None:
-            _replace_personal_kb_content(kb_entry, request.content)
+            new_title = request.title if request.title is not None else kb_entry.title
+            _replace_personal_kb_content(kb_entry, request.content, embed_text=f"{new_title}\n\n{request.content}")
         if request.title is not None:
             kb_entry.title = request.title
 
@@ -1865,6 +1876,10 @@ async def delete_personal_kb_public(
             row.id for row in db.session.query(PersonalKnowledgeBaseChunkModel.id)
             .filter(PersonalKnowledgeBaseChunkModel.kb_id == kb_entry.id).all()
         ]
+        attached_agent_ids = [
+            row.agent_id for row in db.session.query(PersonalKnowledgeBaseAgentBridgeModel.agent_id)
+            .filter(PersonalKnowledgeBaseAgentBridgeModel.kb_id == kb_entry.id).all()
+        ]
 
         if kb_entry.kb_type == "file" and kb_entry.content_path and os.path.exists(kb_entry.content_path):
             try:
@@ -1872,7 +1887,7 @@ async def delete_personal_kb_public(
             except OSError:
                 pass
 
-        db.session.delete(kb_entry)
+        db.session.delete(kb_entry)  # cascades chunk rows + agent bridge rows
         db.session.commit()
 
     try:
@@ -1880,10 +1895,11 @@ async def delete_personal_kb_public(
     except Exception as e:
         logger.warning(f"Failed to remove FAISS vectors for deleted public KB item {id}: {e}")
 
-    try:
-        remove_personal_kb_tool_if_empty(current_user.id)
-    except Exception as e:
-        logger.warning(f"Failed to sync personal KB tool removal for user {current_user.id}: {e}")
+    for agent_id in attached_agent_ids:
+        try:
+            remove_personal_kb_tool_from_agent_if_empty(agent_id)
+        except Exception as e:
+            logger.warning(f"Failed to sync personal KB tool removal for agent {agent_id}: {e}")
     return None
 
 @router.get("/ai-models/{id}", response_model=AIModelRead)

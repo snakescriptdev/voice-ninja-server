@@ -45,9 +45,12 @@ def deduct_coins(
     Deducts coins from the user's ledger using FIFO logic on valid credit batches.
     amount is treated as the raw coin count.
 
-    force=True: deducts the full amount even if balance is insufficient, allowing
-                a negative balance (debt). Used for post-call billing where the
-                call already happened and must be recorded.
+    force=True: deducts as much as is available, capping at the user's current
+                balance instead of refusing outright — used for post-call billing,
+                where the call already happened and some deduction must be recorded
+                even if the real cost exceeds what's left. Never pushes the balance
+                negative; any shortfall beyond the available balance is absorbed
+                rather than recorded as user debt.
     force=False (default): refuses and returns False if balance is insufficient.
 
     Must be called within an active db() session block.
@@ -84,15 +87,26 @@ def deduct_coins(
                     f"Needed: {coin_amount}, Available: {total_available}"
                 )
                 return False
-            # force=True: log the overdraft but proceed with full deduction
+            # force=True: cap the deduction at what's actually available —
+            # the shortfall is absorbed (not billed) rather than putting the
+            # user in debt. Balance floors at 0, never negative.
+            shortfall = coin_amount - total_available
             logger.warning(
-                f"Post-call overdraft for user {user_id}: "
+                f"Post-call balance shortfall for user {user_id}: "
                 f"cost={coin_amount}, available={total_available}, "
-                f"debt={coin_amount - total_available}"
+                f"shortfall={shortfall} absorbed — balance capped at 0"
             )
+            coin_amount = total_available
 
-        # 2. Drain all available credit batches to 0 only in case of overdraft not in noraml case so it should be min(total_available,coin_amount) 
-        remaining_to_deduct = min(total_available,coin_amount)
+        if coin_amount <= 0:
+            # Nothing left to deduct (already fully drained) — no-op rather
+            # than writing a zero-amount ledger entry.
+            if commit:
+                db.session.commit()
+            return True
+
+        # 2. Drain available credit batches for the (possibly capped) amount.
+        remaining_to_deduct = coin_amount
         for batch in batches:
             if remaining_to_deduct <= 0:
                 break
@@ -100,9 +114,9 @@ def deduct_coins(
             batch.remaining_coins -= deduct_from_batch
             remaining_to_deduct -= deduct_from_batch
 
-        # 3. Create debit entry — coins and balance_after reflect the full requested
-        #    amount, going negative in the overdraft case.
-        balance_after = current_balance - coin_amount 
+        # 3. Create debit entry — balance_after reflects the (possibly capped)
+        #    amount actually deducted, never going below 0.
+        balance_after = current_balance - coin_amount
         ledger_entry = CoinsLedgerModel(
             user_id=user_id,
             transaction_type=transaction_type,
