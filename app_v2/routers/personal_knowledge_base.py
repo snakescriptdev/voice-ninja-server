@@ -490,10 +490,17 @@ async def update_personal_kb_url(
 
             if request.url is not None:
                 new_url = str(request.url)
-                title, text = scrape_url(new_url)
+                scraped_title, text = scrape_url(new_url)
                 _replace_kb_content(kb_entry, text)
                 kb_entry.content_path = new_url
-                kb_entry.title = request.title if request.title is not None else title
+
+                # The edit form always resends the current title alongside the
+                # url, even when the user didn't touch the title field. Only
+                # treat it as an explicit override if it actually differs from
+                # the item's stored title — otherwise refresh it from the newly
+                # scraped page, same as on creation.
+                title_explicitly_changed = request.title is not None and request.title != kb_entry.title
+                kb_entry.title = request.title if title_explicitly_changed else scraped_title
             elif request.title is not None:
                 kb_entry.title = request.title
 
@@ -530,9 +537,14 @@ async def update_personal_kb_text(
             if not kb_entry:
                 raise HTTPException(status_code=404, detail="Text Knowledge Base item not found")
 
-            if request.content is not None:
+            if request.content is not None or request.title is not None:
                 new_title = request.title if request.title is not None else kb_entry.title
-                _replace_kb_content(kb_entry, request.content, embed_text=f"{new_title}\n\n{request.content}")
+                new_content = request.content if request.content is not None else kb_entry.content_text
+                # Re-embed whenever either changes, not just content — the title
+                # is baked into the embedded text (see embed_text below), so a
+                # title-only update would otherwise leave stale chunk content
+                # behind even though kb_entry.title itself is updated.
+                _replace_kb_content(kb_entry, new_content, embed_text=f"{new_title}\n\n{new_content}")
             if request.title is not None:
                 kb_entry.title = request.title
 
@@ -600,10 +612,17 @@ async def update_personal_kb_file(
                     logger.error(f"Error processing file update for personal kb {kb_id}: {e}")
                     raise HTTPException(status_code=422, detail="Could not process file")
 
+                # The edit form always resends the current title alongside a
+                # replacement file, even when the user didn't touch the title
+                # field. Only treat it as an explicit override if it actually
+                # differs from the item's stored title — otherwise refresh it
+                # from the new file's name, same as on upload.
+                title_explicitly_changed = title is not None and title != kb_entry.title
+
                 old_path = kb_entry.content_path
                 kb_entry.content_path = new_file_path
                 kb_entry.file_size = round(file_size / 1024, 2)
-                kb_entry.title = title if title is not None else file.filename
+                kb_entry.title = title if title_explicitly_changed else file.filename
                 if old_path and os.path.exists(old_path):
                     try:
                         os.remove(old_path)
@@ -928,6 +947,7 @@ async def tool_search_webhook(agent_id: int, request: ToolSearchRequest, http_re
     summary of recent relevant turns, if the calling agent passed one) is
     folded into that synthesis so follow-up questions resolve correctly.
     """
+    logger.info(f"Tool search called for agent {agent_id} with query: {request.query} and conversation_context: {request.conversation_context}")
     _require_internal_auth(http_request)
 
     try:
@@ -938,7 +958,7 @@ async def tool_search_webhook(agent_id: int, request: ToolSearchRequest, http_re
             results = _search_personal_kb_for_agent(agent_id, agent.user_id, request.query, top_k=5)
 
         answer = await generate_kb_answer(request.query, results, request.conversation_context)
-        return PersonalKnowledgeBaseAnswerResponse(answer=answer, results=results)
+        return PersonalKnowledgeBaseAnswerResponse(answer=answer)
     except HTTPException as e:
         raise e
     except Exception as e:

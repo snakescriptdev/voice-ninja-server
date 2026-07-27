@@ -448,13 +448,20 @@ class ElevenLabsAgent(BaseElevenLabs):
         name: str,
         description: str,
         api_schema: ApiSchema,
+        pre_tool_speech: Optional[str] = None,
     ) -> dict:
         """
         Build a robust flat payload for ElevenLabs webhook tools.
         The 'webhook' in error locs refers to the model type, not a nested key.
         Handles removal of empty property dicts to satisfy EL validator.
+
+        `pre_tool_speech` controls whether the agent narrates before calling
+        this tool (e.g. "let me check that for you") — pass "off" to suppress
+        it for tools whose result should just be relayed silently. Left unset
+        (EL default "auto") for regular user-created tools, where that filler
+        speech is often wanted while a slower action runs.
         """
-        
+
         # Serialize api_schema
         serialized_api = {
             "url": api_schema.url,
@@ -462,48 +469,51 @@ class ElevenLabsAgent(BaseElevenLabs):
             "request_headers": api_schema.request_headers or {},
             "content_type": api_schema.content_type.value if hasattr(api_schema.content_type, 'value') else (api_schema.content_type or "application/json"),
         }
-        
+
         # Omit empty schemas because EL validator rejects empty properties
         # Path params schema
         if api_schema.path_params_schema:
             serialized_api["path_params_schema"] = {
-                k: v.model_dump() if hasattr(v, "model_dump") else v 
+                k: v.model_dump() if hasattr(v, "model_dump") else v
                 for k, v in api_schema.path_params_schema.items()
             }
-            
+
         # Query params schema - check properties
         if api_schema.query_params_schema:
             qp_dump = api_schema.query_params_schema.model_dump(exclude_none=True)
             if qp_dump.get("properties"):
                 serialized_api["query_params_schema"] = qp_dump
-        
+
         # Request body schema - check properties
         if api_schema.request_body_schema:
             rb_dump = api_schema.request_body_schema.model_dump(exclude_none=True)
             if rb_dump.get("properties"):
                  serialized_api["request_body_schema"] = rb_dump
 
-        return {
-            "tool_config": {
-                "type": "webhook",
-                "name": name,
-                "description": description,
-                "api_schema": serialized_api
-            }
+        tool_config = {
+            "type": "webhook",
+            "name": name,
+            "description": description,
+            "api_schema": serialized_api
         }
+        if pre_tool_speech is not None:
+            tool_config["pre_tool_speech"] = pre_tool_speech
+
+        return {"tool_config": tool_config}
 
     def create_tool(
         self,
         name: str,
         description: str,
         api_schema: ApiSchema,
+        pre_tool_speech: Optional[str] = None,
     ) -> ElevenLabsResponse:
         """
         Create a webhook tool in ElevenLabs ConvAI.
         """
         logger.info(f"Creating ElevenLabs tool: {name}")
 
-        payload = self._build_tool_payload(name, description, api_schema)
+        payload = self._build_tool_payload(name, description, api_schema, pre_tool_speech=pre_tool_speech)
         response = self._post("/convai/tools", data=payload)
 
         if response.status:
