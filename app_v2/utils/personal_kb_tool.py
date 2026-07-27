@@ -165,7 +165,10 @@ def _create_system_tool(user_id: int, agent_id: int) -> FunctionModel:
     )
 
     el_client = ElevenLabsAgent()
-    el_response = el_client.create_tool(name=TOOL_NAME, description=TOOL_DESCRIPTION, api_schema=api_schema)
+    # "off" — the answer is already synthesized and ready to speak; the agent
+    # should relay it directly rather than narrating that it's checking notes
+    # or the knowledge base first.
+    el_response = el_client.create_tool(name=TOOL_NAME, description=TOOL_DESCRIPTION, api_schema=api_schema, pre_tool_speech="off")
     if not el_response.status:
         raise RuntimeError(f"Failed to create personal KB tool in ElevenLabs: {el_response.error_message}")
     elevenlabs_tool_id = el_response.data.get("id")
