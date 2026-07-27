@@ -1,9 +1,7 @@
 import random
 import string
 import re
-import os
 from datetime import timedelta
-from twilio.rest import Client
 from app_v2.core.logger import setup_logger
 from app_v2.utils.email_service import send_email_async
 
@@ -17,16 +15,6 @@ def is_email(text: str) -> bool:
     """Check if text is an email"""
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, text) is not None
-
-def is_phone(text: str) -> bool:
-    """Check if text is a phone number"""
-    cleaned = re.sub(r'[\s\-\(\)]', '', text)
-    pattern = r'^\+?[1-9]\d{9,14}$'
-    return re.match(pattern, cleaned) is not None
-
-def normalize_phone(phone: str) -> str:
-    """Remove spaces and formatting from phone"""
-    return re.sub(r'[\s\-\(\)]', '', phone)
 
 async def send_otp_email(email: str, otp: str):
     """Send OTP via email"""
@@ -48,29 +36,4 @@ async def send_otp_email(email: str, otp: str):
         return True
     except Exception as e:
         logger.error(f"Email send failed: {e}")
-        return False
-
-def send_otp_sms(phone: str, otp: str):
-    """Send OTP via SMS"""
-    try:
-        account_sid = os.getenv("TWILIO_ACCOUNT_SID")
-        auth_token = os.getenv("TWILIO_AUTH_TOKEN")
-        twilio_phone = os.getenv("TWILIO_PHONE_NUMBER")
-        
-        logger.info(f"Attempting to send SMS to {phone} with SID: {account_sid[:10]}...")
-        
-        if not all([account_sid, auth_token, twilio_phone]):
-            logger.error("Twilio not configured - missing credentials")
-            return False
-        
-        client = Client(account_sid, auth_token)
-        message = client.messages.create(
-            body=f"Your verification code is: {otp}\n\nExpires in 10 minutes.",
-            from_=twilio_phone,
-            to=phone
-        )
-        logger.info(f"SMS sent successfully to {phone}, Message SID: {message.sid}")
-        return True
-    except Exception as e:
-        logger.error(f"SMS send failed to {phone}: {str(e)}")
         return False
