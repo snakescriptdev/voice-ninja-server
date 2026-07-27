@@ -60,3 +60,16 @@ class PersonalKnowledgeBaseQueryResponse(BaseModel):
 class ToolSearchRequest(BaseModel):
     """Body ElevenLabs sends when the agent invokes the personal KB tool."""
     query: str = Field(..., min_length=1)
+    # LLM-authored summary of recent turns relevant to `query` — the agent's
+    # own model fills this in based on its conversation context, same as it
+    # fills `query`. Optional since there may be no prior context yet (e.g.
+    # the very first turn), or the model may omit it.
+    conversation_context: Optional[str] = None
+
+
+class PersonalKnowledgeBaseAnswerResponse(BaseModel):
+    """Response returned to the search_personal_knowledge_base tool call —
+    a ready-to-speak answer synthesized from the retrieved KB excerpts, plus
+    the raw excerpts themselves for transparency/debugging."""
+    answer: str
+    results: List[PersonalKnowledgeBaseQueryResult]
