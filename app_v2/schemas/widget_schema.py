@@ -1,6 +1,7 @@
-from pydantic import BaseModel,AnyHttpUrl, field_serializer
+from pydantic import BaseModel,AnyHttpUrl, field_serializer, field_validator
 from typing import Optional,Literal
 from app_v2.schemas.enum_types import WidgetPosition
+from app_v2.utils.validation_utils import validate_entity_name, validate_entity_name_optional
 from datetime import datetime
 
 class AppearanceConfig(BaseModel):
@@ -47,6 +48,8 @@ class WidgetConfig(BaseModel):
 
     appearance: AppearanceConfig
     prechat: PrechatConfig
+
+    _validate_widget_name = field_validator("widget_name")(validate_entity_name)
 
 
 
@@ -99,3 +102,5 @@ class WidgetConfigUpdate(BaseModel):
     appearance: Optional[AppearanceConfigUpdate] = None
     prechat: Optional[PrechatConfigUpdate] = None
     is_enabled: Optional[bool] = None
+
+    _validate_widget_name = field_validator("widget_name")(validate_entity_name_optional)

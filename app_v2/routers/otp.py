@@ -1,31 +1,33 @@
 """OTP-related API endpoints.
 
 This module provides endpoints for OTP-based authentication:
-- Request OTP: Send OTP to user's email or phone
+- Request OTP: Send OTP to user's email
 - Verify OTP: Verify OTP and complete login
 """
 
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Union
 
-from fastapi import APIRouter, Request, HTTPException, status
+from fastapi import APIRouter, Request, HTTPException, status, Depends
 from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
-from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
+from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings, UserSessionModel
 from app_v2.utils.otp_utils import (
     generate_otp,
     is_email,
-    is_phone,
-    normalize_phone,
     send_otp_email,
-    send_otp_sms,
 )
 from app_v2.utils.jwt_utils import (
     create_access_token,
     create_refresh_token,
     verify_refresh_token,
+    create_user_session,
+    revoke_session_by_jti,
+    revoke_all_sessions,
+    require_active_user,
 )
 
 from app_v2.constants import (
@@ -36,11 +38,9 @@ from app_v2.constants import (
     HTTP_401_UNAUTHORIZED,
     HTTP_404_NOT_FOUND,
     HTTP_500_INTERNAL_SERVER_ERROR,
-    MSG_INVALID_EMAIL_OR_PHONE,
+    MSG_INVALID_EMAIL_FORMAT,
     MSG_USER_CREATED_OTP_SENT_EMAIL,
-    MSG_USER_CREATED_OTP_SENT_SMS,
     MSG_OTP_SENT_EMAIL,
-    MSG_OTP_SENT_SMS,
     MSG_FAILED_TO_SEND_OTP,
     MSG_USER_NOT_FOUND,
     MSG_USER_SIGNED_UP_WITH_GOOGLE,
@@ -49,11 +49,12 @@ from app_v2.constants import (
     MSG_LOGIN_SUCCESSFUL,
     MSG_FAILED_TO_SEND_OTP_VIA_METHOD,
     MSG_OTP_RESENT_EMAIL,
-    MSG_OTP_RESENT_SMS,
     MSG_NO_ACTIVE_OTP,
+    MSG_ACCOUNT_ALREADY_EXISTS,
+    MSG_USER_NOT_FOUND_SIGNUP_PROMPT,
+    HTTP_409_CONFLICT,
     OTP_EXPIRY_MINUTES,
     METHOD_EMAIL,
-    METHOD_SMS,
 )
 from app_v2.schemas.otp import (
     RequestOTPRequest,
@@ -63,6 +64,7 @@ from app_v2.schemas.otp import (
     VerifyOTPResponse,
     ErrorResponse,
     RefreshTokenRequest,
+    LogoutRequest,
 )
 
 router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
@@ -72,7 +74,7 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
     '/login',
     status_code=status.HTTP_200_OK,
     summary='Request OTP',
-    description='Send OTP to user email or phone number for authentication',
+    description='Send OTP to user email for authentication',
     responses={
         200: {
             'description': 'OTP sent successfully',
@@ -94,7 +96,31 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
                     'example': {
                         'status': 'failed',
                         'status_code': 400,
-                        'message': 'Invalid email or phone format'
+                        'message': 'Invalid email format'
+                    }
+                }
+            }
+        },
+        404: {
+            'description': "Login mode - no account exists for this email",
+            'content': {
+                'application/json': {
+                    'example': {
+                        'status': 'failed',
+                        'status_code': 404,
+                        'message': 'User not found. Please check your email or sign up.'
+                    }
+                }
+            }
+        },
+        409: {
+            'description': 'Signup mode - an account already exists for this email',
+            'content': {
+                'application/json': {
+                    'example': {
+                        'status': 'failed',
+                        'status_code': 409,
+                        'message': 'Account already exists. Please login.'
                     }
                 }
             }
@@ -114,13 +140,18 @@ router = APIRouter(prefix='/api/v2/auth', tags=['Authentication'])
     }
 )
 async def request_otp(request: RequestOTPRequest):
-    """Request OTP to be sent to email or phone.
+    """Request OTP to be sent to email.
 
-    This endpoint validates the username (email or phone), generates an OTP,
-    and sends it via the appropriate channel.
+    This endpoint validates the username (email), generates an OTP,
+    and sends it via email.
+
+    The `mode` field ('login' or 'signup', default 'login') tells the two
+    flows apart: 'signup' rejects with 409 if an account already exists for
+    the email, and 'login' rejects with 404 if no account exists yet -
+    instead of silently creating an account or resending a code either way.
 
     Args:
-        request: Request containing username (email or phone).
+        request: Request containing username (email) and mode.
 
     Returns:
         RequestOTPResponse with status and method information on success,
@@ -128,39 +159,60 @@ async def request_otp(request: RequestOTPRequest):
     """
     try:
         username = request.username
+        mode = request.mode
 
-        # Validate email or phone format
-        is_email_login = is_email(username)
-        is_phone_login = is_phone(username)
-
-        if not is_email_login and not is_phone_login:
+        # Validate email format
+        if not is_email(username):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "status": STATUS_FAILED,
                     "status_code": HTTP_400_BAD_REQUEST,
-                    "message": MSG_INVALID_EMAIL_OR_PHONE
+                    "message": MSG_INVALID_EMAIL_FORMAT
                 }
             )
-
-        # Normalize phone if needed
-        if is_phone_login:
-            username = normalize_phone(username)
 
         # Check unified auth model first
         unified_user = UnifiedAuthModel.get_by_username(username)
         user_created = False
-        
+
+        # An account only really "exists" once it has completed at least one
+        # signup (OTP verification or Google auth both set is_verified=True).
+        # A row that exists but is_verified=False just means a previous
+        # signup attempt was started but never finished, so it's fine to
+        # treat it like a fresh signup and let the OTP be (re)sent.
+        account_exists = bool(unified_user and unified_user.is_verified)
+
+        if mode == 'signup' and account_exists:
+            raise HTTPException(
+                status_code=HTTP_409_CONFLICT,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_409_CONFLICT,
+                    "message": MSG_ACCOUNT_ALREADY_EXISTS
+                }
+            )
+
+        if mode == 'login' and not account_exists:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_404_NOT_FOUND,
+                    "message": MSG_USER_NOT_FOUND_SIGNUP_PROMPT
+                }
+            )
+
         if not unified_user:
             # Create new user in unified auth
             unified_user = UnifiedAuthModel.create(
                 username=username,
-                email=username if is_email_login else None,
-                phone=username if is_phone_login else "",
+                email=username,
+                phone="",
                 has_otp_auth=True,
                 is_verified=False
             )
-            
+
             # Create default notification settings
             with db():
                 notification_settings = UserNotificationSettings(user_id=unified_user.id)
@@ -173,8 +225,8 @@ async def request_otp(request: RequestOTPRequest):
             with db():
                 old_user = UserModel(
                     username=username,
-                    email=username if is_email_login else None,
-                    phone=username if is_phone_login else "",
+                    email=username,
+                    phone="",
                     is_verified=False
                 )
                 db.session.add(old_user)
@@ -221,14 +273,9 @@ async def request_otp(request: RequestOTPRequest):
             )
 
         # Send OTP - show correct message based on whether user was actually created
-        if is_email_login:
-            success = await send_otp_email(username, otp)
-            method = METHOD_EMAIL
-            success_message = MSG_USER_CREATED_OTP_SENT_EMAIL if user_created else MSG_OTP_SENT_EMAIL
-        else:
-            success = send_otp_sms(username, otp)
-            method = METHOD_SMS
-            success_message = MSG_USER_CREATED_OTP_SENT_SMS if user_created else MSG_OTP_SENT_SMS
+        success = await send_otp_email(username, otp)
+        method = METHOD_EMAIL
+        success_message = MSG_USER_CREATED_OTP_SENT_EMAIL if user_created else MSG_OTP_SENT_EMAIL
 
         if not success:
             error_message = MSG_FAILED_TO_SEND_OTP_VIA_METHOD.format(method=method)
@@ -347,10 +394,6 @@ async def verify_otp(
         username = request.username
         otp = request.otp
 
-        # Normalize phone if needed
-        if is_phone(username):
-            username = normalize_phone(username)
-
         # Get user from unified model
         unified_user = UnifiedAuthModel.get_by_username(username)
         if not unified_user:
@@ -416,15 +459,22 @@ async def verify_otp(
             )
             
 
-        # Create tokens
+        # Create tokens. `jti` is minted once per login and embedded in both
+        # the access and refresh tokens, and used as the key for the
+        # server-side UserSessionModel row that makes revocation possible.
+        jti = uuid.uuid4().hex
         token_data = {
             'user_id': unified_user.id,
             'email': unified_user.email,
             'phone': unified_user.phone,
-            'role': 'admin' if unified_user.is_admin else 'user'
+            'role': 'admin' if unified_user.is_admin else 'user',
+            'jti': jti,
         }
         access_token = create_access_token(data=token_data)
-        refresh_token = create_refresh_token(unified_user.id)
+        refresh_token = create_refresh_token(unified_user.id, jti)
+
+        # Record this login as a trackable/revocable server-side session.
+        create_user_session(unified_user.id, jti, http_request)
 
         # Create session
         http_request.session['user'] = {
@@ -474,7 +524,7 @@ async def verify_otp(
     '/resend-otp',
     status_code=status.HTTP_200_OK,
     summary='Resend OTP',
-    description='Resend OTP to user email or phone number',
+    description='Resend OTP to user email',
     responses={
         200: {
             'description': 'OTP resent successfully',
@@ -496,7 +546,7 @@ async def verify_otp(
                     'example': {
                         'status': 'failed',
                         'status_code': 400,
-                        'message': 'Invalid email or phone format'
+                        'message': 'Invalid email format'
                     }
                 }
             }
@@ -528,13 +578,13 @@ async def verify_otp(
     }
 )
 async def resend_otp(request: ResendOTPRequest):
-    """Resend OTP to user email or phone.
+    """Resend OTP to user email.
 
     This endpoint validates the username, checks for an existing user with
-    an active OTP, generates a new OTP, and resends it via the appropriate channel.
+    an active OTP, generates a new OTP, and resends it via email.
 
     Args:
-        request: Request containing username (email or phone).
+        request: Request containing username (email).
 
     Returns:
         RequestOTPResponse with status and method information on success,
@@ -543,23 +593,16 @@ async def resend_otp(request: ResendOTPRequest):
     try:
         username = request.username
 
-        # Validate email or phone format
-        is_email_login = is_email(username)
-        is_phone_login = is_phone(username)
-
-        if not is_email_login and not is_phone_login:
+        # Validate email format
+        if not is_email(username):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "status": STATUS_FAILED,
                     "status_code": HTTP_400_BAD_REQUEST,
-                    "message": MSG_INVALID_EMAIL_OR_PHONE
+                    "message": MSG_INVALID_EMAIL_FORMAT
                 }
             )
-
-        # Normalize phone if needed
-        if is_phone_login:
-            username = normalize_phone(username)
 
         # Get user from unified model
         unified_user = UnifiedAuthModel.get_by_username(username)
@@ -573,14 +616,25 @@ async def resend_otp(request: ResendOTPRequest):
                 }
             )
 
-        # Check if user has an active OTP (not expired)
-        if not unified_user.otp_code or not unified_user.otp_expires_at or datetime.now(timezone.utc) > unified_user.otp_expires_at:
+        # Check if user has ever requested an OTP
+        if not unified_user.otp_code or not unified_user.otp_expires_at:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail={
                     "status": STATUS_FAILED,
                     "status_code": HTTP_400_BAD_REQUEST,
                     "message": MSG_NO_ACTIVE_OTP
+                }
+            )
+
+        # Check if that OTP has since expired
+        if datetime.now(timezone.utc) > unified_user.otp_expires_at:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_400_BAD_REQUEST,
+                    "message": MSG_OTP_EXPIRED
                 }
             )
 
@@ -605,14 +659,9 @@ async def resend_otp(request: ResendOTPRequest):
             )
 
         # Send OTP
-        if is_email_login:
-            success = await send_otp_email(username, otp)
-            method = METHOD_EMAIL
-            success_message = MSG_OTP_RESENT_EMAIL
-        else:
-            success = send_otp_sms(username, otp)
-            method = METHOD_SMS
-            success_message = MSG_OTP_RESENT_SMS
+        success = await send_otp_email(username, otp)
+        method = METHOD_EMAIL
+        success_message = MSG_OTP_RESENT_EMAIL
 
         if not success:
             error_message = MSG_FAILED_TO_SEND_OTP_VIA_METHOD.format(method=method)
@@ -681,8 +730,8 @@ async def refresh_token(request: RefreshTokenRequest):
     and a new refresh token if valid.
     """
     try:
-        user_id = verify_refresh_token(request.refresh_token)
-        if not user_id:
+        user_id, jti = verify_refresh_token(request.refresh_token)
+        if user_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
@@ -713,14 +762,41 @@ async def refresh_token(request: RefreshTokenRequest):
                 }
             )
 
-        # Create new tokens
+        # Refresh tokens predating session tracking carry no jti - reject
+        # them the same way an unknown/revoked session would be, rather than
+        # silently minting a session-less access token that would just fail
+        # on its very first authenticated request anyway.
+        session_row = UserSessionModel.get_by_jti(jti) if jti else None
+        if not jti or not session_row or session_row.is_revoked:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "status": STATUS_FAILED,
+                    "status_code": HTTP_401_UNAUTHORIZED,
+                    "message": "Session has been revoked or does not exist"
+                }
+            )
+
+        # Create new access token, reusing the SAME jti (no rotation) so it
+        # keeps pointing at the same UserSessionModel row.
         token_data = {
             'user_id': unified_user.id,
             'email': unified_user.email,
             'phone': unified_user.phone,
-            'role': 'admin' if unified_user.is_admin else 'user'
+            'role': 'admin' if unified_user.is_admin else 'user',
+            'jti': jti,
         }
         access_token = create_access_token(data=token_data)
+
+        # Bump last_used_at for this session on refresh too.
+        try:
+            with db():
+                db.session.query(UserSessionModel).filter(
+                    UserSessionModel.id == session_row.id
+                ).update({"last_used_at": datetime.now(timezone.utc)})
+                db.session.commit()
+        except Exception as e:
+            logger.error(f'Failed to bump last_used_at on refresh for jti={jti}: {e}', exc_info=True)
 
         return {
             'status_code': HTTP_200_OK,
@@ -739,5 +815,62 @@ async def refresh_token(request: RefreshTokenRequest):
                 "status": STATUS_FAILED,
                 "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
                 "message": 'Failed to refresh token'
+            }
+        )
+
+
+@router.post(
+    '/logout',
+    status_code=status.HTTP_200_OK,
+    summary='Logout',
+    description='Revoke the current session, or all sessions, ending real server-side auth (not just client-side token clearing)',
+    responses={
+        200: {
+            'description': 'Logged out successfully',
+            'content': {
+                'application/json': {
+                    'example': {
+                        'message': 'Logged out'
+                    }
+                }
+            }
+        }
+    }
+)
+async def logout(
+    request: LogoutRequest,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    """Log out the current user.
+
+    - `revoke_all=True` revokes EVERY active session for this user,
+      including the one used to call this endpoint (log out everywhere).
+    - `revoke_all=False` (default) revokes only the session tied to the
+      access token used to call this endpoint.
+    """
+    try:
+        current_jti = getattr(current_user, "_current_jti", None)
+
+        if request.revoke_all:
+            revoke_all_sessions(current_user.id, exclude_jti=None)
+        elif current_jti:
+            revoke_session_by_jti(current_user.id, current_jti)
+
+        return {
+            'status': STATUS_SUCCESS,
+            'status_code': HTTP_200_OK,
+            'message': 'Logged out'
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f'Error in logout: {e}', exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={
+                "status": STATUS_FAILED,
+                "status_code": HTTP_500_INTERNAL_SERVER_ERROR,
+                "message": 'Failed to log out'
             }
         )

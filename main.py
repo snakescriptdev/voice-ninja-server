@@ -3,9 +3,20 @@ from dotenv import load_dotenv
 import certifi
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
+# torch (embeddings) and faiss (vector index) each bring their own OpenMP
+# runtime; sharing a process crashes (segfault, sometimes mid-request, always
+# on process exit) unless both are pinned to a single thread. Must be set
+# before either library is imported anywhere in the app — our per-request
+# workloads are tiny, so this costs nothing. See app_v2/utils/faiss_store.py
+# and app_v2/utils/embedding_utils.py for the matching in-process pins.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 # Load environment variables
 load_dotenv()
 
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -15,7 +26,7 @@ from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
 from app_v2.core.exceptions import get_readable_message
-from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router, phone_router, widget_router,websocket_router,conversation_router,widget_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_user_management, payment_insights_router, api_key_management, public_api,public_websocket_router,webhooks, twilio_connector_router, web_agent_config_router, web_agent_router, invoice_files
+from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router, personal_knowledge_base_router, phone_router, widget_router,websocket_router,conversation_router,widget_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_user_management, payment_insights_router, api_key_management, public_api,public_websocket_router,webhooks, twilio_connector_router, web_agent_config_router, web_agent_router, invoice_files, support_router, admin_support, sessions_router
 from app_v2.routers.email_subscription import public_router as email_subscription_public_router, admin_router as email_subscription_admin_router
 from app_v2.utils.jwt_utils import HTTPBearer
 from fastapi.responses import HTMLResponse
@@ -25,8 +36,31 @@ from fastapi.responses import HTMLResponse
 from pathlib import Path
 from fastapi.staticfiles import StaticFiles
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Kicks off loading the personal-KB embedding model in the background on
+    # startup, so it's warm by the time the first real request needs it —
+    # without blocking server startup itself on the (multi-second) load. Any
+    # request that needs the model before this finishes just waits on the
+    # same load instead of triggering a duplicate one (see the lock in
+    # embedding_utils.get_embeddings()).
+    import threading
+    from app_v2.utils.embedding_utils import get_embeddings
+    from app_v2.core.logger import setup_logger
+    logger = setup_logger(__name__)
+
+    def _preload():
+        try:
+            get_embeddings()
+        except Exception as e:
+            logger.warning(f"Failed to preload embedding model in background, will load lazily on first use: {e}")
+
+    threading.Thread(target=_preload, daemon=True, name="preload-embedding-model").start()
+    yield
+
+
 app = FastAPI(title="Voice Ninja V2 API", version="2.0.0",docs_url=None,
-    redoc_url=None)
+    redoc_url=None, lifespan=lifespan)
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -164,7 +198,8 @@ app.include_router(ai_model_router)
 app.include_router(agent_router)
 app.include_router(voice_router)
 app.include_router(function_router)
-app.include_router(knowledge_base_router)
+app.include_router(knowledge_base_router, include_in_schema=False)
+app.include_router(personal_knowledge_base_router)
 app.include_router(phone_router)
 app.include_router(widget_router)
 app.include_router(websocket_router)
@@ -185,6 +220,10 @@ app.include_router(web_agent_config_router)
 app.include_router(web_agent_router)
 app.include_router(email_subscription_public_router)
 app.include_router(email_subscription_admin_router)
+app.include_router(support_router)
+app.include_router(admin_support.router)
+app.include_router(sessions_router)
+
 
 @app.get("/", tags=["System"])
 async def root():
