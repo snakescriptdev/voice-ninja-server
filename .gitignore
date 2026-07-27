@@ -17,6 +17,7 @@ pyproject.toml
 migrations/versions
 uv.lock
 uploads/*
+faiss_indexes/*
 branch_structure.json
 temp_auto_push.bat
 temp_interactive_push.bat
