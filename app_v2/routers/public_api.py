@@ -1343,7 +1343,7 @@ def sync_agent_kb_logic(agent_id: int):
     except Exception as e:
         logger.error(f"Failed to sync KB for agent {agent_id}: {e}")
 
-@router.get("/kb", response_model=PaginatedResponse[KnowledgeBaseResponse])
+@router.get("/kb", response_model=PaginatedResponse[KnowledgeBaseResponse], include_in_schema=False)
 async def list_kb_public(
     page: int = 1,
     size: int = 20,
@@ -1357,7 +1357,7 @@ async def list_kb_public(
         kb_items = query.order_by(KnowledgeBaseModel.id.asc()).offset(skip).limit(size).all()
         return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total/size), items=kb_items)
 
-@router.get("/kb/{id}", response_model=KnowledgeBaseResponse)
+@router.get("/kb/{id}", response_model=KnowledgeBaseResponse, include_in_schema=False)
 async def get_kb_public(
     id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1371,7 +1371,7 @@ async def get_kb_public(
             raise HTTPException(status_code=404, detail="Knowledge Base item not found")
         return kb_item
 
-@router.post("/kb/url", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/kb/url", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 async def create_kb_url_public(
     request: KnowledgeBaseURLCreate,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1415,7 +1415,7 @@ async def create_kb_url_public(
         db.session.refresh(kb_entry)
         return kb_entry
 
-@router.post("/kb/text", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/kb/text", response_model=KnowledgeBaseResponse, status_code=status.HTTP_201_CREATED, include_in_schema=False)
 async def create_kb_text_public(
     request: KnowledgeBaseTextCreate,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1454,7 +1454,7 @@ async def create_kb_text_public(
         db.session.refresh(kb_entry)
         return kb_entry
 
-@router.post("/kb/file", response_model=List[KnowledgeBaseResponse], status_code=status.HTTP_201_CREATED)
+@router.post("/kb/file", response_model=List[KnowledgeBaseResponse], status_code=status.HTTP_201_CREATED, include_in_schema=False)
 async def create_kb_file_public(
     files: List[UploadFile] = File(...),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1525,7 +1525,7 @@ async def create_kb_file_public(
             
         return responses
 
-@router.delete("/kb/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/kb/{id}", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
 async def delete_kb_public(
     id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1557,7 +1557,7 @@ async def delete_kb_public(
         for agent_id in agent_ids: sync_agent_kb_logic(agent_id)
     return None
 
-@router.post("/kb/bind", status_code=status.HTTP_200_OK)
+@router.post("/kb/bind", status_code=status.HTTP_200_OK, include_in_schema=False)
 async def bind_kb_public(
     request: KnowledgeBaseBind,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
