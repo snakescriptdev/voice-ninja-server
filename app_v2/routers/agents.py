@@ -30,6 +30,7 @@ from app_v2.databases.models import (
     TwilioUserCreds,
     KnowledgeBaseModel,
     AgentKnowledgeBaseBridge,
+    PersonalKnowledgeBaseAgentBridgeModel,
     AgentFunctionBridgeModel,
     FunctionModel,
     VariablesModel,
@@ -144,7 +145,7 @@ def agent_to_read(
             if is_first_call_pending is not None
             else is_agents_first_call(agent.id)
         ),
-        kb_count=len(agent.agent_knowledge_bases),
+        kb_count=len(agent.personal_kb_agent_bridges),
         tool_count=len(agent.agent_functions),
         conversation_count=conversation_count,
         credits_used=credits_used,
@@ -1045,6 +1046,7 @@ async def get_all_agents(
             selectinload(AgentModel.phone_number),
             selectinload(AgentModel.variables),
             selectinload(AgentModel.agent_knowledge_bases),
+            selectinload(AgentModel.personal_kb_agent_bridges),
             selectinload(AgentModel.agent_functions)
         )
         .filter(AgentModel.user_id == current_user.id)
@@ -1063,10 +1065,10 @@ async def get_all_agents(
     if sort_by in {"credits_desc", "kb_count_desc", "tool_count_desc"}:
         kb_sub = (
             db.session.query(
-                AgentKnowledgeBaseBridge.agent_id.label("agent_id"),
-                func.count(AgentKnowledgeBaseBridge.kb_id).label("cnt"),
+                PersonalKnowledgeBaseAgentBridgeModel.agent_id.label("agent_id"),
+                func.count(PersonalKnowledgeBaseAgentBridgeModel.kb_id).label("cnt"),
             )
-            .group_by(AgentKnowledgeBaseBridge.agent_id)
+            .group_by(PersonalKnowledgeBaseAgentBridgeModel.agent_id)
             .subquery()
         )
         tool_sub = (
