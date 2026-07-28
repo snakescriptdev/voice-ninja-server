@@ -9,7 +9,7 @@ import shutil
 import logging
 import mimetypes
 from datetime import datetime, timezone
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 import math
 
 from app_v2.databases.models import KnowledgeBaseModel, AgentModel, UnifiedAuthModel, AgentKnowledgeBaseBridge
@@ -350,8 +350,8 @@ def kb_to_read(item: KnowledgeBaseModel, agents_count: int = 0) -> KnowledgeBase
 
 @router.get("/", response_model=PaginatedResponse[KnowledgeBaseResponse], openapi_extra={"security": [{"BearerAuth": []}]})
 async def get_all_knowledge_base(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     title: Optional[str] = None,
     agent_name: Optional[str] = None,
     kb_type: Optional[str] = None,
@@ -444,7 +444,7 @@ async def get_all_knowledge_base(
 async def get_agent_knowledge_base(
     agent_id: int,
     skip: int = 0,
-    limit: int = 20,
+    limit: PageSize = 10,
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
