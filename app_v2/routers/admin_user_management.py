@@ -3,7 +3,7 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, desc, select
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, ConversationsModel, PaymentModel, PaymentTypeEnum, KnowledgeBaseModel
+from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, ConversationsModel, PaymentModel, PaymentTypeEnum, PersonalKnowledgeBaseModel, PersonalKnowledgeBaseChunkModel
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
 from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest, AdminUserTransactionItem, AdminUserBillingHistoryItem, AdminKnowledgeBaseItem
 from app_v2.schemas.pagination import PaginatedResponse, PageSize
@@ -435,9 +435,30 @@ def get_user_knowledge_base(user_id: int, page: int = Query(1, ge=1), page_size:
     """Knowledge base items created by a specific user — for the admin
     user-detail Knowledge Base tab."""
     try:
-        base = db.session.query(KnowledgeBaseModel).filter(KnowledgeBaseModel.user_id == user_id)
+        base = db.session.query(PersonalKnowledgeBaseModel).filter(PersonalKnowledgeBaseModel.user_id == user_id)
         total = base.count()
-        items = base.order_by(KnowledgeBaseModel.modified_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+        entries = base.order_by(PersonalKnowledgeBaseModel.modified_at.desc()).offset((page - 1) * page_size).limit(page_size).all()
+
+        chunk_counts = dict(
+            db.session.query(
+                PersonalKnowledgeBaseChunkModel.kb_id,
+                func.count(PersonalKnowledgeBaseChunkModel.id),
+            )
+            .filter(PersonalKnowledgeBaseChunkModel.kb_id.in_([e.id for e in entries]))
+            .group_by(PersonalKnowledgeBaseChunkModel.kb_id)
+            .all()
+        )
+        items = [
+            AdminKnowledgeBaseItem(
+                id=e.id,
+                title=e.title,
+                kb_type=e.kb_type,
+                num_chunks=chunk_counts.get(e.id, 0),
+                created_at=e.created_at,
+                modified_at=e.modified_at,
+            )
+            for e in entries
+        ]
 
         total_pages = (total + page_size - 1) // page_size if page_size > 0 else 0
         return PaginatedResponse(total=total, page=page, size=page_size, pages=total_pages, items=items)

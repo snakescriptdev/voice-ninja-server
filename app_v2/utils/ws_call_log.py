@@ -15,6 +15,7 @@ from fastapi_sqlalchemy import db
 
 from app_v2.databases.models import APICallLogModel
 from app_v2.schemas.enum_types import PublicLogChannelEnum
+from app_v2.utils.public_call_success_counter import increment_success_counter
 from app_v2.core.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -66,10 +67,11 @@ def finalize_ws_call_log(
     """
     Updates the row opened by start_ws_call_log() with the call's outcome —
     unless the call succeeded, in which case the in-flight placeholder row is
-    deleted instead. This log exists for error visibility/alerting, not a
-    full request audit trail, so successful calls aren't worth keeping.
-    No-op if log_id is None (e.g. the call was rejected before a user could
-    be resolved). Never raises. Must be called inside db().
+    deleted instead (a lightweight success counter is incremented first, so
+    the success still counts towards success/failure totals even though no
+    full detail row is kept). No-op if log_id is None (e.g. the call was
+    rejected before a user could be resolved). Never raises. Must be called
+    inside db().
     """
     if not log_id:
         return
@@ -78,6 +80,8 @@ def finalize_ws_call_log(
         if record is None:
             return
         if is_success:
+            if record.channel is not None:
+                increment_success_counter(record.user_id, record.channel, record.api_route, record.method, record.api_key_id)
             db.session.delete(record)
             db.session.commit()
             return

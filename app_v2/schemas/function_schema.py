@@ -281,6 +281,10 @@ class FunctionRead(BaseModel):
     modified_at: datetime
     # Number of the current user's agents this tool is attached to.
     agents_count: int = 0
+    # True for the auto-provisioned search_personal_knowledge_base tool — the
+    # frontend uses this to hide edit/delete and show name-only, since these
+    # tools are managed automatically and can't be edited/viewed in detail.
+    is_system_managed: bool = False
 
     model_config = {"from_attributes": True}
 

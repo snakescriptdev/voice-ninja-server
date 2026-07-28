@@ -93,8 +93,12 @@ def function_to_read(f: FunctionModel, agents_count: int = 0) -> FunctionRead:
         elevenlabs_tool_id=f.elevenlabs_tool_id,
         created_at=f.created_at,
         modified_at=f.modified_at,
-        api_config=api_schema,
+        # System-managed tools (e.g. the auto-provisioned personal-KB search
+        # tool) never expose their API config to the frontend — users can see
+        # the tool exists but can't view/edit its underlying URL/headers/etc.
+        api_config=api_schema if not f.is_system_managed else None,
         agents_count=agents_count,
+        is_system_managed=f.is_system_managed,
     )
 
 @router.post(
@@ -229,7 +233,6 @@ async def get_all_functions(
 
     query = db.session.query(FunctionModel).filter(
         FunctionModel.user_id == current_user.id,
-        FunctionModel.is_system_managed.is_(False),
     ).options(joinedload(FunctionModel.api_endpoint_url))
 
     if name:

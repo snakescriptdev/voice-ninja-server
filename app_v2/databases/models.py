@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, Date, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
 from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, PaymentProviderEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, PublicLogChannelEnum, SupportTicketCategoryEnum, SupportTicketStatusEnum
 from sqlalchemy.sql import func
@@ -9,7 +9,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict, MutableList
 import bcrypt
 import os
-from datetime import datetime, timezone, timezone
+from datetime import datetime, timezone, date
 from app_v2.core.config import VoiceSettings
 import uuid
 
@@ -1217,6 +1217,50 @@ class APICallLogModel(Base):
     __table_args__ = (
         Index("ix_api_call_logs_channel_route_created", "channel", "api_route", "created_at"),
     )
+
+
+class PublicCallSuccessCounterModel(Base):
+    """
+    Lightweight daily counter for successful public API / websocket calls.
+
+    Successful calls are never persisted as full APICallLogModel rows (by
+    design — that log exists for error visibility, not a full audit trail),
+    so the success side of "success vs failure" counts/graphs would always be
+    zero without this. This table stores just a count, not request/response
+    bodies, keeping storage low while making the number real. One row per
+    (user_id, channel, route, method, call_date), incremented atomically.
+    `method` is part of the key (not just channel/route) because the
+    /public-logs/endpoints breakdown groups failure counts the same way —
+    a route with both GET and POST would otherwise have its successes
+    double-counted onto both rows.
+    """
+    __tablename__ = "public_call_success_counters"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("unified_auth.id"), nullable=True, index=True)
+    # Plain string (not the publiclogchannelenum PG type api_call_logs uses)
+    # to avoid a duplicate-CREATE-TYPE conflict on a shared enum name — this
+    # table stores PublicLogChannelEnum's .value, e.g. "public_api".
+    channel: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    api_route: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Never NULL — defaults to "UNKNOWN" when the call didn't record a method
+    # (e.g. a websocket call with no explicit method), so the unique
+    # constraint below reliably matches on upsert (Postgres treats NULL as
+    # never equal to NULL, which would break ON CONFLICT matching).
+    method: Mapped[str] = mapped_column(String(10), nullable=False, default="UNKNOWN")
+    # 0 (never a real id — API key ids start at 1) means "no API key", e.g.
+    # widget_websocket calls, which aren't authenticated via an API key.
+    # Same NULL-never-matches-NULL reasoning as `method` above.
+    api_key_id: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    call_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    user = relationship("UnifiedAuthModel")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "channel", "api_route", "method", "api_key_id", "call_date", name="uq_public_call_success_counter"),
+    )
+
 
 class WebhookEventLogModel(Base):
     """
