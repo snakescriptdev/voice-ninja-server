@@ -26,7 +26,7 @@ from app_v2.utils.email_service import send_usage_history_export_email, send_bil
 from app_v2.constants import api_list
 
 from sqlalchemy import func
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.schemas.user_dashboard import (
     UserDashboardAgentResponse,
     UserDashboardPhoneNumberResponse,
@@ -390,8 +390,8 @@ def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(require_active_
 
 @router.get("/coins/buckets", response_model=CoinBucketsResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_coin_buckets(
-    page: int = 1,
-    size: int = 10,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     try:
@@ -461,21 +461,67 @@ def get_coin_buckets(
         logger.exception("Error fetching coin buckets")
         raise HTTPException(status_code=500, detail="Failed to fetch coin buckets")
 
-@router.get("/agents-summary", response_model=List[AgentSummaryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_agents_summary(current_user: UnifiedAuthModel = Depends(require_active_user())):
+@router.get("/agents-summary", response_model=PaginatedResponse[AgentSummaryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_agents_summary(
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
     """Per-agent summary for the logged-in user: web-agent / widget counts and
     conversation success / failed counts."""
     try:
-        return build_agent_summaries(current_user.id)
+        items, total = build_agent_summaries(current_user.id, page=page, size=size)
+        pages = (total + size - 1) // size if size > 0 else 1
+        return PaginatedResponse(total=total, page=page, size=size, pages=pages, items=items)
     except Exception as e:
         logger.error(f"Error in get_agents_summary: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.get("/agent-performance", response_model=PaginatedResponse[AgentAnalytics], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_agent_performance(
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
+    current_user: UnifiedAuthModel = Depends(RequireFeature("analytics_dashboard")),
+):
+    """Paginated per-agent call/duration/coin performance breakdown — a
+    paginated counterpart to the `agent_analytics` list embedded in
+    GET /analytics."""
+    try:
+        agent_query = db.session.query(
+            AgentModel.id.label('agent_id'),
+            AgentModel.agent_name,
+            func.count(ConversationsModel.id).label('call_count'),
+            func.sum(ConversationsModel.duration).label('total_duration'),
+            func.coalesce(func.sum(ConversationsModel.coins_charged_to_user), 0).label('coins_charged')
+        ).join(ConversationsModel, AgentModel.id == ConversationsModel.agent_id)\
+         .filter(ConversationsModel.user_id == current_user.id)\
+         .group_by(AgentModel.id, AgentModel.agent_name)
+
+        total = agent_query.count()
+        agent_data = agent_query.offset((page - 1) * size).limit(size).all()
+
+        agent_list = [
+            AgentAnalytics(
+                agent_id=a.agent_id,
+                agent_name=a.agent_name,
+                call_count=a.call_count,
+                total_duration=int(a.total_duration or 0),
+                coins_used=int(a.coins_charged or 0)
+            ) for a in agent_data
+        ]
+
+        pages = ceil(total / size) if size > 0 else 1
+        return PaginatedResponse(total=total, page=page, size=size, pages=pages, items=agent_list)
+    except Exception as e:
+        logger.error(f"Error in get_agent_performance: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/usage-history", response_model=UsageHistoryResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_usage_history(
-    page: int = 1,
-    size: int = 10,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """Details coin usage transactions."""
@@ -541,8 +587,8 @@ def get_usage_history(
 
 @router.post("/usage-history/export", openapi_extra={"security":[{"BearerAuth":[]}]})
 async def export_usage_history(
-    page: int = 1,
-    size: int = 10,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """Emails the user a CSV of exactly the usage-history records for the given
@@ -583,8 +629,8 @@ async def export_usage_history(
 
 @router.get("/billing-history", response_model=BillingHistoryResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_billing_history(
-    page: int = 1,
-    size: int = 10,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """
@@ -1083,8 +1129,8 @@ def get_public_log_hourly_distribution(
 def get_public_logs(
     channel: PublicLogChannelEnum,
     route: str,
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     api_key_id: Optional[int] = None,
     current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
@@ -1172,8 +1218,8 @@ def get_public_log_graph(
 
 @router.get("/leads", response_model=DashboardLeadListResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_leads(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     search: Optional[str] = None,
     agent_id: Optional[int] = None,
     current_user: UnifiedAuthModel = Depends(require_active_user())

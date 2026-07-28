@@ -27,7 +27,9 @@ from app_v2.schemas.user_dashboard import AgentSummaryItem, WebAgentSummaryRef, 
 _SORT_OPTIONS = {"credits_desc", "date_added_desc", "kb_count_desc", "tool_count_desc"}
 
 
-def build_agent_summaries(user_id: int, sort_by: Optional[str] = None) -> List[AgentSummaryItem]:
+def build_agent_summaries(
+    user_id: int, sort_by: Optional[str] = None, page: Optional[int] = None, size: Optional[int] = None
+) -> tuple[List[AgentSummaryItem], int]:
     # Conversation aggregates per agent (total + success/failed) — one row/agent.
     conv_sub = (
         db.session.query(
@@ -116,7 +118,12 @@ def build_agent_summaries(user_id: int, sort_by: Optional[str] = None) -> List[A
     elif sort_by == "tool_count_desc":
         query = query.order_by(func.coalesce(tool_sub.c.cnt, 0).desc(), AgentModel.agent_name)
 
-    rows = query.all()
+    total = query.count()
+
+    if page is not None and size is not None:
+        rows = query.offset((page - 1) * size).limit(size).all()
+    else:
+        rows = query.all()
 
     # Actual web-agent / widget rows (id, public_id, name) per agent, so the
     # frontend can render clickable links instead of just a count.
@@ -140,7 +147,7 @@ def build_agent_summaries(user_id: int, sort_by: Optional[str] = None) -> List[A
             WebAgentSummaryRef(id=wa_id, public_id=public_id, web_agent_name=web_agent_name)
         )
 
-    return [
+    items = [
         AgentSummaryItem(
             agent_id=r[0],
             agent_name=r[1],
@@ -159,3 +166,5 @@ def build_agent_summaries(user_id: int, sort_by: Optional[str] = None) -> List[A
         )
         for r in rows
     ]
+
+    return items, total
