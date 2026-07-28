@@ -18,7 +18,7 @@ since ElevenLabs calls it server-to-server, and is instead guarded by a
 shared secret header.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Request, status, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
@@ -37,7 +37,7 @@ from app_v2.databases.models import (
     AgentModel,
     UnifiedAuthModel,
 )
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.schemas.personal_knowledge_base_schema import (
     PersonalKnowledgeBaseResponse,
     PersonalKnowledgeBaseURLCreate,
@@ -682,8 +682,8 @@ async def download_personal_kb_file(
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
 async def get_all_personal_kb(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     title: Optional[str] = None,
     kb_type: Optional[str] = None,
     sort_by: Optional[str] = None,

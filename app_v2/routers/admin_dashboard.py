@@ -21,7 +21,7 @@ from app_v2.schemas.admin_dashboard import (
     AdminPaymentItem,
 )
 from app_v2.schemas.enum_types import CallStatusEnum, PublicLogChannelEnum, ChannelEnum
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, case, desc
@@ -349,7 +349,7 @@ def get_users_cost(
 )
 def list_all_conversations_for_admin(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: PageSize = 10,
     search: Optional[str] = Query(None, description="Search by user name/email or agent name"),
     date_after: Optional[date] = Query(None),
     date_before: Optional[date] = Query(None),
@@ -646,7 +646,7 @@ def list_public_logs_for_admin(
     channel: PublicLogChannelEnum,
     route: str,
     page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    size: PageSize = 10,
 ):
     """Paginated call log rows (full request/response detail) for one endpoint, across every user.
 
@@ -830,7 +830,7 @@ def _describe_admin_adjustment(coins: int) -> str:
 )
 def list_all_payments_for_admin(
     page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    size: PageSize = 10,
     status_filter: Optional[str] = Query(None, alias="status"),
     email: Optional[str] = None,
     amount_min: Optional[float] = None,

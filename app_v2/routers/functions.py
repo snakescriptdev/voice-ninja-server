@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_
 from typing import List, Optional
@@ -20,7 +20,7 @@ from app_v2.schemas.function_schema import (
     ApiSchema,
     PrimitiveField
 )
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs import ElevenLabsAgent
 from app_v2.utils.crypto_utils import encrypt_data
@@ -216,8 +216,8 @@ async def create_function(
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
 async def get_all_functions(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     name: Optional[str] = None,
     method: Optional[str] = None,
     agent_name: Optional[str] = None,

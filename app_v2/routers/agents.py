@@ -1,10 +1,10 @@
 import re
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from fastapi_sqlalchemy import db
 from app_v2.schemas.agent_config import AgentConfigGenerator, AgentConfigOut
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 import math
 from app_v2.utils.llm_utils import generate_system_prompt_async
@@ -1024,8 +1024,8 @@ async def check_agent_name(
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
 async def get_all_agents(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     name: Optional[str] = None,
     voice: Optional[str] = None,
     sort_by: Optional[str] = None,
