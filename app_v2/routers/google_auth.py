@@ -21,7 +21,8 @@ from app_v2.core.logger import setup_logger
 from app_v2.core.config import VoiceSettings
 logger = setup_logger(__name__)
 from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
-from app_v2.utils.jwt_utils import create_access_token, create_refresh_token, create_user_session
+from app_v2.utils.jwt_utils import create_access_token, create_refresh_token, create_user_session, get_client_ip, parse_device_label
+from app_v2.utils.email_service import send_new_login_email
 
 from app_v2.constants import (
     STATUS_SUCCESS,
@@ -328,7 +329,20 @@ async def google_callback(code: str, http_request: Request):
         # http_request here is the actual browser hitting the OAuth
         # redirect callback, so its User-Agent/IP reflect the real device.
         create_user_session(user_id, jti, http_request)
-        
+
+        # Best-effort "new login" notification - never blocks/breaks login.
+        if user_email:
+            try:
+                await send_new_login_email(
+                    user_email=user_email,
+                    user_name=None,
+                    device_label=parse_device_label(http_request.headers.get("user-agent")),
+                    ip_address=get_client_ip(http_request),
+                    occurred_at=datetime.now(timezone.utc),
+                )
+            except Exception as e:
+                logger.error(f"Failed to send new login email for user_id={user_id}: {e}", exc_info=True)
+
         # Generate one-time authorization code
         app_code = secrets.token_urlsafe(32)
         

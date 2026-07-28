@@ -204,7 +204,7 @@ def delete_conversation(conversation_id: int,current_user= Depends(require_activ
 		el_conv = ElevenLabsConversation()
 		resp = el_conv.delete_conversation(elevenlabs_conv_id)
 		if not resp.status:
-			raise HTTPException(status_code=500, detail="Failed to delete conversation from ElevenLabs")
+			raise HTTPException(status_code=500, detail="Failed to delete conversation")
 		try:
 			db.session.delete(conv)
 			db.session.commit()

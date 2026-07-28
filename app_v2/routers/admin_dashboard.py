@@ -20,7 +20,7 @@ from app_v2.schemas.admin_dashboard import (
     AdminWebhookEventItem,
     AdminPaymentItem,
 )
-from app_v2.schemas.enum_types import CallStatusEnum, PublicLogChannelEnum
+from app_v2.schemas.enum_types import CallStatusEnum, PublicLogChannelEnum, ChannelEnum
 from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
@@ -262,7 +262,7 @@ def get_elevenlabs_usage_and_billing():
         logger.error(f"Error fetching ElevenLabs billing info: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to fetch usage and billing information from ElevenLabs."
+            detail="Failed to fetch usage and billing information."
         )
 
 @router.get("/users-cost", response_model=PaginatedResponse[UserCostItem],dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
@@ -357,6 +357,16 @@ def list_all_conversations_for_admin(
     agent_id: Optional[int] = Query(None, description="Filter to a single agent's conversations"),
     call_status: Optional[CallStatusEnum] = Query(None, description="Filter by call status (success/failed/in_progress)"),
     profit_type: Optional[Literal["profit", "loss"]] = Query(None, description="Filter to calls where profit_percentage >= 0 (profit) or < 0 (loss)"),
+    channel: Optional[ChannelEnum] = Query(None, description="Filter by conversation channel (e.g. 'api' for the public WS API, 'widget', 'web_agent', 'call', 'test_voice')"),
+    cost_profit_type: Optional[Literal["llm_profit", "llm_loss", "conversation_profit", "conversation_loss"]] = Query(
+        None,
+        description=(
+            "Filter by per-category cost variance (actual EL charge vs our calculated "
+            "estimate), same convention as the Conv Δ%/LLM Δ% columns: "
+            "'llm_profit'/'conversation_profit' = actual <= calculated (we didn't undercharge), "
+            "'llm_loss'/'conversation_loss' = actual > calculated (we undercharged)."
+        ),
+    ),
 ):
     """
     Every conversation across every user, side by side with the raw
@@ -393,6 +403,16 @@ def list_all_conversations_for_admin(
             q = q.filter(ConversationsModel.profit_percentage >= 0)
         elif profit_type == "loss":
             q = q.filter(ConversationsModel.profit_percentage < 0)
+        if channel:
+            q = q.filter(ConversationsModel.channel == channel)
+        if cost_profit_type == "llm_profit":
+            q = q.filter(ConversationsModel.actual_llm_credits <= ConversationsModel.calculated_llm_cost)
+        elif cost_profit_type == "llm_loss":
+            q = q.filter(ConversationsModel.actual_llm_credits > ConversationsModel.calculated_llm_cost)
+        elif cost_profit_type == "conversation_profit":
+            q = q.filter(ConversationsModel.actual_conversation_credits <= ConversationsModel.calculated_conversation_cost)
+        elif cost_profit_type == "conversation_loss":
+            q = q.filter(ConversationsModel.actual_conversation_credits > ConversationsModel.calculated_conversation_cost)
 
         q = q.order_by(ConversationsModel.created_at.desc())
 
@@ -627,9 +647,12 @@ def list_public_logs_for_admin(
     route: str,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
-    only_failures: bool = True,
 ):
-    """Paginated call log rows (full request/response detail) for one endpoint, across every user."""
+    """Paginated call log rows (full request/response detail) for one endpoint, across every user.
+
+    Always scoped to failures: successful calls' bodies are never persisted,
+    so there's nothing to click through to for a success count.
+    """
     try:
         from math import ceil
 
@@ -637,10 +660,12 @@ def list_public_logs_for_admin(
         q = (
             db.session.query(APICallLogModel, UnifiedAuthModel)
             .join(UnifiedAuthModel, APICallLogModel.user_id == UnifiedAuthModel.id)
-            .filter(APICallLogModel.channel == channel, APICallLogModel.api_route == route)
+            .filter(
+                APICallLogModel.channel == channel,
+                APICallLogModel.api_route == route,
+                APICallLogModel.is_success == False,
+            )
         )
-        if only_failures:
-            q = q.filter(APICallLogModel.is_success == False)
 
         total = q.count()
         rows = q.order_by(APICallLogModel.created_at.desc()).offset(skip).limit(size).all()
