@@ -24,6 +24,11 @@ from app_v2.schemas.enum_types import (
 from app_v2.utils.coin_utils import get_user_coin_balance
 from app_v2.utils.email_service import send_usage_history_export_email, send_billing_history_export_email
 from app_v2.constants import api_list
+from app_v2.utils.public_call_success_counter import (
+    get_success_counts_by_endpoint,
+    get_success_count_total,
+    get_success_counts_by_day,
+)
 
 from sqlalchemy import func
 from app_v2.schemas.pagination import PaginatedResponse, PageSize
@@ -924,6 +929,17 @@ def _channel_group_filter(channel_group: Optional[str]):
     return None
 
 
+# Same "api"/"ws"/all grouping as _channel_group_filter, but as a plain list
+# of channels — used to query the success counter table, which isn't an
+# APICallLogModel query so can't reuse a SQLAlchemy filter expression.
+def _channel_group_list(channel_group: Optional[str]) -> List[PublicLogChannelEnum]:
+    if channel_group == "api":
+        return [PublicLogChannelEnum.public_api]
+    if channel_group == "ws":
+        return [PublicLogChannelEnum.public_websocket, PublicLogChannelEnum.widget_websocket]
+    return PUBLIC_LOG_CHANNELS
+
+
 def _parse_month_param(month: Optional[str]) -> tuple:
     """Returns (year, month) for a "YYYY-MM" string, defaulting to the current UTC month."""
     if month:
@@ -936,9 +952,14 @@ def _parse_month_param(month: Optional[str]) -> tuple:
     return now.year, now.month
 
 
-def _day_of_month_graph(base_filters: list, year: int, month: int) -> PublicLogGraphResponse:
+def _day_of_month_graph(
+    base_filters: list, year: int, month: int, user_id: int, channels: List[PublicLogChannelEnum]
+) -> PublicLogGraphResponse:
     """Builds the full day-of-month range for `month`, filling gaps with 0 —
-    mirrors the fill-the-full-range pattern used by /analytics's daily trends."""
+    mirrors the fill-the-full-range pattern used by /analytics's daily trends.
+    Failure counts come from APICallLogModel (full detail rows); success
+    counts come from the lightweight counter table, since successes are
+    never persisted as full rows."""
     days_in_month = calendar.monthrange(year, month)[1]
     month_start = datetime(year, month, 1, tzinfo=timezone.utc)
     month_end = (
@@ -946,22 +967,28 @@ def _day_of_month_graph(base_filters: list, year: int, month: int) -> PublicLogG
         else datetime(year, month + 1, 1, tzinfo=timezone.utc)
     )
 
-    rows = (
+    failure_rows = (
         db.session.query(
             func.extract("day", APICallLogModel.created_at).label("day"),
-            func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
-            func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
+            func.count(APICallLogModel.id).label("failure_count"),
         )
-        .filter(*base_filters, APICallLogModel.created_at >= month_start, APICallLogModel.created_at < month_end)
+        .filter(
+            *base_filters,
+            APICallLogModel.is_success == False,
+            APICallLogModel.created_at >= month_start,
+            APICallLogModel.created_at < month_end,
+        )
         .group_by("day")
         .all()
     )
-    by_day = {int(r.day): r for r in rows}
+    failure_by_day = {int(r.day): int(r.failure_count or 0) for r in failure_rows}
+    success_by_day = get_success_counts_by_day(user_id, channels, year, month)
+
     buckets = [
         DayOfMonthBucket(
             day=d,
-            success_count=int(by_day[d].success_count or 0) if d in by_day else 0,
-            failure_count=int(by_day[d].failure_count or 0) if d in by_day else 0,
+            success_count=success_by_day.get(d, 0),
+            failure_count=failure_by_day.get(d, 0),
         )
         for d in range(1, days_in_month + 1)
     ]
@@ -985,6 +1012,7 @@ def get_public_log_endpoints(
         filters = [
             APICallLogModel.user_id == current_user.id,
             APICallLogModel.channel.in_(PUBLIC_LOG_CHANNELS),
+            APICallLogModel.is_success == False,
         ]
         group_filter = _channel_group_filter(channel_group)
         if group_filter is not None:
@@ -992,29 +1020,43 @@ def get_public_log_endpoints(
         if api_key_id is not None:
             filters.append(APICallLogModel.api_key_id == api_key_id)
 
-        rows = (
+        # Failure counts (full detail rows exist) and success counts (from
+        # the lightweight counter — no detail rows exist for successes) are
+        # sourced separately, then merged over the union of endpoint keys so
+        # a route with only successes and zero failures still shows up.
+        failure_rows = (
             db.session.query(
                 APICallLogModel.channel,
                 APICallLogModel.api_route,
                 APICallLogModel.method,
-                func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
-                func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
-                func.count(APICallLogModel.id).label("total_count"),
+                func.count(APICallLogModel.id).label("failure_count"),
             )
             .filter(*filters)
             .group_by(APICallLogModel.channel, APICallLogModel.api_route, APICallLogModel.method)
             .all()
         )
+        failure_map = {
+            (
+                row.channel.value if row.channel else PublicLogChannelEnum.public_api.value,
+                row.api_route,
+                (row.method or "UNKNOWN").upper(),
+            ): int(row.failure_count or 0)
+            for row in failure_rows
+        }
+        success_map = get_success_counts_by_endpoint(
+            current_user.id, _channel_group_list(channel_group), api_key_id
+        )
+
         endpoints = [
             PublicLogEndpointItem(
-                channel=row.channel.value if row.channel else PublicLogChannelEnum.public_api.value,
-                route=row.api_route,
-                method=row.method,
-                success_count=int(row.success_count or 0),
-                failure_count=int(row.failure_count or 0),
-                total_count=int(row.total_count or 0),
+                channel=key[0],
+                route=key[1],
+                method=None if key[2] == "UNKNOWN" else key[2],
+                success_count=success_map.get(key, 0),
+                failure_count=failure_map.get(key, 0),
+                total_count=success_map.get(key, 0) + failure_map.get(key, 0),
             )
-            for row in rows
+            for key in set(failure_map.keys()) | set(success_map.keys())
         ]
         return PublicLogEndpointListResponse(endpoints=endpoints)
     except Exception as e:
@@ -1038,7 +1080,9 @@ def get_public_log_summary_graph(
         group_filter = _channel_group_filter(channel_group)
         if group_filter is not None:
             base_filters.append(group_filter)
-        return _day_of_month_graph(base_filters, year, mon)
+        return _day_of_month_graph(
+            base_filters, year, mon, current_user.id, _channel_group_list(channel_group)
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -1064,19 +1108,19 @@ def get_public_log_overview(
         if api_key_id is not None:
             filters.append(APICallLogModel.api_key_id == api_key_id)
 
-        row = (
-            db.session.query(
-                func.count(APICallLogModel.id).label("total_calls"),
-                func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
-                func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
-            )
-            .filter(*filters)
-            .first()
+        failure_count = (
+            db.session.query(func.count(APICallLogModel.id))
+            .filter(*filters, APICallLogModel.is_success == False)
+            .scalar()
+            or 0
+        )
+        success_count = get_success_count_total(
+            current_user.id, _channel_group_list(channel_group), api_key_id
         )
         return PublicLogOverviewResponse(
-            total_calls=int(row.total_calls or 0),
-            success_count=int(row.success_count or 0),
-            failure_count=int(row.failure_count or 0),
+            total_calls=int(failure_count) + success_count,
+            success_count=success_count,
+            failure_count=int(failure_count),
         )
     except Exception as e:
         logger.error(f"Error in get_public_log_overview: {str(e)}")

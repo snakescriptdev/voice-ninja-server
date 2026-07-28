@@ -27,6 +27,7 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, case, desc
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
+from app_v2.utils.public_call_success_counter import get_success_counts_by_endpoint_admin
 from app_v2.core.config import VoiceSettings
 from elevenlabs import ElevenLabs
 from datetime import datetime, timezone
@@ -606,29 +607,40 @@ ADMIN_PUBLIC_LOG_CHANNELS = [
 def list_public_log_endpoints_for_admin():
     """All-time success/failure/total counts per (channel, route, method), across every user."""
     try:
-        rows = (
+        failure_rows = (
             db.session.query(
                 APICallLogModel.channel,
                 APICallLogModel.api_route,
                 APICallLogModel.method,
-                func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
-                func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
-                func.count(APICallLogModel.id).label("total_count"),
+                func.count(APICallLogModel.id).label("failure_count"),
             )
-            .filter(APICallLogModel.channel.in_(ADMIN_PUBLIC_LOG_CHANNELS))
+            .filter(
+                APICallLogModel.channel.in_(ADMIN_PUBLIC_LOG_CHANNELS),
+                APICallLogModel.is_success == False,
+            )
             .group_by(APICallLogModel.channel, APICallLogModel.api_route, APICallLogModel.method)
             .all()
         )
+        failure_map = {
+            (
+                row.channel.value if row.channel else PublicLogChannelEnum.public_api.value,
+                row.api_route,
+                (row.method or "UNKNOWN").upper(),
+            ): int(row.failure_count or 0)
+            for row in failure_rows
+        }
+        success_map = get_success_counts_by_endpoint_admin(ADMIN_PUBLIC_LOG_CHANNELS)
+
         endpoints = [
             AdminPublicLogEndpointItem(
-                channel=row.channel.value if row.channel else PublicLogChannelEnum.public_api.value,
-                route=row.api_route,
-                method=row.method,
-                success_count=int(row.success_count or 0),
-                failure_count=int(row.failure_count or 0),
-                total_count=int(row.total_count or 0),
+                channel=key[0],
+                route=key[1],
+                method=None if key[2] == "UNKNOWN" else key[2],
+                success_count=success_map.get(key, 0),
+                failure_count=failure_map.get(key, 0),
+                total_count=success_map.get(key, 0) + failure_map.get(key, 0),
             )
-            for row in rows
+            for key in set(failure_map.keys()) | set(success_map.keys())
         ]
         return AdminPublicLogEndpointListResponse(endpoints=endpoints)
     except Exception as e:

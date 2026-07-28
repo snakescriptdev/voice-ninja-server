@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType, MultipartSubtypeEnum
 from starlette.datastructures import Headers, UploadFile
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
@@ -25,10 +25,15 @@ async def send_email_async(
     recipients: list,
     body: str,
     attachments: list[tuple[str, bytes, str]] | None = None,
+    plain_text_body: str | None = None,
 ):
     """
     attachments: list of (filename, content_bytes, mime_type), e.g.
     [("invoice.pdf", pdf_bytes, "application/pdf")].
+
+    plain_text_body: when given, sent as a multipart/alternative text/plain
+    part alongside the HTML body — an HTML-only email (no plain-text
+    alternative) is a known spam-score/deliverability factor.
     """
     upload_attachments = []
     for filename, content, mime_type in (attachments or []):
@@ -46,6 +51,10 @@ async def send_email_async(
         body=body,
         subtype="html",
         attachments=upload_attachments,
+        alternative_body=plain_text_body,
+        multipart_subtype=(
+            MultipartSubtypeEnum.alternative if plain_text_body else MultipartSubtypeEnum.mixed
+        ),
     )
 
     fm = FastMail(email_config)
