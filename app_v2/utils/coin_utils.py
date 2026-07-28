@@ -185,6 +185,22 @@ def reset_unused_subscription_coins(user_id: int):
         return 0
 
 
+ADMIN_MAX_COINS_ADDED_PER_DAY = 10000
+
+def get_admin_added_coins_today(user_id: int) -> int:
+    """Sum of coins already manually credited to this user today (UTC) via
+    admin_adjust_coins — used to enforce a daily cap on admin top-ups."""
+    now = datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    total = db.session.query(func.coalesce(func.sum(CoinsLedgerModel.coins), 0)).filter(
+        CoinsLedgerModel.user_id == user_id,
+        CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.admin_adjustment,
+        CoinsLedgerModel.coins > 0,
+        CoinsLedgerModel.created_at >= day_start,
+    ).scalar()
+    return int(total or 0)
+
+
 def admin_adjust_coins(
     user_id: int,
     amount: int,
