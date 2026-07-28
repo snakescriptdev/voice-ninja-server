@@ -135,7 +135,7 @@ async def create_function(
         if not el_response.status:
             raise HTTPException(
                 status_code=status.HTTP_424_FAILED_DEPENDENCY,
-                detail=f"Failed to create tool in ElevenLabs: {el_response.error_message}"
+                detail=f"Failed to create tool: {el_response.error_message}"
             )
         
         elevenlabs_tool_id = el_response.data.get("id")
@@ -147,7 +147,7 @@ async def create_function(
         logger.exception("Unexpected error creating ElevenLabs tool")
         raise HTTPException(
             status_code=status.HTTP_424_FAILED_DEPENDENCY,
-            detail=f"Unexpected error while creating ElevenLabs tool: {str(e)}"
+            detail=f"Unexpected error while creating tool: {str(e)}"
         )
 
     # 2. Save to Database
@@ -509,7 +509,7 @@ async def update_function(
                 db.session.rollback()
                 raise HTTPException(
                     status_code=status.HTTP_424_FAILED_DEPENDENCY,
-                    detail=f"Failed to update tool in ElevenLabs: {el_response.error_message}"
+                    detail=f"Failed to update tool: {el_response.error_message}"
                 )
             logger.info(f"✅ ElevenLabs tool '{function.elevenlabs_tool_id}' updated successfully")
         except HTTPException:
@@ -519,7 +519,7 @@ async def update_function(
             db.session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_424_FAILED_DEPENDENCY,
-                detail=f"Failed to update tool in ElevenLabs due to an unexpected error: {str(e)}"
+                detail=f"Failed to update tool due to an unexpected error: {str(e)}"
             )
 
     try:

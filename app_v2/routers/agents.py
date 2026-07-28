@@ -212,6 +212,7 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
         if config.enabled:
             el_transfers = []
             valid_transfers = []
+            seen_transfers = set()
             for t in config.transfers:
                 transfer_data = t.model_dump()
                 requested_id = str(transfer_data.get("agent_id"))
@@ -235,6 +236,18 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
                     AgentModel.id == int(requested_id),
                     AgentModel.user_id == user_id
                 ).first()
+
+                # Duplicate detection (same target + condition) happens here,
+                # after the lookup, so the error can name the agent instead of
+                # showing its raw internal id.
+                dup_key = (requested_id, t.condition.strip().lower())
+                if dup_key in seen_transfers:
+                    agent_label = target_agent.agent_name if target_agent else requested_id
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Duplicate transfer to agent '{agent_label}' with the same condition '{t.condition}'"
+                    )
+                seen_transfers.add(dup_key)
 
                 if target_agent and target_agent.elevenlabs_agent_id:
                     transfer_data["agent_id"] = target_agent.elevenlabs_agent_id
@@ -623,8 +636,8 @@ async def create_agent(
         raise HTTPException(
             status_code=400,
             detail={
-                "message": f"Voice '{agent_in.voice}' not found or not synced with ElevenLabs",
-                "hint": "Run: python populate_elevenlabs_data.py to sync voices, then use a voice from the list.",
+                "message": f"Voice '{agent_in.voice}' not found or not synced",
+                "hint": "Run the voice sync script to sync voices, then use a voice from the list.",
             },
         )
     if not voice.is_enabled:
@@ -785,7 +798,7 @@ async def create_agent(
         if not el_response.status:
             raise HTTPException(
                 status_code=424,
-                detail=el_response.error_message or "Failed to create agent in ElevenLabs",
+                detail=el_response.error_message or "Failed to create agent",
             )
 
         elevenlabs_agent_id = el_response.data.get("agent_id")
@@ -797,7 +810,7 @@ async def create_agent(
         logger.exception("Unexpected ElevenLabs error")
         raise HTTPException(
             status_code=424,
-            detail=f"Unexpected error while creating agent in ElevenLabs {str(e)}",
+            detail=f"Unexpected error while creating agent: {str(e)}",
         )
 
     # -------------------------------------------------
@@ -1211,7 +1224,7 @@ async def get_llm_pricing(
     if not response.status:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to fetch LLM pricing from ElevenLabs",
+            detail="Failed to fetch LLM pricing",
         )
 
     usd_to_inr_rate = get_usd_to_inr_rate()
@@ -1294,7 +1307,7 @@ def _sync_agent_tool_ids_with_elevenlabs(agent: AgentModel) -> None:
         logger.error(f"❌ ElevenLabs agent tool resync failed: {el_response.error_message}")
         raise HTTPException(
             status_code=424,
-            detail=f"Failed to sync tools with ElevenLabs: {el_response.error_message}",
+            detail=f"Failed to sync tools: {el_response.error_message}",
         )
 
 
@@ -1506,7 +1519,7 @@ async def update_agent(
         if not voice:
             raise HTTPException(
                 status_code=400,
-                detail=f"Voice '{agent_in.voice}' not found or not synced with ElevenLabs. Run: python populate_elevenlabs_data.py",
+                detail=f"Voice '{agent_in.voice}' not found or not synced. Run the voice sync script, then use a voice from the list.",
             )
         if voice.is_enabled == False:
             raise HTTPException(
@@ -1711,7 +1724,7 @@ async def update_agent(
                 db.session.rollback()
                 raise HTTPException(
                     status_code=424,
-                    detail=f"Failed to update agent in ElevenLabs: {el_response.error_message}"
+                    detail=f"Failed to update agent: {el_response.error_message}"
                 )
 
             logger.info(f"✅ ElevenLabs agent '{agent.elevenlabs_agent_id}' updated successfully")
@@ -1749,7 +1762,7 @@ async def update_agent(
             db.session.rollback()
             raise HTTPException(
                 status_code=424,
-                detail=f"Failed to update agent in ElevenLabs due to an unexpected error: {str(e)}"
+                detail=f"Failed to update agent due to an unexpected error: {str(e)}"
             )
 
     db.session.commit()
