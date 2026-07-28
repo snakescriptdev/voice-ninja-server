@@ -10,6 +10,7 @@ from app_v2.utils.activity_logger import log_activity
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum, CoinTransactionTypeEnum
 import io
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
+from app_v2.schemas.pagination import PageSize
 
 
 security = HTTPBearer()
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/api/v2/conversation", tags=["conversation"],dependen
 @router.get("/user",openapi_extra={"security":[{"BearerAuth": []}]})
 def list_user_conversations(
 	page: int = Query(1, ge=1),
-	page_size: int = Query(10, ge=1, le=100),
+	page_size: PageSize = 10,
 	search: Optional[str] = Query(None, description="Search by agent name or lead name"),
 	date_after: Optional[date] = Query(None),
 	date_before: Optional[date] = Query(None),

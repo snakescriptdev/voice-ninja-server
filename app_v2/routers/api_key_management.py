@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
 from typing import List
 
 from app_v2.databases.models import APIKeyModel, UnifiedAuthModel
 from app_v2.schemas.api_key_schema import APIKeyCreate, APIKeyResponse, APIKeyFullResponse, APIKeyUpdate
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.utils.api_key_utils import generate_client_id, generate_client_secret, hash_secret
 from sqlalchemy.exc import SQLAlchemyError
@@ -106,10 +107,12 @@ async def create_api_key(
 
 @router.get(
     "/",
-    response_model=List[APIKeyResponse],
+    response_model=PaginatedResponse[APIKeyResponse],
     openapi_extra={"security": [{"BearerAuth": []}]}
 )
 async def list_api_keys(
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     """List all API keys belonging to the current user."""
@@ -117,12 +120,15 @@ async def list_api_keys(
         logger.info(f"Fetching API keys for user_id={current_user.id}")
 
         with db():
-            keys = db.session.query(APIKeyModel).filter(
+            query = db.session.query(APIKeyModel).filter(
                 APIKeyModel.user_id == current_user.id
-            ).all()
+            )
+            total = query.count()
+            keys = query.offset((page - 1) * size).limit(size).all()
 
         logger.info(f"Found {len(keys)} API keys for user_id={current_user.id}")
-        return keys
+        total_pages = (total + size - 1) // size if size > 0 else 1
+        return PaginatedResponse(total=total, page=page, size=size, pages=total_pages, items=keys)
 
     except SQLAlchemyError as e:
         logger.error(

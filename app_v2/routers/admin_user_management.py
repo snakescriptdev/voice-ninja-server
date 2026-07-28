@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, CoinsLedgerModel, ActivityLogModel, APICallLogModel, VoiceModel, ConversationsModel, PaymentModel, PaymentTypeEnum, KnowledgeBaseModel
 from app_v2.utils.jwt_utils import is_admin, HTTPBearer
 from app_v2.schemas.admin_user_management import UserManagementStats, UserManagementListItem, SuspendUserRequest,AdjustUserCoinRequest, AdminUserTransactionItem, AdminUserBillingHistoryItem, AdminKnowledgeBaseItem
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
 
@@ -63,7 +63,7 @@ def get_user_management_stats():
 @router.get("/users", response_model=PaginatedResponse[UserManagementListItem],openapi_extra={"security":[{"BearerAuth":[]}]})
 def list_users_managed(
     page: int = Query(1, ge=1),
-    limit: int = Query(10, ge=1),
+    limit: PageSize = 10,
     search: Optional[str] = None,
     is_suspended: Optional[bool] = Query(None),
     sort_order: str = Query("desc", enum=["asc", "desc"]),
@@ -300,7 +300,7 @@ def get_user_detail(user_id: int):
 
 
 @router.get("/users/{user_id}/transactions", response_model=PaginatedResponse[AdminUserTransactionItem], openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_user_transactions(user_id: int, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
+def get_user_transactions(user_id: int, page: int = Query(1, ge=1), page_size: PageSize = 10):
     """All coin-ledger transactions (added and deducted) for a user, newest first."""
     try:
         base = db.session.query(CoinsLedgerModel).filter(CoinsLedgerModel.user_id == user_id)
@@ -349,7 +349,7 @@ def get_user_transactions(user_id: int, page: int = Query(1, ge=1), page_size: i
 def get_user_billing_history(
     user_id: int,
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: PageSize = 10,
     provider_payment_id: Optional[str] = None,
     provider_order_id: Optional[str] = None,
 ):
@@ -416,20 +416,22 @@ def get_user_billing_invoice(user_id: int, payment_id: int):
     return {"path": f"/invoices/{payment.invoice_reference}.pdf"}
 
 
-@router.get("/users/{user_id}/agents-summary", response_model=List[AgentSummaryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_user_agents_summary(user_id: int, sort_by: Optional[str] = None):
+@router.get("/users/{user_id}/agents-summary", response_model=PaginatedResponse[AgentSummaryItem], openapi_extra={"security":[{"BearerAuth":[]}]})
+def get_user_agents_summary(user_id: int, sort_by: Optional[str] = None, page: int = Query(1, ge=1), size: PageSize = 10):
     """Per-agent summary (web-agent/widget counts, conversation success/failed
     counts, KB/tool counts) for a specific user — for the admin user-detail
     Agents tab. sort_by: credits_desc | date_added_desc | kb_count_desc | tool_count_desc."""
     try:
-        return build_agent_summaries(user_id, sort_by=sort_by)
+        items, total = build_agent_summaries(user_id, sort_by=sort_by, page=page, size=size)
+        pages = (total + size - 1) // size if size > 0 else 1
+        return PaginatedResponse(total=total, page=page, size=size, pages=pages, items=items)
     except Exception as e:
         logger.error(f"Error building agents summary for user {user_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/users/{user_id}/knowledge-base", response_model=PaginatedResponse[AdminKnowledgeBaseItem], openapi_extra={"security":[{"BearerAuth":[]}]})
-def get_user_knowledge_base(user_id: int, page: int = Query(1, ge=1), page_size: int = Query(20, ge=1, le=100)):
+def get_user_knowledge_base(user_id: int, page: int = Query(1, ge=1), page_size: PageSize = 10):
     """Knowledge base items created by a specific user — for the admin
     user-detail Knowledge Base tab."""
     try:
