@@ -10,10 +10,15 @@ from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.core.logger import setup_logger
 
-from app_v2.utils.coin_utils import admin_adjust_coins, get_user_coin_balance
+from app_v2.utils.coin_utils import (
+    admin_adjust_coins,
+    get_user_coin_balance,
+    get_admin_added_coins_today,
+    ADMIN_MAX_COINS_ADDED_PER_DAY,
+)
 from app_v2.utils.agent_summary import build_agent_summaries
 from app_v2.schemas.user_dashboard import AgentSummaryItem
-from app_v2.utils.email_service import send_account_suspended_email, send_account_reactivated_email
+from app_v2.utils.email_service import send_account_suspended_email, send_account_reactivated_email, send_email_to_admins
 
 security = HTTPBearer()
 logger = setup_logger(__name__)
@@ -485,17 +490,23 @@ async def suspend_user(user_id:int,request:SuspendUserRequest):
         raise HTTPException(status_code=500,detail=str(e))
 
 @router.post("/users/{user_id}/adjust-coins", openapi_extra={"security": [{"BearerAuth": []}]})
-def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
+async def adjust_user_coins(
+    user_id: int,
+    request: AdjustUserCoinRequest,
+    current_admin: UnifiedAuthModel = Depends(is_admin),
+):
     """
     Adjust user coins (add or deduct) by admin.
     Positive amount adds coins, negative amount deducts coins.
+    Adding coins is capped at ADMIN_MAX_COINS_ADDED_PER_DAY per user per day,
+    and notifies all admins by email with the reason once applied.
     """
     try:
         user = (db.session.query(UnifiedAuthModel).filter(
             UnifiedAuthModel.id == user_id,
             UnifiedAuthModel.is_admin.is_(False)
         ).first())
-        
+
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -508,20 +519,43 @@ def adjust_user_coins(user_id: int, request: AdjustUserCoinRequest):
                 detail="This user's account is suspended. Please reactivate the account before adjusting coins."
             )
 
+        if request.coins > 0:
+            already_added_today = get_admin_added_coins_today(user_id)
+            if already_added_today + request.coins > ADMIN_MAX_COINS_ADDED_PER_DAY:
+                remaining = max(ADMIN_MAX_COINS_ADDED_PER_DAY - already_added_today, 0)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Admins can add at most {ADMIN_MAX_COINS_ADDED_PER_DAY} coins to a user per day. "
+                        f"{already_added_today} already added today for this user — {remaining} remaining."
+                    )
+                )
+
         success = admin_adjust_coins(
             user_id=user_id,
             amount=request.coins,
             reason=request.reason,
         )
-        
+
         if not success and request.coins < 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Failed to adjust coins. Check if user has sufficient balance for deduction."
             )
-            
+
+        if success and request.coins > 0:
+            admin_label = current_admin.name or current_admin.email or f"Admin #{current_admin.id}"
+            user_label = user.name or user.email or f"User #{user_id}"
+            subject = f"{request.coins} coins added to {user_label} by {admin_label}"
+            body = (
+                f"<p><b>{admin_label}</b> manually added <b>{request.coins} coins</b> "
+                f"to <b>{user_label}</b>'s account.</p>"
+                f"<p><b>Reason:</b> {request.reason}</p>"
+            )
+            await send_email_to_admins(db.session, subject, body)
+
         return {"message": "Coins adjusted successfully", "new_balance": get_user_coin_balance(user_id)}
-        
+
     except HTTPException:
         raise
     except Exception as e:

@@ -1152,8 +1152,18 @@ class APIKeyModel(Base):
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     client_id: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
     client_secret_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Last 4 characters of the plaintext secret, stored alongside the hash
+    # purely for display (e.g. "••••••••ab12") so a user can tell keys apart
+    # in the list without the full secret ever being retrievable again. Null
+    # for keys created before this column existed.
+    client_secret_last4: Mapped[str | None] = mapped_column(String(4), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    # Optional request-time restrictions. Empty/null means "no restriction" for
+    # that dimension. IPs are compared against the caller's resolved client IP;
+    # origins are compared against the Origin/Referer header's hostname.
+    allowed_ips: Mapped[list | None] = mapped_column(MutableList.as_mutable(JSONB), nullable=True)
+    allowed_origins: Mapped[list | None] = mapped_column(MutableList.as_mutable(JSONB), nullable=True)
 
     user = relationship("UnifiedAuthModel", back_populates="api_keys")
 
@@ -1175,7 +1185,9 @@ class APICallLogModel(Base):
     __tablename__ = "api_call_logs"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
+    # Nullable: a request whose client_id didn't match any API key can't be
+    # attributed to a user, but is still logged (see attempted_client_id).
+    user_id: Mapped[Optional[int]] = mapped_column(ForeignKey("unified_auth.id"), nullable=True, index=True)
     api_route: Mapped[str] = mapped_column(String(255), nullable=False)
     # Route path TEMPLATE (e.g. "/api/v2/public/agents/{agent_id}"), not the
     # resolved path — so the Logs page groups one row per endpoint.
@@ -1186,6 +1198,10 @@ class APICallLogModel(Base):
 
     channel: Mapped[Optional[PublicLogChannelEnum]] = mapped_column(Enum(PublicLogChannelEnum, name="publiclogchannelenum"), nullable=True, index=True)
     method: Mapped[Optional[str]] = mapped_column(String(10), nullable=True)
+    # Set only when user_id is null: the raw X-API-Client-ID header from a
+    # request whose client_id didn't match any API key, so the failed auth
+    # attempt is still captured instead of silently dropped.
+    attempted_client_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     request_params: Mapped[Optional[dict]] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
     request_body: Mapped[Optional[dict]] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
     response_body: Mapped[Optional[dict]] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
