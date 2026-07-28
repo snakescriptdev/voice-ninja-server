@@ -16,7 +16,7 @@ from app_v2.databases.models import (
     ConversationsModel,
     WidgetModel,
     WebAgentPageModel,
-    AgentKnowledgeBaseBridge,
+    PersonalKnowledgeBaseAgentBridgeModel,
     AgentFunctionBridgeModel,
 )
 from app_v2.schemas.enum_types import CallStatusEnum
@@ -69,10 +69,10 @@ def build_agent_summaries(
     # widget_sub/webagent_sub, to avoid join fan-out corrupting other counts.
     kb_sub = (
         db.session.query(
-            AgentKnowledgeBaseBridge.agent_id.label("agent_id"),
-            func.count(AgentKnowledgeBaseBridge.kb_id).label("cnt"),
+            PersonalKnowledgeBaseAgentBridgeModel.agent_id.label("agent_id"),
+            func.count(PersonalKnowledgeBaseAgentBridgeModel.kb_id).label("cnt"),
         )
-        .group_by(AgentKnowledgeBaseBridge.agent_id)
+        .group_by(PersonalKnowledgeBaseAgentBridgeModel.agent_id)
         .subquery()
     )
     tool_sub = (

@@ -48,6 +48,7 @@ from app_v2.schemas.personal_knowledge_base_schema import (
     PersonalKnowledgeBaseQueryResult,
     PersonalKnowledgeBaseQueryResponse,
     PersonalKnowledgeBaseAnswerResponse,
+    PersonalKnowledgeBaseAgentItem,
     ToolSearchRequest,
 )
 from app_v2.utils.jwt_utils import require_active_user
@@ -160,6 +161,12 @@ def _kb_to_read(item: PersonalKnowledgeBaseModel) -> PersonalKnowledgeBaseRespon
         .scalar()
         or 0
     )
+    agent_count = (
+        db.session.query(func.count(PersonalKnowledgeBaseAgentBridgeModel.id))
+        .filter(PersonalKnowledgeBaseAgentBridgeModel.kb_id == item.id)
+        .scalar()
+        or 0
+    )
     return PersonalKnowledgeBaseResponse(
         id=item.id,
         kb_type=item.kb_type,
@@ -168,6 +175,7 @@ def _kb_to_read(item: PersonalKnowledgeBaseModel) -> PersonalKnowledgeBaseRespon
         content_text=item.content_text,
         file_size=item.file_size,
         num_chunks=num_chunks,
+        agent_count=agent_count,
         created_at=item.created_at,
         modified_at=item.modified_at,
     )
@@ -725,6 +733,53 @@ async def get_all_personal_kb(
         raise e
     except Exception as e:
         logger.error(f"Error retrieving personal knowledge base: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/{kb_id}/agents",
+    response_model=PaginatedResponse[PersonalKnowledgeBaseAgentItem],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def get_personal_kb_agents(
+    kb_id: int,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    """Paginated list of agents a personal KB item is attached to — for the
+    /knowledge-base page's "attached agents" drilldown."""
+    try:
+        with db():
+            kb_entry = db.session.query(PersonalKnowledgeBaseModel).filter(
+                PersonalKnowledgeBaseModel.id == kb_id,
+                PersonalKnowledgeBaseModel.user_id == current_user.id,
+            ).first()
+            if not kb_entry:
+                raise HTTPException(status_code=404, detail="Knowledge base item not found")
+
+            query = (
+                db.session.query(AgentModel.id, AgentModel.agent_name)
+                .join(
+                    PersonalKnowledgeBaseAgentBridgeModel,
+                    PersonalKnowledgeBaseAgentBridgeModel.agent_id == AgentModel.id,
+                )
+                .filter(PersonalKnowledgeBaseAgentBridgeModel.kb_id == kb_id)
+                .order_by(AgentModel.agent_name)
+            )
+            total = query.count()
+            pages = math.ceil(total / size) if size > 0 else 1
+            rows = query.offset((page - 1) * size).limit(size).all()
+
+            items = [
+                PersonalKnowledgeBaseAgentItem(agent_id=r.id, agent_name=r.agent_name)
+                for r in rows
+            ]
+            return PaginatedResponse(total=total, page=page, size=size, pages=pages, items=items)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error retrieving agents for personal KB {kb_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
