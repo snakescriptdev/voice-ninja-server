@@ -22,7 +22,7 @@ class AppearanceConfigUpdate(BaseModel):
 class CustomFieldSchema(BaseModel):
     field_name: str
     required: bool = False
-    field_type: Literal["text", "number", "email", "textarea"] = "text"
+    field_type: Literal["text", "number", "email", "textarea","phone"] = "text"
 
 
 class PrechatConfig(BaseModel):
