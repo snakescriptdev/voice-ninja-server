@@ -19,6 +19,7 @@ from app_v2.utils.coin_utils import (
 from app_v2.utils.agent_summary import build_agent_summaries
 from app_v2.schemas.user_dashboard import AgentSummaryItem
 from app_v2.utils.email_service import send_account_suspended_email, send_account_reactivated_email, send_email_to_admins
+from app_v2.utils.email_templates import render_email, heading, paragraph, info_table
 
 security = HTTPBearer()
 logger = setup_logger(__name__)
@@ -570,12 +571,26 @@ async def adjust_user_coins(
             admin_label = current_admin.name or current_admin.email or f"Admin #{current_admin.id}"
             user_label = user.name or user.email or f"User #{user_id}"
             subject = f"{request.coins} coins added to {user_label} by {admin_label}"
-            body = (
-                f"<p><b>{admin_label}</b> manually added <b>{request.coins} coins</b> "
-                f"to <b>{user_label}</b>'s account.</p>"
-                f"<p><b>Reason:</b> {request.reason}</p>"
+            content = (
+                heading("Coins Added")
+                + paragraph(f"<b>{admin_label}</b> manually added <b>{request.coins} coins</b> to <b>{user_label}</b>'s account.")
+                + info_table([
+                    ("Admin", admin_label),
+                    ("User", user_label),
+                    ("Coins Added", str(request.coins)),
+                    ("Reason", request.reason),
+                ])
             )
-            await send_email_to_admins(db.session, subject, body)
+            body = render_email(content, preheader=f"{request.coins} coins added to {user_label}")
+            plain_text = (
+                "Coins Added\n\n"
+                f"{admin_label} manually added {request.coins} coins to {user_label}'s account.\n\n"
+                f"Admin: {admin_label}\n"
+                f"User: {user_label}\n"
+                f"Coins Added: {request.coins}\n"
+                f"Reason: {request.reason}\n"
+            )
+            await send_email_to_admins(db.session, subject, body, plain_text_body=plain_text)
 
         return {"message": "Coins adjusted successfully", "new_balance": get_user_coin_balance(user_id)}
 
