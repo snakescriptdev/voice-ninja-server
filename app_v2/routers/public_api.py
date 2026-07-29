@@ -157,36 +157,41 @@ class PublicAPIRoute(APIRoute):
                             # request made with a deactivated key never got logged
                             # at all, even though we know exactly whose key it was.
                             key = db.session.query(APIKeyModel).filter_by(client_id=client_id).first()
-                            if key:
-                                content_type = request.headers.get("content-type", "")
-                                if "application/json" in content_type:
-                                    req_body_parsed = _try_parse_json_bytes(raw_request_body)
-                                elif raw_request_body:
-                                    req_body_parsed = {"_unloggable": True, "content_type": content_type}
-                                else:
-                                    req_body_parsed = None
-                                resp_body_parsed = (
-                                    _try_parse_json_bytes(getattr(response, "body", None))
-                                    if response is not None else None
-                                )
-                                log_public_api_call(
-                                    user_id=key.user_id,
-                                    api_route=route_path,
-                                    status_code=status_code,
-                                    response_time_ms=process_time_ms,
-                                    coins_used=0,
-                                    channel=PublicLogChannelEnum.public_api,
-                                    method=request.method,
-                                    request_params={
-                                        "path_params": dict(request.path_params),
-                                        "query_params": dict(request.query_params),
-                                    },
-                                    request_body=sanitize_for_log(req_body_parsed),
-                                    response_body=sanitize_for_log(resp_body_parsed),
-                                    is_success=(200 <= status_code < 300),
-                                    error_message=error_message,
-                                    api_key_id=key.id,
-                                )
+                            # `key` can be None here (client_id didn't match any API
+                            # key at all — typo'd/garbage/deleted key). We still want
+                            # 3xx/4xx/5xx to be logged rather than silently dropped,
+                            # so we fall back to an unattributed log row instead of
+                            # requiring a resolvable user_id.
+                            content_type = request.headers.get("content-type", "")
+                            if "application/json" in content_type:
+                                req_body_parsed = _try_parse_json_bytes(raw_request_body)
+                            elif raw_request_body:
+                                req_body_parsed = {"_unloggable": True, "content_type": content_type}
+                            else:
+                                req_body_parsed = None
+                            resp_body_parsed = (
+                                _try_parse_json_bytes(getattr(response, "body", None))
+                                if response is not None else None
+                            )
+                            log_public_api_call(
+                                user_id=key.user_id if key else None,
+                                api_route=route_path,
+                                status_code=status_code,
+                                response_time_ms=process_time_ms,
+                                coins_used=0,
+                                channel=PublicLogChannelEnum.public_api,
+                                method=request.method,
+                                request_params={
+                                    "path_params": dict(request.path_params),
+                                    "query_params": dict(request.query_params),
+                                },
+                                request_body=sanitize_for_log(req_body_parsed),
+                                response_body=sanitize_for_log(resp_body_parsed),
+                                is_success=(200 <= status_code < 300),
+                                error_message=error_message,
+                                api_key_id=key.id if key else None,
+                                attempted_client_id=None if key else client_id,
+                            )
                     except Exception as e:
                         logger.error(f"Failed to log public API call in route handler: {e}")
 
@@ -431,7 +436,7 @@ async def create_agent(
             timezone=agent_in.timezone
         )
         if not el_response.status:
-            raise HTTPException(status_code=424, detail="ElevenLabs failure")
+            raise HTTPException(status_code=424, detail="Failed to create agent with the voice provider")
         
         elevenlabs_agent_id = el_response.data.get("agent_id")
         
@@ -637,7 +642,7 @@ async def update_agent_public(
                     db.session.rollback()
                     raise HTTPException(
                         status_code=424,
-                        detail=f"Failed to update agent in ElevenLabs: {el_response.error_message}"
+                        detail=f"Failed to update agent: {el_response.error_message}"
                     )
 
                 # Refresh the stored LLM price now that ElevenLabs has the new
@@ -660,7 +665,7 @@ async def update_agent_public(
                 db.session.rollback()
                 raise HTTPException(
                     status_code=424,
-                    detail=f"Failed to update agent in ElevenLabs due to an unexpected error: {str(e)}"
+                    detail=f"Failed to update agent due to an unexpected error: {str(e)}"
                 )
 
         db.session.commit()
@@ -1436,7 +1441,7 @@ async def create_kb_text_public(
         kb_client = ElevenLabsKB()
         kb_response = kb_client.add_text_document(request.content, request.title)
         if not kb_response.status:
-            raise HTTPException(status_code=424, detail=f"ElevenLabs failure: {kb_response.error_message}")
+            raise HTTPException(status_code=424, detail=f"Knowledge base sync failure: {kb_response.error_message}")
         
         doc_id = kb_response.data.get("document_id")
         rag_id = kb_client.compute_rag_index(doc_id)
@@ -1499,7 +1504,7 @@ async def create_kb_file_public(
             kb_response = kb_client.upload_document(file_path, name=file.filename)
             if not kb_response.status:
                 if os.path.exists(file_path): os.remove(file_path)
-                raise HTTPException(status_code=424, detail=f"ElevenLabs failure for {file.filename}: {kb_response.error_message}")
+                raise HTTPException(status_code=424, detail=f"Knowledge base sync failure for {file.filename}: {kb_response.error_message}")
             
             doc_id = kb_response.data.get("document_id")
             rag_id = kb_client.compute_rag_index(doc_id)
@@ -2021,7 +2026,7 @@ async def create_function_public(
             api_schema=function_in.api_config
         )
         if not el_response.status:
-            raise HTTPException(status_code=424, detail=f"ElevenLabs failure: {el_response.error_message}")
+            raise HTTPException(status_code=424, detail=f"Failed to create tool: {el_response.error_message}")
 
         elevenlabs_tool_id = el_response.data.get("id")
 
@@ -2159,7 +2164,7 @@ async def update_function_public(
             el_res = el_client.update_tool(tool_id=function.elevenlabs_tool_id, **el_params)
             if not el_res.status:
                 db.session.rollback()
-                raise HTTPException(status_code=424, detail=f"ElevenLabs update failure: {el_res.error_message}")
+                raise HTTPException(status_code=424, detail=f"Failed to update tool: {el_res.error_message}")
 
         db.session.commit()
         db.session.refresh(function)

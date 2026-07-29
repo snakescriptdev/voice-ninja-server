@@ -268,9 +268,9 @@ async def create_voice(
                     )
                 
                 raise HTTPException(
-                    status_code=424, 
+                    status_code=424,
                     detail={
-                        "message": clean_message or f"Failed to clone voice in ElevenLabs: {error_msg}"
+                        "message": clean_message or f"Failed to clone voice: {error_msg}"
                     }
                 )
             
@@ -464,7 +464,7 @@ async def preview_voice(
         if not voice.elevenlabs_voice_id:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="This voice is not linked to ElevenLabs"
+                detail="This voice is not linked to a synced provider voice"
             )
         
         if voice.has_sample_audio == True:

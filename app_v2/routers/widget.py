@@ -867,7 +867,7 @@ def _build_embed_script(public_id: str) -> str:
         inputTag = '<textarea id="vn-custom-' + safeId + '" placeholder="' + escapeHtml(field.field_name) + '"' +
           (field.required ? ' required' : '') + '></textarea>';
       } else {
-        var htmlType = (fldType === 'email') ? 'email' : (fldType === 'number') ? 'number' : 'text';
+        var htmlType = (fldType === 'email') ? 'email' : (fldType === 'number') ? 'number' : (fldType === 'phone') ? 'tel' : 'text';
         inputTag = '<input type="' + htmlType + '" id="vn-custom-' + safeId + '" placeholder="' + escapeHtml(field.field_name) + '"' +
           (field.required ? ' required' : '') + '>';
       }
@@ -1123,6 +1123,14 @@ def _build_embed_script(public_id: str) -> str:
       }
       if (fieldDef.type === 'tel' && !PHONE_RE.test(val.replace(/[\s\(\)\-\.]/g, ''))) {
         return 'Please enter a valid phone number';
+      }
+      if (fieldDef.type === 'phone') {
+        if (!/^[0-9+\-]+$/.test(val)) {
+          return 'Phone number can only contain numbers, - and +';
+        }
+        if (val.replace(/[^0-9]/g, '').length < 10) {
+          return 'Phone number must have at least 10 digits';
+        }
       }
       if (fieldDef.type === 'number' && isNaN(Number(val))) {
         return 'Please enter a valid number';
