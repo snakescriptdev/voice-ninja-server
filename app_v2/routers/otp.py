@@ -14,7 +14,7 @@ from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
 logger = setup_logger(__name__)
-from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings, UserSessionModel
+from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings, UserSessionModel, SupportTicketModel
 from app_v2.utils.otp_utils import (
     generate_otp,
     is_email,
@@ -449,7 +449,22 @@ async def verify_otp(
             is_verified=True,
             last_login=datetime.now(timezone.utc)
         )
-        
+
+        # Link any anonymous "contact us" tickets submitted with this same
+        # email to this account, so they show up under the user's own
+        # support tickets now that the email is confirmed to be theirs.
+        if unified_user.email:
+            linked = (
+                db.session.query(SupportTicketModel)
+                .filter(
+                    SupportTicketModel.email == unified_user.email.lower(),
+                    SupportTicketModel.user_id.is_(None),
+                )
+                .update({SupportTicketModel.user_id: unified_user.id}, synchronize_session=False)
+            )
+            if linked:
+                db.session.commit()
+
         # Also update old model for backward compatibility
         old_user = UserModel.get_by_username(username)
         if old_user:
