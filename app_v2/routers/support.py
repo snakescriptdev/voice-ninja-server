@@ -69,7 +69,7 @@ def create_public_support_ticket(request: PublicSupportTicketCreate):
 )
 def create_support_ticket(
     request: SupportTicketCreate,
-    current_user: UnifiedAuthModel = Depends(require_active_user()),
+    current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True)),
 ):
     try:
         ticket = SupportTicketModel(
@@ -98,7 +98,7 @@ def list_support_tickets(
     page: int = 1,
     size: int = 20,
     status_filter: Optional[SupportTicketStatusEnum] = None,
-    current_user: UnifiedAuthModel = Depends(require_active_user()),
+    current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True)),
 ):
     try:
         skip = (page - 1) * size
@@ -139,7 +139,7 @@ def list_support_tickets(
 )
 def get_support_ticket(
     ticket_id: int,
-    current_user: UnifiedAuthModel = Depends(require_active_user()),
+    current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True)),
 ):
     try:
         ticket = (
