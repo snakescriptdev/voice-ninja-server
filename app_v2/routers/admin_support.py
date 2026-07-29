@@ -30,10 +30,14 @@ _TERMINAL_STATUSES = {SupportTicketStatusEnum.resolved, SupportTicketStatusEnum.
 
 def _to_admin_read(ticket: SupportTicketModel) -> SupportTicketAdminRead:
     user = ticket.user
-    user_name = None
     if user:
         parts = [p for p in [user.first_name, user.last_name] if p]
         user_name = " ".join(parts) if parts else (user.name or None)
+        user_email = user.email
+    else:
+        # Anonymous "contact us" submission, not yet linked to an account.
+        user_name = ticket.name
+        user_email = ticket.email
 
     return SupportTicketAdminRead(
         id=ticket.id,
@@ -46,8 +50,9 @@ def _to_admin_read(ticket: SupportTicketModel) -> SupportTicketAdminRead:
         updated_at=ticket.updated_at,
         resolved_at=ticket.resolved_at,
         user_id=ticket.user_id,
-        user_email=user.email if user else None,
+        user_email=user_email,
         user_name=user_name,
+        is_guest=user is None,
     )
 
 
@@ -67,7 +72,9 @@ def list_all_support_tickets(
     try:
         skip = (page - 1) * size
 
-        query = db.session.query(SupportTicketModel).join(
+        # outerjoin (not join): anonymous tickets have no user_id, so an
+        # inner join would silently drop every guest-submitted ticket.
+        query = db.session.query(SupportTicketModel).outerjoin(
             UnifiedAuthModel, SupportTicketModel.user_id == UnifiedAuthModel.id
         )
 
@@ -83,6 +90,8 @@ def list_all_support_tickets(
                 or_(
                     SupportTicketModel.subject.ilike(term),
                     SupportTicketModel.message.ilike(term),
+                    SupportTicketModel.email.ilike(term),
+                    UnifiedAuthModel.email.ilike(term),
                 )
             )
 

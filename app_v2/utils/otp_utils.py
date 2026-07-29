@@ -4,6 +4,7 @@ import re
 from datetime import timedelta
 from app_v2.core.logger import setup_logger
 from app_v2.utils.email_service import send_email_async
+from app_v2.utils.email_templates import render_email, heading, paragraph, signoff
 
 logger = setup_logger(__name__)
 
@@ -19,29 +20,16 @@ def is_email(text: str) -> bool:
 async def send_otp_email(email: str, otp: str):
     """Send OTP via email"""
     try:
-        html = f"""
-        <html>
-        <body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:30px;margin:0;">
-        <table width="600" align="center" style="background:white;border-radius:10px;padding:30px;border-collapse:collapse;box-shadow:0 0 10px rgba(0,0,0,0.08);">
-            <tr>
-                <td>
-                    <h2 style="color:#1f2937;margin-top:0;">Your Verification Code</h2>
-                    <p>Use this code to complete your login:</p>
-                    <div style="background:#f5f5f5;padding:15px;text-align:center;font-size:32px;
-                                font-weight:bold;letter-spacing:5px;margin:20px 0;border-radius:6px;">
-                        {otp}
-                    </div>
-                    <p style="color:#666;">This code expires in 10 minutes.</p>
-                    <p style="color:#555;">
-                        If you didn't request this code, you can safely ignore this email.
-                    </p>
-                    <p style="color:#555;">Thanks,<br/>Voice Ninja Team</p>
-                </td>
-            </tr>
-        </table>
-        </body>
-        </html>
-        """
+        content = (
+            heading("Your Verification Code")
+            + paragraph("Use this code to complete your login:")
+            + f'<div style="background:#f9fafb;border:1px solid #e5e7eb;padding:18px;text-align:center;'
+              f'font-size:32px;font-weight:800;letter-spacing:6px;margin:0 0 20px;border-radius:8px;'
+              f'color:#111827;">{otp}</div>'
+            + paragraph("This code expires in 10 minutes.", muted=True)
+            + signoff("If you didn't request this code, you can safely ignore this email.")
+        )
+        html = render_email(content, preheader=f"Your verification code is {otp}")
         plain_text = (
             "Your Verification Code\n\n"
             f"Use this code to complete your login: {otp}\n\n"
