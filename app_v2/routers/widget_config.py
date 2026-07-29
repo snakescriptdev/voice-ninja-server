@@ -1,7 +1,7 @@
 from typing import Optional
 from fastapi import Body
 
-from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.responses import Response, HTMLResponse
 
 from fastapi_sqlalchemy import db
@@ -10,6 +10,7 @@ from sqlalchemy import func
 
 from app_v2.databases.models import AgentModel, AgentLanguageBridge, WidgetModel, UnifiedAuthModel
 from app_v2.schemas.widget_schema import WidgetConfig, WidgetConfigResponse, WidgetListResponse, WidgetConfigUpdate
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from sqlalchemy.exc import NoResultFound
 from app_v2.utils.activity_logger import log_activity
 import uuid
@@ -33,25 +34,42 @@ router = APIRouter(
 
 
 
-@router.get("/widgets", response_model=list[WidgetListResponse], openapi_extra={"security": [{"BearerAuth": []}]})
-def list_widgets(request: Request, agent_id: Optional[int] = None, user=Depends(require_active_user())):
+@router.get("/widgets", response_model=PaginatedResponse[WidgetListResponse], openapi_extra={"security": [{"BearerAuth": []}]})
+def list_widgets(
+    request: Request,
+    agent_id: Optional[int] = None,
+    search: Optional[str] = None,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
+    user=Depends(require_active_user()),
+):
     query = db.session.query(WidgetModel).filter(WidgetModel.user_id == user.id)
     if agent_id is not None:
         query = query.filter(WidgetModel.agent_id == agent_id)
-    widgets = query.order_by(WidgetModel.created_at.desc()).all()
+    if search:
+        query = query.filter(func.lower(WidgetModel.widget_name).contains(search.lower()))
+    total = query.count()
+    widgets = query.order_by(WidgetModel.created_at.desc()).offset((page - 1) * size).limit(size).all()
     base_url = str(request.base_url).rstrip("/")
-    return [
-        WidgetListResponse(
-            id=wa.id,
-            widget_name=wa.widget_name,
-            public_id=wa.public_id,
-            shareable_link=f"{base_url}/api/v2/widget/preview/{wa.public_id}",
-            is_enabled=wa.is_enabled,
-            created_at = wa.created_at,
-            agent_id=wa.agent_id,
-            agent_name=wa.agent.agent_name if wa.agent else ""
-        ) for wa in widgets
-    ]
+    total_pages = (total + size - 1) // size if size > 0 else 1
+    return PaginatedResponse(
+        total=total,
+        page=page,
+        size=size,
+        pages=total_pages,
+        items=[
+            WidgetListResponse(
+                id=wa.id,
+                widget_name=wa.widget_name,
+                public_id=wa.public_id,
+                shareable_link=f"{base_url}/api/v2/widget/preview/{wa.public_id}",
+                is_enabled=wa.is_enabled,
+                created_at = wa.created_at,
+                agent_id=wa.agent_id,
+                agent_name=wa.agent.agent_name if wa.agent else ""
+            ) for wa in widgets
+        ],
+    )
 
 
 @router.post("/widgets", response_model=WidgetConfigResponse,openapi_extra={"security":[{"BearerAuth":[]}]})

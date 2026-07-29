@@ -6,6 +6,7 @@ from app_v2.databases.models import ActivityLogModel, APIDailyUsageModel, APICal
 from sqlalchemy import func
 from app_v2.utils.activity_logger import log_activity
 from app_v2.schemas.enum_types import PublicLogChannelEnum
+from app_v2.utils.public_call_success_counter import increment_success_counter
 
 from app_v2.utils.feature_access import get_feature_limit
 
@@ -69,7 +70,7 @@ def track_and_limit_api(user_id: int):
         db.session.commit()
 
 def log_public_api_call(
-    user_id: int,
+    user_id: Optional[int],
     api_route: str,
     status_code: int,
     response_time_ms: int,
@@ -83,16 +84,29 @@ def log_public_api_call(
     is_success: Optional[bool] = None,
     error_message: Optional[str] = None,
     api_key_id: Optional[int] = None,
+    attempted_client_id: Optional[str] = None,
 ):
     """
     Logs a detailed public API call record. Successful calls (is_success
-    True, or a 2xx status_code when is_success wasn't given) are skipped
-    entirely — this log exists for error visibility/alerting, not a full
-    request audit trail, so only 2xx traffic is skipped; 3xx/4xx/5xx are
-    all logged as failures.
+    True, or a 2xx status_code when is_success wasn't given) skip the full
+    detail row entirely — this log exists for error visibility/alerting, not
+    a full request audit trail — but still increment a lightweight daily
+    success counter (see public_call_success_counter.py) so success counts
+    shown to users/admins are real instead of always zero.
+
+    `user_id` may be None (e.g. the request's client_id didn't match any API
+    key, so there's no user to attribute it to) — `attempted_client_id`
+    should be set in that case so the failed auth attempt is still captured
+    instead of being dropped entirely.
     """
     success = is_success if is_success is not None else (200 <= status_code < 300)
     if success:
+        try:
+            with db():
+                increment_success_counter(user_id, channel, api_route, method, api_key_id)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Failed to increment success counter: {e}")
         return
     try:
         with db():
@@ -110,6 +124,7 @@ def log_public_api_call(
                 is_success=success,
                 error_message=error_message,
                 api_key_id=api_key_id,
+                attempted_client_id=attempted_client_id,
             )
             db.session.add(log_entry)
             db.session.commit()

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_
 from typing import List, Optional
@@ -20,7 +20,7 @@ from app_v2.schemas.function_schema import (
     ApiSchema,
     PrimitiveField
 )
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.core.logger import setup_logger
 from app_v2.utils.elevenlabs import ElevenLabsAgent
 from app_v2.utils.crypto_utils import encrypt_data
@@ -80,7 +80,7 @@ def function_to_read(f: FunctionModel, agents_count: int = 0) -> FunctionRead:
                 {k: PrimitiveField(**v) for k, v in db_config.path_params.items()}
                 if db_config.path_params else None
             ),
-            query_params_schema=db_config.query_params,
+            query_params_schema=db_config.query_params if db_config.query_params else None,
             request_body_schema=db_config.body_schema,
             response_variables=db_config.response_variables,
             content_type="application/json" if db_config.body_schema else None,
@@ -93,8 +93,12 @@ def function_to_read(f: FunctionModel, agents_count: int = 0) -> FunctionRead:
         elevenlabs_tool_id=f.elevenlabs_tool_id,
         created_at=f.created_at,
         modified_at=f.modified_at,
-        api_config=api_schema,
+        # System-managed tools (e.g. the auto-provisioned personal-KB search
+        # tool) never expose their API config to the frontend — users can see
+        # the tool exists but can't view/edit its underlying URL/headers/etc.
+        api_config=api_schema if not f.is_system_managed else None,
         agents_count=agents_count,
+        is_system_managed=f.is_system_managed,
     )
 
 @router.post(
@@ -135,7 +139,7 @@ async def create_function(
         if not el_response.status:
             raise HTTPException(
                 status_code=status.HTTP_424_FAILED_DEPENDENCY,
-                detail=f"Failed to create tool in ElevenLabs: {el_response.error_message}"
+                detail=f"Failed to create tool: {el_response.error_message}"
             )
         
         elevenlabs_tool_id = el_response.data.get("id")
@@ -147,7 +151,7 @@ async def create_function(
         logger.exception("Unexpected error creating ElevenLabs tool")
         raise HTTPException(
             status_code=status.HTTP_424_FAILED_DEPENDENCY,
-            detail=f"Unexpected error while creating ElevenLabs tool: {str(e)}"
+            detail=f"Unexpected error while creating tool: {str(e)}"
         )
 
     # 2. Save to Database
@@ -216,8 +220,8 @@ async def create_function(
     openapi_extra={"security": [{"BearerAuth": []}]},
 )
 async def get_all_functions(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     name: Optional[str] = None,
     method: Optional[str] = None,
     agent_name: Optional[str] = None,
@@ -229,7 +233,6 @@ async def get_all_functions(
 
     query = db.session.query(FunctionModel).filter(
         FunctionModel.user_id == current_user.id,
-        FunctionModel.is_system_managed.is_(False),
     ).options(joinedload(FunctionModel.api_endpoint_url))
 
     if name:
@@ -479,7 +482,7 @@ async def update_function(
         "method": api_config.http_method,
         "request_headers": decrypted_headers,
         "path_params_schema": api_config.path_params,
-        "query_params_schema": api_config.query_params,
+        "query_params_schema": api_config.query_params if api_config.query_params else None,
         "request_body_schema": api_config.body_schema,
         "response_variables": api_config.response_variables,
         "content_type": "application/json" if api_config.body_schema else None,
@@ -509,7 +512,7 @@ async def update_function(
                 db.session.rollback()
                 raise HTTPException(
                     status_code=status.HTTP_424_FAILED_DEPENDENCY,
-                    detail=f"Failed to update tool in ElevenLabs: {el_response.error_message}"
+                    detail=f"Failed to update tool: {el_response.error_message}"
                 )
             logger.info(f"✅ ElevenLabs tool '{function.elevenlabs_tool_id}' updated successfully")
         except HTTPException:
@@ -519,7 +522,7 @@ async def update_function(
             db.session.rollback()
             raise HTTPException(
                 status_code=status.HTTP_424_FAILED_DEPENDENCY,
-                detail=f"Failed to update tool in ElevenLabs due to an unexpected error: {str(e)}"
+                detail=f"Failed to update tool due to an unexpected error: {str(e)}"
             )
 
     try:

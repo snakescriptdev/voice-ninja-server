@@ -45,8 +45,7 @@ class AdminKnowledgeBaseItem(BaseModel):
     id: int
     title: Optional[str] = None
     kb_type: str
-    num_pages: Optional[int] = None
-    elevenlabs_document_id: Optional[str] = None
+    num_chunks: int = 0
     created_at: datetime
     modified_at: datetime
 

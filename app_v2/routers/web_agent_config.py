@@ -1,6 +1,7 @@
 import uuid
+from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
@@ -12,6 +13,7 @@ from app_v2.schemas.web_agent_schema import (
     WebAgentResponse,
     WebAgentListResponse,
 )
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.jwt_utils import HTTPBearer
 from app_v2.utils.feature_access import RequireFeatureEnabled
@@ -87,31 +89,52 @@ def _check_web_agent_name_unique(
         )
 
 
-@router.get("/", response_model=list[WebAgentListResponse], openapi_extra={"security": [{"BearerAuth": []}]})
-def list_web_agents(request: Request, user=Depends(RequireFeatureEnabled(PlanFeatureEnum.web_agent))):
+@router.get("/", response_model=PaginatedResponse[WebAgentListResponse], openapi_extra={"security": [{"BearerAuth": []}]})
+def list_web_agents(
+    request: Request,
+    search: Optional[str] = None,
+    agent_id: Optional[int] = None,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
+    user=Depends(RequireFeatureEnabled(PlanFeatureEnum.web_agent)),
+):
+    query = db.session.query(WebAgentPageModel).filter(WebAgentPageModel.user_id == user.id)
+    if agent_id is not None:
+        query = query.filter(WebAgentPageModel.agent_id == agent_id)
+    if search:
+        query = query.filter(func.lower(WebAgentPageModel.web_agent_name).contains(search.lower()))
+    total = query.count()
     web_agents = (
-        db.session.query(WebAgentPageModel)
-        .filter(WebAgentPageModel.user_id == user.id)
+        query
         .order_by(WebAgentPageModel.created_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
         .all()
     )
-    return [
-        WebAgentListResponse(
-            id=wa.id,
-            public_id=wa.public_id,
-            web_agent_name=wa.web_agent_name,
-            is_enabled=wa.is_enabled,
-            bg_color=wa.bg_color,
-            agent_position=wa.agent_position,
-            agent_id=wa.agent_id,
-            agent_name=wa.agent.agent_name if wa.agent else "",
-            widget_id=wa.widget_id,
-            widget_name=wa.widget.widget_name if wa.widget else "",
-            shareable_link=_shareable_link(request, wa.public_id),
-            created_at=wa.created_at,
-        )
-        for wa in web_agents
-    ]
+    total_pages = (total + size - 1) // size if size > 0 else 1
+    return PaginatedResponse(
+        total=total,
+        page=page,
+        size=size,
+        pages=total_pages,
+        items=[
+            WebAgentListResponse(
+                id=wa.id,
+                public_id=wa.public_id,
+                web_agent_name=wa.web_agent_name,
+                is_enabled=wa.is_enabled,
+                bg_color=wa.bg_color,
+                agent_position=wa.agent_position,
+                agent_id=wa.agent_id,
+                agent_name=wa.agent.agent_name if wa.agent else "",
+                widget_id=wa.widget_id,
+                widget_name=wa.widget.widget_name if wa.widget else "",
+                shareable_link=_shareable_link(request, wa.public_id),
+                created_at=wa.created_at,
+            )
+            for wa in web_agents
+        ],
+    )
 
 
 @router.post("/", response_model=WebAgentResponse, openapi_extra={"security": [{"BearerAuth": []}]})
