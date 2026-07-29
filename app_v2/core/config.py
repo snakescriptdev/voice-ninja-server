@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     MAIL_USERNAME: str = os.getenv("MAIL_USERNAME")
     MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD")
     MAIL_FROM: str = os.getenv("MAIL_FROM")
+    # Display name on outgoing mail (e.g. "Voice Ninja <no-reply@...>") — an
+    # HTML-only email sent from a bare address with no display name is a
+    # deliverability/spam-score red flag on top of just looking unpolished.
+    MAIL_FROM_NAME: str = os.getenv("MAIL_FROM_NAME", "Voice Ninja")
     MAIL_PORT: int = os.getenv("MAIL_PORT")
     MAIL_SERVER: str = os.getenv("MAIL_SERVER")
     
