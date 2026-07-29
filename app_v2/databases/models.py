@@ -1329,7 +1329,12 @@ class SupportTicketModel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
-    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
+    # Nullable so a ticket can be created by an anonymous visitor (contact-us
+    # form). `email`/`name` hold the submitter's details in that case, and
+    # `user_id` is backfilled once someone signs up/logs in with that email.
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("unified_auth.id"), nullable=True, index=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    name: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
     category: Mapped[SupportTicketCategoryEnum] = mapped_column(Enum(SupportTicketCategoryEnum), nullable=False)
 
