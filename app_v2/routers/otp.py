@@ -28,7 +28,10 @@ from app_v2.utils.jwt_utils import (
     revoke_session_by_jti,
     revoke_all_sessions,
     require_active_user,
+    get_client_ip,
+    parse_device_label,
 )
+from app_v2.utils.email_service import send_new_login_email
 
 from app_v2.constants import (
     STATUS_SUCCESS,
@@ -475,6 +478,19 @@ async def verify_otp(
 
         # Record this login as a trackable/revocable server-side session.
         create_user_session(unified_user.id, jti, http_request)
+
+        # Best-effort "new login" notification - never blocks/breaks login.
+        if unified_user.email:
+            try:
+                await send_new_login_email(
+                    user_email=unified_user.email,
+                    user_name=unified_user.name,
+                    device_label=parse_device_label(http_request.headers.get("user-agent")),
+                    ip_address=get_client_ip(http_request),
+                    occurred_at=datetime.now(timezone.utc),
+                )
+            except Exception as e:
+                logger.error(f"Failed to send new login email for user_id={unified_user.id}: {e}", exc_info=True)
 
         # Create session
         http_request.session['user'] = {

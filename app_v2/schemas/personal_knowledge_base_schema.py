@@ -30,11 +30,17 @@ class PersonalKnowledgeBaseResponse(BaseModel):
     content_text: Optional[str] = None
     file_size: Optional[float] = None
     num_chunks: int = 0
+    agent_count: int = 0
     created_at: datetime
     modified_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class PersonalKnowledgeBaseAgentItem(BaseModel):
+    agent_id: int
+    agent_name: str
 
 
 class PersonalKnowledgeBaseQueryRequest(BaseModel):

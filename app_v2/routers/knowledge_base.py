@@ -9,7 +9,7 @@ import shutil
 import logging
 import mimetypes
 from datetime import datetime, timezone
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 import math
 
 from app_v2.databases.models import KnowledgeBaseModel, AgentModel, UnifiedAuthModel, AgentKnowledgeBaseBridge
@@ -158,14 +158,14 @@ async def upload_files(
                         logger.warning(f"Failed to upload to ElevenLabs KB: {kb_response.error_message}")
                         if os.path.exists(file_path):
                             os.remove(file_path)
-                        raise HTTPException(status_code=424, detail=f"ElevenLabs KB upload failed: {kb_response.error_message}")
+                        raise HTTPException(status_code=424, detail=f"Knowledge base upload failed: {kb_response.error_message}")
                 except HTTPException:
                     raise
                 except Exception as e:
                     if os.path.exists(file_path):
                         os.remove(file_path)
                     logger.error(f"Error syncing with ElevenLabs: {e}")
-                    raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
+                    raise HTTPException(status_code=424, detail="Error syncing knowledge base")
 
                 num_pages = kb_client.get_document_page_count(elevenlabs_document_id) if elevenlabs_document_id else None
 
@@ -236,7 +236,7 @@ async def add_url(request: KnowledgeBaseURLCreate, current_user: UnifiedAuthMode
                 raise
             except Exception as e:
                 logger.error(f"Error syncing URL with ElevenLabs: {e}")
-                raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
+                raise HTTPException(status_code=424, detail="Error syncing knowledge base")
 
             num_pages = kb_client.get_document_page_count(elevenlabs_document_id) if elevenlabs_document_id else None
 
@@ -291,12 +291,12 @@ async def add_text(request: KnowledgeBaseTextCreate, current_user: UnifiedAuthMo
                     # ---- Compute RAG Index ----
                     rag_index_id = kb_client.compute_rag_index(elevenlabs_document_id)
                 else:
-                    raise HTTPException(status_code=424, detail=f"ElevenLabs KB text addition failed: {kb_response.error_message}")
+                    raise HTTPException(status_code=424, detail=f"Knowledge base text addition failed: {kb_response.error_message}")
             except HTTPException:
                 raise
             except Exception as e:
                 logger.error(f"Error syncing text with ElevenLabs: {e}")
-                raise HTTPException(status_code=424, detail="Error syncing with ElevenLabs")
+                raise HTTPException(status_code=424, detail="Error syncing knowledge base")
 
             num_pages = kb_client.get_document_page_count(elevenlabs_document_id) if elevenlabs_document_id else None
 
@@ -350,8 +350,8 @@ def kb_to_read(item: KnowledgeBaseModel, agents_count: int = 0) -> KnowledgeBase
 
 @router.get("/", response_model=PaginatedResponse[KnowledgeBaseResponse], openapi_extra={"security": [{"BearerAuth": []}]})
 async def get_all_knowledge_base(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: PageSize = 10,
     title: Optional[str] = None,
     agent_name: Optional[str] = None,
     kb_type: Optional[str] = None,
@@ -444,7 +444,7 @@ async def get_all_knowledge_base(
 async def get_agent_knowledge_base(
     agent_id: int,
     skip: int = 0,
-    limit: int = 20,
+    limit: PageSize = 10,
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
@@ -725,7 +725,7 @@ async def update_file_knowledge_base(
                 if not upload_path or not os.path.exists(upload_path):
                     if new_file_path and os.path.exists(new_file_path):
                         os.remove(new_file_path)
-                    raise HTTPException(status_code=400, detail="Local file missing, cannot re-sync with ElevenLabs")
+                    raise HTTPException(status_code=400, detail="Local file missing, cannot re-sync")
 
                 kb_response = kb_client.upload_document(upload_path, name=new_title)
                 if not kb_response.status:
@@ -735,7 +735,7 @@ async def update_file_knowledge_base(
                     db.session.rollback()
                     raise HTTPException(
                         status_code=424,
-                        detail=f"Failed to sync file with ElevenLabs: {kb_response.error_message}"
+                        detail=f"Failed to sync file: {kb_response.error_message}"
                     )
 
                 kb_entry.title = new_title
@@ -875,7 +875,7 @@ async def update_text_knowledge_base(
                     db.session.rollback()
                     raise HTTPException(
                         status_code=424,
-                        detail=f"Failed to sync text with ElevenLabs: {kb_response.error_message}"
+                        detail=f"Failed to sync text: {kb_response.error_message}"
                     )
 
                 kb_entry.elevenlabs_document_id = kb_response.data.get("document_id")
