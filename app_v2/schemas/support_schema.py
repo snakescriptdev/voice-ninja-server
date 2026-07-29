@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import List, Optional
 from datetime import datetime
 
@@ -27,6 +27,44 @@ class SupportTicketCreate(BaseModel):
         return v
 
 
+class PublicSupportTicketCreate(BaseModel):
+    """Contact-us submission from an anonymous (logged-out) visitor."""
+
+    name: str = Field(..., min_length=1, max_length=200)
+    email: EmailStr
+    subject: str = Field(..., min_length=1, max_length=200)
+    message: str = Field(..., min_length=1, max_length=5000)
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, value: str) -> str:
+        v = value.strip()
+        if not v:
+            raise ValueError("Name cannot be empty or only spaces.")
+        return v
+
+    @field_validator("subject")
+    @classmethod
+    def _validate_subject(cls, value: str) -> str:
+        v = value.strip()
+        if not v:
+            raise ValueError("Subject cannot be empty or only spaces.")
+        return v
+
+    @field_validator("message")
+    @classmethod
+    def _validate_message(cls, value: str) -> str:
+        v = value.strip()
+        if not v:
+            raise ValueError("Message cannot be empty or only spaces.")
+        return v
+
+
+class PublicSupportTicketResponse(BaseModel):
+    message: str
+    ticket_id: int
+
+
 class SupportTicketRead(BaseModel):
     id: int
     category: SupportTicketCategoryEnum
@@ -43,9 +81,10 @@ class SupportTicketRead(BaseModel):
 
 
 class SupportTicketAdminRead(SupportTicketRead):
-    user_id: int
+    user_id: Optional[int] = None
     user_email: Optional[str] = None
     user_name: Optional[str] = None
+    is_guest: bool = False
 
 
 class SupportTicketListResponse(BaseModel):
