@@ -3,7 +3,7 @@ from fastapi_sqlalchemy import db
 from sqlalchemy import func
 from typing import List
 
-from app_v2.databases.models import APIKeyModel, UnifiedAuthModel
+from app_v2.databases.models import APIKeyModel, UnifiedAuthModel, APICallLogModel, PublicCallSuccessCounterModel
 from app_v2.schemas.api_key_schema import APIKeyCreate, APIKeyResponse, APIKeyFullResponse, APIKeyUpdate
 from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
@@ -238,6 +238,14 @@ async def delete_api_key(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail="API key not found"
                 )
+
+            db.session.query(APICallLogModel).filter(
+                APICallLogModel.api_key_id == key_id
+            ).delete(synchronize_session=False)
+
+            db.session.query(PublicCallSuccessCounterModel).filter(
+                PublicCallSuccessCounterModel.api_key_id == key_id
+            ).delete(synchronize_session=False)
 
             db.session.delete(key)
             db.session.commit()
