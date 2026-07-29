@@ -54,7 +54,7 @@ def _session_to_dict(session_row: UserSessionModel, current_jti: str | None) -> 
     description="List the current user's active (non-revoked) sessions/devices, newest-used first.",
 )
 async def list_sessions(
-    current_user: UnifiedAuthModel = Depends(require_active_user()),
+    current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True)),
 ):
     """Return all active sessions for the current user."""
     try:
@@ -82,7 +82,7 @@ async def list_sessions(
 )
 async def revoke_session(
     session_id: int,
-    current_user: UnifiedAuthModel = Depends(require_active_user()),
+    current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True)),
 ):
     """Revoke a single session by id. Must belong to the current user."""
     try:
@@ -123,7 +123,7 @@ async def revoke_session(
 )
 async def revoke_all_sessions_endpoint(
     request: RevokeAllSessionsRequest,
-    current_user: UnifiedAuthModel = Depends(require_active_user()),
+    current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True)),
 ):
     """Revoke all sessions for the current user."""
     try:
