@@ -1,6 +1,6 @@
 from io import BytesIO
 
-from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig, MessageType, MultipartSubtypeEnum
 from starlette.datastructures import Headers, UploadFile
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
@@ -25,10 +25,15 @@ async def send_email_async(
     recipients: list,
     body: str,
     attachments: list[tuple[str, bytes, str]] | None = None,
+    plain_text_body: str | None = None,
 ):
     """
     attachments: list of (filename, content_bytes, mime_type), e.g.
     [("invoice.pdf", pdf_bytes, "application/pdf")].
+
+    plain_text_body: when given, sent as a multipart/alternative text/plain
+    part alongside the HTML body — an HTML-only email (no plain-text
+    alternative) is a known spam-score/deliverability factor.
     """
     upload_attachments = []
     for filename, content, mime_type in (attachments or []):
@@ -46,6 +51,10 @@ async def send_email_async(
         body=body,
         subtype="html",
         attachments=upload_attachments,
+        alternative_body=plain_text_body,
+        multipart_subtype=(
+            MultipartSubtypeEnum.alternative if plain_text_body else MultipartSubtypeEnum.mixed
+        ),
     )
 
     fm = FastMail(email_config)
@@ -720,6 +729,62 @@ async def send_account_reactivated_email(
         )
     except Exception as e:
         logger.error(f"Failed to send account reactivated email: {str(e)}")
+
+
+async def send_new_login_email(
+    user_email: str,
+    user_name: str | None,
+    device_label: str | None,
+    ip_address: str | None,
+    occurred_at: datetime,
+):
+    """Sent whenever a new session is created for the user (fresh login on a device/browser)."""
+    try:
+        subject = "New Login to Your Voice Ninja Account"
+
+        when_str = occurred_at.astimezone(timezone.utc).strftime("%b %d, %Y at %H:%M UTC")
+
+        body = f"""
+        <html>
+        <body style="font-family:Arial,Helvetica,sans-serif;background:#f4f4f4;padding:30px;margin:0;">
+        <table width="600" align="center" style="background:white;border-radius:10px;padding:30px;border-collapse:collapse;box-shadow:0 0 10px rgba(0,0,0,0.08);">
+            <tr>
+                <td>
+                    <h2 style="color:#1f2937;margin-top:0;">New Login Detected</h2>
+                    <p>Hi {user_name or "there"},</p>
+                    <p>We noticed a new login to your Voice Ninja account. Here are the details:</p>
+                    <table style="width:100%;border-collapse:collapse;margin:20px 0;">
+                        <tr>
+                            <td style="padding:8px 0;color:#6b7280;">Device</td>
+                            <td style="padding:8px 0;color:#1f2937;font-weight:bold;">{device_label or "Unknown device"}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding:8px 0;color:#6b7280;">IP address</td>
+                            <td style="padding:8px 0;color:#1f2937;font-weight:bold;">{ip_address or "Unknown"}</td>
+                        </tr>
+                        <tr>
+                            <td style="padding:8px 0;color:#6b7280;">Time</td>
+                            <td style="padding:8px 0;color:#1f2937;font-weight:bold;">{when_str}</td>
+                        </tr>
+                    </table>
+                    <p>If this was you, no action is needed. If you don't recognize this login, please review your active sessions from your account settings and log out any devices you don't recognize.</p>
+
+                    <br/>
+                    <p style="color:#555;">Thanks,<br/>Voice Ninja Team</p>
+                </td>
+            </tr>
+        </table>
+        </body>
+        </html>
+        """
+
+        await send_email_async(
+            subject=subject,
+            recipients=[user_email],
+            body=body,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send new login email: {str(e)}")
 
 
 async def send_voice_limit_email_to_admins(db_session, user_identifier: str, user_id: int):

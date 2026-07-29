@@ -20,13 +20,14 @@ from app_v2.schemas.admin_dashboard import (
     AdminWebhookEventItem,
     AdminPaymentItem,
 )
-from app_v2.schemas.enum_types import CallStatusEnum, PublicLogChannelEnum
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.enum_types import CallStatusEnum, PublicLogChannelEnum, ChannelEnum
+from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, or_, case, desc
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
+from app_v2.utils.public_call_success_counter import get_success_counts_by_endpoint_admin
 from app_v2.core.config import VoiceSettings
 from elevenlabs import ElevenLabs
 from datetime import datetime, timezone
@@ -262,7 +263,7 @@ def get_elevenlabs_usage_and_billing():
         logger.error(f"Error fetching ElevenLabs billing info: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Failed to fetch usage and billing information from ElevenLabs."
+            detail="Failed to fetch usage and billing information."
         )
 
 @router.get("/users-cost", response_model=PaginatedResponse[UserCostItem],dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
@@ -349,7 +350,7 @@ def get_users_cost(
 )
 def list_all_conversations_for_admin(
     page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+    page_size: PageSize = 10,
     search: Optional[str] = Query(None, description="Search by user name/email or agent name"),
     date_after: Optional[date] = Query(None),
     date_before: Optional[date] = Query(None),
@@ -357,6 +358,16 @@ def list_all_conversations_for_admin(
     agent_id: Optional[int] = Query(None, description="Filter to a single agent's conversations"),
     call_status: Optional[CallStatusEnum] = Query(None, description="Filter by call status (success/failed/in_progress)"),
     profit_type: Optional[Literal["profit", "loss"]] = Query(None, description="Filter to calls where profit_percentage >= 0 (profit) or < 0 (loss)"),
+    channel: Optional[ChannelEnum] = Query(None, description="Filter by conversation channel (e.g. 'api' for the public WS API, 'widget', 'web_agent', 'call', 'test_voice')"),
+    cost_profit_type: Optional[Literal["llm_profit", "llm_loss", "conversation_profit", "conversation_loss"]] = Query(
+        None,
+        description=(
+            "Filter by per-category cost variance (actual EL charge vs our calculated "
+            "estimate), same convention as the Conv Δ%/LLM Δ% columns: "
+            "'llm_profit'/'conversation_profit' = actual <= calculated (we didn't undercharge), "
+            "'llm_loss'/'conversation_loss' = actual > calculated (we undercharged)."
+        ),
+    ),
 ):
     """
     Every conversation across every user, side by side with the raw
@@ -393,6 +404,16 @@ def list_all_conversations_for_admin(
             q = q.filter(ConversationsModel.profit_percentage >= 0)
         elif profit_type == "loss":
             q = q.filter(ConversationsModel.profit_percentage < 0)
+        if channel:
+            q = q.filter(ConversationsModel.channel == channel)
+        if cost_profit_type == "llm_profit":
+            q = q.filter(ConversationsModel.actual_llm_credits <= ConversationsModel.calculated_llm_cost)
+        elif cost_profit_type == "llm_loss":
+            q = q.filter(ConversationsModel.actual_llm_credits > ConversationsModel.calculated_llm_cost)
+        elif cost_profit_type == "conversation_profit":
+            q = q.filter(ConversationsModel.actual_conversation_credits <= ConversationsModel.calculated_conversation_cost)
+        elif cost_profit_type == "conversation_loss":
+            q = q.filter(ConversationsModel.actual_conversation_credits > ConversationsModel.calculated_conversation_cost)
 
         q = q.order_by(ConversationsModel.created_at.desc())
 
@@ -586,29 +607,40 @@ ADMIN_PUBLIC_LOG_CHANNELS = [
 def list_public_log_endpoints_for_admin():
     """All-time success/failure/total counts per (channel, route, method), across every user."""
     try:
-        rows = (
+        failure_rows = (
             db.session.query(
                 APICallLogModel.channel,
                 APICallLogModel.api_route,
                 APICallLogModel.method,
-                func.sum(case((APICallLogModel.is_success == True, 1), else_=0)).label("success_count"),
-                func.sum(case((APICallLogModel.is_success == False, 1), else_=0)).label("failure_count"),
-                func.count(APICallLogModel.id).label("total_count"),
+                func.count(APICallLogModel.id).label("failure_count"),
             )
-            .filter(APICallLogModel.channel.in_(ADMIN_PUBLIC_LOG_CHANNELS))
+            .filter(
+                APICallLogModel.channel.in_(ADMIN_PUBLIC_LOG_CHANNELS),
+                APICallLogModel.is_success == False,
+            )
             .group_by(APICallLogModel.channel, APICallLogModel.api_route, APICallLogModel.method)
             .all()
         )
+        failure_map = {
+            (
+                row.channel.value if row.channel else PublicLogChannelEnum.public_api.value,
+                row.api_route,
+                (row.method or "UNKNOWN").upper(),
+            ): int(row.failure_count or 0)
+            for row in failure_rows
+        }
+        success_map = get_success_counts_by_endpoint_admin(ADMIN_PUBLIC_LOG_CHANNELS)
+
         endpoints = [
             AdminPublicLogEndpointItem(
-                channel=row.channel.value if row.channel else PublicLogChannelEnum.public_api.value,
-                route=row.api_route,
-                method=row.method,
-                success_count=int(row.success_count or 0),
-                failure_count=int(row.failure_count or 0),
-                total_count=int(row.total_count or 0),
+                channel=key[0],
+                route=key[1],
+                method=None if key[2] == "UNKNOWN" else key[2],
+                success_count=success_map.get(key, 0),
+                failure_count=failure_map.get(key, 0),
+                total_count=success_map.get(key, 0) + failure_map.get(key, 0),
             )
-            for row in rows
+            for key in set(failure_map.keys()) | set(success_map.keys())
         ]
         return AdminPublicLogEndpointListResponse(endpoints=endpoints)
     except Exception as e:
@@ -626,10 +658,13 @@ def list_public_logs_for_admin(
     channel: PublicLogChannelEnum,
     route: str,
     page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
-    only_failures: bool = True,
+    size: PageSize = 10,
 ):
-    """Paginated call log rows (full request/response detail) for one endpoint, across every user."""
+    """Paginated call log rows (full request/response detail) for one endpoint, across every user.
+
+    Always scoped to failures: successful calls' bodies are never persisted,
+    so there's nothing to click through to for a success count.
+    """
     try:
         from math import ceil
 
@@ -637,10 +672,12 @@ def list_public_logs_for_admin(
         q = (
             db.session.query(APICallLogModel, UnifiedAuthModel)
             .join(UnifiedAuthModel, APICallLogModel.user_id == UnifiedAuthModel.id)
-            .filter(APICallLogModel.channel == channel, APICallLogModel.api_route == route)
+            .filter(
+                APICallLogModel.channel == channel,
+                APICallLogModel.api_route == route,
+                APICallLogModel.is_success == False,
+            )
         )
-        if only_failures:
-            q = q.filter(APICallLogModel.is_success == False)
 
         total = q.count()
         rows = q.order_by(APICallLogModel.created_at.desc()).offset(skip).limit(size).all()
@@ -805,7 +842,7 @@ def _describe_admin_adjustment(coins: int) -> str:
 )
 def list_all_payments_for_admin(
     page: int = Query(1, ge=1),
-    size: int = Query(20, ge=1, le=100),
+    size: PageSize = 10,
     status_filter: Optional[str] = Query(None, alias="status"),
     email: Optional[str] = None,
     amount_min: Optional[float] = None,

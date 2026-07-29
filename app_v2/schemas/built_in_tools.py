@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Union
 
 class TransferToAgentParams(BaseModel):
@@ -33,18 +33,10 @@ class TransferToAgentConfig(ToolConfig):
              [{"agent_id": "agent_xyz123", "condition": "User asks for sales department"}]
         ]
     )
-
-    @model_validator(mode="after")
-    def transfers_must_be_unique(self):
-        seen = set()
-        for t in self.transfers:
-            key = (t.agent_id, t.condition.strip().lower())
-            if key in seen:
-                raise ValueError(
-                    f"Duplicate transfer to agent '{t.agent_id}' with the same condition '{t.condition}'"
-                )
-            seen.add(key)
-        return self
+    # Duplicate-transfer detection (same agent_id + condition) happens in the
+    # router (transform_built_in_tools in app_v2/routers/agents.py) instead of
+    # here, so the error message can show the target agent's name rather than
+    # its raw id — this schema has no DB access to resolve that name.
 
 class TransferToNumberConfig(ToolConfig):
     transfers: List[TransferToNumberParams] = Field(
