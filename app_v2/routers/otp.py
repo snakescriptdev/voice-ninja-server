@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Union
 
-from fastapi import APIRouter, Request, HTTPException, status, Depends
+from fastapi import APIRouter, BackgroundTasks, Request, HTTPException, status, Depends
 from fastapi_sqlalchemy import db
 
 from app_v2.core.logger import setup_logger
@@ -378,7 +378,8 @@ async def request_otp(request: RequestOTPRequest):
 )
 async def verify_otp(
     request: VerifyOTPRequest,
-    http_request: Request
+    http_request: Request,
+    background_tasks: BackgroundTasks,
 ):
     """Verify OTP and complete login.
 
@@ -494,18 +495,19 @@ async def verify_otp(
         # Record this login as a trackable/revocable server-side session.
         create_user_session(unified_user.id, jti, http_request)
 
-        # Best-effort "new login" notification - never blocks/breaks login.
+        # Best-effort "new login" notification - sent after the response goes
+        # out (via BackgroundTasks) so the SMTP round-trip never adds to
+        # login latency; send_new_login_email already swallows its own
+        # errors, so a failed send still can't break login.
         if unified_user.email:
-            try:
-                await send_new_login_email(
-                    user_email=unified_user.email,
-                    user_name=unified_user.name,
-                    device_label=parse_device_label(http_request.headers.get("user-agent")),
-                    ip_address=get_client_ip(http_request),
-                    occurred_at=datetime.now(timezone.utc),
-                )
-            except Exception as e:
-                logger.error(f"Failed to send new login email for user_id={unified_user.id}: {e}", exc_info=True)
+            background_tasks.add_task(
+                send_new_login_email,
+                user_email=unified_user.email,
+                user_name=unified_user.name,
+                device_label=parse_device_label(http_request.headers.get("user-agent")),
+                ip_address=get_client_ip(http_request),
+                occurred_at=datetime.now(timezone.utc),
+            )
 
         # Create session
         http_request.session['user'] = {
