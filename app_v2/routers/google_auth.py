@@ -12,8 +12,8 @@ from datetime import datetime, timezone, timedelta
 from typing import Union
 from urllib.parse import urlencode
 
-import requests
-from fastapi import APIRouter, HTTPException, Request, status
+import httpx
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 from fastapi.responses import RedirectResponse,JSONResponse
 from fastapi_sqlalchemy import db
 
@@ -113,7 +113,7 @@ async def google_login(request: Request):
     summary='Google OAuth Callback',
     description='Handle Google OAuth callback and authenticate user.',
 )
-async def google_callback(code: str, http_request: Request):
+async def google_callback(code: str, http_request: Request, background_tasks: BackgroundTasks):
     """Handle Google OAuth callback.
     
     This endpoint:
@@ -145,13 +145,13 @@ async def google_callback(code: str, http_request: Request):
         
         logger.info(f'Exchanging code for token with redirect_uri: {GOOGLE_REDIRECT_URI}')
         
-        token_response = requests.post(
-                        GOOGLE_TOKEN_URL,
-                        data=token_data,
-                        headers={"Content-Type": "application/x-www-form-urlencoded"},
-                        timeout=10
-)
-        
+        async with httpx.AsyncClient(timeout=10) as client:
+            token_response = await client.post(
+                GOOGLE_TOKEN_URL,
+                data=token_data,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+
         if token_response.status_code != 200:
             error_detail = token_response.json() if token_response.text else {}
             logger.error(f'Google token error (status {token_response.status_code}): {token_response.text}')
@@ -180,12 +180,12 @@ async def google_callback(code: str, http_request: Request):
             )
         
         # Get user info from Google
-        userinfo_response = requests.get(
-            GOOGLE_USERINFO_URL,
-            headers={'Authorization': f'Bearer {access_token}'},
-            timeout=10
-        )
-        
+        async with httpx.AsyncClient(timeout=10) as client:
+            userinfo_response = await client.get(
+                GOOGLE_USERINFO_URL,
+                headers={'Authorization': f'Bearer {access_token}'},
+            )
+
         if userinfo_response.status_code != 200:
             logger.error(f'Google userinfo error: {userinfo_response.text}')
             raise HTTPException(
@@ -330,18 +330,19 @@ async def google_callback(code: str, http_request: Request):
         # redirect callback, so its User-Agent/IP reflect the real device.
         create_user_session(user_id, jti, http_request)
 
-        # Best-effort "new login" notification - never blocks/breaks login.
+        # Best-effort "new login" notification - sent after the response goes
+        # out (via BackgroundTasks) so the SMTP round-trip never adds to
+        # login latency; send_new_login_email already swallows its own
+        # errors, so a failed send still can't break login.
         if user_email:
-            try:
-                await send_new_login_email(
-                    user_email=user_email,
-                    user_name=None,
-                    device_label=parse_device_label(http_request.headers.get("user-agent")),
-                    ip_address=get_client_ip(http_request),
-                    occurred_at=datetime.now(timezone.utc),
-                )
-            except Exception as e:
-                logger.error(f"Failed to send new login email for user_id={user_id}: {e}", exc_info=True)
+            background_tasks.add_task(
+                send_new_login_email,
+                user_email=user_email,
+                user_name=None,
+                device_label=parse_device_label(http_request.headers.get("user-agent")),
+                ip_address=get_client_ip(http_request),
+                occurred_at=datetime.now(timezone.utc),
+            )
 
         # Generate one-time authorization code
         app_code = secrets.token_urlsafe(32)

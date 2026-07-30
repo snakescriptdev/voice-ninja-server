@@ -39,9 +39,15 @@ class UserModel(Base):
     updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
     tokens = Column(Integer, nullable=True, default=0)
     is_admin = Column(Boolean, default=False)
-    
-    
-    
+
+    # Matches idx_users_email/idx_users_phone  —
+    # get_by_username()'s OR lookup below needs these to avoid a full table
+    # scan on every login.
+    __table_args__ = (
+        Index("idx_users_email", "email"),
+        Index("idx_users_phone", "phone"),
+    )
+
     @classmethod
     def get_by_id(cls, user_id: int) -> Optional["UserModel"]:
         with db():
@@ -154,6 +160,16 @@ class UnifiedAuthModel(Base):
     low_credits_banner_recovered = Column(Boolean, default=False, server_default="false")
     critical_credits_banner_dismissed = Column(Boolean, default=False, server_default="false")
     critical_credits_banner_recovered = Column(Boolean, default=False, server_default="false")
+
+    # Matches idx_unified_auth_username_ci/idx_unified_auth_email_ci/
+    # idx_unified_auth_phone  — get_by_username()
+    # filters on func.lower(username)/func.lower(email)/phone, which the
+    # plain unique/index=True above can't serve.
+    __table_args__ = (
+        Index("idx_unified_auth_username_ci", func.lower(username)),
+        Index("idx_unified_auth_email_ci", func.lower(email)),
+        Index("idx_unified_auth_phone", "phone"),
+    )
 
     agents = relationship("AgentModel", back_populates="user")
     voices = relationship("VoiceModel", back_populates="user")

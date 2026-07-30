@@ -25,6 +25,19 @@ Knowledge base excerpts:
 
 Answer:"""
 
+_model: Optional[genai.GenerativeModel] = None
+
+
+def _get_model(api_key: str) -> genai.GenerativeModel:
+    """Configures the Gemini client and builds the model once, then reuses
+    it — avoids the redundant genai.configure()/GenerativeModel() overhead
+    on every single tool-search call."""
+    global _model
+    if _model is None:
+        genai.configure(api_key=api_key)
+        _model = genai.GenerativeModel("gemini-2.5-flash")
+    return _model
+
 
 async def generate_kb_answer(
     query: str,
@@ -57,8 +70,7 @@ async def generate_kb_answer(
     )
 
     try:
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = _get_model(api_key)
         response = await model.generate_content_async(
             prompt,
             generation_config=genai.types.GenerationConfig(temperature=0.2),
