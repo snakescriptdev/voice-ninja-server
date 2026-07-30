@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse
 from fastapi_sqlalchemy import db
 from sqlalchemy import func
 from typing import List, Optional
+import asyncio
 import math
 import mimetypes
 import os
@@ -982,6 +983,21 @@ async def query_personal_kb(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
+def _fetch_agent_kb_results(agent_id: int, query: str) -> List[PersonalKnowledgeBaseQueryResult]:
+    """
+    Sync helper bundling the agent lookup + FAISS/embedding search for a
+    single tool-search call. Run via asyncio.to_thread so this blocking work
+    (disk-backed FAISS index, local embedding-model inference, DB query)
+    doesn't tie up the event loop while it runs — other concurrent requests
+    keep being served in the meantime.
+    """
+    with db():
+        agent = db.session.query(AgentModel).filter(AgentModel.id == agent_id).first()
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
+        return _search_personal_kb_for_agent(agent_id, agent.user_id, query, top_k=5)
+
+
 @router.post(
     "/tool-search/{agent_id}",
     response_model=PersonalKnowledgeBaseAnswerResponse,
@@ -1006,12 +1022,7 @@ async def tool_search_webhook(agent_id: int, request: ToolSearchRequest, http_re
     _require_internal_auth(http_request)
 
     try:
-        with db():
-            agent = db.session.query(AgentModel).filter(AgentModel.id == agent_id).first()
-            if not agent:
-                raise HTTPException(status_code=404, detail="Agent not found")
-            results = _search_personal_kb_for_agent(agent_id, agent.user_id, request.query, top_k=5)
-
+        results = await asyncio.to_thread(_fetch_agent_kb_results, agent_id, request.query)
         answer = await generate_kb_answer(request.query, results, request.conversation_context)
         return PersonalKnowledgeBaseAnswerResponse(answer=answer)
     except HTTPException as e:
