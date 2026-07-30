@@ -49,23 +49,7 @@ _PROMPT_BLOCK_PATTERN = re.compile(
 )
 _PROMPT_BLOCK_TEXT = (
     f"\n\n{_PROMPT_BLOCK_START}\n"
-    f"You have access to a tool named `{TOOL_NAME}`, which searches the "
-    f"user's personal knowledge base (their uploaded files, URLs, and notes) "
-    f"and returns an already-synthesized answer. When the user asks something "
-    f"you might be able to answer, resolve it in this order, without "
-    f"announcing these steps out loud:\n"
-    f"1. Check whether your instructions above already answer it — if so, "
-    f"just answer directly.\n"
-    f"2. Otherwise, call {TOOL_NAME} with their question before answering. "
-    f"If the question is even roughly clear, call it right away rather than "
-    f"asking multiple clarifying questions first — let the search results "
-    f"tell you whether more detail is actually needed. Relay the tool's "
-    f"returned answer directly; don't re-derive your own from raw excerpts. "
-    f"Also pass a brief summary of the recent conversation relevant to the "
-    f"question, if any.\n"
-    f"3. Only if the tool finds nothing relevant, answer from your own "
-    f"general knowledge, and make it clear that's what you're doing rather "
-    f"than presenting it as coming from the user's own documents.\n"
+    f"You have access to a custom knowledge base its accessed from tool of name search_personal_knowledge_base. You are strictly forbidden from answering questions about any query using your own pre-trained knowledge. If the user asks about any topic, you MUST call the search_personal_knowledge_base tool. If the information is not found there, explicitly state that you do not have that information"
     f"{_PROMPT_BLOCK_END}"
 )
 
