@@ -16,7 +16,7 @@ logger = setup_logger(__name__)
 
 NO_RESULTS_ANSWER = "I couldn't find anything relevant to that in your knowledge base."
 
-ANSWER_PROMPT_TEMPLATE = """You are answering a user's question during a live voice call, using ONLY the knowledge base excerpts below. Give a concise, natural, spoken answer — no markdown, no bullet points, no source citations, nothing that reads awkwardly out loud. If the excerpts don't actually answer the question, say plainly that you don't have that information — never invent an answer.
+ANSWER_PROMPT_TEMPLATE = """You are answering a user's question during a live voice call, using ONLY the knowledge base excerpts below. Do not use any outside knowledge or add information that isn't in the excerpts. Give a concise, natural, spoken answer — no markdown, no bullet points, no source citations, nothing that reads awkwardly out loud. If the excerpts don't actually answer the question, say plainly that you don't have that information — never invent an answer.
 {context_section}
 User's question: {query}
 
