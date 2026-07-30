@@ -66,9 +66,10 @@ from app_v2.schemas.user_dashboard import (
 from app_v2.utils.agent_summary import build_agent_summaries
 from app_v2.core.logger import setup_logger
 from app_v2.utils.time_utils import format_time_ago
+from app_v2.utils.activity_logger import get_agent_ids_matching_name, enrich_activities_with_agent_and_coins
 from math import ceil
 import calendar
-from sqlalchemy import case
+from sqlalchemy import case, Integer
 
 logger = setup_logger(__name__)
 security = HTTPBearer()
@@ -135,29 +136,43 @@ def get_phone_numbers(skip: int = 0, limit: int = 3, current_user: str = Depends
 def get_global_activities(
     page: int = 1,
     size: int = 20,
+    agent_name: Optional[str] = Query(None, description="Filter by agent name (partial match)"),
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
         skip = (page - 1) * size
-        
-        query = db.session.query(ActivityLogModel).filter(ActivityLogModel.user_id==current_user.id).order_by(ActivityLogModel.created_at.desc())
+
+        query = db.session.query(ActivityLogModel).filter(ActivityLogModel.user_id==current_user.id)
+
+        if agent_name:
+            matching_agent_ids = get_agent_ids_matching_name(agent_name, current_user.id)
+            if not matching_agent_ids:
+                return {"status": "success", "total": 0, "page": page, "size": size, "activities": []}
+            query = query.filter(
+                ActivityLogModel.metadata_json["agent_id"].astext.cast(Integer).in_(matching_agent_ids)
+            )
+
+        query = query.order_by(ActivityLogModel.created_at.desc())
         total = query.count()
-        
+
         logs = query.offset(skip).limit(size).all()
-        
+        enrichment = enrich_activities_with_agent_and_coins(logs)
+
         results = []
         for log in logs:
             results.append({
                 "id": log.id,
                 "user_id": log.user_id,
                 "user_name": log.user.name or log.user.username or "Unknown",
+                "agent_name": enrichment[log.id]["agent_name"],
+                "coins": enrichment[log.id]["coins"] or 0,
                 "event_type": log.event_type,
                 "description": log.description,
                 "metadata_json": log.metadata_json,
                 "created_at": log.created_at,
                 "time_ago": format_time_ago(log.created_at)
             })
-            
+
         return {
             "status": "success",
             "total": total,
