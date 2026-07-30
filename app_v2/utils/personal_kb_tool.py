@@ -55,12 +55,9 @@ _PROMPT_BLOCK_TEXT = (
 
 
 def _webhook_base_url() -> str:
-    base = VoiceSettings.NGROK_BASE_URL or ""
-    if base.startswith("wss://"):
-        return base.replace("wss://", "https://")
-    if base.startswith("ws://"):
-        return base.replace("ws://", "http://")
-    return base
+    # e.g. "https://apis.voiceninja.ai/api/v2" — already includes the
+    # "/api/v2" prefix, so callers must not append it again.
+    return (VoiceSettings.BE_API_URL or "").rstrip("/")
 
 
 def strip_prompt_block(system_prompt: str) -> str:
@@ -120,7 +117,7 @@ def _create_system_tool(user_id: int, agent_id: int) -> FunctionModel:
         logger.warning("INTERNAL_API_SECRET_KEY is not set — the personal KB tool webhook will be unauthenticated.")
     auth_header = f"Bearer {secret}" if secret else ""
 
-    url = f"{_webhook_base_url()}/api/v2/personal-knowledge-base/tool-search/{agent_id}"
+    url = f"{_webhook_base_url()}/personal-knowledge-base/tool-search/{agent_id}"
     body_field = {
         "query": {"type": "string", "description": "The user's question or topic to search for"},
         "conversation_context": {
