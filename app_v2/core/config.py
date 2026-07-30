@@ -55,6 +55,11 @@ class Settings(BaseSettings):
     #Ngrok base url
     NGROK_BASE_URL: str = os.getenv("NGROK_BASE_URL")
 
+    # Public API base url (e.g. https://apis.voiceninja.ai/api/v2) — used to
+    # build absolute webhook URLs (e.g. the personal KB tool-search webhook)
+    # that ElevenLabs calls back into, instead of the ngrok tunnel.
+    BE_API_URL: str = os.getenv("BE_API_URL")
+
     # Razorpay Configuration
     RAZOR_KEY_ID: str = os.getenv("RAZOR_KEY_ID")
     RAZOR_KEY_SECRET: str = os.getenv("RAZOR_KEY_SECRET")
