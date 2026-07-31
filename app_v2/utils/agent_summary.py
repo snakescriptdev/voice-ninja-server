@@ -21,6 +21,7 @@ from app_v2.databases.models import (
 )
 from app_v2.schemas.enum_types import CallStatusEnum
 from app_v2.schemas.user_dashboard import AgentSummaryItem, WebAgentSummaryRef, WidgetSummaryRef
+from app_v2.utils.coin_utils import get_credits_per_rupee, coins_to_inr
 
 # sort_by values accepted by build_agent_summaries — anything else (including
 # None) falls back to the default alphabetical-by-name order.
@@ -125,6 +126,8 @@ def build_agent_summaries(
     else:
         rows = query.all()
 
+    credits_per_rupee = get_credits_per_rupee()
+
     # Actual web-agent / widget rows (id, public_id, name) per agent, so the
     # frontend can render clickable links instead of just a count.
     widgets_by_agent = {}
@@ -160,6 +163,7 @@ def build_agent_summaries(
             web_agents=web_agents_by_agent.get(r[0], []),
             widgets=widgets_by_agent.get(r[0], []),
             total_credits_used=int(r[8] or 0),
+            total_amount_used=coins_to_inr(r[8] or 0, credits_per_rupee),
             kb_count=int(r[9] or 0),
             tool_count=int(r[10] or 0),
             kb_total_pages=r[11],
