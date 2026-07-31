@@ -12,8 +12,8 @@ from app_v2.utils.feature_access import RequireFeature
 from app_v2.databases.models import (
     UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel,
     ConversationsModel, CoinsLedgerModel,
-    PaymentModel, WidgetModel, WidgetLeadModel,APIDailyUsageModel,
-    APICallLogModel, APIKeyModel
+    PaymentModel, WidgetModel, WidgetLeadModel, APIDailyUsageModel,
+    APICallLogModel, APIKeyModel, CoinUsageSettingsModel,
 )
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
 from app_v2.schemas.enum_types import (
@@ -66,9 +66,23 @@ from app_v2.schemas.user_dashboard import (
 from app_v2.utils.agent_summary import build_agent_summaries
 from app_v2.core.logger import setup_logger
 from app_v2.utils.time_utils import format_time_ago
+from app_v2.utils.activity_logger import get_agent_ids_matching_name, enrich_activities_with_agent_and_coins
 from math import ceil
+
+
+def _coins_to_inr(coins: int | float, credits_per_rupee: float) -> float:
+    """Convert the internal credit value into a user-facing INR amount."""
+    return round(float(coins) / credits_per_rupee, 2)
+
+
+def _credits_per_rupee() -> float:
+    settings = CoinUsageSettingsModel.get_settings()
+    rate = float(settings.credits_per_rupee or 0)
+    if rate <= 0:
+        raise ValueError("Invalid credits-per-rupee setting")
+    return rate
 import calendar
-from sqlalchemy import case
+from sqlalchemy import case, Integer
 
 logger = setup_logger(__name__)
 security = HTTPBearer()
@@ -135,29 +149,44 @@ def get_phone_numbers(skip: int = 0, limit: int = 3, current_user: str = Depends
 def get_global_activities(
     page: int = 1,
     size: int = 20,
+    agent_name: Optional[str] = Query(None, description="Filter by agent name (partial match)"),
     current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
     try:
+        credits_per_rupee = _credits_per_rupee()
         skip = (page - 1) * size
-        
-        query = db.session.query(ActivityLogModel).filter(ActivityLogModel.user_id==current_user.id).order_by(ActivityLogModel.created_at.desc())
+
+        query = db.session.query(ActivityLogModel).filter(ActivityLogModel.user_id==current_user.id)
+
+        if agent_name:
+            matching_agent_ids = get_agent_ids_matching_name(agent_name, current_user.id)
+            if not matching_agent_ids:
+                return {"status": "success", "total": 0, "page": page, "size": size, "activities": []}
+            query = query.filter(
+                ActivityLogModel.metadata_json["agent_id"].astext.cast(Integer).in_(matching_agent_ids)
+            )
+
+        query = query.order_by(ActivityLogModel.created_at.desc())
         total = query.count()
-        
+
         logs = query.offset(skip).limit(size).all()
-        
+        enrichment = enrich_activities_with_agent_and_coins(logs)
+
         results = []
         for log in logs:
             results.append({
                 "id": log.id,
                 "user_id": log.user_id,
                 "user_name": log.user.name or log.user.username or "Unknown",
+                "agent_name": enrichment[log.id]["agent_name"],
+                "amount": _coins_to_inr(enrichment[log.id]["coins"] or 0, credits_per_rupee),
                 "event_type": log.event_type,
                 "description": log.description,
                 "metadata_json": log.metadata_json,
                 "created_at": log.created_at,
                 "time_ago": format_time_ago(log.created_at)
             })
-            
+
         return {
             "status": "success",
             "total": total,
@@ -371,6 +400,7 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
 @router.get("/coin-usage", response_model=UserCoinUsageResponse, openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(require_active_user(allow_suspended=True))):
     try:
+        credits_per_rupee = _credits_per_rupee()
         balance = get_user_coin_balance(current_user.id)
         
         now = datetime.now(timezone.utc)
@@ -383,8 +413,8 @@ def get_user_coin_usage(current_user: UnifiedAuthModel = Depends(require_active_
         ).scalar() or 0
         
         return UserCoinUsageResponse(
-            available_coins=int(balance),
-            this_month_usage=int(usage)
+            available_amount=_coins_to_inr(balance, credits_per_rupee),
+            this_month_usage_amount=_coins_to_inr(usage, credits_per_rupee),
         )
     except Exception as e:
         logger.error(f"Error in get_user_coin_usage: {str(e)}")
@@ -400,6 +430,7 @@ def get_coin_buckets(
     current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     try:
+        credits_per_rupee = _credits_per_rupee()
         skip = (page - 1) * size
 
         base_query = db.session.query(CoinsLedgerModel).filter(
@@ -438,16 +469,16 @@ def get_coin_buckets(
         buckets = []
 
         for item in buckets_query:
-            source_name = "Coins"
+            source_name = "Added Amount"
 
             payment = payment_map.get(item.reference_id)
             if payment and payment.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
-                source_name = "Credit Purchase"
+                source_name = "Amount Purchase"
 
             buckets.append(
                 CoinBucketItem(
                     source=source_name,
-                    amount=item.remaining_coins,
+                    amount=_coins_to_inr(item.remaining_coins, credits_per_rupee),
                 )
             )
 
@@ -459,7 +490,7 @@ def get_coin_buckets(
             size=size,
             pages=total_pages,
             buckets=buckets,
-            total_available=total_available
+            total_available=_coins_to_inr(total_available, credits_per_rupee)
         )
 
     except Exception as e:
@@ -531,6 +562,7 @@ def get_usage_history(
 ):
     """Details coin usage transactions."""
     try:
+        credits_per_rupee = _credits_per_rupee()
         skip = (page - 1) * size
 
         # All coin transactions (credits added, deductions, expiries, refunds,
@@ -546,11 +578,11 @@ def get_usage_history(
 
         action_map = {
             "debit_usage": "AI Interaction",
-            "credit_subscription": "Subscription Credits",
-            "credit_purchase": "Credits Purchased",
+            "credit_subscription": "Subscription Amount",
+            "credit_purchase": "Amount Added",
             "refund": "Refund",
-            "expired": "Coins Expired",
-            "carry_forward_reset": "Unused Coins Reset",
+            "expired": "Amount Expired",
+            "carry_forward_reset": "Unused Amount Reset",
             "admin_adjustment": "Admin Adjustment",
         }
 
@@ -570,9 +602,9 @@ def get_usage_history(
                 action=friendly_action,
                 transaction_type=source_name,
                 agent_name=agent_name,
-                coins=item.coins,                              # signed
-                balance_before=item.balance_after - item.coins,
-                balance_after=item.balance_after,
+                amount=_coins_to_inr(item.coins, credits_per_rupee),
+                balance_before=_coins_to_inr(item.balance_after - item.coins, credits_per_rupee),
+                balance_after=_coins_to_inr(item.balance_after, credits_per_rupee),
                 reason=item.notes,
             ))
             
@@ -606,13 +638,13 @@ async def export_usage_history(
 
         buffer = StringIO()
         writer = csv.writer(buffer)
-        writer.writerow(["Date & Time", "Action", "Agent", "Coins", "Before Credits", "After Credits", "Reason"])
+        writer.writerow(["Date & Time", "Action", "Agent", "Amount (INR)", "Amount Before (INR)", "Amount After (INR)", "Reason"])
         for item in result.history:
             writer.writerow([
                 item.date_time.strftime("%d %b %Y, %H:%M UTC"),
                 item.action,
                 item.agent_name,
-                item.coins,
+                item.amount,
                 item.balance_before,
                 item.balance_after,
                 item.reason or "",
@@ -659,8 +691,7 @@ def get_billing_history(
         dated_items = []
         for p in payments:
             if p.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
-                coins = p.metadata_json.get("coins") if p.metadata_json else None
-                description = f"Credit Purchase ({coins} credits)" if coins else "Credit Purchase"
+                description = "Amount Purchase"
             elif p.payment_type == PaymentTypeEnum.subscription:
                 description = "Subscription Payment"
             else:
@@ -733,8 +764,7 @@ async def export_billing_history(
         dated_rows = []
         for p in payments:
             if p.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
-                coins = p.metadata_json.get("coins") if p.metadata_json else None
-                description = f"Credit Purchase ({coins} credits)" if coins else "Credit Purchase"
+                description = "Amount Purchase"
             elif p.payment_type == PaymentTypeEnum.subscription:
                 description = "Subscription Payment"
             else:

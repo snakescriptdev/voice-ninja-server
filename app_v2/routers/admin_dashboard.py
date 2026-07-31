@@ -4,7 +4,7 @@ from datetime import datetime, date
 from typing import List, Literal, Optional
 from app_v2.core.logger import setup_logger
 from app_v2.databases.models import UnifiedAuthModel, AgentModel, PhoneNumberService, ActivityLogModel, ConversationsModel, CoinUsageSettingsModel, CoinUsageSettingsVersionModel, PaymentModel, PaymentStatusEnum, PaymentTypeEnum, CoinsLedgerModel, CoinTransactionTypeEnum, APICallLogModel, APIKeyModel, WebhookEventLogModel, AddOnCoinOrderModel
-from app_v2.schemas.activity_schema import ActivityLogResponse
+from app_v2.schemas.activity_schema import ActivityLogResponse, AdminActivityItem
 from app_v2.schemas.admin_dashboard import (
     UserCostItem,
     AdminConversationItem,
@@ -24,7 +24,8 @@ from app_v2.schemas.enum_types import CallStatusEnum, PublicLogChannelEnum, Chan
 from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.core.logger import setup_logger
 from fastapi_sqlalchemy import db
-from sqlalchemy import func, or_, case, desc
+from sqlalchemy import func, or_, case, desc, Integer
+from app_v2.utils.activity_logger import get_agent_ids_matching_name, enrich_activities_with_agent_and_coins
 from app_v2.utils.time_utils import format_time_ago
 from app_v2.utils.analytics_utils import calculate_percentage_change, get_current_and_previous_month_start
 from app_v2.utils.public_call_success_counter import get_success_counts_by_endpoint_admin
@@ -494,6 +495,90 @@ def list_all_conversations_for_admin(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to fetch conversations: {str(e)}"
+        )
+
+
+@router.get(
+    "/activities",
+    response_model=PaginatedResponse[AdminActivityItem],
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def list_all_activities_for_admin(
+    page: int = Query(1, ge=1),
+    page_size: PageSize = 10,
+    date_after: Optional[date] = Query(None),
+    date_before: Optional[date] = Query(None),
+    event_type: Optional[str] = Query(None, description="Filter by activity/event type (partial match)"),
+    user_email: Optional[str] = Query(None, description="Filter by the acting user's email (partial match)"),
+    agent_name: Optional[str] = Query(None, description="Filter by agent name (partial match)"),
+):
+    """
+    Every user's activity log entries side by side, admin-only equivalent of
+    the user-side /user-dashboard/activities feed — with the acting user's
+    email attached to each row and filters for date range/event type/email/agent.
+    """
+    try:
+        q = (
+            db.session.query(ActivityLogModel, UnifiedAuthModel)
+            .join(UnifiedAuthModel, ActivityLogModel.user_id == UnifiedAuthModel.id)
+        )
+
+        if date_after:
+            q = q.filter(ActivityLogModel.created_at >= date_after)
+        if date_before:
+            q = q.filter(ActivityLogModel.created_at <= date_before)
+        if event_type:
+            q = q.filter(ActivityLogModel.event_type.ilike(f"%{event_type}%"))
+        if user_email:
+            q = q.filter(UnifiedAuthModel.email.ilike(f"%{user_email}%"))
+        if agent_name:
+            matching_agent_ids = get_agent_ids_matching_name(agent_name)
+            if not matching_agent_ids:
+                return PaginatedResponse(total=0, page=page, size=page_size, pages=1, items=[])
+            q = q.filter(
+                ActivityLogModel.metadata_json["agent_id"].astext.cast(Integer).in_(matching_agent_ids)
+            )
+
+        q = q.order_by(ActivityLogModel.created_at.desc())
+
+        total = q.count()
+        rows = q.offset((page - 1) * page_size).limit(page_size).all()
+        enrichment = enrich_activities_with_agent_and_coins([log for log, _ in rows])
+
+        items = [
+            AdminActivityItem(
+                id=log.id,
+                user_id=log.user_id,
+                user_name=user.name or user.username or "Unknown",
+                user_email=user.email or "",
+                agent_name=enrichment[log.id]["agent_name"],
+                coins=enrichment[log.id]["coins"],
+                event_type=log.event_type,
+                description=log.description,
+                metadata_json=log.metadata_json,
+                created_at=log.created_at,
+                time_ago=format_time_ago(log.created_at),
+            )
+            for log, user in rows
+        ]
+
+        from math import ceil
+        total_pages = ceil(total / page_size) if page_size > 0 else 1
+
+        return PaginatedResponse(
+            total=total,
+            page=page,
+            size=page_size,
+            pages=total_pages,
+            items=items,
+        )
+
+    except Exception as e:
+        logger.error(f"Error in list_all_activities_for_admin: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch activities: {str(e)}"
         )
 
 
