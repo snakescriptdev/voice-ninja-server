@@ -176,6 +176,7 @@ def get_credit_banner_status(current_user: UnifiedAuthModel = Depends(require_ac
         low_credits_threshold=low_credits_threshold,
         show_low_credits_banner=show_low,
         show_critical_credits_banner=show_critical,
+        credits_per_rupee=settings.credits_per_rupee,
     )
 
 
@@ -434,7 +435,6 @@ async def verify_coin_payment(
                     user_name=current_user.name,
                     amount=addon_order.amount,
                     currency="INR",
-                    coins=addon_order.coins,
                     provider_payment_id=data.razorpay_payment_id,
                     base_url=VoiceSettings.FRONTEND_URL,
                     invoice_pdf=generate_invoice_pdf(payment, current_user),

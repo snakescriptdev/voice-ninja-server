@@ -33,9 +33,7 @@ def generate_invoice_reference() -> str:
 
 
 def _describe_payment(payment: PaymentModel) -> str:
-    if payment.metadata_json and payment.metadata_json.get("coins"):
-        return f"Credit Purchase ({payment.metadata_json['coins']:,} credits)"
-    return "Credit Purchase"
+    return "Amount Purchase"
 
 
 def _status_color(status: str):
@@ -89,7 +87,7 @@ def generate_invoice_pdf(payment: PaymentModel, user: UnifiedAuthModel | None) -
         "completed and no charge was made."
         if is_failed
         else "Thank you for choosing Voice Ninja. This receipt confirms your "
-        "one-time credit purchase - credits never expire."
+        "one-time payment - your balance never expires."
     )
 
     # ---- Title + status pill ----

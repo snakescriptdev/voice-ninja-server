@@ -204,6 +204,7 @@ def get_global_activities(
 @router.get("/analytics", response_model=UserAnalyticsResponse,openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("analytics_dashboard"))):
     try:
+        credits_per_rupee = _credits_per_rupee()
         first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
 
         total_calls = db.session.query(func.count(ConversationsModel.id)).filter(
@@ -298,18 +299,18 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         )
 
         call_trends = []
-        coin_trends = []
+        amount_trends = []
         for i in range(7):
             day = (seven_days_ago + timedelta(days=i)).date()
             day_str = str(day)
-            
+
             call_trends.append(DailyTrendSeries(
                 date=day_str,
                 value=call_daily.get(day_str, 0)
             ))
-            coin_trends.append(DailyTrendSeries(
+            amount_trends.append(DailyTrendSeries(
                 date=day_str,
-                value=coin_daily.get(day_str, 0)
+                value=_coins_to_inr(coin_daily.get(day_str, 0), credits_per_rupee)
             ))
 
         hourly_data = db.session.query(
@@ -350,10 +351,10 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
                 agent_name=a.agent_name,
                 call_count=a.call_count,
                 total_duration=int(a.total_duration or 0),
-                coins_used=int(a.coins_charged or 0)
+                amount_used=_coins_to_inr(a.coins_charged or 0, credits_per_rupee)
             ) for a in agent_data
         ]
-        
+
         channel_data = db.session.query(
             ConversationsModel.channel,
             func.count(ConversationsModel.id).label('count')
@@ -378,15 +379,15 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             total_calls_change=float(total_calls_change),
             avg_call_duration=round(float(avg_duration), 2),
             avg_call_duration_change=float(avg_call_duration_change),
-            coin_used_this_month=int(coin_used_this_month),
-            coin_used_this_month_change=float(coin_used_this_month_change),
+            amount_used_this_month=_coins_to_inr(coin_used_this_month, credits_per_rupee),
+            amount_used_this_month_change=float(coin_used_this_month_change),
             active_leads_count=active_leads_count,
             active_leads_count_change=float(active_leads_count_change),
             hourly_distribution=hourly_list,
             agent_analytics=agent_list,
             channel_distribution=channel_list,
             call_trends=call_trends,
-            coin_trends=coin_trends
+            amount_trends=amount_trends
         )
         
     except Exception as e:
@@ -524,6 +525,7 @@ def get_agent_performance(
     paginated counterpart to the `agent_analytics` list embedded in
     GET /analytics."""
     try:
+        credits_per_rupee = _credits_per_rupee()
         agent_query = db.session.query(
             AgentModel.id.label('agent_id'),
             AgentModel.agent_name,
@@ -543,7 +545,7 @@ def get_agent_performance(
                 agent_name=a.agent_name,
                 call_count=a.call_count,
                 total_duration=int(a.total_duration or 0),
-                coins_used=int(a.coins_charged or 0)
+                amount_used=_coins_to_inr(a.coins_charged or 0, credits_per_rupee)
             ) for a in agent_data
         ]
 

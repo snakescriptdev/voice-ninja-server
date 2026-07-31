@@ -39,6 +39,8 @@ class CreditBannerStatusResponse(BaseModel):
     low_credits_threshold: int
     show_low_credits_banner: bool
     show_critical_credits_banner: bool
+    # So the client can render the coin balances above as an INR amount.
+    credits_per_rupee: float
 
 class DismissCreditBannerRequest(BaseModel):
     banner: BannerType

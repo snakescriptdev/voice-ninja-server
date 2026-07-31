@@ -25,7 +25,7 @@ from app_v2.databases.models import (
     UnifiedAuthModel,
 )
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
-from app_v2.utils.coin_utils import deduct_coins, get_user_coin_balance
+from app_v2.utils.coin_utils import deduct_coins, get_user_coin_balance, coins_to_inr
 from app_v2.utils.cost_utils import (
     compute_live_charge_credits,
     estimate_costs_credits,
@@ -149,12 +149,13 @@ def _maybe_alert_insufficient_call_balance(
             return
 
         minutes_available = max(current_balance, 0) / settings.minimum_credits_per_minute
+        credits_per_rupee = settings.credits_per_rupee
         _dispatch_coro(
             send_insufficient_call_balance_email(
                 user_email=user.email,
                 user_name=user.first_name or user.name or "User",
-                current_balance=current_balance,
-                minimum_credits_per_minute=settings.minimum_credits_per_minute,
+                current_balance_inr=coins_to_inr(current_balance, credits_per_rupee),
+                minimum_rate_inr=coins_to_inr(settings.minimum_credits_per_minute, credits_per_rupee),
                 minutes_available=minutes_available,
                 base_url=VoiceSettings.FRONTEND_URL,
             )
@@ -163,7 +164,11 @@ def _maybe_alert_insufficient_call_balance(
         logger.exception("Failed to evaluate/send insufficient-call-balance alert")
 
 
-def _maybe_alert_low_agent_balance(record: ConversationsModel, agent: Optional[AgentModel]) -> None:
+def _maybe_alert_low_agent_balance(
+    record: ConversationsModel,
+    agent: Optional[AgentModel],
+    settings: CoinUsageSettingsModel,
+) -> None:
     """
     Email the user when their current balance can no longer cover even one
     more minute of calling with THIS specific agent — using
@@ -187,13 +192,14 @@ def _maybe_alert_low_agent_balance(record: ConversationsModel, agent: Optional[A
         if not alerts_enabled:
             return
 
+        credits_per_rupee = settings.credits_per_rupee
         _dispatch_coro(
             send_low_agent_balance_email(
                 user_email=user.email,
                 user_name=user.first_name or user.name or "User",
                 agent_name=agent.agent_name,
-                current_balance=current_balance,
-                credits_per_minute=agent.avg_credits_per_minute,
+                current_balance_inr=coins_to_inr(current_balance, credits_per_rupee),
+                rate_inr_per_minute=coins_to_inr(agent.avg_credits_per_minute, credits_per_rupee),
                 base_url=VoiceSettings.FRONTEND_URL,
             )
         )
@@ -632,7 +638,7 @@ def finalize_conversation(
 
     # Alert the user if their balance can't cover even 1 more minute with
     # this specific agent.
-    _maybe_alert_low_agent_balance(record, agent)
+    _maybe_alert_low_agent_balance(record, agent, settings)
 
     return record
 
