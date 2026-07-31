@@ -77,28 +77,28 @@ class UserAnalyticsResponse(BaseModel):
     coin_trends: List[DailyTrendSeries]
 
 class UserCoinUsageResponse(BaseModel):
-    available_coins: int
-    this_month_usage: int
+    available_amount: float
+    this_month_usage_amount: float
 
 # New Schemas for User Dashboard Refinement
 
 class CoinBucketItem(BaseModel):
     source: str
-    amount: int
+    amount: float
 
 class CoinBucketsResponse(BaseModel):
     buckets: List[CoinBucketItem]
-    total_available: int
+    total_available: float
 
 class UsageHistoryItem(BaseModel):
     date_time: datetime
     action: str
     transaction_type: str
     agent_name: Optional[str] = None
-    # Signed: positive = credits added, negative = credits deducted.
-    coins: int
-    balance_before: int
-    balance_after: int
+    # Signed INR amount: positive = added, negative = deducted.
+    amount: float
+    balance_before: float
+    balance_after: float
     # Reason an admin gave for this adjustment; null for non-admin entries.
     reason: Optional[str] = None
 
