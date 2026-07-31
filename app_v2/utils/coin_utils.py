@@ -1,11 +1,33 @@
 from fastapi_sqlalchemy import db
-from sqlalchemy import func
-from app_v2.databases.models import CoinsLedgerModel, CoinTransactionTypeEnum
+from sqlalchemy import func, desc
+from app_v2.databases.models import CoinsLedgerModel, CoinTransactionTypeEnum, CoinUsageSettingsModel
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone
 import math
 
 logger = setup_logger(__name__)
+
+
+def get_credits_per_rupee() -> float | None:
+    """
+    Returns the current credits-per-rupee conversion rate from the latest
+    CoinUsageSettingsModel row, or None if no settings row exists.
+
+    Must be called within an active db() session block.
+    """
+    coin_setting_record = (
+        db.session.query(CoinUsageSettingsModel)
+        .order_by(desc(CoinUsageSettingsModel.id))
+        .first()
+    )
+    return coin_setting_record.credits_per_rupee if coin_setting_record else None
+
+
+def coins_to_inr(coins: float, credits_per_rupee: float | None) -> float:
+    """Converts a raw coin/credit amount into a user-facing INR amount."""
+    if not credits_per_rupee or credits_per_rupee <= 0:
+        return 0.0
+    return round(float(coins) / credits_per_rupee, 2)
 
 
 def get_user_coin_balance(user_id: int) -> int:

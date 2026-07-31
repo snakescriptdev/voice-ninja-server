@@ -24,7 +24,7 @@ class AgentAnalytics(BaseModel):
     agent_name: str
     call_count: int
     total_duration: int
-    coins_used: int
+    amount_used: float
 
 class WebAgentSummaryRef(BaseModel):
     id: int
@@ -47,7 +47,11 @@ class AgentSummaryItem(BaseModel):
     total_conversations: int
     success_count: int
     failed_count: int
+    # Raw credits — used by the admin-side agents-summary view.
     total_credits_used: int
+    # INR-converted equivalent of total_credits_used — used by the user-side
+    # analytics page, which shows amount only (no credit/coin terminology).
+    total_amount_used: float
     kb_count: int = 0
     tool_count: int = 0
     kb_total_pages: Optional[int] = None
@@ -66,15 +70,15 @@ class UserAnalyticsResponse(BaseModel):
     total_calls_change: float
     avg_call_duration: float
     avg_call_duration_change: float
-    coin_used_this_month: int
-    coin_used_this_month_change: float
+    amount_used_this_month: float
+    amount_used_this_month_change: float
     active_leads_count: int
     active_leads_count_change: float
     hourly_distribution: List[HourlyDistribution]
     agent_analytics: List[AgentAnalytics]
     channel_distribution: List[ChannelDistribution]
     call_trends: List[DailyTrendSeries]
-    coin_trends: List[DailyTrendSeries]
+    amount_trends: List[DailyTrendSeries]
 
 class UserCoinUsageResponse(BaseModel):
     available_amount: float
