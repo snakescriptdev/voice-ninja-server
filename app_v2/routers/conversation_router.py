@@ -4,14 +4,14 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy import or_
 from datetime import date
 from typing import Optional
-from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WidgetLeadModel, CoinsLedgerModel
+from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WidgetLeadModel, CoinsLedgerModel,CoinUsageSettingsModel
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.activity_logger import log_activity
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum, CoinTransactionTypeEnum
 import io
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.schemas.pagination import PageSize
-
+from sqlalchemy import desc
 
 security = HTTPBearer()
 
@@ -32,6 +32,15 @@ def list_user_conversations(
 	current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
 	with db():
+		coin_setting_record = (
+			db.session.query(CoinUsageSettingsModel)
+			.order_by(desc(CoinUsageSettingsModel.id))
+			.first()
+		)	    
+		credits_per_rupee = coin_setting_record.credits_per_rupee if coin_setting_record else None
+		if credits_per_rupee is None or credits_per_rupee <= 0:
+			raise HTTPException(status_code=500, detail="Invalid coin usage settings")
+	
 		q = (
 			db.session.query(ConversationsModel)
 			.outerjoin(AgentModel, ConversationsModel.agent_id == AgentModel.id)
@@ -89,7 +98,8 @@ def list_user_conversations(
 			hours, remainder = divmod(secs, 3600)
 			minutes, seconds = divmod(remainder, 60)
 			return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-
+		
+		
 		results = []
 		for conv in conversations:
 			display_cost = ledger_cost_map.get(conv.id, conv.cost)
@@ -104,7 +114,7 @@ def list_user_conversations(
 				"call_status": conv.call_status.name if conv.call_status else None,
 				"channel": conv.channel.value if conv.channel else None,
 				"lead_name": getattr(conv.lead, "name", None) if conv.lead else None,
-				"cost": display_cost,
+				"cost": display_cost/credits_per_rupee,
 				"ended_due_to_low_balance": conv.ended_due_to_low_balance,
 			})
 
