@@ -196,7 +196,6 @@ async def razorpay_webhook(request: Request):
                     user_name=email_task["name"],
                     amount=email_task["amount"],
                     currency=email_task["currency"],
-                    coins=email_task["coins"],
                     provider_payment_id=email_task["provider_payment_id"],
                     base_url=VoiceSettings.FRONTEND_URL,
                     invoice_pdf=email_task.get("invoice_pdf"),
@@ -341,7 +340,6 @@ def _order_payment_captured(
         "name": user.name,
         "amount": amount,
         "currency": currency,
-        "coins": addon_order.coins,
         "provider_payment_id": rzp_payment_id,
         "invoice_pdf": generate_invoice_pdf(payment, user),
     }
