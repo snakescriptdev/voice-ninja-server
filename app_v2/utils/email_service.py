@@ -165,31 +165,31 @@ async def send_conversation_notification_email(
 
 async def send_low_coins_email(
     user_email: str,
-    current_coins: int,
+    current_balance_inr: float,
     base_url: str,
     user_name: str | None = None,
 ):
     try:
-        subject = "⚠️ You're Running Low on Coins"
+        subject = "⚠️ You're Running Low on Balance"
 
         recharge_link = f"{base_url}/billing-wallet"
 
         content = (
             heading("Low Balance Alert ⚠️")
             + paragraph(f"Hi {user_name or 'User'},")
-            + paragraph("Your coin balance is running low.")
-            + info_table([("Current Coins", f"{current_coins}")])
-            + paragraph("To avoid any interruption in your services, please recharge your coins.")
+            + paragraph("Your account balance is running low.")
+            + info_table([("Current Balance", f"₹{current_balance_inr:,.2f}")])
+            + paragraph("To avoid any interruption in your services, please recharge your balance.")
             + button("Recharge Now", recharge_link, tone="warning")
             + signoff()
         )
-        body = render_email(content, preheader="Your coin balance is running low")
+        body = render_email(content, preheader="Your account balance is running low")
         plain_text = (
             "Low Balance Alert\n\n"
             f"Hi {user_name or 'User'},\n\n"
-            "Your coin balance is running low.\n"
-            f"Current Coins: {current_coins}\n\n"
-            "To avoid any interruption in your services, please recharge your coins.\n"
+            "Your account balance is running low.\n"
+            f"Current Balance: ₹{current_balance_inr:,.2f}\n\n"
+            "To avoid any interruption in your services, please recharge your balance.\n"
             f"Recharge now: {recharge_link}\n\n"
             "Thanks,\nVoice Ninja Team"
         )
@@ -207,51 +207,51 @@ async def send_low_coins_email(
 
 async def send_insufficient_call_balance_email(
     user_email: str,
-    current_balance: int,
-    minimum_credits_per_minute: int,
+    current_balance_inr: float,
+    minimum_rate_inr: float,
     minutes_available: float,
     base_url: str,
     user_name: str | None = None,
 ):
     """
     Sent right after a call ends when the user's remaining balance has
-    dropped below the minimum coins required to start even one more call
-    (minimum_credits_per_minute x minimum_call_minutes), so future calls
-    will be blocked until they recharge.
+    dropped below the minimum required to start even one more call
+    (minimum_credits_per_minute x minimum_call_minutes, converted to INR), so
+    future calls will be blocked until they recharge.
     """
     try:
-        subject = "🚫 Insufficient Coins — Calls Are Now Blocked"
+        subject = "🚫 Insufficient Balance — Calls Are Now Blocked"
         recharge_link = f"{base_url}/billing-wallet"
         minutes_display = f"{minutes_available:.1f}".rstrip("0").rstrip(".") or "0"
 
         content = (
-            heading("Insufficient Coin Balance 🚫")
+            heading("Insufficient Balance 🚫")
             + paragraph(f"Hi {user_name or 'User'},")
-            + paragraph("Your call just ended, and your remaining coin balance is no longer enough to start a new call.")
+            + paragraph("Your call just ended, and your remaining balance is no longer enough to start a new call.")
             + callout(
                 f'<p style="margin:0 0 8px;"><b>No new calls can be made right now.</b></p>'
-                f'<p style="margin:0;">A call requires at least <b>{minimum_credits_per_minute:,} coins per minute</b>, '
-                f'but you currently have coins for only <b>~{minutes_display} minute(s)</b>.</p>',
+                f'<p style="margin:0;">A call requires at least <b>₹{minimum_rate_inr:,.2f} per minute</b>, '
+                f'but you currently have balance for only <b>~{minutes_display} minute(s)</b>.</p>',
                 tone="danger",
             )
             + info_table([
-                ("Your Current Balance", f"{current_balance:,} coins"),
-                ("Minimum Required Rate", f"{minimum_credits_per_minute:,} coins / minute"),
+                ("Your Current Balance", f"₹{current_balance_inr:,.2f}"),
+                ("Minimum Required Rate", f"₹{minimum_rate_inr:,.2f} / minute"),
                 ("Call Time Left", f"~{minutes_display} minute(s)"),
             ])
             + paragraph("Recharge now to keep making calls without interruption.")
             + button("Recharge Now", recharge_link, tone="danger")
             + signoff()
         )
-        body = render_email(content, preheader="Your coin balance is too low to start a new call")
+        body = render_email(content, preheader="Your balance is too low to start a new call")
         plain_text = (
-            "Insufficient Coin Balance\n\n"
+            "Insufficient Balance\n\n"
             f"Hi {user_name or 'User'},\n\n"
-            "Your call just ended, and your remaining coin balance is no longer enough to start a new call.\n"
-            f"A call requires at least {minimum_credits_per_minute:,} coins per minute, but you currently have "
-            f"coins for only ~{minutes_display} minute(s).\n\n"
-            f"Your Current Balance: {current_balance:,} coins\n"
-            f"Minimum Required Rate: {minimum_credits_per_minute:,} coins / minute\n"
+            "Your call just ended, and your remaining balance is no longer enough to start a new call.\n"
+            f"A call requires at least ₹{minimum_rate_inr:,.2f} per minute, but you currently have "
+            f"balance for only ~{minutes_display} minute(s).\n\n"
+            f"Your Current Balance: ₹{current_balance_inr:,.2f}\n"
+            f"Minimum Required Rate: ₹{minimum_rate_inr:,.2f} / minute\n"
             f"Call Time Left: ~{minutes_display} minute(s)\n\n"
             f"Recharge now: {recharge_link}\n\n"
             "Thanks,\nVoice Ninja Team"
@@ -271,8 +271,8 @@ async def send_insufficient_call_balance_email(
 async def send_low_agent_balance_email(
     user_email: str,
     agent_name: str,
-    current_balance: int,
-    credits_per_minute: float,
+    current_balance_inr: float,
+    rate_inr_per_minute: float,
     base_url: str,
     user_name: str | None = None,
 ):
@@ -280,19 +280,20 @@ async def send_low_agent_balance_email(
     Sent right after a call ends when the user's remaining balance has
     dropped below what this specific agent needs for even one more minute
     of calling (agent.avg_credits_per_minute, a live 1-minute cost
-    projection refreshed after every call to this agent) — so their next
-    call with THIS agent will likely end well under a minute.
+    projection refreshed after every call to this agent, converted to INR)
+    — so their next call with THIS agent will likely end well under a
+    minute.
     """
     try:
         subject = f"⚠️ Low Balance for {agent_name} — Calls May End Early"
         recharge_link = f"{base_url}/billing-wallet"
-        estimated_seconds = int(max(current_balance, 0) / credits_per_minute * 60)
+        estimated_seconds = int(max(current_balance_inr, 0) / rate_inr_per_minute * 60)
 
         content = (
             heading(f"Low Balance for {agent_name} ⚠️")
             + paragraph(f"Hi {user_name or 'User'},")
             + paragraph(
-                f"Your call with <b>{agent_name}</b> just ended, and your remaining coin balance is now "
+                f"Your call with <b>{agent_name}</b> just ended, and your remaining balance is now "
                 "below what this agent needs for even one more minute of calling."
             )
             + callout(
@@ -301,8 +302,8 @@ async def send_low_agent_balance_email(
                 tone="warning",
             )
             + info_table([
-                ("Your Current Balance", f"{current_balance:,} coins"),
-                (f"{agent_name} — Cost per Minute", f"{credits_per_minute:,.0f} coins / minute"),
+                ("Your Current Balance", f"₹{current_balance_inr:,.2f}"),
+                (f"{agent_name} — Cost per Minute", f"₹{rate_inr_per_minute:,.2f} / minute"),
             ])
             + paragraph("Recharge now to keep making calls with this agent without interruption.")
             + button("Recharge Now", recharge_link, tone="warning")
@@ -312,11 +313,11 @@ async def send_low_agent_balance_email(
         plain_text = (
             f"Low Balance for {agent_name}\n\n"
             f"Hi {user_name or 'User'},\n\n"
-            f"Your call with {agent_name} just ended, and your remaining coin balance is now below what "
+            f"Your call with {agent_name} just ended, and your remaining balance is now below what "
             "this agent needs for even one more minute of calling.\n"
             f"Your next call with {agent_name} will last at most ~{estimated_seconds} second(s) before it's cut short.\n\n"
-            f"Your Current Balance: {current_balance:,} coins\n"
-            f"{agent_name} — Cost per Minute: {credits_per_minute:,.0f} coins / minute\n\n"
+            f"Your Current Balance: ₹{current_balance_inr:,.2f}\n"
+            f"{agent_name} — Cost per Minute: ₹{rate_inr_per_minute:,.2f} / minute\n\n"
             f"Recharge now: {recharge_link}\n\n"
             "Thanks,\nVoice Ninja Team"
         )
@@ -464,14 +465,13 @@ async def send_payment_success_email(
     user_name: str | None,
     amount: float,
     currency: str,
-    coins: int,
     provider_payment_id: str | None,
     base_url: str,
     invoice_pdf: bytes | None = None,
 ):
     """Sent once a credit purchase is confirmed (webhook or client-verify, whichever wins the race)."""
     try:
-        subject = "✅ Payment Received — Credits Added"
+        subject = "✅ Payment Received"
         billing_link = f"{base_url}/billing-wallet"
         invoice_note = (
             "Your invoice is attached to this email as a PDF."
@@ -482,16 +482,15 @@ async def send_payment_success_email(
         content = (
             heading("Payment Received ✅")
             + paragraph(f"Hi {user_name or 'there'},")
-            + paragraph("Thanks for your purchase — your coins have been added to your wallet.")
+            + paragraph("Thanks for your purchase — your balance has been updated.")
             + info_table([
                 ("Amount Paid", f"{currency} {amount:,.2f}"),
-                ("Credits Added", f"{coins:,} coins"),
                 ("Payment ID", provider_payment_id or "-"),
             ])
             + button("View Billing & Wallet", billing_link, tone="success")
             + signoff(invoice_note)
         )
-        body = render_email(content, preheader="Your coins have been added to your wallet")
+        body = render_email(content, preheader="Your balance has been updated")
 
         invoice_note_plain = (
             "Your invoice is attached to this email as a PDF."
@@ -501,9 +500,8 @@ async def send_payment_success_email(
         plain_text = (
             "Payment Received\n\n"
             f"Hi {user_name or 'there'},\n\n"
-            "Thanks for your purchase — your coins have been added to your wallet.\n\n"
+            "Thanks for your purchase — your balance has been updated.\n\n"
             f"Amount Paid: {currency} {amount:,.2f}\n"
-            f"Credits Added: {coins:,} coins\n"
             f"Payment ID: {provider_payment_id or '-'}\n\n"
             f"View Billing & Wallet: {billing_link}\n\n"
             f"{invoice_note_plain}\n\n"
@@ -540,7 +538,7 @@ async def send_payment_failed_email(
         content = (
             heading("Payment Failed ❌")
             + paragraph(f"Hi {user_name or 'there'},")
-            + paragraph("Your attempt to add credits didn't go through, and no coins were added to your wallet.")
+            + paragraph("Your payment attempt didn't go through, and your balance was not updated.")
             + callout(
                 f'<p style="margin:0 0 8px;"><b>Amount:</b> {currency} {amount:,.2f}</p>'
                 f'<p style="margin:0;"><b>Reason:</b> {reason}</p>',
@@ -558,7 +556,7 @@ async def send_payment_failed_email(
         plain_text = (
             "Payment Failed\n\n"
             f"Hi {user_name or 'there'},\n\n"
-            "Your attempt to add credits didn't go through, and no coins were added to your wallet.\n\n"
+            "Your payment attempt didn't go through, and your balance was not updated.\n\n"
             f"Amount: {currency} {amount:,.2f}\n"
             f"Reason: {reason}\n\n"
             "No charge was made to your account for this attempt. You can try again anytime.\n"
