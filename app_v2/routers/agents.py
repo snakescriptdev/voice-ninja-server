@@ -12,6 +12,7 @@ from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.utils.elevenlabs.kb_utils import ElevenLabsKB
 from app_v2.utils.elevenlabs.phone_connection import ElevenLabsPhoneConnection
 from app_v2.utils.conversation_lifecycle import is_agents_first_call
+from app_v2.utils.coin_utils import coins_to_inr
 from app_v2.utils.feature_access import check_can_enable_resource, require_feature_enabled
 
 from app_v2.utils.jwt_utils import HTTPBearer,require_active_user
@@ -78,7 +79,7 @@ def agent_to_read(
     agent: AgentModel,
     is_first_call_pending: Optional[bool] = None,
     conversation_count: int = 0,
-    credits_used: int = 0,
+    amount_used: float = 0,
     leads_count: int = 0,
 ) -> AgentRead:
     ai_model = (
@@ -148,7 +149,7 @@ def agent_to_read(
         kb_count=len(agent.personal_kb_agent_bridges),
         tool_count=len(agent.agent_functions),
         conversation_count=conversation_count,
-        credits_used=credits_used,
+        amount_used=amount_used,
         leads_count=leads_count,
     )
 
@@ -1082,7 +1083,7 @@ async def get_all_agents(
         conv_sub = (
             db.session.query(
                 ConversationsModel.agent_id.label("agent_id"),
-                func.coalesce(func.sum(ConversationsModel.coins_charged_to_user), 0).label("credits_used"),
+                func.coalesce(func.sum(ConversationsModel.cost_inr), 0).label("amount_used"),
             )
             .group_by(ConversationsModel.agent_id)
             .subquery()
@@ -1094,7 +1095,7 @@ async def get_all_agents(
             .outerjoin(conv_sub, AgentModel.id == conv_sub.c.agent_id)
         )
         if sort_by == "credits_desc":
-            query = query.order_by(func.coalesce(conv_sub.c.credits_used, 0).desc(), AgentModel.agent_name)
+            query = query.order_by(func.coalesce(conv_sub.c.amount_used, 0).desc(), AgentModel.agent_name)
         elif sort_by == "kb_count_desc":
             query = query.order_by(func.coalesce(kb_sub.c.cnt, 0).desc(), AgentModel.agent_name)
         elif sort_by == "tool_count_desc":
@@ -1136,7 +1137,7 @@ async def get_all_agents(
             for row in db.session.query(
                 ConversationsModel.agent_id,
                 func.count(ConversationsModel.id),
-                func.coalesce(func.sum(ConversationsModel.coins_charged_to_user), 0),
+                func.coalesce(func.sum(ConversationsModel.cost_inr), 0),
             )
             .filter(ConversationsModel.agent_id.in_(agent_ids))
             .group_by(ConversationsModel.agent_id)
@@ -1168,7 +1169,7 @@ async def get_all_agents(
             agent,
             is_first_call_pending=(agent.id not in agents_with_calls),
             conversation_count=conversation_stats.get(agent.id, (0, 0))[0],
-            credits_used=int(conversation_stats.get(agent.id, (0, 0))[1] or 0),
+            amount_used=round(float(conversation_stats.get(agent.id, (0, 0))[1] or 0), 2),
             leads_count=leads_stats.get(agent.id, 0),
         )
         for agent in agents

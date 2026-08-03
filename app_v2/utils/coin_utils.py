@@ -1,6 +1,11 @@
 from fastapi_sqlalchemy import db
 from sqlalchemy import func, desc
-from app_v2.databases.models import CoinsLedgerModel, CoinTransactionTypeEnum, CoinUsageSettingsModel
+from app_v2.databases.models import (
+    CoinsLedgerModel,
+    CoinTransactionTypeEnum,
+    CoinUsageSettingsModel,
+    ConversationsModel,
+)
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone
 import math
@@ -8,13 +13,28 @@ import math
 logger = setup_logger(__name__)
 
 
-def get_credits_per_rupee() -> float | None:
+def get_credits_per_rupee(conversation: "ConversationsModel") -> float | None:
     """
-    Returns the current credits-per-rupee conversion rate from the latest
-    CoinUsageSettingsModel row, or None if no settings row exists.
+    Returns the credits-per-rupee conversion rate to use for a conversation's
+    INR cost — the rate snapshotted on its settings_version, i.e. the rate
+    that was actually in effect when it happened, not today's rate (which may
+    have since changed). Falls back to the live CoinUsageSettingsModel rate
+    only for legacy conversations that predate rate snapshotting (no
+    settings_version_id, or a version row saved before this field existed).
+
+    A conversation is required — there is no "current rate" concept here.
+    Code that needs today's live rate for something other than a specific
+    conversation's cost (e.g. a balance notification, or the SQL-level
+    fallback in a bulk aggregate) should read
+    CoinUsageSettingsModel.get_settings().credits_per_rupee directly instead.
 
     Must be called within an active db() session block.
     """
+    settings_version = getattr(conversation, "settings_version", None)
+    version_rate = getattr(settings_version, "credits_per_rupee", None)
+    if version_rate:
+        return version_rate
+
     coin_setting_record = (
         db.session.query(CoinUsageSettingsModel)
         .order_by(desc(CoinUsageSettingsModel.id))
