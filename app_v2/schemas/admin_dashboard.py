@@ -24,6 +24,7 @@ class ConversationSettingsSnapshot(BaseModel):
     first_call_max_duration_seconds: int
     knowledge_base_llm_cost_multiplier: float
     tool_llm_cost_multiplier: float
+    credits_per_rupee: Optional[float] = None
 
     model_config = {"from_attributes": True}
 
