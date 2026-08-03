@@ -21,7 +21,6 @@ from app_v2.databases.models import (
 )
 from app_v2.schemas.enum_types import CallStatusEnum
 from app_v2.schemas.user_dashboard import AgentSummaryItem, WebAgentSummaryRef, WidgetSummaryRef
-from app_v2.utils.coin_utils import get_credits_per_rupee, coins_to_inr
 
 # sort_by values accepted by build_agent_summaries — anything else (including
 # None) falls back to the default alphabetical-by-name order.
@@ -44,6 +43,10 @@ def build_agent_summaries(
             ).label("failed"),
             # Total coins actually charged to the user for this agent's calls.
             func.coalesce(func.sum(ConversationsModel.coins_charged_to_user), 0).label("credits_used"),
+            # INR equivalent — precomputed and stored per-conversation at
+            # finalize time (see conversation_lifecycle.finalize_conversation),
+            # at the rate saved on that conversation's own settings_version.
+            func.coalesce(func.sum(ConversationsModel.cost_inr), 0).label("amount_used"),
         )
         .group_by(ConversationsModel.agent_id)
         .subquery()
@@ -96,6 +99,7 @@ def build_agent_summaries(
             func.coalesce(widget_sub.c.cnt, 0),
             func.coalesce(webagent_sub.c.cnt, 0),
             func.coalesce(conv_sub.c.credits_used, 0),
+            func.coalesce(conv_sub.c.amount_used, 0),
             func.coalesce(kb_sub.c.cnt, 0),
             func.coalesce(tool_sub.c.cnt, 0),
             AgentModel.kb_total_pages,
@@ -125,8 +129,6 @@ def build_agent_summaries(
         rows = query.offset((page - 1) * size).limit(size).all()
     else:
         rows = query.all()
-
-    credits_per_rupee = get_credits_per_rupee()
 
     # Actual web-agent / widget rows (id, public_id, name) per agent, so the
     # frontend can render clickable links instead of just a count.
@@ -163,10 +165,10 @@ def build_agent_summaries(
             web_agents=web_agents_by_agent.get(r[0], []),
             widgets=widgets_by_agent.get(r[0], []),
             total_credits_used=int(r[8] or 0),
-            total_amount_used=coins_to_inr(r[8] or 0, credits_per_rupee),
-            kb_count=int(r[9] or 0),
-            tool_count=int(r[10] or 0),
-            kb_total_pages=r[11],
+            total_amount_used=round(float(r[9] or 0), 2),
+            kb_count=int(r[10] or 0),
+            tool_count=int(r[11] or 0),
+            kb_total_pages=r[12],
         )
         for r in rows
     ]

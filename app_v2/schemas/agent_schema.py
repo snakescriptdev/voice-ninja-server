@@ -80,6 +80,77 @@ class AgentRead(BaseModel):
     kb_count: int = 0
     tool_count: int = 0
     conversation_count: int = 0
+    amount_used: float = 0
+    leads_count: int = 0
+    class Config:
+        from_attributes = True
+
+
+# -------------------------------------------------------------------
+# Public API (app_v2/routers/public_api.py) only. Kept separate from
+# AgentCreate/AgentRead above because those are shared with the internal
+# (JWT-authenticated) agents router the frontend calls.
+# -------------------------------------------------------------------
+
+class PublicAgentCreate(BaseModel):
+    agent_name: str
+    first_message: str | None = None
+    system_prompt: str
+    phone: Optional[str] = Field(None, description="Phone number to assign to this agent (e.g., +14155551234)")
+    voice: str
+    ai_model: str
+    language: str = Field(description="language code to be passed in model (en-01 for english)")
+    knowledgebase: Optional[List[int | Dict]] = Field(default=[], description="List of knowledge base IDs or objects")
+    variables: Optional[Dict[str, str]] = Field(default={}, description="Dynamic variables for the agent")
+    tools: Optional[List[int | Dict]] = Field(default=[], description="List of function/tool IDs or objects")
+    built_in_tools: Optional[BuiltInToolsParams] = Field(default=None, description="Configuration for built-in tools")
+    timezone: Optional[str] = Field(default=None, description="IANA timezone for the agent (must be valid for tzinfo, e.g. 'America/New_York')")
+
+    _validate_timezone = field_validator("timezone")(_validate_timezone)
+    _validate_agent_name = field_validator("agent_name")(validate_entity_name)
+
+
+class PublicAgentRead(BaseModel):
+    id: int
+    agent_name: str
+    is_enabled: bool
+    first_message: str | None
+    system_prompt: str
+    voice: str
+    updated_at: date
+    phone: Optional[str] = None
+    ai_model: str
+    language: str
+    knowledgebase: List[dict[str,int|str]] = []
+    variables: Dict[str, str] = {}
+    tools: List[dict[str,int|str]] = []
+    built_in_tools: Optional[Dict] = None
+    timezone: Optional[str] = None
+    is_first_call_pending: bool = True
+    kb_count: int = 0
+    tool_count: int = 0
+    conversation_count: int = 0
+    credits_used: int = 0
+    leads_count: int = 0
+    class Config:
+        from_attributes = True
+
+
+class PublicAgentListRead(BaseModel):
+    id: int
+    agent_name: str
+    is_enabled: bool
+    first_message: str | None
+    voice: str
+    updated_at: date
+    phone: Optional[str] = None
+    ai_model: str
+    language: str
+    timezone: Optional[str] = None
+    is_first_call_pending: bool = True
+    kb_count: int = 0
+    tool_count: int = 0
+    conversation_count: int = 0
     credits_used: int = 0
     leads_count: int = 0
     class Config:
