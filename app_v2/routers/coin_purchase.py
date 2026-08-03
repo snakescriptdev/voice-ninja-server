@@ -39,7 +39,7 @@ from app_v2.utils.invoice_utils import generate_invoice_pdf, generate_invoice_re
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone
-from app_v2.utils.coin_utils import get_user_coin_balance
+from app_v2.utils.coin_utils import get_user_coin_balance, coins_to_inr
 from app_v2.utils.conversation_lifecycle import SETTINGS_VERSION_FIELDS, maybe_create_new_settings_version
 from app_v2.schemas.admin_settings import CoinUsageSettingsResponse, CoinUsageSettingsUpdate
 from fastapi.responses import HTMLResponse
@@ -171,12 +171,10 @@ def get_credit_banner_status(current_user: UnifiedAuthModel = Depends(require_ac
         db.session.commit()
 
     return CreditBannerStatusResponse(
-        available_coins=available_coins,
-        minimum_call_balance=minimum_call_balance,
-        low_credits_threshold=low_credits_threshold,
+        available_amount=coins_to_inr(available_coins, settings.credits_per_rupee),
+        minimum_call_balance_amount=coins_to_inr(minimum_call_balance, settings.credits_per_rupee),
         show_low_credits_banner=show_low,
         show_critical_credits_banner=show_critical,
-        credits_per_rupee=settings.credits_per_rupee,
     )
 
 

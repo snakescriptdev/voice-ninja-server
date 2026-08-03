@@ -137,9 +137,9 @@ class UserAPICallLogItem(BaseModel):
     api_route: str
     status_code: int
     response_time_ms: Optional[float]
-    coins_used: int
+    amount_used: float
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 
@@ -163,7 +163,7 @@ class APIListItem(BaseModel):
 class PublicAPIUsageResponse(BaseModel):
     total_api_calls_this_month: int
     total_api_calls_this_month_change: float
-    api_coins_used_this_month: int
+    api_amount_used_this_month: float
     avg_api_response_time_24h: float
     daily_usage: List[APIUsageDailyItem]
     api_list: List[APIListItem]
