@@ -39,7 +39,7 @@ from app_v2.databases.models import (
 )
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
 from app_v2.utils.activity_logger import log_activity
-from app_v2.utils.coin_utils import get_user_coin_balance, get_credits_per_rupee, coins_to_inr
+from app_v2.utils.coin_utils import get_user_coin_balance, coins_to_inr
 from app_v2.utils.conversation_lifecycle import (
     start_conversation,
     finalize_conversation,
@@ -612,7 +612,7 @@ async def maybe_send_low_coins_alert(user_id: int) -> None:
             if current_balance > 1000:
                 return
 
-            credits_per_rupee = get_credits_per_rupee()
+            credits_per_rupee = CoinUsageSettingsModel.get_settings().credits_per_rupee
             await send_low_coins_email(
                 user_email=user.email,
                 current_balance_inr=coins_to_inr(current_balance, credits_per_rupee),

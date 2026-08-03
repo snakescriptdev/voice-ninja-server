@@ -28,3 +28,16 @@ class PaginatedResponse(BaseModel, Generic[T]):
     size: int
     pages: int
     items: List[T]
+
+
+# Public API (app_v2/routers/public_api.py) only — kept separate from
+# PaginatedResponse because that one is shared with internal/admin routers
+# whose consumers (the frontend) already depend on the `page`/`pages` keys.
+class PublicPaginatedResponse(BaseModel, Generic[T]):
+    total: int
+    current_page: int
+    size: int
+    total_pages: int
+    has_next: bool
+    has_previous: bool
+    items: List[T]

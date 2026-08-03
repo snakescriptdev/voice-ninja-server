@@ -753,6 +753,11 @@ class ConversationsModel(Base):
     actual_conversation_credits: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # What we actually deducted from the user (their coins) and the resulting margin.
     coins_charged_to_user: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # INR equivalent of coins_charged_to_user, computed once at finalize time
+    # using the credits_per_rupee snapshotted on settings_version — the rate
+    # in effect for THIS call, not whatever the live rate is later. Callers
+    # should read this directly instead of re-deriving it from coins.
+    cost_inr: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     profit_percentage: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # True when the call was cut short because the user ran out of coins mid-call
     # (call_status is failed and error_message says so). Used for filtering.
@@ -1155,6 +1160,10 @@ class CoinUsageSettingsVersionModel(Base):
     first_call_max_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
     knowledge_base_llm_cost_multiplier: Mapped[float] = mapped_column(Float, nullable=False)
     tool_llm_cost_multiplier: Mapped[float] = mapped_column(Float, nullable=False)
+    # Conversion rate in effect when this immutable billing version was used.
+    # User-facing INR values for a conversation must use this snapshot rather
+    # than today's rate.
+    credits_per_rupee: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

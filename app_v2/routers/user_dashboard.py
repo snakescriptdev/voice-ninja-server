@@ -81,6 +81,13 @@ def _credits_per_rupee() -> float:
     if rate <= 0:
         raise ValueError("Invalid credits-per-rupee setting")
     return rate
+
+
+def _conversation_amount_expression():
+    """SQL expression for a conversation's INR charge — precomputed and
+    stored at finalize time (see conversation_lifecycle.finalize_conversation)
+    using the rate saved on that conversation's own settings_version."""
+    return ConversationsModel.cost_inr
 import calendar
 from sqlalchemy import case, Integer
 
@@ -204,7 +211,6 @@ def get_global_activities(
 @router.get("/analytics", response_model=UserAnalyticsResponse,openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("analytics_dashboard"))):
     try:
-        credits_per_rupee = _credits_per_rupee()
         first_day_of_month, first_day_prev_month = get_current_and_previous_month_start()
 
         total_calls = db.session.query(func.count(ConversationsModel.id)).filter(
@@ -237,19 +243,21 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
         ).scalar() or 0.0
         avg_call_duration_change = calculate_percentage_change(curr_avg_dur, prev_avg_dur)
 
-        coin_used_this_month = db.session.query(func.abs(func.sum(CoinsLedgerModel.coins))).filter(
-            CoinsLedgerModel.user_id == current_user.id,
-            CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage,
-            CoinsLedgerModel.created_at >= first_day_of_month
+        amount_used_this_month = db.session.query(
+            func.coalesce(func.sum(_conversation_amount_expression()), 0)
+        ).filter(
+            ConversationsModel.user_id == current_user.id,
+            ConversationsModel.created_at >= first_day_of_month,
         ).scalar() or 0
-        
-        coin_used_prev_month = db.session.query(func.abs(func.sum(CoinsLedgerModel.coins))).filter(
-            CoinsLedgerModel.user_id == current_user.id,
-            CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage,
-            CoinsLedgerModel.created_at >= first_day_prev_month,
-            CoinsLedgerModel.created_at < first_day_of_month
+
+        amount_used_prev_month = db.session.query(
+            func.coalesce(func.sum(_conversation_amount_expression()), 0)
+        ).filter(
+            ConversationsModel.user_id == current_user.id,
+            ConversationsModel.created_at >= first_day_prev_month,
+            ConversationsModel.created_at < first_day_of_month,
         ).scalar() or 0
-        coin_used_this_month_change = calculate_percentage_change(coin_used_this_month, coin_used_prev_month)
+        amount_used_this_month_change = calculate_percentage_change(amount_used_this_month, amount_used_prev_month)
 
         active_leads_count = db.session.query(func.count(WidgetLeadModel.id)).join(
             WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id
@@ -290,13 +298,16 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             return {str(r.date): float(r.value) for r in query.group_by(func.date(date_attr)).all()}
 
         call_daily = get_daily_counts(ConversationsModel, ConversationsModel.user_id, ConversationsModel.created_at)
-        coin_daily = get_daily_counts(
-            CoinsLedgerModel, 
-            CoinsLedgerModel.user_id, 
-            CoinsLedgerModel.created_at, 
-            value_attr=CoinsLedgerModel.coins,
-            filter_type=(CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage)
-        )
+        amount_daily = {
+            str(row.date): float(row.value or 0)
+            for row in db.session.query(
+                func.date(ConversationsModel.created_at).label("date"),
+                func.sum(_conversation_amount_expression()).label("value"),
+            ).filter(
+                ConversationsModel.user_id == current_user.id,
+                ConversationsModel.created_at >= seven_days_ago,
+            ).group_by(func.date(ConversationsModel.created_at)).all()
+        }
 
         call_trends = []
         amount_trends = []
@@ -310,7 +321,7 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             ))
             amount_trends.append(DailyTrendSeries(
                 date=day_str,
-                value=_coins_to_inr(coin_daily.get(day_str, 0), credits_per_rupee)
+                value=amount_daily.get(day_str, 0)
             ))
 
         hourly_data = db.session.query(
@@ -340,7 +351,7 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             AgentModel.agent_name,
             func.count(ConversationsModel.id).label('call_count'),
             func.sum(ConversationsModel.duration).label('total_duration'),
-            func.coalesce(func.sum(ConversationsModel.coins_charged_to_user), 0).label('coins_charged')
+            func.coalesce(func.sum(_conversation_amount_expression()), 0).label('amount_used')
         ).join(ConversationsModel, AgentModel.id == ConversationsModel.agent_id)\
          .filter(ConversationsModel.user_id == current_user.id)\
          .group_by(AgentModel.id, AgentModel.agent_name).all()
@@ -351,9 +362,10 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
                 agent_name=a.agent_name,
                 call_count=a.call_count,
                 total_duration=int(a.total_duration or 0),
-                amount_used=_coins_to_inr(a.coins_charged or 0, credits_per_rupee)
+                amount_used=round(float(a.amount_used or 0), 2)
             ) for a in agent_data
         ]
+
 
         channel_data = db.session.query(
             ConversationsModel.channel,
@@ -379,8 +391,8 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             total_calls_change=float(total_calls_change),
             avg_call_duration=round(float(avg_duration), 2),
             avg_call_duration_change=float(avg_call_duration_change),
-            amount_used_this_month=_coins_to_inr(coin_used_this_month, credits_per_rupee),
-            amount_used_this_month_change=float(coin_used_this_month_change),
+            amount_used_this_month=round(float(amount_used_this_month), 2),
+            amount_used_this_month_change=float(amount_used_this_month_change),
             active_leads_count=active_leads_count,
             active_leads_count_change=float(active_leads_count_change),
             hourly_distribution=hourly_list,
@@ -525,13 +537,12 @@ def get_agent_performance(
     paginated counterpart to the `agent_analytics` list embedded in
     GET /analytics."""
     try:
-        credits_per_rupee = _credits_per_rupee()
         agent_query = db.session.query(
             AgentModel.id.label('agent_id'),
             AgentModel.agent_name,
             func.count(ConversationsModel.id).label('call_count'),
             func.sum(ConversationsModel.duration).label('total_duration'),
-            func.coalesce(func.sum(ConversationsModel.coins_charged_to_user), 0).label('coins_charged')
+            func.coalesce(func.sum(_conversation_amount_expression()), 0).label('amount_used')
         ).join(ConversationsModel, AgentModel.id == ConversationsModel.agent_id)\
          .filter(ConversationsModel.user_id == current_user.id)\
          .group_by(AgentModel.id, AgentModel.agent_name)
@@ -545,7 +556,7 @@ def get_agent_performance(
                 agent_name=a.agent_name,
                 call_count=a.call_count,
                 total_duration=int(a.total_duration or 0),
-                amount_used=_coins_to_inr(a.coins_charged or 0, credits_per_rupee)
+                amount_used=round(float(a.amount_used or 0), 2)
             ) for a in agent_data
         ]
 
@@ -860,6 +871,7 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
         ).scalar() or 0
         total_api_calls_this_month_change = calculate_percentage_change(total_api_calls_this_month, total_api_calls_prev_month)
 
+        credits_per_rupee = _credits_per_rupee()
         api_coins_used_this_month = db.session.query(func.sum(APICallLogModel.coins_used)).filter(
             APICallLogModel.user_id == current_user.id,
             APICallLogModel.channel == PublicLogChannelEnum.public_api,
@@ -901,7 +913,7 @@ def get_public_api_usage(request:Request,current_user: UnifiedAuthModel = Depend
         return PublicAPIUsageResponse(
             total_api_calls_this_month=total_api_calls_this_month,
             total_api_calls_this_month_change=float(total_api_calls_this_month_change),
-            api_coins_used_this_month=int(api_coins_used_this_month),
+            api_amount_used_this_month=_coins_to_inr(api_coins_used_this_month, credits_per_rupee),
             avg_api_response_time_24h=round(float(avg_api_response_time_24h), 2),
             daily_usage=daily_usage,
             api_list=apis
@@ -927,15 +939,26 @@ def get_user_api_logs(
         
         total_count = base_query.count()
         logs = base_query.order_by(APICallLogModel.created_at.desc()).offset(skip).limit(size).all()
-        
+
         total_pages = ceil(total_count / size) if size > 0 else 1
-        
+        credits_per_rupee = _credits_per_rupee()
+
         return UserAPICallLogResponse(
             total=total_count,
             page=page,
             size=size,
             pages=total_pages,
-            logs=[UserAPICallLogItem.model_validate(log) for log in logs]
+            logs=[
+                UserAPICallLogItem(
+                    id=log.id,
+                    api_route=log.api_route,
+                    status_code=log.status_code,
+                    response_time_ms=log.response_time_ms,
+                    amount_used=_coins_to_inr(log.coins_used, credits_per_rupee),
+                    created_at=log.created_at,
+                )
+                for log in logs
+            ]
         )
     except Exception as e:
         logger.error(f"Error in get_user_api_logs: {str(e)}")
