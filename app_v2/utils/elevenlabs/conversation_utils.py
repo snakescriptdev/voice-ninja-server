@@ -122,7 +122,7 @@ class ElevenLabsConversation(BaseElevenLabs):
             
         return response
     
-    def extract_conversation_metadata(self, conversation_id: str, max_retries: int = 5, delay_seconds: float = 3.0) -> Dict[str, Any]:
+    def extract_conversation_metadata(self, conversation_id: str, max_retries: int = 10, delay_seconds: float = 4.0) -> Dict[str, Any]:
         """
         Fetch conversation details from ElevenLabs and extract metadata for database storage.
         Retries if data is incomplete (async assembly by ElevenLabs).

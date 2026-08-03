@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, selectinload
 from fastapi_sqlalchemy import db
 from sqlalchemy import or_
-from typing import List
+from typing import List, Optional
 import json
 import math
 import uuid
@@ -45,7 +45,12 @@ from app_v2.schemas.function_schema import (
     FunctionUnbind,
     PrimitiveField
 )
-from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
+from app_v2.schemas.agent_schema import (
+    AgentUpdate,
+    PublicAgentCreate,
+    PublicAgentRead,
+    PublicAgentListRead,
+)
 from app_v2.schemas.widget_schema import WidgetConfig, WidgetConfigResponse, WidgetConfigUpdate, WidgetListResponse
 from app_v2.schemas.web_agent_schema import WebAgentCreate, WebAgentUpdate, WebAgentResponse, WebAgentListResponse
 from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
@@ -65,13 +70,12 @@ from app_v2.schemas.personal_knowledge_base_schema import (
     PersonalKnowledgeBaseURLUpdate,
     PersonalKnowledgeBaseTextUpdate,
 )
-from app_v2.schemas.pagination import PaginatedResponse
+from app_v2.schemas.pagination import PublicPaginatedResponse
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum, PublicLogChannelEnum
 from app_v2.utils.public_auth import get_public_api_user
 from app_v2.utils.crypto_utils import encrypt_data, decrypt_data
 from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
-from app_v2.schemas.pagination import PaginatedResponse
 from app_v2.utils.rate_limit import track_and_limit_api, log_public_api_call
 from app_v2.utils.log_sanitizer import sanitize_for_log
 from app_v2.utils.feature_access import RequireFeaturePublic, require_feature_enabled, check_can_enable_resource
@@ -108,7 +112,9 @@ logger = setup_logger(__name__)
 
 from fastapi.routing import APIRoute
 from typing import Callable
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse
+from fastapi.exceptions import RequestValidationError
+from app_v2.core.exceptions import get_readable_message
 
 def _try_parse_json_bytes(raw: bytes):
     """Best-effort JSON parse; returns None on empty/invalid/non-JSON bytes."""
@@ -118,6 +124,10 @@ def _try_parse_json_bytes(raw: bytes):
         return json.loads(raw)
     except (ValueError, TypeError):
         return None
+
+
+def _public_envelope(status_str: str, data=None, message: str = "", detail: str = "") -> dict:
+    return {"status": status_str, "data": data, "message": message, "detail": detail}
 
 
 class PublicAPIRoute(APIRoute):
@@ -135,14 +145,46 @@ class PublicAPIRoute(APIRoute):
             try:
                 response = await original(request)
                 status_code = response.status_code
+                payload = _try_parse_json_bytes(getattr(response, "body", None))
+                response = JSONResponse(
+                    status_code=status_code,
+                    content=_public_envelope("success", data=payload),
+                )
                 return response
             except HTTPException as e:
                 status_code = e.status_code
                 error_message = str(e.detail)
-                raise e
+                response = JSONResponse(
+                    status_code=status_code,
+                    content=_public_envelope("failed", message=error_message, detail=error_message),
+                )
+                return response
+            except RequestValidationError as e:
+                status_code = 400
+                field_errors = []
+                for err in e.errors():
+                    loc = err.get("loc", [])
+                    field = loc[-1] if loc else "field"
+                    field_errors.append(get_readable_message(field, err.get("msg", "Invalid value")))
+                error_message = "; ".join(field_errors)
+                response = JSONResponse(
+                    status_code=status_code,
+                    content=_public_envelope("failed", message=error_message, detail=error_message),
+                )
+                return response
             except Exception as e:
+                status_code = 500
                 error_message = str(e)
-                raise e
+                logger.error(f"Unhandled error in public API {route_path}: {e}", exc_info=True)
+                response = JSONResponse(
+                    status_code=status_code,
+                    content=_public_envelope(
+                        "failed",
+                        message="Something went wrong. Please try again later.",
+                        detail=error_message,
+                    ),
+                )
+                return response
             finally:
                 process_time_ms = int((time.time() - start_time) * 1000)
                 client_id = request.headers.get("X-API-Client-ID")
@@ -206,7 +248,7 @@ router = APIRouter(
 
 # -------------------- HELPERS --------------------
 
-def agent_to_read(agent: AgentModel) -> AgentRead:
+def agent_to_read(agent: AgentModel) -> PublicAgentRead:
     ai_model = (
         agent.agent_ai_models[0].ai_model.model_name
         if agent.agent_ai_models else None
@@ -220,7 +262,7 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         if agent.phone_number else None
     )
 
-    return AgentRead(
+    return PublicAgentRead(
         id=agent.id,
         agent_name=agent.agent_name,
         first_message=agent.first_message,
@@ -234,7 +276,6 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         ai_model=ai_model,
         language=language,
         updated_at=agent.modified_at.date(),
-        elevenlabs_agent_id=agent.elevenlabs_agent_id,
         phone=phone_number,
         knowledgebase = [
             {"id": bridge.knowledge_base.id, "title": bridge.knowledge_base.title, "type": bridge.knowledge_base.kb_type}
@@ -247,6 +288,34 @@ def agent_to_read(agent: AgentModel) -> AgentRead:
         ],
         built_in_tools=agent.built_in_tools,
         timezone=agent.timezone
+    )
+
+
+def agent_to_list_read(agent: AgentModel) -> PublicAgentListRead:
+    ai_model = (
+        agent.agent_ai_models[0].ai_model.model_name
+        if agent.agent_ai_models else None
+    )
+    language = (
+        agent.agent_languages[0].language.lang_code
+        if agent.agent_languages else None
+    )
+    phone_number = (
+        agent.phone_number[0].phone_number
+        if agent.phone_number else None
+    )
+
+    return PublicAgentListRead(
+        id=agent.id,
+        agent_name=agent.agent_name,
+        first_message=agent.first_message,
+        voice=agent.voice.voice_name,
+        is_enabled=agent.is_enabled,
+        ai_model=ai_model,
+        language=language,
+        updated_at=agent.modified_at.date(),
+        phone=phone_number,
+        timezone=agent.timezone,
     )
 
 def widget_to_response(widget: WidgetModel, request: Request = None) -> WidgetConfigResponse:
@@ -286,10 +355,12 @@ def twilio_connector_to_response(connector: TwilioUserCreds) -> TwilioConnectorR
 def voice_to_read(voice: VoiceModel) -> VoiceRead:
     gender = GenderEnum.male
     nationality = "british"
-    
+
     if voice.traits:
         gender = voice.traits.gender.value if hasattr(voice.traits.gender, 'value') else str(voice.traits.gender)
         nationality = voice.traits.nationality
+
+    agents = [a.agent_name for a in voice.agents] if voice.agents else []
 
     return VoiceRead(
         id=voice.id,
@@ -299,29 +370,52 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
         gender=gender,
         nationality=nationality,
         has_sample_audio=voice.has_sample_audio,
-        sample_audio_url=voice.audio_file
+        sample_audio_url=voice.audio_file,
+        is_enabled=voice.is_enabled,
+        agents=agents,
     )
 
 # -------------------------------------------------------------------
 # AGENTS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/agents", response_model=PaginatedResponse[AgentRead])
+@router.get(
+    "/agents",
+    response_model=PublicPaginatedResponse[PublicAgentListRead],
+    description=(
+        "Lists this account's agents. Supports filtering with `name` (partial, "
+        "case-insensitive match on agent name) and `voice` (partial, "
+        "case-insensitive match on voice name)."
+    ),
+)
 async def list_agents(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=50),
+    name: Optional[str] = Query(None, description="Filter by partial agent name (case-insensitive)"),
+    voice: Optional[str] = Query(None, description="Filter by partial voice name (case-insensitive)"),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
-    skip = (max(1, page) - 1) * size
+    skip = (page - 1) * size
     with db():
         query = db.session.query(AgentModel).filter(AgentModel.user_id == current_user.id)
+        if name:
+            query = query.filter(AgentModel.agent_name.ilike(f"%{name}%"))
+        if voice:
+            query = query.join(AgentModel.voice).filter(VoiceModel.voice_name.ilike(f"%{voice}%"))
         total = query.count()
-        agents = query.order_by(AgentModel.created_at.desc()).offset(skip).limit(size).all()
-        items = [agent_to_read(a) for a in agents]
-        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total/size), items=items)
+        agents = (
+            query.order_by(AgentModel.created_at.desc(), AgentModel.id.desc())
+            .offset(skip).limit(size).all()
+        )
+        items = [agent_to_list_read(a) for a in agents]
+        total_pages = math.ceil(total / size) if total else 0
+        return PublicPaginatedResponse(
+            total=total, current_page=page, size=size, total_pages=total_pages,
+            has_next=page < total_pages, has_previous=page > 1, items=items,
+        )
 
-@router.get("/agents/{agent_id}", response_model=AgentRead)
+@router.get("/agents/{agent_id}", response_model=PublicAgentRead)
 async def get_agent(
     agent_id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -339,9 +433,9 @@ async def get_agent(
 
         return agent_to_read(agent)
 
-@router.post("/agents", response_model=AgentRead, status_code=status.HTTP_201_CREATED)
+@router.post("/agents", response_model=PublicAgentRead, status_code=status.HTTP_201_CREATED)
 async def create_agent(
-    agent_in: AgentCreate,
+    agent_in: PublicAgentCreate,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
@@ -365,8 +459,11 @@ async def create_agent(
             raise HTTPException(status_code=400, detail="Invalid language")
 
         from app_v2.routers.agents import resolve_phone_record, finalize_phone_assignment
+        # Public callers can't specify a twilio_connector_id (removed from
+        # PublicAgentCreate) — resolve_phone_record falls back to requiring
+        # an already-owned, previously imported number for `phone`.
         phone_record, phone_connector = resolve_phone_record(
-            db.session, user_id, agent_in.phone, agent_in.twilio_connector_id
+            db.session, user_id, agent_in.phone, None
         )
 
         # -------------------------------------------------
@@ -473,7 +570,7 @@ async def create_agent(
 
         return agent_to_read(new_agent)
 
-@router.put("/agents/{agent_id}", response_model=AgentRead)
+@router.put("/agents/{agent_id}", response_model=PublicAgentRead)
 async def update_agent_public(
     agent_id: int,
     agent_in: AgentUpdate,
@@ -681,7 +778,7 @@ async def update_agent_public(
 
         return agent_to_read(agent)
 
-@router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/agents/{agent_id}")
 async def delete_agent_public(
     agent_id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -715,21 +812,24 @@ async def delete_agent_public(
 # WidgetS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/widgets", response_model=PaginatedResponse[WidgetListResponse])
+@router.get("/widgets", response_model=PublicPaginatedResponse[WidgetListResponse])
 async def list_widgets(
     request: Request,
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=50),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
-    skip = (max(1, page) - 1) * size
+    skip = (page - 1) * size
     base_url = str(request.base_url).rstrip("/")
     with db():
         query = db.session.query(WidgetModel).filter(WidgetModel.user_id == current_user.id)
         total = query.count()
-        widgets = query.order_by(WidgetModel.created_at.desc()).offset(skip).limit(size).all()
-        
+        widgets = (
+            query.order_by(WidgetModel.created_at.desc(), WidgetModel.id.desc())
+            .offset(skip).limit(size).all()
+        )
+
         items = [
             WidgetListResponse(
                 id=wa.id,
@@ -741,7 +841,11 @@ async def list_widgets(
                 agent_name=wa.agent.agent_name
             ) for wa in widgets
         ]
-        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total/size), items=items)
+        total_pages = math.ceil(total / size) if total else 0
+        return PublicPaginatedResponse(
+            total=total, current_page=page, size=size, total_pages=total_pages,
+            has_next=page < total_pages, has_previous=page > 1, items=items,
+        )
 
 @router.get("/widgets/{public_id}", response_model=WidgetConfigResponse)
 async def get_widget(
@@ -848,7 +952,7 @@ async def update_widget(
             if "position" in appearance_data: wa.position = appearance_data["position"]
             if "show_branding" in appearance_data: wa.show_branding = appearance_data["show_branding"]
 
-        if "prechat" in update_data:
+        if "prechat" in update_data and update_data.get("prechat") is not None:
             prechat_data = update_data["prechat"]
             if "enable_prechat" in prechat_data: wa.enable_prechat = prechat_data["enable_prechat"]
             if "require_name" in prechat_data: wa.require_name = prechat_data["require_name"]
@@ -860,7 +964,7 @@ async def update_widget(
         db.session.refresh(wa)
         return widget_to_response(wa, request)
 
-@router.delete("/widgets/{public_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/widgets/{public_id}")
 async def delete_widget(
     public_id: str,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -880,22 +984,25 @@ async def delete_widget(
 # WEB AGENTS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/web-agents", response_model=PaginatedResponse[WebAgentListResponse])
+@router.get("/web-agents", response_model=PublicPaginatedResponse[WebAgentListResponse])
 async def list_web_agents_public(
     request: Request,
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=50),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     require_feature_enabled(current_user.id, PlanFeatureEnum.web_agent)
-    skip = (max(1, page) - 1) * size
+    skip = (page - 1) * size
     with db():
         from app_v2.routers.web_agent_config import _shareable_link
 
         query = db.session.query(WebAgentPageModel).filter(WebAgentPageModel.user_id == current_user.id)
         total = query.count()
-        web_agents = query.order_by(WebAgentPageModel.created_at.desc()).offset(skip).limit(size).all()
+        web_agents = (
+            query.order_by(WebAgentPageModel.created_at.desc(), WebAgentPageModel.id.desc())
+            .offset(skip).limit(size).all()
+        )
         items = [
             WebAgentListResponse(
                 id=wa.id,
@@ -913,7 +1020,11 @@ async def list_web_agents_public(
             )
             for wa in web_agents
         ]
-        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total / size), items=items)
+        total_pages = math.ceil(total / size) if total else 0
+        return PublicPaginatedResponse(
+            total=total, current_page=page, size=size, total_pages=total_pages,
+            has_next=page < total_pages, has_previous=page > 1, items=items,
+        )
 
 
 @router.get("/web-agents/{public_id}", response_model=WebAgentResponse)
@@ -1046,7 +1157,7 @@ async def update_web_agent_public(
         return _to_response(request, web_agent)
 
 
-@router.delete("/web-agents/{public_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/web-agents/{public_id}")
 async def delete_web_agent_public(
     public_id: str,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1067,22 +1178,29 @@ async def delete_web_agent_public(
 # TWILIO CONNECTORS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/twilio-connectors", response_model=PaginatedResponse[TwilioConnectorResponse])
+@router.get("/twilio-connectors", response_model=PublicPaginatedResponse[TwilioConnectorResponse])
 async def list_twilio_connectors(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=50),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     require_feature_enabled(current_user.id, PlanFeatureEnum.phone_numbers)
-    skip = (max(1, page) - 1) * size
+    skip = (page - 1) * size
     with db():
         query = db.session.query(TwilioUserCreds).filter(TwilioUserCreds.user_id == current_user.id)
         total = query.count()
-        connectors = query.order_by(TwilioUserCreds.created_at.desc()).offset(skip).limit(size).all()
+        connectors = (
+            query.order_by(TwilioUserCreds.created_at.desc(), TwilioUserCreds.id.desc())
+            .offset(skip).limit(size).all()
+        )
 
         items = [twilio_connector_to_response(c) for c in connectors]
-        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total / size), items=items)
+        total_pages = math.ceil(total / size) if total else 0
+        return PublicPaginatedResponse(
+            total=total, current_page=page, size=size, total_pages=total_pages,
+            has_next=page < total_pages, has_previous=page > 1, items=items,
+        )
 
 @router.get("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
 async def get_twilio_connector(
@@ -1192,7 +1310,7 @@ async def update_twilio_connector(
         db.session.refresh(connector)
         return twilio_connector_to_response(connector)
 
-@router.delete("/twilio-connectors/{connector_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/twilio-connectors/{connector_id}")
 async def delete_twilio_connector(
     connector_id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1217,19 +1335,23 @@ async def delete_twilio_connector(
 # LANGUAGES
 # -------------------------------------------------------------------
 
-@router.get("/languages", response_model=PaginatedResponse[LanguageRead])
+@router.get("/languages", response_model=PublicPaginatedResponse[LanguageRead])
 async def list_languages_public(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=50),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
-    skip = (max(1, page) - 1) * size
+    skip = (page - 1) * size
     with db():
         query = db.session.query(LanguageModel)
         total = query.count()
         languages = query.order_by(LanguageModel.id.asc()).offset(skip).limit(size).all()
-        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total/size), items=languages)
+        total_pages = math.ceil(total / size) if total else 0
+        return PublicPaginatedResponse(
+            total=total, current_page=page, size=size, total_pages=total_pages,
+            has_next=page < total_pages, has_previous=page > 1, items=languages,
+        )
 
 @router.get("/languages/{id}", response_model=LanguageRead)
 async def get_language_public(
@@ -1247,14 +1369,14 @@ async def get_language_public(
 # VOICES
 # -------------------------------------------------------------------
 
-@router.get("/voices", response_model=PaginatedResponse[VoiceRead])
+@router.get("/voices", response_model=PublicPaginatedResponse[VoiceRead])
 async def list_voices_public(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=50),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
-    skip = (max(1, page) - 1) * size
+    skip = (page - 1) * size
     with db():
         filters = [
             or_(
@@ -1262,12 +1384,16 @@ async def list_voices_public(
                 VoiceModel.user_id.is_(None),
             ),
         ]
-            
+
         query = db.session.query(VoiceModel).options(selectinload(VoiceModel.traits)).filter(*filters)
         total = query.count()
         voices = query.order_by(VoiceModel.id.asc()).offset(skip).limit(size).all()
         items = [voice_to_read(v) for v in voices]
-        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total/size), items=items)
+        total_pages = math.ceil(total / size) if total else 0
+        return PublicPaginatedResponse(
+            total=total, current_page=page, size=size, total_pages=total_pages,
+            has_next=page < total_pages, has_previous=page > 1, items=items,
+        )
 
 @router.get("/voices/{id}", response_model=VoiceRead)
 async def get_voice_public(
@@ -1291,19 +1417,23 @@ async def get_voice_public(
 # AI MODELS
 # -------------------------------------------------------------------
 
-@router.get("/ai-models", response_model=PaginatedResponse[AIModelRead])
+@router.get("/ai-models", response_model=PublicPaginatedResponse[AIModelRead])
 async def list_ai_models_public(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=50),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
-    skip = (max(1, page) - 1) * size
+    skip = (page - 1) * size
     with db():
         query = db.session.query(AIModels)
         total = query.count()
         models = query.order_by(AIModels.model_name.asc()).offset(skip).limit(size).all()
-        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total/size), items=models)
+        total_pages = math.ceil(total / size) if total else 0
+        return PublicPaginatedResponse(
+            total=total, current_page=page, size=size, total_pages=total_pages,
+            has_next=page < total_pages, has_previous=page > 1, items=models,
+        )
 # -------------------------------------------------------------------
 # KNOWLEDGE BASE
 # -------------------------------------------------------------------
@@ -1348,19 +1478,23 @@ def sync_agent_kb_logic(agent_id: int):
     except Exception as e:
         logger.error(f"Failed to sync KB for agent {agent_id}: {e}")
 
-@router.get("/kb", response_model=PaginatedResponse[KnowledgeBaseResponse], include_in_schema=False)
+@router.get("/kb", response_model=PublicPaginatedResponse[KnowledgeBaseResponse], include_in_schema=False)
 async def list_kb_public(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=50),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
-    skip = (max(1, page) - 1) * size
+    skip = (page - 1) * size
     with db():
         query = db.session.query(KnowledgeBaseModel).filter(KnowledgeBaseModel.user_id == current_user.id)
         total = query.count()
         kb_items = query.order_by(KnowledgeBaseModel.id.asc()).offset(skip).limit(size).all()
-        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total/size), items=kb_items)
+        total_pages = math.ceil(total / size) if total else 0
+        return PublicPaginatedResponse(
+            total=total, current_page=page, size=size, total_pages=total_pages,
+            has_next=page < total_pages, has_previous=page > 1, items=kb_items,
+        )
 
 @router.get("/kb/{id}", response_model=KnowledgeBaseResponse, include_in_schema=False)
 async def get_kb_public(
@@ -1530,7 +1664,7 @@ async def create_kb_file_public(
             
         return responses
 
-@router.delete("/kb/{id}", status_code=status.HTTP_204_NO_CONTENT, include_in_schema=False)
+@router.delete("/kb/{id}", include_in_schema=False)
 async def delete_kb_public(
     id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1600,10 +1734,10 @@ async def bind_kb_public(
 # at least one item attached (app_v2/utils/personal_kb_tool.py).
 # -------------------------------------------------------------------
 
-@router.get("/personal-kb", response_model=PaginatedResponse[PersonalKnowledgeBaseResponse])
+@router.get("/personal-kb", response_model=PublicPaginatedResponse[PersonalKnowledgeBaseResponse])
 async def list_personal_kb_public(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=50),
     title: str = None,
     kb_type: str = None,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1619,10 +1753,12 @@ async def list_personal_kb_public(
             query = query.filter(PersonalKnowledgeBaseModel.kb_type == kb_type)
 
         total = query.count()
-        skip = (max(1, page) - 1) * size
+        skip = (page - 1) * size
         items = query.order_by(PersonalKnowledgeBaseModel.id.asc()).offset(skip).limit(size).all()
-        return PaginatedResponse(
-            total=total, page=page, size=size, pages=math.ceil(total / size) if size else 1,
+        total_pages = math.ceil(total / size) if total else 0
+        return PublicPaginatedResponse(
+            total=total, current_page=page, size=size, total_pages=total_pages,
+            has_next=page < total_pages, has_previous=page > 1,
             items=[_personal_kb_to_read(item) for item in items],
         )
 
@@ -1864,7 +2000,7 @@ async def update_personal_kb_file_public(
         return _personal_kb_to_read(kb_entry)
 
 
-@router.delete("/personal-kb/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/personal-kb/{id}")
 async def delete_personal_kb_public(
     id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1964,25 +2100,29 @@ def function_to_read(f: FunctionModel) -> FunctionRead:
     )
 
 
-@router.get("/functions", response_model=PaginatedResponse[FunctionRead])
+@router.get("/functions", response_model=PublicPaginatedResponse[FunctionRead])
 async def list_functions_public(
-    page: int = 1,
-    size: int = 20,
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=50),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
-    skip = (max(1, page) - 1) * size
+    skip = (page - 1) * size
     with db():
         query = db.session.query(FunctionModel).filter(FunctionModel.user_id == current_user.id)
         total = query.count()
         functions = (
             query
             .options(selectinload(FunctionModel.api_endpoint_url))
-            .order_by(FunctionModel.created_at.desc())
+            .order_by(FunctionModel.created_at.desc(), FunctionModel.id.desc())
             .offset(skip).limit(size).all()
         )
         items = [function_to_read(f) for f in functions]
-        return PaginatedResponse(total=total, page=page, size=size, pages=math.ceil(total/size), items=items)
+        total_pages = math.ceil(total / size) if total else 0
+        return PublicPaginatedResponse(
+            total=total, current_page=page, size=size, total_pages=total_pages,
+            has_next=page < total_pages, has_previous=page > 1, items=items,
+        )
 
 
 @router.get("/functions/{id}", response_model=FunctionRead)
@@ -2171,7 +2311,7 @@ async def update_function_public(
         return function_to_read(function)
 
 
-@router.delete("/functions/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/functions/{id}")
 async def delete_function_public(
     id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))

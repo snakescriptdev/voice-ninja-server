@@ -25,7 +25,7 @@ from app_v2.databases.models import (
     UnifiedAuthModel,
 )
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
-from app_v2.utils.coin_utils import deduct_coins, get_user_coin_balance, coins_to_inr
+from app_v2.utils.coin_utils import deduct_coins, get_user_coin_balance, coins_to_inr, get_credits_per_rupee
 from app_v2.utils.cost_utils import (
     compute_live_charge_credits,
     estimate_costs_credits,
@@ -394,9 +394,8 @@ def get_minimum_call_balance() -> int:
 
 
 # Billing-relevant CoinUsageSettingsModel fields — a change to ANY of these
-# triggers a new CoinUsageSettingsVersionModel snapshot. credits_per_rupee /
-# minimum_purchase_amount_inr are deliberately excluded: they govern
-# purchasing, not what a conversation is charged.
+# triggers a new CoinUsageSettingsVersionModel snapshot. credits_per_rupee is
+# included because it determines the INR display value of every conversation.
 SETTINGS_VERSION_FIELDS = [
     "elevenlabs_conversation_credits_per_minute",
     "usd_to_credits",
@@ -406,6 +405,7 @@ SETTINGS_VERSION_FIELDS = [
     "first_call_max_duration_seconds",
     "knowledge_base_llm_cost_multiplier",
     "tool_llm_cost_multiplier",
+    "credits_per_rupee",
 ]
 
 
@@ -605,6 +605,7 @@ def finalize_conversation(
     record.calculated_telephony_cost = calculated["calculated_telephony_cost"]
 
     record.coins_charged_to_user = calculated_cost
+    record.cost_inr = coins_to_inr(calculated_cost, get_credits_per_rupee(record))
     actual = compute_actual_breakdown(
         total_elevenlabs_credits=raw_cost,
         llm_credits=metadata.get("llm_credits"),
