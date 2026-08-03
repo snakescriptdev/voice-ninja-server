@@ -366,6 +366,7 @@ def get_user_analytics(current_user: UnifiedAuthModel = Depends(RequireFeature("
             ) for a in agent_data
         ]
 
+
         channel_data = db.session.query(
             ConversationsModel.channel,
             func.count(ConversationsModel.id).label('count')
