@@ -4,10 +4,10 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy import or_
 from datetime import date
 from typing import Optional
-from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WidgetLeadModel, CoinsLedgerModel,CoinUsageSettingsModel
+from app_v2.databases.models import ConversationsModel, AgentModel, UnifiedAuthModel, WidgetLeadModel
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.activity_logger import log_activity
-from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum, CoinTransactionTypeEnum
+from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
 import io
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.schemas.pagination import PageSize
@@ -32,20 +32,14 @@ def list_user_conversations(
 	current_user: UnifiedAuthModel = Depends(require_active_user())
 ):
 	with db():
-		coin_setting_record = (
-			db.session.query(CoinUsageSettingsModel)
-			.order_by(desc(CoinUsageSettingsModel.id))
-			.first()
-		)	    
-		credits_per_rupee = coin_setting_record.credits_per_rupee if coin_setting_record else None
-		if credits_per_rupee is None or credits_per_rupee <= 0:
-			raise HTTPException(status_code=500, detail="Invalid coin usage settings")
-	
 		q = (
 			db.session.query(ConversationsModel)
 			.outerjoin(AgentModel, ConversationsModel.agent_id == AgentModel.id)
 			.outerjoin(WidgetLeadModel, WidgetLeadModel.conversation_id == ConversationsModel.id)
-			.options(joinedload(ConversationsModel.agent), joinedload(ConversationsModel.lead))
+			.options(
+				joinedload(ConversationsModel.agent),
+				joinedload(ConversationsModel.lead),
+			)
 			.filter(ConversationsModel.user_id == current_user.id)
 		)
 
@@ -80,17 +74,6 @@ def list_user_conversations(
 		total = q.count()
 		conversations = q.offset((page-1)*page_size).limit(page_size).all()
 
-		if conversations:
-			conv_ids = [c.id for c in conversations]
-			ledger_entries = db.session.query(CoinsLedgerModel.reference_id, CoinsLedgerModel.coins).filter(
-				CoinsLedgerModel.reference_type == "conversation",
-				CoinsLedgerModel.reference_id.in_(conv_ids),
-				CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage
-			).all()
-			ledger_cost_map = {entry.reference_id: abs(entry.coins) for entry in ledger_entries}
-		else:
-			ledger_cost_map = {}
-
 		def seconds_to_timer(secs):
 			if not secs:
 				return "00:00:00"
@@ -102,7 +85,6 @@ def list_user_conversations(
 		
 		results = []
 		for conv in conversations:
-			display_cost = ledger_cost_map.get(conv.id, conv.cost)
 			results.append({
 				"id": conv.id,
 				"date": conv.created_at.strftime("%b %d, %Y"),
@@ -114,7 +96,7 @@ def list_user_conversations(
 				"call_status": conv.call_status.name if conv.call_status else None,
 				"channel": conv.channel.value if conv.channel else None,
 				"lead_name": getattr(conv.lead, "name", None) if conv.lead else None,
-				"cost": display_cost/credits_per_rupee,
+				"cost": conv.cost_inr or 0,
 				"ended_due_to_low_balance": conv.ended_due_to_low_balance,
 			})
 
@@ -152,23 +134,20 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 	with db():
 		conv = db.session.query(ConversationsModel).options(
 			joinedload(ConversationsModel.agent),
-			joinedload(ConversationsModel.lead)
+			joinedload(ConversationsModel.lead),
 		).filter(ConversationsModel.id == conversation_id,ConversationsModel.user_id==current_user.id).first()
 		if not conv:
 			raise HTTPException(status_code=404, detail="Conversation not found")
 		elevenlabs_conv_id = conv.elevenlabs_conv_id
 
-		ledger_entry = db.session.query(CoinsLedgerModel).filter(
-			CoinsLedgerModel.reference_type == "conversation",
-			CoinsLedgerModel.reference_id == conversation_id,
-			CoinsLedgerModel.transaction_type == CoinTransactionTypeEnum.debit_usage
-		).first()
-		display_cost = abs(ledger_entry.coins) if ledger_entry else conv.cost
-
 	el_conv = ElevenLabsConversation()
 	transcript = []
 	if elevenlabs_conv_id:
-		meta = el_conv.extract_conversation_metadata(elevenlabs_conv_id)
+		# Shorter budget than the default: this runs synchronously in an HTTP
+		# request (unlike the finalize-call flows, which retry via
+		# asyncio.to_thread), so it shouldn't block the details page for the
+		# full retry window just to fetch a transcript for display.
+		meta = el_conv.extract_conversation_metadata(elevenlabs_conv_id, max_retries=5, delay_seconds=3.0)
 		transcript = meta.get("transcript", [])
 
 	def seconds_to_timer(secs):
@@ -185,7 +164,7 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 			"duration": seconds_to_timer(conv.duration),
 			"messages": conv.message_count,
 			"channel": conv.channel.value if conv.channel else None,
-			"cost": display_cost,
+			"cost": conv.cost_inr or 0,
             "error_message": conv.error_message,
             "ended_due_to_low_balance": conv.ended_due_to_low_balance,
 		},

@@ -36,7 +36,7 @@ from app_v2.databases.models import (
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum, PublicLogChannelEnum
 from app_v2.schemas.widget_schema import WidgetLeadCreate, WidgetPublicConfig
 from app_v2.utils.activity_logger import log_activity
-from app_v2.utils.coin_utils import get_user_coin_balance, get_credits_per_rupee, coins_to_inr
+from app_v2.utils.coin_utils import get_user_coin_balance, coins_to_inr
 from app_v2.utils.conversation_lifecycle import (
     start_conversation,
     finalize_conversation,
@@ -621,7 +621,7 @@ async def maybe_send_notifications(
     with db():
         notif, lead_name = _fetch_owner_notification_settings(ctx.user_id, lead_id)
         current_balance = get_user_coin_balance(ctx.user_id)
-        credits_per_rupee = get_credits_per_rupee()
+        credits_per_rupee = CoinUsageSettingsModel.get_settings().credits_per_rupee
 
     if notif.email and notif.email_notifications:
         try:

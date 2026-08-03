@@ -31,16 +31,13 @@ class CallConfigResponse(BaseModel):
 BannerType = Literal["low_credits", "critical_credits"]
 
 class CreditBannerStatusResponse(BaseModel):
-    available_coins: int
-    # Balance at/under which a call cannot be started (the "critical" banner).
-    minimum_call_balance: int
-    # Balance at/under which we warn a call may end mid-way (the "low" banner) —
-    # a multiple of minimum_call_balance, always >= it.
-    low_credits_threshold: int
+    # INR equivalent of the user's current balance.
+    available_amount: float
+    # INR equivalent of the balance at/under which a call cannot be started
+    # (the "critical" banner).
+    minimum_call_balance_amount: float
     show_low_credits_banner: bool
     show_critical_credits_banner: bool
-    # So the client can render the coin balances above as an INR amount.
-    credits_per_rupee: float
 
 class DismissCreditBannerRequest(BaseModel):
     banner: BannerType
