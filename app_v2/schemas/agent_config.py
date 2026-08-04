@@ -36,8 +36,32 @@ class AgentConfigGenerator(BaseModel):
 
 class AgentConfigOut(BaseModel):
     agent_name: str
-    ai_model: str 
+    ai_model: str
     voice: str
     language: str
+    system_prompt: str
+
+
+class GeneratePromptRequest(BaseModel):
+    """
+    Freeform "Generate with AI" input from the system prompt editor — unlike
+    AgentConfigGenerator, this has no structured fields (name/voice/use
+    cases/etc.) since it's meant to work from whatever the user types,
+    whether that's a one-line goal or a fully-formed draft prompt.
+    """
+    instructions: str = Field(..., description="Freeform description of what the agent should do")
+
+    @field_validator("instructions")
+    @classmethod
+    def validate_instructions(cls, v: str) -> str:
+        v = (v or "").strip()
+        if len(v) < 10:
+            raise ValueError("Please describe your agent in at least 10 characters")
+        if len(v) > 2000:
+            raise ValueError("Description must be 2000 characters or fewer")
+        return v
+
+
+class GeneratePromptResponse(BaseModel):
     system_prompt: str
 

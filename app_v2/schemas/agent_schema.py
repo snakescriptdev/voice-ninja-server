@@ -77,7 +77,7 @@ class AgentRead(BaseModel):
     elevenlabs_agent_id: Optional[str] = None
     knowledgebase: List[dict[str,int|str]] = []
     variables: Dict[str, str] = {}
-    tools: List[dict[str,int|str]] = []
+    tools: List[dict[str,int|str|bool]] = []
     built_in_tools: Optional[Dict] = None
     timezone: Optional[str] = None
     # True iff this agent has never had a conversation row yet — drives the
