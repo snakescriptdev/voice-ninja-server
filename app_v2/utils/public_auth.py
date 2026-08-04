@@ -1,4 +1,5 @@
 from urllib.parse import urlparse
+from typing import Literal
 
 from fastapi import Header, HTTPException, status, Depends, Request
 from fastapi_sqlalchemy import db
@@ -14,10 +15,40 @@ def _origin_hostname(request: Request) -> str | None:
         return None
     return (urlparse(header_value).hostname or header_value).lower()
 
+
+async def require_json_accept(
+    accept: Literal["application/json"] = Header(
+        "application/json",
+        alias="Accept",
+        description=(
+            "Must be exactly `application/json` - this API only ever returns JSON. "
+            "Any other value is rejected."
+        ),
+    ),
+):
+    """
+    Router-level dependency so every public API route documents and enforces
+    `Accept: application/json`. Rejecting via FastAPI's own Literal validation
+    keeps the error on the same enveloped-response path as every other
+    validation error here (see PublicAPIRoute.get_route_handler).
+    """
+    return accept
+
+
 async def get_public_api_user(
     request: Request,
-    x_api_client_id: str = Header(..., alias="X-API-Client-ID"),
-    x_api_client_secret: str = Header(..., alias="X-API-Client-Secret")
+    x_api_client_id: str = Header(
+        ...,
+        alias="X-API-Client-ID",
+        description="Your API client ID. In Postman, set the collection variable `VOICE_NINJA_CLIENT_ID` to this value.",
+        json_schema_extra={"example": "{{VOICE_NINJA_CLIENT_ID}}"},
+    ),
+    x_api_client_secret: str = Header(
+        ...,
+        alias="X-API-Client-Secret",
+        description="Your API client secret. In Postman, set the collection variable `VOICE_NINJA_CLIENT_SECRET` to this value.",
+        json_schema_extra={"example": "{{VOICE_NINJA_CLIENT_SECRET}}"},
+    ),
 ) -> UnifiedAuthModel:
     """
     Dependency to authenticate public API requests using Client ID and Client Secret.
