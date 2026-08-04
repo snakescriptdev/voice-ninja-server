@@ -26,7 +26,7 @@ from app_v2.core.config import VoiceSettings
 from starlette.middleware.sessions import SessionMiddleware
 from app_v2.databases.models import AdminTokenModel, TokensToConsume, VoiceModel
 from app_v2.core.exceptions import get_readable_message
-from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router, personal_knowledge_base_router, phone_router, widget_router,websocket_router,conversation_router,widget_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_user_management, payment_insights_router, api_key_management, public_api,public_websocket_router,webhooks, twilio_connector_router, web_agent_config_router, web_agent_router, invoice_files, support_router, support_public_router, admin_support, sessions_router
+from app_v2.routers import otp_router, health_router, google_auth_router, profile_router, lang_router, ai_model_router, agent_router, voice_router, function_router, knowledge_base_router, personal_knowledge_base_router, phone_router, widget_router,websocket_router,conversation_router,widget_config_router, user_dashboard_router,admin_dashboard_router, coin_purchase_router, admin_user_management, payment_insights_router, api_key_management, public_api,public_websocket_router,webhooks, twilio_connector_router, web_agent_config_router, web_agent_router, invoice_files, support_router, support_public_router, admin_support, sessions_router, internal_reconciliation
 from app_v2.routers.email_subscription import public_router as email_subscription_public_router, admin_router as email_subscription_admin_router
 from app_v2.utils.jwt_utils import HTTPBearer
 from fastapi.responses import HTMLResponse
@@ -128,8 +128,145 @@ async def http_exception_handler(request: Request, exc: HTTPException):
         }
     )
 
+
+def _is_public_api_path(path: str) -> bool:
+    return path.startswith("/api/v2/public")
+
+
+# Starlette raises its own (base-class) HTTPException for router-level errors
+# - 404 for an unmatched path, 405 for a matched path/wrong method - straight
+# from Router.handle(), before any individual route's `route_class` (e.g.
+# PublicAPIRoute in app_v2/routers/public_api.py) gets a chance to run. Since
+# that base class is never the exact type the `HTTPException` handler above is
+# registered against (that's the fastapi.HTTPException subclass), those
+# responses fell through to FastAPI's bare default `{"detail": ...}` handler
+# instead of either envelope format. Catch it explicitly and route by path so
+# public API callers still get `_public_envelope`.
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+
+@app.exception_handler(StarletteHTTPException)
+async def starlette_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if _is_public_api_path(request.url.path):
+        from app_v2.routers.public_api import _public_envelope
+        message = str(exc.detail)
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=_public_envelope("failed", message=message, detail=message),
+            headers=getattr(exc, "headers", None),
+        )
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=getattr(exc, "headers", None),
+    )
+
+
+# Last-resort net for anything that isn't an HTTPException/RequestValidationError
+# and manages to escape PublicAPIRoute's own catch-all (app_v2/routers/public_api.py)
+# - e.g. an error raised by ASGI middleware above routing. Without this, such an
+# error would produce Starlette's bare-text 500, not JSON at all.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    from app_v2.core.logger import setup_logger
+    setup_logger(__name__).error(f"Unhandled error on {request.url.path}: {exc}", exc_info=True)
+    if _is_public_api_path(request.url.path):
+        from app_v2.routers.public_api import _public_envelope
+        return JSONResponse(
+            status_code=500,
+            content=_public_envelope(
+                "failed",
+                message="Something went wrong. Please try again later.",
+                detail=str(exc),
+            ),
+        )
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": {
+                "message": "Something went wrong. Please try again later.",
+                "status": "failed",
+                "status_code": 500,
+            }
+        },
+    )
+
 # Security scheme for Bearer token
 security = HTTPBearer()
+
+# Postman's OpenAPI importer handles 3.1-style schema shapes unreliably against
+# a spec declared as 3.0.x:
+#  - `anyOf: [{type: X}, {type: null}]` (how Pydantic v2/FastAPI represents
+#    `Optional[X]` params) silently drops the parameter from the generated
+#    request instead of showing it as an optional filter. Downgraded to the
+#    3.0-style `{type: X, nullable: true}` shape, which Postman has always
+#    understood. See app_v2/routers/public_api.py `list_agents` for the
+#    endpoint this was originally reported against (filters missing on import).
+#  - `const: X` (how a single-value `Literal[X]`, e.g. the `Accept` header,
+#    is represented) isn't part of the OpenAPI-3.0-era JSON Schema dialect.
+#    Downgraded to the equivalent `enum: [X]`, which Postman renders as a
+#    fixed/single-choice value.
+def _openapi_31_anyof_null_to_30_nullable(node):
+    if isinstance(node, dict):
+        if isinstance(node.get("anyOf"), list):
+            members = node["anyOf"]
+            non_null = [m for m in members if m != {"type": "null"}]
+            if len(non_null) == 1 and len(non_null) != len(members):
+                target = non_null[0]
+                rest = {k: v for k, v in node.items() if k != "anyOf"}
+                if "$ref" in target:
+                    rest["allOf"] = [target]
+                else:
+                    rest.update(target)
+                rest["nullable"] = True
+                node.clear()
+                node.update(rest)
+        if "const" in node:
+            node["enum"] = [node.pop("const")]
+        for key, value in node.items():
+            _openapi_31_anyof_null_to_30_nullable(value)
+    elif isinstance(node, list):
+        for item in node:
+            _openapi_31_anyof_null_to_30_nullable(item)
+
+
+# Every response on /api/v2/public/* actually goes out wrapped in
+# `_public_envelope` (see PublicAPIRoute.get_route_handler in
+# app_v2/routers/public_api.py), not as the bare `response_model` FastAPI
+# documents by default. Two corrections needed for the docs (and therefore
+# for anything imported from them, e.g. a Postman collection) to match what
+# callers actually receive:
+#  - the auto-added 422 "Validation Error" response doesn't apply: a bad
+#    request on these routes comes back as a 400 in the envelope shape, never
+#    as a bare FastAPI 422, so that example is actively misleading here.
+#  - the 2xx response schema needs the real payload nested under `data`
+#    inside the envelope, instead of documented as the bare payload.
+def _wrap_public_api_responses_in_envelope(openapi_schema):
+    for path, path_item in openapi_schema.get("paths", {}).items():
+        if not path.startswith("/api/v2/public"):
+            continue
+        for method, operation in path_item.items():
+            if method not in ("get", "post", "put", "patch", "delete"):
+                continue
+            responses = operation.get("responses", {})
+            responses.pop("422", None)
+            for code, resp in responses.items():
+                if not code.startswith("2"):
+                    continue
+                content = resp.get("content", {}).get("application/json")
+                if not content or "schema" not in content:
+                    continue
+                original_schema = content["schema"]
+                content["schema"] = {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "example": "success"},
+                        "data": original_schema,
+                        "message": {"type": "string", "example": ""},
+                        "detail": {"type": "string", "example": ""},
+                    },
+                }
+
 
 # Custom OpenAPI function to add security scheme
 def custom_openapi():
@@ -140,10 +277,12 @@ def custom_openapi():
     openapi_schema = get_openapi(
         title=app.title,
         version=app.version,
-        openapi_version=app.openapi_version,
+        openapi_version="3.0.3",
         description=app.description,
         routes=app.routes,
     )
+    _openapi_31_anyof_null_to_30_nullable(openapi_schema)
+    _wrap_public_api_responses_in_envelope(openapi_schema)
     # Add security scheme
     if "components" not in openapi_schema:
         openapi_schema["components"] = {}
@@ -224,6 +363,7 @@ app.include_router(support_router)
 app.include_router(support_public_router)
 app.include_router(admin_support.router)
 app.include_router(sessions_router)
+app.include_router(internal_reconciliation.router, include_in_schema=False)
 
 
 @app.get("/", tags=["System"])

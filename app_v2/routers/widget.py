@@ -41,6 +41,7 @@ from app_v2.utils.conversation_lifecycle import (
     start_conversation,
     finalize_conversation,
     mark_conversation_failed,
+    set_conversation_conv_id,
     get_minimum_call_balance,
     is_balance_exhausted,
     is_agents_first_call,
@@ -439,6 +440,7 @@ def _is_first_call_capped(ctx: WidgetContext) -> bool:
 async def run_widget_session(
     websocket: WebSocket,
     ctx: WidgetContext,
+    conversation_row_id: int,
 ) -> Optional[str]:
     """
     Main message loop for the widget WebSocket session.
@@ -451,10 +453,23 @@ async def run_widget_session(
 
     conversation = None
     conversation_ready = False
+    conv_id_persisted = False
     chunk_count = 0
     el_ended = asyncio.Event()
 
     while True:
+        # The SDK's Conversation object sets _conversation_id on its own
+        # background thread as soon as ElevenLabs' conversation_initiation_metadata
+        # event arrives — well before the call ends — so grab it the first
+        # time it shows up instead of waiting for wait_for_session_end().
+        if conversation_ready and not conv_id_persisted:
+            early_conv_id = getattr(conversation, "_conversation_id", None)
+            if early_conv_id:
+                with db():
+                    set_conversation_conv_id(conversation_row_id, early_conv_id)
+                conv_id_persisted = True
+                logger.info("Captured conversation_id early: %s", early_conv_id)
+
         # Periodic minute-limit / low-balance checks
         chunk_count += 1
         if chunk_count % 10 == 0 and _is_minute_limit_exceeded(ctx):
@@ -674,31 +689,43 @@ async def save_web_conversation(
 
         if not metadata:
             logger.error("Metadata extraction failed for conversation %s", conv_id)
-            with db():
-                mark_conversation_failed(conversation_row_id, error_message or "Metadata extraction failed")
-                finalize_ws_call_log(
-                    ctx.ws_log_id, is_success=False,
-                    error_message=error_message or "Metadata extraction failed",
-                )
+
+            def _mark_metadata_failed():
+                with db():
+                    mark_conversation_failed(conversation_row_id, error_message or "Metadata extraction failed")
+                    finalize_ws_call_log(
+                        ctx.ws_log_id, is_success=False,
+                        error_message=error_message or "Metadata extraction failed",
+                    )
+            await asyncio.to_thread(_mark_metadata_failed)
             return
 
-        with db():
-            record = _persist_web_conversation(conversation_row_id, metadata, conv_id, lead_id, error_message=error_message)
-            finalize_ws_call_log(
-                ctx.ws_log_id,
-                is_success=not error_message,
-                status_code=1000,
-                response_body=sanitize_for_log({"conversation_id": conv_id, "cost": record.cost}),
-                error_message=error_message,
-            )
-            # _persist_web_conversation's lead-link commit and
-            # finalize_ws_call_log's own commit both expire every object in
-            # this session (SQLAlchemy expire_on_commit default). Refresh
-            # record now, while the session is still open, so its attributes
-            # stay readable below and in maybe_send_notifications() after
-            # this block closes and detaches it — otherwise the next access
-            # raises DetachedInstanceError.
-            db.session.refresh(record)
+        def _finalize():
+            with db():
+                record = _persist_web_conversation(conversation_row_id, metadata, conv_id, lead_id, error_message=error_message)
+                finalize_ws_call_log(
+                    ctx.ws_log_id,
+                    is_success=not error_message,
+                    status_code=1000,
+                    response_body=sanitize_for_log({"conversation_id": conv_id, "cost": record.cost}),
+                    error_message=error_message,
+                )
+                # _persist_web_conversation's lead-link commit and
+                # finalize_ws_call_log's own commit both expire every object in
+                # this session (SQLAlchemy expire_on_commit default). Refresh
+                # record now, while the session is still open, so its attributes
+                # stay readable below and in maybe_send_notifications() after
+                # this block closes and detaches it — otherwise the next access
+                # raises DetachedInstanceError.
+                db.session.refresh(record)
+                return record
+
+        # Several synchronous DB round-trips (query, flush, deduct_coins,
+        # two commits, refresh) — offloaded to a worker thread so a slow
+        # finalize can't stall every other concurrent call on this
+        # single-worker server (that's what dropped a concurrent
+        # test-connection call's cost save in production).
+        record = await asyncio.to_thread(_finalize)
 
         logger.info(
             "Conversation %s saved (duration=%ss, messages=%s, cost=%s)",
@@ -709,9 +736,12 @@ async def save_web_conversation(
 
     except Exception:
         logger.error("save_web_conversation failed:\n%s", traceback.format_exc())
-        with db():
-            mark_conversation_failed(conversation_row_id, "Failed to save conversation")
-            finalize_ws_call_log(ctx.ws_log_id, is_success=False, error_message="Failed to save conversation")
+
+        def _mark_save_failed():
+            with db():
+                mark_conversation_failed(conversation_row_id, "Failed to save conversation")
+                finalize_ws_call_log(ctx.ws_log_id, is_success=False, error_message="Failed to save conversation")
+        await asyncio.to_thread(_mark_save_failed)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1332,7 +1362,7 @@ async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int]
     # ── 3. Run session ────────────────────────────────────────────────────────
     failure_reason = None
     try:
-        conv_id = await run_widget_session(websocket, ctx)
+        conv_id = await run_widget_session(websocket, ctx, conversation_row_id)
     except Exception:
         logger.error("run_widget_session failed:\n%s", traceback.format_exc())
         conv_id = None
@@ -1358,12 +1388,14 @@ async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int]
     if conv_id:
         await save_web_conversation(ctx, conv_id, lead_id, conversation_row_id, error_message=limit_error)
     else:
-        with db():
-            mark_conversation_failed(conversation_row_id, limit_error or failure_reason or "No conversation ID captured")
-            finalize_ws_call_log(
-                ctx.ws_log_id, is_success=False,
-                error_message=limit_error or failure_reason or "No conversation ID captured",
-            )
+        def _mark_no_conv_id():
+            with db():
+                mark_conversation_failed(conversation_row_id, limit_error or failure_reason or "No conversation ID captured")
+                finalize_ws_call_log(
+                    ctx.ws_log_id, is_success=False,
+                    error_message=limit_error or failure_reason or "No conversation ID captured",
+                )
+        await asyncio.to_thread(_mark_no_conv_id)
 
     # ── 6. Close ──────────────────────────────────────────────────────────────
     try:
