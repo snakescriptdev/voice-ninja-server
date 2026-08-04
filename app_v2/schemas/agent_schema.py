@@ -163,3 +163,4 @@ class PublicAgentListRead(BaseModel):
     leads_count: int = 0
     class Config:
         from_attributes = True
+
