@@ -7,6 +7,13 @@ from .built_in_tools import BuiltInToolsParams
 from app_v2.utils.validation_utils import validate_entity_name, validate_entity_name_optional
 
 
+def _validate_first_message(value: str) -> str:
+    v = (value or "").strip()
+    if not v:
+        raise ValueError("first_message cannot be empty or only spaces.")
+    return v
+
+
 def _validate_timezone(value: Optional[str]) -> Optional[str]:
     if not value:
         return None
@@ -94,12 +101,12 @@ class AgentRead(BaseModel):
 
 class PublicAgentCreate(BaseModel):
     agent_name: str
-    first_message: str | None = None
+    first_message: str = Field(..., min_length=1, description="Opening line the agent speaks when a call starts. Required, cannot be blank/whitespace-only.")
     system_prompt: str
     phone: Optional[str] = Field(None, description="Phone number to assign to this agent (e.g., +14155551234)")
-    voice: str
-    ai_model: str
-    language: str = Field(description="language code to be passed in model (en-01 for english)")
+    voice: str = Field(..., description="The `voice_name` value from a GET /api/v2/public/voices item (not its numeric `id`).")
+    ai_model: str = Field(..., description="The `model_name` value from a GET /api/v2/public/ai-models item (not its numeric `id`).")
+    language: str = Field(description="The `lang_code` value from a GET /api/v2/public/languages item (not its numeric `id`), e.g. 'en' for English.")
     knowledgebase: Optional[List[int | Dict]] = Field(default=[], description="List of knowledge base IDs or objects")
     variables: Optional[Dict[str, str]] = Field(default={}, description="Dynamic variables for the agent")
     tools: Optional[List[int | Dict]] = Field(default=[], description="List of function/tool IDs or objects")
@@ -108,6 +115,7 @@ class PublicAgentCreate(BaseModel):
 
     _validate_timezone = field_validator("timezone")(_validate_timezone)
     _validate_agent_name = field_validator("agent_name")(validate_entity_name)
+    _validate_first_message = field_validator("first_message")(_validate_first_message)
 
 
 class PublicAgentRead(BaseModel):
