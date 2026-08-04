@@ -42,8 +42,10 @@ from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.coin_utils import get_user_coin_balance, coins_to_inr
 from app_v2.utils.conversation_lifecycle import (
     start_conversation,
-    finalize_conversation,
+    finalize_conversation_async,
     mark_conversation_failed,
+    mark_conversation_failed_async,
+    set_conversation_conv_id,
     get_minimum_call_balance,
     is_balance_exhausted,
     is_agents_first_call,
@@ -480,6 +482,7 @@ async def browser_to_elevenlabs(
 async def elevenlabs_to_browser(
     websocket: WebSocket,
     el_ws: aiohttp.ClientWebSocketResponse,
+    conversation_row_id: int,
 ) -> Optional[str]:
     """
     Relays events/audio from ElevenLabs → browser.
@@ -507,6 +510,9 @@ async def elevenlabs_to_browser(
                         .get("conversation_id")
                     )
                     logger.info(f"Conversation ID captured: {conversation_id}")
+                    if conversation_id:
+                        with db():
+                            set_conversation_conv_id(conversation_row_id, conversation_id)
 
                 if etype == "interruption":
                     last_interrupt_id = int(data.get("interruption_event", {}).get("event_id", 0))
@@ -559,6 +565,7 @@ async def run_bridge(
     websocket: WebSocket,
     el_ws: aiohttp.ClientWebSocketResponse,
     ctx: CallContext,
+    conversation_row_id: int,
 ) -> Optional[str]:
     """
     Runs both bridge tasks concurrently.
@@ -568,7 +575,7 @@ async def run_bridge(
     conversation_id_holder: list[Optional[str]] = [None]
 
     async def _el_to_browser_wrapper():
-        conversation_id_holder[0] = await elevenlabs_to_browser(websocket, el_ws)
+        conversation_id_holder[0] = await elevenlabs_to_browser(websocket, el_ws, conversation_row_id)
 
     tasks = [
         asyncio.create_task(browser_to_elevenlabs(websocket, el_ws, ctx), name="browser_task"),
@@ -647,12 +654,10 @@ async def save_conversation(
 
         if not metadata:
             logger.error(f"Metadata extraction failed for conversation {conversation_id}")
-            with db():
-                mark_conversation_failed(conversation_row_id, error_message or "Metadata extraction failed")
+            await mark_conversation_failed_async(conversation_row_id, error_message or "Metadata extraction failed")
             return
 
-        with db():
-            record = finalize_conversation(conversation_row_id, metadata, conversation_id, error_message=error_message)
+        record = await finalize_conversation_async(conversation_row_id, metadata, conversation_id, error_message=error_message)
 
         logger.info(
             f"Conversation {conversation_id} saved "
@@ -665,8 +670,7 @@ async def save_conversation(
 
     except Exception:
         logger.error(f"save_conversation failed:\n{traceback.format_exc()}")
-        with db():
-            mark_conversation_failed(conversation_row_id, "Failed to save conversation")
+        await mark_conversation_failed_async(conversation_row_id, "Failed to save conversation")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -759,7 +763,7 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
         async with aiohttp.ClientSession() as session:
             async with session.ws_connect(el_url, headers={"xi-api-key": ELEVENLABS_API_KEY}) as el_ws:
                 logger.info(f"ElevenLabs WS connected for agent {agent_result.elevenlabs_agent_id}")
-                conversation_id = await run_bridge(websocket, el_ws, ctx)
+                conversation_id = await run_bridge(websocket, el_ws, ctx, conversation_row_id)
     except Exception:
         logger.error(f"ElevenLabs bridge failed:\n{traceback.format_exc()}")
         with db():
