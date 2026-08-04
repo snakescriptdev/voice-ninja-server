@@ -3,11 +3,19 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from fastapi_sqlalchemy import db
-from app_v2.schemas.agent_config import AgentConfigGenerator, AgentConfigOut
+from app_v2.schemas.agent_config import (
+    AgentConfigGenerator,
+    AgentConfigOut,
+    GeneratePromptRequest,
+    GeneratePromptResponse,
+)
 from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 import math
-from app_v2.utils.llm_utils import generate_system_prompt_async
+from app_v2.utils.llm_utils import (
+    generate_system_prompt_async,
+    generate_system_prompt_from_instructions_async,
+)
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.utils.elevenlabs.kb_utils import ElevenLabsKB
 from app_v2.utils.elevenlabs.phone_connection import ElevenLabsPhoneConnection
@@ -135,7 +143,8 @@ def agent_to_read(
         tools=[
             {
                 "id": bridge.function.id,
-                "name": bridge.function.name
+                "name": bridge.function.name,
+                "is_system_managed": bridge.function.is_system_managed,
             }
             for bridge in agent.agent_functions
         ],
@@ -950,8 +959,9 @@ async def clone_agent(
             detail="Source agent is missing voice/model/language and cannot be cloned",
         )
 
-    # Generate a unique clone name: "<name> (copy)", "<name> (copy) 2", ...
-    base_name = f"{source.agent_name} (copy)"
+    # Generate a unique clone name: "<name> copy", "<name> copy 2", ...
+    # (parentheses aren't in the allowed agent_name charset - see validation_utils.py)
+    base_name = f"{source.agent_name} copy"
     clone_name = base_name
     suffix = 2
     while (
@@ -1898,3 +1908,38 @@ async def generate_system_prompt_for_agent(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"failed to generate system prompt at the moment: {str(e)}"
             )
+
+
+@router.post(
+    "/generate-prompt",
+    response_model=GeneratePromptResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate a system prompt from a freeform description via AI",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def generate_prompt_from_instructions(
+    payload: GeneratePromptRequest,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    """
+    Backs the "Generate with AI" panel under the system prompt editor on the
+    create/edit agent pages — unlike /config, this takes no structured agent
+    fields and isn't blocked by an existing agent name, since it's used for
+    both brand-new agents and regenerating an existing one's prompt.
+    """
+    try:
+        system_prompt = await generate_system_prompt_from_instructions_async(payload.instructions)
+        if not system_prompt:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not generate a prompt at the moment. Please try again.",
+            )
+        return GeneratePromptResponse(system_prompt=system_prompt)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"error while generating prompt from instructions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not generate a prompt at the moment. Please try again.",
+        )
