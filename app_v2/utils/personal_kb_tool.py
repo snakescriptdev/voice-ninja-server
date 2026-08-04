@@ -212,22 +212,30 @@ def ensure_personal_kb_tool_for_agent(agent_id: int) -> None:
         if not tool:
             try:
                 tool = _create_system_tool(agent.user_id, agent_id)
+                db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=tool.id))
+                # Committed immediately, on its own — the tool + its binding
+                # to this agent must never be lost because of a later,
+                # unrelated failure (e.g. the ElevenLabs resync below). Both
+                # were previously left pending until a single commit() at the
+                # end of this function; if that commit (or anything after
+                # this point) raised, the whole transaction rolled back and
+                # silently dropped the binding even though _create_system_tool
+                # had already created a real, orphaned ElevenLabs tool.
+                db.session.commit()
             except Exception as e:
                 db.session.rollback()
                 logger.error(f"Failed to provision personal KB tool for agent {agent_id}: {e}")
                 return
-            db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=tool.id))
-            db.session.flush()
 
         if _PROMPT_BLOCK_START not in (agent.system_prompt or ""):
             agent.system_prompt = _add_prompt_block(agent.system_prompt or "")
 
         try:
             _resync_agent(agent, ElevenLabsAgent())
+            db.session.commit()
         except Exception as e:
             logger.warning(f"Failed to sync personal KB tool to agent {agent_id}: {e}")
-
-        db.session.commit()
+            db.session.rollback()
 
 
 def remove_personal_kb_tool_from_agent_if_empty(agent_id: int) -> None:

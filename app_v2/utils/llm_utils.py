@@ -107,5 +107,69 @@ async def generate_system_prompt_async(
         raise RuntimeError(f"Unexpected system prompt generation error: {str(e)}") from e
 
 
+INSTRUCTIONS_PROMPT_TEMPLATE = """
+You are an expert system prompt writer for real-time voice AI assistants.
+
+Based on the description below, write a complete, ready-to-use system prompt
+for a voice AI agent. The description may read like a short goal, a rough
+list of instructions, or an already-drafted prompt — in every case, produce
+a single polished, complete system prompt.
+
+Description:
+{instructions}
+
+Guidelines for the prompt you write:
+1. Establish a clear identity, tone, and role for the agent.
+2. Write for natural, spoken conversation - short, clear sentences. No
+   markdown, symbols, emojis, or visual formatting of any kind.
+3. Do not reference text, screens, or visual layout - this is a voice-only
+   interaction.
+4. Include concrete behavioral guidance: what to do, what to ask, when to
+   escalate or transfer, and how to handle requests outside its scope.
+5. Never mention that this is a system prompt, or refer back to these
+   instructions.
+
+Output only the system prompt text itself - no preamble, headings, quotes,
+or explanation.
+"""
+
+
+async def generate_system_prompt_from_instructions_async(instructions: str) -> str:
+    """
+    Generates a system prompt from a freeform description (the "Generate with
+    AI" panel under the system prompt editor) using Google Gemini.
+    """
+    api_key = VoiceSettings.GEMINI_API_KEY
+    if not api_key:
+        logger.error("GEMINI_API_KEY not set")
+        raise RuntimeError("GEMINI_API_KEY environment variable not set")
+
+    genai.configure(api_key=api_key)
+    logger.info("Generating system prompt from freeform instructions")
+
+    try:
+        formatted_prompt = INSTRUCTIONS_PROMPT_TEMPLATE.format(
+            instructions=instructions.strip(),
+        )
+
+        model = genai.GenerativeModel("gemini-2.5-flash")
+
+        response = await model.generate_content_async(
+            formatted_prompt,
+            generation_config=genai.types.GenerationConfig(temperature=0.5),
+        )
+
+        if not response.text:
+            logger.error("Empty response from Gemini")
+            raise RuntimeError("LLM returned empty response")
+
+        logger.info("System prompt generated successfully from instructions")
+        return response.text.strip()
+
+    except Exception as e:
+        logger.exception("Unexpected error while generating system prompt from instructions")
+        raise RuntimeError(f"Unexpected system prompt generation error: {str(e)}") from e
+
+
 
 
