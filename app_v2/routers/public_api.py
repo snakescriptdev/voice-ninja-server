@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
 from sqlalchemy.orm import Session, selectinload
 from fastapi_sqlalchemy import db
 from sqlalchemy import or_
-from typing import List, Optional
+from typing import List, Optional, Literal
 import json
 import math
 import uuid
@@ -34,7 +34,10 @@ from app_v2.databases.models import (
     AgentKnowledgeBaseBridge,
     AgentFunctionBridgeModel,
     FunctionApiConfig,
-    TwilioUserCreds
+    TwilioUserCreds,
+    ConversationsModel,
+    WidgetLeadModel,
+    VoiceTraitsModel,
 )
 from app_v2.schemas.function_schema import (
     FunctionCreateSchema,
@@ -55,7 +58,7 @@ from app_v2.schemas.widget_schema import WidgetConfig, WidgetConfigResponse, Wid
 from app_v2.schemas.web_agent_schema import WebAgentCreate, WebAgentUpdate, WebAgentResponse, WebAgentListResponse
 from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
 from app_v2.schemas.language_schema import LanguageRead
-from app_v2.schemas.voice_schema import VoiceRead
+from app_v2.schemas.voice_schema import VoiceRead, PublicVoiceListRead, PublicVoiceRead
 from app_v2.schemas.ai_model import AIModelRead
 from app_v2.schemas.knowledge_base_schema import (
     KnowledgeBaseResponse,
@@ -72,7 +75,7 @@ from app_v2.schemas.personal_knowledge_base_schema import (
 )
 from app_v2.schemas.pagination import PublicPaginatedResponse
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum, PublicLogChannelEnum
-from app_v2.utils.public_auth import get_public_api_user
+from app_v2.utils.public_auth import get_public_api_user, require_json_accept
 from app_v2.utils.crypto_utils import encrypt_data, decrypt_data
 from twilio.rest import Client as TwilioClient
 from twilio.base.exceptions import TwilioRestException
@@ -139,10 +142,14 @@ class PublicAPIRoute(APIRoute):
             status_code = 500
             error_message = None
             response = None
-            # Cached by Starlette, so reading it here doesn't consume the
-            # handler's own await request.json()/request.body() calls.
-            raw_request_body = await request.body()
+            raw_request_body = b""
             try:
+                # Cached by Starlette, so reading it here doesn't consume the
+                # handler's own await request.json()/request.body() calls.
+                # Read inside the try so a failure here (e.g. client
+                # disconnect mid-body) still comes back enveloped instead of
+                # bypassing _public_envelope entirely.
+                raw_request_body = await request.body()
                 response = await original(request)
                 status_code = response.status_code
                 payload = _try_parse_json_bytes(getattr(response, "body", None))
@@ -242,7 +249,7 @@ class PublicAPIRoute(APIRoute):
 router = APIRouter(
     prefix="/api/v2/public",
     tags=["public-api"],
-    dependencies=[Depends(get_public_api_user)],
+    dependencies=[Depends(require_json_accept), Depends(get_public_api_user)],
     route_class=PublicAPIRoute
 )
 
@@ -291,7 +298,14 @@ def agent_to_read(agent: AgentModel) -> PublicAgentRead:
     )
 
 
-def agent_to_list_read(agent: AgentModel) -> PublicAgentListRead:
+def agent_to_list_read(
+    agent: AgentModel,
+    kb_count: int = 0,
+    tool_count: int = 0,
+    conversation_count: int = 0,
+    leads_count: int = 0,
+    is_first_call_pending: bool = True,
+) -> PublicAgentListRead:
     ai_model = (
         agent.agent_ai_models[0].ai_model.model_name
         if agent.agent_ai_models else None
@@ -316,6 +330,11 @@ def agent_to_list_read(agent: AgentModel) -> PublicAgentListRead:
         updated_at=agent.modified_at.date(),
         phone=phone_number,
         timezone=agent.timezone,
+        kb_count=kb_count,
+        tool_count=tool_count,
+        conversation_count=conversation_count,
+        leads_count=leads_count,
+        is_first_call_pending=is_first_call_pending,
     )
 
 def widget_to_response(widget: WidgetModel, request: Request = None) -> WidgetConfigResponse:
@@ -352,27 +371,39 @@ def twilio_connector_to_response(connector: TwilioUserCreds) -> TwilioConnectorR
         created_at=connector.created_at,
     )
 
-def voice_to_read(voice: VoiceModel) -> VoiceRead:
+def _voice_traits(voice: VoiceModel):
     gender = GenderEnum.male
     nationality = "british"
-
     if voice.traits:
         gender = voice.traits.gender.value if hasattr(voice.traits.gender, 'value') else str(voice.traits.gender)
         nationality = voice.traits.nationality
+    return gender, nationality
 
-    agents = [a.agent_name for a in voice.agents] if voice.agents else []
 
-    return VoiceRead(
+def voice_to_list_read(voice: VoiceModel) -> PublicVoiceListRead:
+    gender, _ = _voice_traits(voice)
+    return PublicVoiceListRead(
         id=voice.id,
         voice_name=voice.voice_name,
         is_custom_voice=voice.is_custom_voice,
-        elevenlabs_voice_id=voice.elevenlabs_voice_id,
+        gender=gender,
+        has_sample_audio=voice.has_sample_audio,
+        sample_audio_url=voice.audio_file,
+        is_enabled=voice.is_enabled,
+    )
+
+
+def voice_to_read(voice: VoiceModel) -> PublicVoiceRead:
+    gender, nationality = _voice_traits(voice)
+    return PublicVoiceRead(
+        id=voice.id,
+        voice_name=voice.voice_name,
+        is_custom_voice=voice.is_custom_voice,
         gender=gender,
         nationality=nationality,
         has_sample_audio=voice.has_sample_audio,
         sample_audio_url=voice.audio_file,
         is_enabled=voice.is_enabled,
-        agents=agents,
     )
 
 # -------------------------------------------------------------------
@@ -383,33 +414,150 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
     "/agents",
     response_model=PublicPaginatedResponse[PublicAgentListRead],
     description=(
-        "Lists this account's agents. Supports filtering with `name` (partial, "
-        "case-insensitive match on agent name) and `voice` (partial, "
-        "case-insensitive match on voice name)."
+        "Lists this account's agents. Supports filtering with `agent_name` (partial, "
+        "case-insensitive match on agent name) and `voice` (partial, case-insensitive "
+        "match on voice name). Supports sorting via `sort_by` (`created_at`, "
+        "`modified_at`, `agent_name`, `kb_count`, `tool_count`, `conversation_count`) "
+        "and `sort_order` (`asc`, `desc`)."
     ),
 )
 async def list_agents(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
-    name: Optional[str] = Query(None, description="Filter by partial agent name (case-insensitive)"),
+    agent_name: Optional[str] = Query(None, description="Filter by partial agent name (case-insensitive)"),
     voice: Optional[str] = Query(None, description="Filter by partial voice name (case-insensitive)"),
+    sort_by: Literal[
+        "created_at", "modified_at", "agent_name", "kb_count", "tool_count", "conversation_count"
+    ] = Query("created_at", description="Field to sort agents by"),
+    sort_order: Literal["asc", "desc"] = Query("desc", description="Sort direction"),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (page - 1) * size
     with db():
         query = db.session.query(AgentModel).filter(AgentModel.user_id == current_user.id)
-        if name:
-            query = query.filter(AgentModel.agent_name.ilike(f"%{name}%"))
+        if agent_name:
+            query = query.filter(AgentModel.agent_name.ilike(f"%{agent_name}%"))
         if voice:
             query = query.join(AgentModel.voice).filter(VoiceModel.voice_name.ilike(f"%{voice}%"))
-        total = query.count()
-        agents = (
-            query.order_by(AgentModel.created_at.desc(), AgentModel.id.desc())
-            .offset(skip).limit(size).all()
+
+        # kb_count/tool_count/conversation_count live on other tables - join in
+        # grouped subqueries (same shape as agents.py's get_all_agents) so ORDER BY
+        # happens in SQL, before LIMIT/OFFSET, instead of only sorting the page.
+        if sort_by in {"kb_count", "tool_count", "conversation_count"}:
+            kb_sub = (
+                db.session.query(
+                    AgentKnowledgeBaseBridge.agent_id.label("agent_id"),
+                    func.count(AgentKnowledgeBaseBridge.kb_id).label("cnt"),
+                )
+                .group_by(AgentKnowledgeBaseBridge.agent_id)
+                .subquery()
+            )
+            tool_sub = (
+                db.session.query(
+                    AgentFunctionBridgeModel.agent_id.label("agent_id"),
+                    func.count(AgentFunctionBridgeModel.function_id).label("cnt"),
+                )
+                .group_by(AgentFunctionBridgeModel.agent_id)
+                .subquery()
+            )
+            conv_sub = (
+                db.session.query(
+                    ConversationsModel.agent_id.label("agent_id"),
+                    func.count(ConversationsModel.id).label("cnt"),
+                )
+                .group_by(ConversationsModel.agent_id)
+                .subquery()
+            )
+            query = (
+                query
+                .outerjoin(kb_sub, AgentModel.id == kb_sub.c.agent_id)
+                .outerjoin(tool_sub, AgentModel.id == tool_sub.c.agent_id)
+                .outerjoin(conv_sub, AgentModel.id == conv_sub.c.agent_id)
+            )
+            sort_col = {
+                "kb_count": func.coalesce(kb_sub.c.cnt, 0),
+                "tool_count": func.coalesce(tool_sub.c.cnt, 0),
+                "conversation_count": func.coalesce(conv_sub.c.cnt, 0),
+            }[sort_by]
+        elif sort_by == "modified_at":
+            sort_col = AgentModel.modified_at
+        elif sort_by == "agent_name":
+            sort_col = AgentModel.agent_name
+        else:
+            sort_col = AgentModel.created_at
+
+        query = query.order_by(
+            sort_col.asc() if sort_order == "asc" else sort_col.desc(),
+            AgentModel.id.desc(),
         )
-        items = [agent_to_list_read(a) for a in agents]
+
+        total = query.count()
         total_pages = math.ceil(total / size) if total else 0
+        agents = query.offset(skip).limit(size).all()
+
+        agent_ids = [a.id for a in agents]
+        kb_counts = (
+            {
+                row[0]: row[1]
+                for row in db.session.query(
+                    AgentKnowledgeBaseBridge.agent_id, func.count(AgentKnowledgeBaseBridge.kb_id)
+                )
+                .filter(AgentKnowledgeBaseBridge.agent_id.in_(agent_ids))
+                .group_by(AgentKnowledgeBaseBridge.agent_id)
+                .all()
+            }
+            if agent_ids else {}
+        )
+        tool_counts = (
+            {
+                row[0]: row[1]
+                for row in db.session.query(
+                    AgentFunctionBridgeModel.agent_id, func.count(AgentFunctionBridgeModel.function_id)
+                )
+                .filter(AgentFunctionBridgeModel.agent_id.in_(agent_ids))
+                .group_by(AgentFunctionBridgeModel.agent_id)
+                .all()
+            }
+            if agent_ids else {}
+        )
+        conversation_counts = (
+            {
+                row[0]: row[1]
+                for row in db.session.query(
+                    ConversationsModel.agent_id, func.count(ConversationsModel.id)
+                )
+                .filter(ConversationsModel.agent_id.in_(agent_ids))
+                .group_by(ConversationsModel.agent_id)
+                .all()
+            }
+            if agent_ids else {}
+        )
+        # Leads aren't linked to agents directly - they hang off the widget that
+        # captured them (WidgetLeadModel.widget_id -> WidgetModel.agent_id).
+        leads_counts = (
+            {
+                row[0]: row[1]
+                for row in db.session.query(WidgetModel.agent_id, func.count(WidgetLeadModel.id))
+                .join(WidgetModel, WidgetLeadModel.widget_id == WidgetModel.id)
+                .filter(WidgetModel.agent_id.in_(agent_ids))
+                .group_by(WidgetModel.agent_id)
+                .all()
+            }
+            if agent_ids else {}
+        )
+
+        items = [
+            agent_to_list_read(
+                a,
+                kb_count=kb_counts.get(a.id, 0),
+                tool_count=tool_counts.get(a.id, 0),
+                conversation_count=conversation_counts.get(a.id, 0),
+                leads_count=leads_counts.get(a.id, 0),
+                is_first_call_pending=(a.id not in conversation_counts),
+            )
+            for a in agents
+        ]
         return PublicPaginatedResponse(
             total=total, current_page=page, size=size, total_pages=total_pages,
             has_next=page < total_pages, has_previous=page > 1, items=items,
@@ -457,6 +605,17 @@ async def create_agent(
         language = db.session.query(LanguageModel).filter(LanguageModel.lang_code == agent_in.language).first()
         if not language:
             raise HTTPException(status_code=400, detail="Invalid language")
+
+        # Same uniqueness rule as update_agent_public below: no other agent of
+        # this user may share the name (case-insensitive). Checked before the
+        # ElevenLabs call so a rejected create never leaves an orphaned
+        # ElevenLabs-side agent with no local row.
+        name_taken = db.session.query(AgentModel).filter(
+            func.lower(AgentModel.agent_name) == agent_in.agent_name.lower(),
+            AgentModel.user_id == user_id,
+        ).first()
+        if name_taken:
+            raise HTTPException(status_code=400, detail="Agent with this name already exists")
 
         from app_v2.routers.agents import resolve_phone_record, finalize_phone_assignment
         # Public callers can't specify a twilio_connector_id (removed from
@@ -1369,33 +1528,55 @@ async def get_language_public(
 # VOICES
 # -------------------------------------------------------------------
 
-@router.get("/voices", response_model=PublicPaginatedResponse[VoiceRead])
+@router.get(
+    "/voices",
+    response_model=PublicPaginatedResponse[PublicVoiceListRead],
+    description=(
+        "Lists voices available to this account (enabled voices only). Supports "
+        "filtering with `voice_name` (partial, case-insensitive), `gender` "
+        "(`male`/`female`), and `nationality` (partial, case-insensitive)."
+    ),
+)
 async def list_voices_public(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    voice_name: Optional[str] = Query(None, description="Filter by partial voice name (case-insensitive)"),
+    gender: Optional[Literal["male", "female"]] = Query(None, description="Filter by voice gender"),
+    nationality: Optional[str] = Query(None, description="Filter by partial nationality match (case-insensitive)"),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (page - 1) * size
     with db():
-        filters = [
-            or_(
-                VoiceModel.user_id == current_user.id,
-                VoiceModel.user_id.is_(None),
-            ),
-        ]
-
-        query = db.session.query(VoiceModel).options(selectinload(VoiceModel.traits)).filter(*filters)
+        query = (
+            db.session.query(VoiceModel)
+            .options(selectinload(VoiceModel.traits))
+            .filter(
+                or_(
+                    VoiceModel.user_id == current_user.id,
+                    VoiceModel.user_id.is_(None),
+                ),
+                VoiceModel.is_enabled.is_(True),
+            )
+        )
+        if voice_name:
+            query = query.filter(VoiceModel.voice_name.ilike(f"%{voice_name}%"))
+        if gender or nationality:
+            query = query.join(VoiceTraitsModel, VoiceModel.traits)
+            if gender:
+                query = query.filter(VoiceTraitsModel.gender == GenderEnum(gender))
+            if nationality:
+                query = query.filter(VoiceTraitsModel.nationality.ilike(f"%{nationality}%"))
         total = query.count()
         voices = query.order_by(VoiceModel.id.asc()).offset(skip).limit(size).all()
-        items = [voice_to_read(v) for v in voices]
+        items = [voice_to_list_read(v) for v in voices]
         total_pages = math.ceil(total / size) if total else 0
         return PublicPaginatedResponse(
             total=total, current_page=page, size=size, total_pages=total_pages,
             has_next=page < total_pages, has_previous=page > 1, items=items,
         )
 
-@router.get("/voices/{id}", response_model=VoiceRead)
+@router.get("/voices/{id}", response_model=PublicVoiceRead)
 async def get_voice_public(
     id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1404,6 +1585,7 @@ async def get_voice_public(
     with db():
         voice = db.session.query(VoiceModel).options(selectinload(VoiceModel.traits)).filter(
             VoiceModel.id == id,
+            VoiceModel.is_enabled.is_(True),
             or_(
                 VoiceModel.user_id == current_user.id,
                 VoiceModel.user_id.is_(None)
@@ -1417,18 +1599,31 @@ async def get_voice_public(
 # AI MODELS
 # -------------------------------------------------------------------
 
-@router.get("/ai-models", response_model=PublicPaginatedResponse[AIModelRead])
+@router.get(
+    "/ai-models",
+    response_model=PublicPaginatedResponse[AIModelRead],
+    description=(
+        "Lists available AI models, sorted by id. Supports filtering with "
+        "`model_name` and `provider` (both partial, case-insensitive)."
+    ),
+)
 async def list_ai_models_public(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    model_name: Optional[str] = Query(None, description="Filter by partial model name (case-insensitive)"),
+    provider: Optional[str] = Query(None, description="Filter by partial provider name (case-insensitive)"),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (page - 1) * size
     with db():
         query = db.session.query(AIModels)
+        if model_name:
+            query = query.filter(AIModels.model_name.ilike(f"%{model_name}%"))
+        if provider:
+            query = query.filter(AIModels.provider.ilike(f"%{provider}%"))
         total = query.count()
-        models = query.order_by(AIModels.model_name.asc()).offset(skip).limit(size).all()
+        models = query.order_by(AIModels.id.asc()).offset(skip).limit(size).all()
         total_pages = math.ceil(total / size) if total else 0
         return PublicPaginatedResponse(
             total=total, current_page=page, size=size, total_pages=total_pages,

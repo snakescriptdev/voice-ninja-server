@@ -21,6 +21,7 @@ from app_v2.utils.conversation_lifecycle import (
     start_conversation,
     finalize_conversation,
     mark_conversation_failed,
+    set_conversation_conv_id,
     get_minimum_call_balance,
     is_balance_exhausted,
     is_agents_first_call,
@@ -273,6 +274,9 @@ async def public_websocket_agent(
                                 if etype == "conversation_initiation_metadata":
                                     conversation_metadata = data.get("conversation_initiation_metadata_event")
                                     conversation_id = conversation_metadata.get("conversation_id")
+                                    if conversation_id:
+                                        with db():
+                                            set_conversation_conv_id(conversation_row_id, conversation_id)
                                     await websocket.send_json({
                                         "type": "status",
                                         "message": "Audio interface ready",
@@ -396,33 +400,47 @@ async def public_websocket_agent(
 
             if not metadata:
                 logger.error(f"Metadata extraction failed for public WS conversation {conversation_id}")
-                with db():
-                    mark_conversation_failed(conversation_row_id, limit_error or "Metadata extraction failed")
-                    finalize_ws_call_log(
-                        ws_log_id, is_success=False, status_code=1011,
-                        error_message=limit_error or "Metadata extraction failed",
-                    )
+
+                def _mark_metadata_failed():
+                    with db():
+                        mark_conversation_failed(conversation_row_id, limit_error or "Metadata extraction failed")
+                        finalize_ws_call_log(
+                            ws_log_id, is_success=False, status_code=1011,
+                            error_message=limit_error or "Metadata extraction failed",
+                        )
+                await asyncio.to_thread(_mark_metadata_failed)
                 return
 
-            with db():
-                conversation_data = finalize_conversation(
-                    conversation_row_id, metadata, conversation_id, reference_type="api_conversation",
-                    error_message=limit_error,
-                )
-                finalize_ws_call_log(
-                    ws_log_id,
-                    is_success=not limit_error,
-                    status_code=1000,
-                    response_body=sanitize_for_log({"conversation_id": conversation_id, "cost": conversation_data.cost}),
-                    error_message=limit_error,
-                )
-                # finalize_ws_call_log's own commit() expires every object in
-                # this session (SQLAlchemy expire_on_commit default). Refresh
-                # conversation_data now, while the session is still open, so
-                # its attributes stay readable below after this block closes
-                # and detaches it — otherwise the next access raises
-                # DetachedInstanceError.
-                db.session.refresh(conversation_data)
+            def _finalize():
+                with db():
+                    conversation_data = finalize_conversation(
+                        conversation_row_id, metadata, conversation_id, reference_type="api_conversation",
+                        error_message=limit_error,
+                    )
+                    finalize_ws_call_log(
+                        ws_log_id,
+                        is_success=not limit_error,
+                        status_code=1000,
+                        response_body=sanitize_for_log({"conversation_id": conversation_id, "cost": conversation_data.cost}),
+                        error_message=limit_error,
+                    )
+                    # finalize_ws_call_log's own commit() expires every object in
+                    # this session (SQLAlchemy expire_on_commit default). Refresh
+                    # conversation_data now, while the session is still open, so
+                    # its attributes stay readable below after this block closes
+                    # and detaches it — otherwise the next access raises
+                    # DetachedInstanceError.
+                    db.session.refresh(conversation_data)
+                    return conversation_data
+
+            # This does several synchronous DB round-trips (query, flush,
+            # deduct_coins, two commits, refresh) — offloaded to a worker
+            # thread via asyncio.to_thread so it doesn't stall every other
+            # concurrent connection on this single-worker server for as long
+            # as it takes (see incident: a slow finalize here froze the event
+            # loop long enough that unrelated concurrent websockets got force
+            # -killed by uvicorn's "took too long to shut down" watchdog).
+            conversation_data = await asyncio.to_thread(_finalize)
 
             logger.info(
                 f"✅ Public Conversation {conversation_id} stored successfully "
@@ -431,16 +449,21 @@ async def public_websocket_agent(
 
         except Exception:
             logger.error(f"Error while saving public WS conversation:\n{traceback.format_exc()}")
+
+            def _mark_save_failed():
+                with db():
+                    mark_conversation_failed(conversation_row_id, limit_error or "Failed to save conversation")
+                    finalize_ws_call_log(
+                        ws_log_id, is_success=False, status_code=1011,
+                        error_message=limit_error or "Failed to save conversation",
+                    )
+            await asyncio.to_thread(_mark_save_failed)
+    else:
+        def _mark_no_conv_id():
             with db():
-                mark_conversation_failed(conversation_row_id, limit_error or "Failed to save conversation")
+                mark_conversation_failed(conversation_row_id, limit_error or "No conversation ID captured")
                 finalize_ws_call_log(
                     ws_log_id, is_success=False, status_code=1011,
-                    error_message=limit_error or "Failed to save conversation",
+                    error_message=limit_error or "No conversation ID captured",
                 )
-    else:
-        with db():
-            mark_conversation_failed(conversation_row_id, limit_error or "No conversation ID captured")
-            finalize_ws_call_log(
-                ws_log_id, is_success=False, status_code=1011,
-                error_message=limit_error or "No conversation ID captured",
-            )
+        await asyncio.to_thread(_mark_no_conv_id)

@@ -529,6 +529,22 @@ def start_conversation(user_id: int, agent_id: int, channel: ChannelEnum) -> int
     return record.id
 
 
+def set_conversation_conv_id(conversation_row_id: int, elevenlabs_conv_id: str) -> None:
+    """
+    Writes elevenlabs_conv_id onto the in_progress row as soon as ElevenLabs
+    hands it back (the conversation_initiation_metadata event, right after the
+    call starts) instead of waiting until finalize_conversation() at call end —
+    so the conv_id is available for lookups against an ongoing call. A no-op
+    if the row is missing or already carries a conv_id (finalize_conversation
+    already ran, or this was already captured). Must be called inside db().
+    """
+    record = db.session.query(ConversationsModel).get(conversation_row_id)
+    if record is None or record.elevenlabs_conv_id:
+        return
+    record.elevenlabs_conv_id = elevenlabs_conv_id
+    db.session.commit()
+
+
 def finalize_conversation(
     conversation_row_id: int,
     metadata: dict,
@@ -659,3 +675,36 @@ def mark_conversation_failed(conversation_row_id: Optional[int], error_message: 
     if error_message:
         record.error_message = error_message
     db.session.commit()
+
+
+async def finalize_conversation_async(
+    conversation_row_id: int,
+    metadata: dict,
+    elevenlabs_conv_id: str,
+    reference_type: str = "conversation",
+    error_message: Optional[str] = None,
+) -> ConversationsModel:
+    """
+    Thread-offloaded finalize_conversation(). This one does several
+    synchronous DB round-trips (queries, flush, deduct_coins, commit,
+    refresh) — on a single-worker/single-core deployment those block the
+    entire event loop, stalling every other concurrent websocket/request
+    for as long as they take. Runs on a worker thread via asyncio.to_thread
+    (which preserves the current contextvars, so fastapi_sqlalchemy's
+    session-per-context still works) instead.
+    """
+    def _run():
+        with db():
+            return finalize_conversation(
+                conversation_row_id, metadata, elevenlabs_conv_id,
+                reference_type=reference_type, error_message=error_message,
+            )
+    return await asyncio.to_thread(_run)
+
+
+async def mark_conversation_failed_async(conversation_row_id: Optional[int], error_message: Optional[str] = None) -> None:
+    """Thread-offloaded mark_conversation_failed() — see finalize_conversation_async()."""
+    def _run():
+        with db():
+            mark_conversation_failed(conversation_row_id, error_message)
+    await asyncio.to_thread(_run)
