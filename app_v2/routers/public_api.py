@@ -49,7 +49,6 @@ from app_v2.schemas.function_schema import (
     PrimitiveField
 )
 from app_v2.schemas.agent_schema import (
-    AgentUpdate,
     PublicAgentCreate,
     PublicAgentUpdate,
     PublicAgentRead,
@@ -743,66 +742,109 @@ async def create_agent(
 @router.put("/agents/{agent_id}", response_model=PublicAgentRead)
 async def update_agent_public(
     agent_id: int,
-    agent_in: AgentUpdate,
+    agent_in: PublicAgentUpdate,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
+    user_id = current_user.id
     with db():
         agent = db.session.query(AgentModel).filter(
-            AgentModel.id == agent_id, AgentModel.user_id == current_user.id
+            AgentModel.id == agent_id, AgentModel.user_id == user_id
         ).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        
-        el_update_params = {}
-        
-        # Simplified update: name, prompt, first_message
-        if agent_in.agent_name is not None:
-            # Same uniqueness rule as create: no OTHER agent of this user may
-            # share the name (case-insensitive).
-            name_taken = db.session.query(AgentModel).filter(
-                func.lower(AgentModel.agent_name) == agent_in.agent_name.lower(),
-                AgentModel.user_id == current_user.id,
-                AgentModel.id != agent_id,
-            ).first()
-            if name_taken:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Agent with this name already exists",
-                )
-            agent.agent_name = agent_in.agent_name
-            el_update_params["name"] = agent_in.agent_name
-        if agent_in.system_prompt is not None:
-            # Re-apply (or keep absent) the personal-KB tool prompt block
-            # based on this agent's actual current tool state — the client
-            # never sees the block (see agent_to_read), so it can't be
-            # trusted to round-trip it correctly on its own.
-            new_prompt = apply_prompt_block_state(agent.id, agent_in.system_prompt)
-            agent.system_prompt = new_prompt
-            el_update_params["prompt"] = new_prompt
-        if agent_in.first_message is not None:
-            agent.first_message = agent_in.first_message
-            el_update_params["first_message"] = agent_in.first_message
-        if agent_in.timezone is not None:
-            agent.timezone = agent_in.timezone
-            el_update_params["timezone"] = agent_in.timezone
 
-        # ---- Phone Number Update ----
-        if agent_in.phone is not None:
-            from app_v2.routers.agents import resolve_phone_record, finalize_phone_assignment, unassign_phone
+        # True PUT: agent_name/first_message/system_prompt/voice/ai_model/
+        # language are required (see PublicAgentUpdate) and always applied
+        # below — unlike the internal PATCH-style AgentUpdate, omitting one
+        # is a validation error instead of silently keeping the old value.
+        name_taken = db.session.query(AgentModel).filter(
+            func.lower(AgentModel.agent_name) == agent_in.agent_name.lower(),
+            AgentModel.user_id == user_id,
+            AgentModel.id != agent_id,
+        ).first()
+        if name_taken:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Agent with this name already exists",
+            )
 
-            old_phone = db.session.query(PhoneNumberService).filter(
-                PhoneNumberService.assigned_to == agent_id
-            ).first()
+        voice = db.session.query(VoiceModel).filter(
+            VoiceModel.id == agent_in.voice,
+            or_(VoiceModel.user_id == user_id, VoiceModel.user_id.is_(None)),
+        ).first()
+        if not voice or not voice.elevenlabs_voice_id:
+            raise HTTPException(status_code=400, detail="Invalid voice id")
+        if not voice.is_enabled:
+            raise HTTPException(status_code=400, detail="This voice is disabled and cannot be used for an agent")
+        if not voice.has_sample_audio:
+            raise HTTPException(status_code=400, detail="This voice has no sample audio available and cannot be used for an agent")
 
-            new_phone_value = agent_in.phone.strip() if agent_in.phone else ""
+        ai_model = db.session.query(AIModels).filter(AIModels.id == agent_in.ai_model).first()
+        if not ai_model:
+            raise HTTPException(status_code=400, detail="Invalid AI model id")
+        if ai_model.model_name == CUSTOM_LLM_MODEL_NAME:
+            raise HTTPException(status_code=400, detail="The custom-llm model cannot be used for an agent via this API")
 
-            if not (old_phone and old_phone.phone_number == new_phone_value):
-                unassign_phone(old_phone)
-                new_phone_record, new_phone_connector = resolve_phone_record(
-                    db.session, current_user.id, agent_in.phone, agent_in.twilio_connector_id, current_agent_id=agent_id
-                )
-                finalize_phone_assignment(new_phone_record, agent, new_phone_connector)
+        language = db.session.query(LanguageModel).filter(LanguageModel.id == agent_in.language).first()
+        if not language:
+            raise HTTPException(status_code=400, detail="Invalid language id")
+
+        # Re-apply (or keep absent) the personal-KB tool prompt block based
+        # on this agent's actual current tool state — the client never sees
+        # the block (see agent_to_read), so it can't be trusted to round-trip
+        # it correctly on its own.
+        new_prompt = apply_prompt_block_state(agent.id, agent_in.system_prompt)
+
+        from app_v2.routers.agents import (
+            resolve_phone_record, finalize_phone_assignment, unassign_phone,
+            transform_built_in_tools, prompt_requires_timezone,
+        )
+
+        if prompt_requires_timezone(new_prompt) and not agent_in.timezone:
+            raise HTTPException(
+                status_code=400,
+                detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
+            )
+
+        agent.agent_name = agent_in.agent_name
+        agent.system_prompt = new_prompt
+        agent.first_message = agent_in.first_message
+        agent.timezone = agent_in.timezone
+        agent.agent_voice = voice.id
+
+        el_update_params = {
+            "name": agent_in.agent_name,
+            "voice_id": voice.elevenlabs_voice_id,
+            "prompt": new_prompt,
+            "first_message": agent_in.first_message,
+            "language": language.lang_code,
+            "llm_model": ai_model.model_name,
+            "timezone": agent_in.timezone,
+        }
+
+        db.session.query(AgentAIModelBridge).filter(AgentAIModelBridge.agent_id == agent_id).delete()
+        db.session.add(AgentAIModelBridge(agent_id=agent_id, ai_model_id=ai_model.id))
+
+        db.session.query(AgentLanguageBridge).filter(AgentLanguageBridge.agent_id == agent_id).delete()
+        db.session.add(AgentLanguageBridge(agent_id=agent_id, lang_id=language.id))
+
+        # ---- Phone Number Update (always applied — omitting `phone` or
+        # sending it as null unassigns any currently assigned number,
+        # matching true PUT semantics. No twilio_connector_id: public
+        # callers can't specify one, same as create.) ----
+        old_phone = db.session.query(PhoneNumberService).filter(
+            PhoneNumberService.assigned_to == agent_id
+        ).first()
+
+        new_phone_value = (agent_in.phone or "").strip()
+
+        if not (old_phone and old_phone.phone_number == new_phone_value):
+            unassign_phone(old_phone)
+            new_phone_record, new_phone_connector = resolve_phone_record(
+                db.session, user_id, agent_in.phone, None, current_agent_id=agent_id
+            )
+            finalize_phone_assignment(new_phone_record, agent, new_phone_connector)
 
         # ---- Knowledge Base Update ----
         if agent_in.knowledgebase is not None:
@@ -811,7 +853,7 @@ async def update_agent_public(
             
             kb_records = db.session.query(KnowledgeBaseModel).filter(
                 KnowledgeBaseModel.id.in_(kb_ids_ordered),
-                KnowledgeBaseModel.user_id == current_user.id,
+                KnowledgeBaseModel.user_id == user_id,
                 KnowledgeBaseModel.elevenlabs_document_id.isnot(None)
             ).all()
             
@@ -847,7 +889,7 @@ async def update_agent_public(
                 FunctionModel.id.in_(tool_ids_ordered),
                 FunctionModel.elevenlabs_tool_id.isnot(None),
                 or_(
-                    FunctionModel.user_id == current_user.id,
+                    FunctionModel.user_id == user_id,
                     FunctionModel.user_id.is_(None)
                 )
             ).all()
@@ -876,29 +918,21 @@ async def update_agent_public(
             # that no longer resolves) from agent_in.built_in_tools in place, so run
             # it before the model_dump() to keep the persisted config in sync with
             # what was actually sent to ElevenLabs.
-            from app_v2.routers.agents import transform_built_in_tools
-            el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id, current_agent_id=agent_id)
+            el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, user_id, current_agent_id=agent_id)
             agent.built_in_tools = agent_in.built_in_tools.model_dump()
 
         # ---- Variables Update ----
         if agent_in.variables is not None:
             el_update_params["dynamic_variables"] = agent_in.variables
-            
+
             db.session.query(VariablesModel).filter(
                 VariablesModel.agent_id == agent_id
             ).delete()
             for key, value in agent_in.variables.items():
                 db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
 
-        from app_v2.routers.agents import prompt_requires_timezone
-        if prompt_requires_timezone(agent.system_prompt) and not agent.timezone:
-            raise HTTPException(
-                status_code=400,
-                detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
-            )
-
         # ---- Sync with ElevenLabs ----
-        if el_update_params and agent.elevenlabs_agent_id:
+        if agent.elevenlabs_agent_id:
             try:
                 el_client = ElevenLabsAgent()
                 el_response = el_client.update_agent(
@@ -914,18 +948,9 @@ async def update_agent_public(
 
                 # Refresh the stored LLM price now that ElevenLabs has the new
                 # config (best-effort; prompt/KB/RAG/model all affect it).
-                effective_model = el_update_params.get("llm_model")
-                if not effective_model:
-                    effective_model = (
-                        db.session.query(AIModels.model_name)
-                        .join(AgentAIModelBridge, AgentAIModelBridge.ai_model_id == AIModels.id)
-                        .filter(AgentAIModelBridge.agent_id == agent_id)
-                        .scalar()
-                    )
-                if effective_model:
-                    agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
-                        agent.elevenlabs_agent_id, effective_model
-                    )
+                agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
+                    agent.elevenlabs_agent_id, ai_model.model_name
+                )
             except HTTPException:
                 raise
             except Exception as e:
