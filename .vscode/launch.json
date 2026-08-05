@@ -17,7 +17,7 @@
       "justMyCode": false,
       "envFile": "${workspaceFolder}/.env",
       "cwd": "${workspaceFolder}",
-      "python": "${workspaceFolder}/.venv/bin/python",
+      "python": "${workspaceFolder}/voice_ninja_env/bin/python",
       "console": "integratedTerminal"
     },
     {
