@@ -145,6 +145,12 @@ VALID_LLMS: list[str] = [
     "watt-tool-70b",
 ]
 
+# ElevenLabs' "bring your own LLM endpoint" option. Neither the public API
+# nor the internal product ever collects the endpoint URL/auth this requires,
+# so selecting it produces an agent that can't actually generate responses —
+# excluded from public listings and blocked from agent creation.
+CUSTOM_LLM_MODEL_NAME = "custom-llm"
+
 
 # ============================================================================
 # ElevenLabs TTS Models with Supported Languages
