@@ -51,6 +51,7 @@ from app_v2.schemas.function_schema import (
 from app_v2.schemas.agent_schema import (
     AgentUpdate,
     PublicAgentCreate,
+    PublicAgentUpdate,
     PublicAgentRead,
     PublicAgentListRead,
 )
@@ -110,6 +111,7 @@ import time
 from app_v2.schemas.api_analytics_schema import APIAnalyticsResponse, APICallLogRead
 from sqlalchemy import func
 from datetime import timedelta
+from app_v2.core.elevenlabs_config import CUSTOM_LLM_MODEL_NAME
 
 logger = setup_logger(__name__)
 
@@ -594,17 +596,26 @@ async def create_agent(
     
     user_id = current_user.id
     with db():
-        voice = db.session.query(VoiceModel).filter(VoiceModel.voice_name == agent_in.voice).first()
+        voice = db.session.query(VoiceModel).filter(
+            VoiceModel.id == agent_in.voice,
+            or_(VoiceModel.user_id == user_id, VoiceModel.user_id.is_(None)),
+        ).first()
         if not voice or not voice.elevenlabs_voice_id:
-            raise HTTPException(status_code=400, detail="Invalid voice")
-        
-        ai_model = db.session.query(AIModels).filter(AIModels.model_name == agent_in.ai_model).first()
+            raise HTTPException(status_code=400, detail="Invalid voice id")
+        if not voice.is_enabled:
+            raise HTTPException(status_code=400, detail="This voice is disabled and cannot be used to create an agent")
+        if not voice.has_sample_audio:
+            raise HTTPException(status_code=400, detail="This voice has no sample audio available and cannot be used to create an agent")
+
+        ai_model = db.session.query(AIModels).filter(AIModels.id == agent_in.ai_model).first()
         if not ai_model:
-            raise HTTPException(status_code=400, detail="Invalid AI model")
-        
-        language = db.session.query(LanguageModel).filter(LanguageModel.lang_code == agent_in.language).first()
+            raise HTTPException(status_code=400, detail="Invalid AI model id")
+        if ai_model.model_name == CUSTOM_LLM_MODEL_NAME:
+            raise HTTPException(status_code=400, detail="The custom-llm model cannot be used to create an agent via this API")
+
+        language = db.session.query(LanguageModel).filter(LanguageModel.id == agent_in.language).first()
         if not language:
-            raise HTTPException(status_code=400, detail="Invalid language")
+            raise HTTPException(status_code=400, detail="Invalid language id")
 
         # Same uniqueness rule as update_agent_public below: no other agent of
         # this user may share the name (case-insensitive). Checked before the
@@ -1494,7 +1505,11 @@ async def delete_twilio_connector(
 # LANGUAGES
 # -------------------------------------------------------------------
 
-@router.get("/languages", response_model=PublicPaginatedResponse[LanguageRead])
+@router.get(
+    "/languages",
+    response_model=PublicPaginatedResponse[LanguageRead],
+    description="Lists supported languages. Each item's numeric `id` is the value to pass as `language` in POST /agents.",
+)
 async def list_languages_public(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
@@ -1534,7 +1549,9 @@ async def get_language_public(
     description=(
         "Lists voices available to this account (enabled voices only). Supports "
         "filtering with `voice_name` (partial, case-insensitive), `gender` "
-        "(`male`/`female`), and `nationality` (partial, case-insensitive)."
+        "(`male`/`female`), and `nationality` (partial, case-insensitive). "
+        "Each item's numeric `id` is the value to pass as `voice` in POST "
+        "/agents — only voices with `has_sample_audio: true` can be used."
     ),
 )
 async def list_voices_public(
@@ -1604,7 +1621,10 @@ async def get_voice_public(
     response_model=PublicPaginatedResponse[AIModelRead],
     description=(
         "Lists available AI models, sorted by id. Supports filtering with "
-        "`model_name` and `provider` (both partial, case-insensitive)."
+        "`model_name` and `provider` (both partial, case-insensitive). Every "
+        "model returned here can be used as `ai_model` in POST /agents — "
+        "`custom-llm` is excluded since it can't be used to create an agent "
+        "through this API."
     ),
 )
 async def list_ai_models_public(
@@ -1617,7 +1637,7 @@ async def list_ai_models_public(
     track_and_limit_api(current_user.id)
     skip = (page - 1) * size
     with db():
-        query = db.session.query(AIModels)
+        query = db.session.query(AIModels).filter(AIModels.model_name != CUSTOM_LLM_MODEL_NAME)
         if model_name:
             query = query.filter(AIModels.model_name.ilike(f"%{model_name}%"))
         if provider:
@@ -2245,7 +2265,10 @@ async def get_ai_model_public(
 ):
     track_and_limit_api(current_user.id)
     with db():
-        model = db.session.query(AIModels).filter(AIModels.id == id).first()
+        model = db.session.query(AIModels).filter(
+            AIModels.id == id,
+            AIModels.model_name != CUSTOM_LLM_MODEL_NAME,
+        ).first()
         if not model:
             raise HTTPException(status_code=404, detail="AI Model not found")
         return model
