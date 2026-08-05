@@ -37,6 +37,8 @@ class UseCases(str,Enum):
     knowledge_lookup = "knowledge_lookup"
     customer_support = "customer_support"
     healthcare_assistant = "healthcare_assistant"
+    appointment_booking = "appointment_booking"
+    sales = "sales"
     custom = "custom"
 
 

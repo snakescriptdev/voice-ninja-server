@@ -641,7 +641,7 @@ async def create_agent(
             kb_map = {kb.id: kb for kb in kb_records}
             missing_ids = set(kb_ids_ordered) - set(kb_map.keys())
             if missing_ids:
-                raise HTTPException(status_code=400, detail=f"Some Knowledge Base IDs not found or synced: {list(missing_ids)}")
+                raise HTTPException(status_code=400, detail=f"Knowledge Base IDs not found or synced: {list(missing_ids)}")
             for kb_id in kb_ids_ordered:
                 kb = kb_map[kb_id]
                 el_kb_list.append({
