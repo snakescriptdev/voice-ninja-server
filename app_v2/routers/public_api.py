@@ -20,7 +20,6 @@ from app_v2.databases.models import (
     VoiceModel,
     AIModels,
     LanguageModel,
-    PhoneNumberService,
     KnowledgeBaseModel,
     PersonalKnowledgeBaseModel,
     PersonalKnowledgeBaseChunkModel,
@@ -54,6 +53,7 @@ from app_v2.schemas.agent_schema import (
     PublicAgentRead,
     PublicAgentListRead,
 )
+from app_v2.schemas.built_in_tools import BuiltInToolsParams, TransferToAgentConfig, PublicBuiltInToolsParams
 from app_v2.schemas.widget_schema import WidgetConfig, WidgetConfigResponse, WidgetConfigUpdate, WidgetListResponse
 from app_v2.schemas.web_agent_schema import WebAgentCreate, WebAgentUpdate, WebAgentResponse, WebAgentListResponse
 from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
@@ -90,6 +90,7 @@ from app_v2.utils.text_extraction import extract_text_from_file
 from app_v2.utils.web_scraper import scrape_url
 from app_v2.utils.faiss_store import remove_embeddings
 from app_v2.utils.personal_kb_tool import (
+    ensure_personal_kb_tool_for_agent,
     remove_personal_kb_tool_from_agent_if_empty,
     resync_personal_kb_tool_for_agent,
     delete_agent_personal_kb_tool,
@@ -134,6 +135,31 @@ def _public_envelope(status_str: str, data=None, message: str = "", detail: str 
     return {"status": status_str, "data": data, "message": message, "detail": detail}
 
 
+def _find_duplicate_json_keys(raw: bytes) -> Optional[List[str]]:
+    """Detects repeated keys in a JSON object (at any nesting level, e.g.
+    `variables`). By default `json.loads` silently keeps only the last value
+    for a repeated key, discarding exactly the information needed to flag it
+    as a mistake — so this re-parses with an `object_pairs_hook` that
+    remembers keys seen more than once instead of collapsing them."""
+    if not raw:
+        return None
+    duplicates = []
+
+    def _check_pairs(pairs):
+        seen = set()
+        for k, _ in pairs:
+            if k in seen and k not in duplicates:
+                duplicates.append(k)
+            seen.add(k)
+        return dict(pairs)
+
+    try:
+        json.loads(raw, object_pairs_hook=_check_pairs)
+    except (ValueError, TypeError):
+        return None  # Not valid JSON at all — let the normal request flow report that.
+    return duplicates or None
+
+
 class PublicAPIRoute(APIRoute):
     def get_route_handler(self) -> Callable:
         original = super().get_route_handler()
@@ -151,6 +177,22 @@ class PublicAPIRoute(APIRoute):
                 # disconnect mid-body) still comes back enveloped instead of
                 # bypassing _public_envelope entirely.
                 raw_request_body = await request.body()
+                duplicate_keys = _find_duplicate_json_keys(raw_request_body)
+                if duplicate_keys:
+                    status_code = 400
+                    error_message = (
+                        "Your request contains a repeated field name. Please remove the "
+                        "duplicate and try again."
+                    )
+                    detail_message = (
+                        f"Duplicate key(s) found in request body: {', '.join(duplicate_keys)}. "
+                        "Each key must appear only once."
+                    )
+                    response = JSONResponse(
+                        status_code=status_code,
+                        content=_public_envelope("failed", message=error_message, detail=detail_message),
+                    )
+                    return response
                 response = await original(request)
                 status_code = response.status_code
                 payload = _try_parse_json_bytes(getattr(response, "body", None))
@@ -161,23 +203,46 @@ class PublicAPIRoute(APIRoute):
                 return response
             except HTTPException as e:
                 status_code = e.status_code
-                error_message = str(e.detail)
+                # `detail` is usually a plain string shared by both `message`
+                # and `detail` in the envelope, as it always has been - but a
+                # handful of raises (e.g. the transfer_to_agent duplicate-
+                # condition check in agents.py's transform_built_in_tools)
+                # pass a {"message": ..., "detail": ...} dict instead, same
+                # shape main.py's global HTTPException handler already
+                # supports for the internal (non-public) API.
+                if isinstance(e.detail, dict):
+                    error_message = e.detail.get("message", "Something went wrong")
+                    detail_message = e.detail.get("detail", error_message)
+                else:
+                    error_message = str(e.detail)
+                    detail_message = error_message
                 response = JSONResponse(
                     status_code=status_code,
-                    content=_public_envelope("failed", message=error_message, detail=error_message),
+                    content=_public_envelope("failed", message=error_message, detail=detail_message),
                 )
                 return response
             except RequestValidationError as e:
                 status_code = 400
                 field_errors = []
+                # `detail` is the dev-facing counterpart of `message` (see
+                # `_public_envelope` docstring context above / HTTPException
+                # and generic-Exception branches below, which follow the
+                # same split) — it carries the raw loc/type/input pydantic
+                # gives us, so `message` can stay in plain, user-facing
+                # language without exposing Python-ish internals.
+                detail_errors = []
                 for err in e.errors():
                     loc = err.get("loc", [])
                     field = loc[-1] if loc else "field"
-                    field_errors.append(get_readable_message(field, err.get("msg", "Invalid value")))
+                    raw_msg = err.get("msg", "Invalid value")
+                    field_errors.append(get_readable_message(field, raw_msg))
+                    loc_path = ".".join(str(part) for part in loc) if loc else str(field)
+                    detail_errors.append(f"{loc_path} ({err.get('type', 'unknown')}): {raw_msg}")
                 error_message = "; ".join(field_errors)
+                detail_message = "; ".join(detail_errors)
                 response = JSONResponse(
                     status_code=status_code,
-                    content=_public_envelope("failed", message=error_message, detail=error_message),
+                    content=_public_envelope("failed", message=error_message, detail=detail_message),
                 )
                 return response
             except Exception as e:
@@ -256,19 +321,54 @@ router = APIRouter(
 
 # -------------------- HELPERS --------------------
 
+# Public callers can only configure/see end_call and transfer_to_agent (see
+# PublicBuiltInToolsParams) — both are simpler shapes than their internal
+# equivalent (end_call is a plain bool instead of {enabled, name};
+# transfer_to_agent is a flat list instead of {enabled, name, transfers}).
+# These two helpers convert between that public shape and the internal
+# BuiltInToolsParams shape actually stored on the agent / passed to
+# transform_built_in_tools (shared with the internal router).
+
+def to_internal_built_in_tools(public_params: Optional[PublicBuiltInToolsParams]) -> Optional[BuiltInToolsParams]:
+    if not public_params:
+        return None
+
+    transfer_to_agent_config = None
+    if public_params.transfer_to_agent is not None:
+        transfer_to_agent_config = TransferToAgentConfig(
+            enabled=bool(public_params.transfer_to_agent),
+            transfers=public_params.transfer_to_agent,
+        )
+
+    return BuiltInToolsParams(
+        end_call=public_params.end_call,
+        transfer_to_agent=transfer_to_agent_config,
+    )
+
+
+def _public_built_in_tools(built_in_tools: Optional[dict]) -> Optional[dict]:
+    """Renders a stored (internal-shaped) built_in_tools dict back into the
+    simplified public shape: end_call as a plain bool, transfer_to_agent as
+    a flat list of {agent_id, condition} — dropping transfer_to_number and
+    play_keypad_touch_tone entirely, which the public API never exposes."""
+    if not built_in_tools:
+        return built_in_tools
+
+    end_call = built_in_tools.get("end_call")
+    end_call_enabled = bool(end_call.get("enabled")) if isinstance(end_call, dict) else bool(end_call)
+
+    transfer_to_agent = built_in_tools.get("transfer_to_agent")
+    transfers = (transfer_to_agent or {}).get("transfers") or [] if isinstance(transfer_to_agent, dict) else []
+
+    return {
+        "end_call": end_call_enabled,
+        "transfer_to_agent": transfers,
+    }
+
+
 def agent_to_read(agent: AgentModel) -> PublicAgentRead:
-    ai_model = (
-        agent.agent_ai_models[0].ai_model.model_name
-        if agent.agent_ai_models else None
-    )
-    language = (
-        agent.agent_languages[0].language.lang_code
-        if agent.agent_languages else None
-    )
-    phone_number = (
-        agent.phone_number[0].phone_number
-        if agent.phone_number else None
-    )
+    ai_model = agent.agent_ai_models[0].ai_model if agent.agent_ai_models else None
+    language = agent.agent_languages[0].language if agent.agent_languages else None
 
     return PublicAgentRead(
         id=agent.id,
@@ -279,22 +379,27 @@ def agent_to_read(agent: AgentModel) -> PublicAgentRead:
         # on write via apply_prompt_block_state() if the agent still has an
         # active tool (see update_agent_public below).
         system_prompt=strip_prompt_block(agent.system_prompt),
-        voice=agent.voice.voice_name,
+        voice=agent.voice.id,
+        voice_name=agent.voice.voice_name,
         is_enabled=agent.is_enabled,
-        ai_model=ai_model,
-        language=language,
-        updated_at=agent.modified_at.date(),
-        phone=phone_number,
+        ai_model=ai_model.id if ai_model else None,
+        ai_model_name=ai_model.model_name if ai_model else None,
+        language=language.id if language else None,
+        language_name=language.language if language else None,
+        created_at=agent.created_at,
+        updated_at=agent.modified_at,
+        # Personal KB (PersonalKnowledgeBaseAgentBridgeModel) — see create_agent
+        # for why this API uses personal KB, not the legacy KnowledgeBaseModel.
         knowledgebase = [
             {"id": bridge.knowledge_base.id, "title": bridge.knowledge_base.title, "type": bridge.knowledge_base.kb_type}
-            for bridge in agent.agent_knowledge_bases
+            for bridge in agent.personal_kb_agent_bridges
         ],
         variables={var.variable_name: var.variable_value for var in agent.variables},
         tools=[
             {"id": bridge.function.id, "name": bridge.function.name}
             for bridge in agent.agent_functions
         ],
-        built_in_tools=agent.built_in_tools,
+        built_in_tools=_public_built_in_tools(agent.built_in_tools),
         timezone=agent.timezone
     )
 
@@ -307,29 +412,22 @@ def agent_to_list_read(
     leads_count: int = 0,
     is_first_call_pending: bool = True,
 ) -> PublicAgentListRead:
-    ai_model = (
-        agent.agent_ai_models[0].ai_model.model_name
-        if agent.agent_ai_models else None
-    )
-    language = (
-        agent.agent_languages[0].language.lang_code
-        if agent.agent_languages else None
-    )
-    phone_number = (
-        agent.phone_number[0].phone_number
-        if agent.phone_number else None
-    )
+    ai_model = agent.agent_ai_models[0].ai_model if agent.agent_ai_models else None
+    language = agent.agent_languages[0].language if agent.agent_languages else None
 
     return PublicAgentListRead(
         id=agent.id,
         agent_name=agent.agent_name,
         first_message=agent.first_message,
-        voice=agent.voice.voice_name,
+        voice=agent.voice.id,
+        voice_name=agent.voice.voice_name,
         is_enabled=agent.is_enabled,
-        ai_model=ai_model,
-        language=language,
-        updated_at=agent.modified_at.date(),
-        phone=phone_number,
+        ai_model=ai_model.id if ai_model else None,
+        ai_model_name=ai_model.model_name if ai_model else None,
+        language=language.id if language else None,
+        language_name=language.language if language else None,
+        created_at=agent.created_at,
+        updated_at=agent.modified_at,
         timezone=agent.timezone,
         kb_count=kb_count,
         tool_count=tool_count,
@@ -448,10 +546,10 @@ async def list_agents(
         if sort_by in {"kb_count", "tool_count", "conversation_count"}:
             kb_sub = (
                 db.session.query(
-                    AgentKnowledgeBaseBridge.agent_id.label("agent_id"),
-                    func.count(AgentKnowledgeBaseBridge.kb_id).label("cnt"),
+                    PersonalKnowledgeBaseAgentBridgeModel.agent_id.label("agent_id"),
+                    func.count(PersonalKnowledgeBaseAgentBridgeModel.kb_id).label("cnt"),
                 )
-                .group_by(AgentKnowledgeBaseBridge.agent_id)
+                .group_by(PersonalKnowledgeBaseAgentBridgeModel.agent_id)
                 .subquery()
             )
             tool_sub = (
@@ -502,10 +600,10 @@ async def list_agents(
             {
                 row[0]: row[1]
                 for row in db.session.query(
-                    AgentKnowledgeBaseBridge.agent_id, func.count(AgentKnowledgeBaseBridge.kb_id)
+                    PersonalKnowledgeBaseAgentBridgeModel.agent_id, func.count(PersonalKnowledgeBaseAgentBridgeModel.kb_id)
                 )
-                .filter(AgentKnowledgeBaseBridge.agent_id.in_(agent_ids))
-                .group_by(AgentKnowledgeBaseBridge.agent_id)
+                .filter(PersonalKnowledgeBaseAgentBridgeModel.agent_id.in_(agent_ids))
+                .group_by(PersonalKnowledgeBaseAgentBridgeModel.agent_id)
                 .all()
             }
             if agent_ids else {}
@@ -627,44 +725,51 @@ async def create_agent(
         if name_taken:
             raise HTTPException(status_code=400, detail="Agent with this name already exists")
 
-        from app_v2.routers.agents import resolve_phone_record, finalize_phone_assignment
-        # Public callers can't specify a twilio_connector_id (removed from
-        # PublicAgentCreate) — resolve_phone_record falls back to requiring
-        # an already-owned, previously imported number for `phone`.
-        phone_record, phone_connector = resolve_phone_record(
-            db.session, user_id, agent_in.phone, None
-        )
-
         # -------------------------------------------------
-        # KB & Tools validation and lookup
+        # Personal KB & Tools validation and lookup
+        #
+        # `knowledgebase` attaches personal KB items (PersonalKnowledgeBaseModel
+        # — the self-hosted, FAISS-backed KB also exposed at GET
+        # /api/v2/public/personal-kb), not the legacy ElevenLabs-native
+        # KnowledgeBaseModel. Personal KB items don't feed ElevenLabs'
+        # `knowledge_base` field at all — attaching one instead provisions
+        # this agent's own search_personal_knowledge_base tool (see
+        # ensure_personal_kb_tool_for_agent below, called once the agent exists).
         # -------------------------------------------------
-        el_kb_list = []
         kb_ids_ordered = []
         if agent_in.knowledgebase:
             raw_ids = [k.get("id") if isinstance(k, dict) else k for k in agent_in.knowledgebase]
             kb_ids_ordered = list(dict.fromkeys(raw_ids))
-            kb_records = db.session.query(KnowledgeBaseModel).filter(
-                KnowledgeBaseModel.id.in_(kb_ids_ordered),
-                KnowledgeBaseModel.user_id == user_id,
-                KnowledgeBaseModel.elevenlabs_document_id.isnot(None)
+            kb_records = db.session.query(PersonalKnowledgeBaseModel).filter(
+                PersonalKnowledgeBaseModel.id.in_(kb_ids_ordered),
+                PersonalKnowledgeBaseModel.user_id == user_id,
             ).all()
             kb_map = {kb.id: kb for kb in kb_records}
             missing_ids = set(kb_ids_ordered) - set(kb_map.keys())
             if missing_ids:
-                raise HTTPException(status_code=400, detail=f"Knowledge Base IDs not found or synced: {list(missing_ids)}")
-            for kb_id in kb_ids_ordered:
-                kb = kb_map[kb_id]
-                el_kb_list.append({
-                    "id": kb.elevenlabs_document_id,
-                    "type": "file",
-                    "name": kb.title or f"KB_{kb.id}"
-                })
+                raise HTTPException(status_code=400, detail=f"Knowledge Base IDs not found: {list(missing_ids)}")
 
         el_tool_ids = []
         tool_ids_ordered = []
         if agent_in.tools:
             raw_ids = [t.get("id") if isinstance(t, dict) else t for t in agent_in.tools]
             tool_ids_ordered = list(dict.fromkeys(raw_ids))
+
+            # search_personal_knowledge_base is provisioned exclusively via
+            # `knowledgebase` (see ensure_personal_kb_tool_for_agent below) —
+            # never something a caller adds directly through `tools`.
+            system_managed_ids = [
+                row.id for row in db.session.query(FunctionModel.id).filter(
+                    FunctionModel.id.in_(tool_ids_ordered),
+                    FunctionModel.is_system_managed.is_(True),
+                ).all()
+            ]
+            if system_managed_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tool IDs {system_managed_ids} are managed automatically (via `knowledgebase`) and cannot be set directly through `tools`",
+                )
+
             tool_records = db.session.query(FunctionModel).filter(
                 FunctionModel.id.in_(tool_ids_ordered),
                 FunctionModel.elevenlabs_tool_id.isnot(None),
@@ -677,8 +782,10 @@ async def create_agent(
             for tool_id in tool_ids_ordered:
                 el_tool_ids.append(tool_map[tool_id].elevenlabs_tool_id)
 
-        from app_v2.routers.agents import transform_built_in_tools, prompt_requires_timezone
-        transformed_built_in = transform_built_in_tools(agent_in.built_in_tools, db.session, user_id)
+        from app_v2.routers.agents import transform_built_in_tools, prompt_requires_timezone, extract_prompt_variable_names
+
+        full_built_in_tools = to_internal_built_in_tools(agent_in.built_in_tools)
+        transformed_built_in = transform_built_in_tools(full_built_in_tools, db.session, user_id)
 
         if prompt_requires_timezone(agent_in.system_prompt) and not agent_in.timezone:
             raise HTTPException(
@@ -686,7 +793,19 @@ async def create_agent(
                 detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
             )
 
-        # Create in ElevenLabs
+        # Merge in any {{var_name}} placeholder found in the prompt that the
+        # caller didn't explicitly declare in `variables`, so it still gets
+        # persisted (and sent to ElevenLabs) as a placeholder variable instead
+        # of being silently left unresolved — "test" until the caller sets
+        # the real value via a later PUT.
+        merged_variables = dict(agent_in.variables or {})
+        for var_name in extract_prompt_variable_names(agent_in.system_prompt):
+            merged_variables.setdefault(var_name, "test")
+
+        # Create in ElevenLabs — no `knowledge_base=`: personal KB items don't
+        # feed ElevenLabs' native knowledge_base field, they provision this
+        # agent's own search_personal_knowledge_base tool once it exists (see
+        # ensure_personal_kb_tool_for_agent below).
         el_client = ElevenLabsAgent()
         el_response = el_client.create_agent(
             name=agent_in.agent_name,
@@ -696,16 +815,15 @@ async def create_agent(
             language=language.lang_code,
             llm_model=ai_model.model_name,
             tool_ids=el_tool_ids,
-            knowledge_base=el_kb_list,
-            dynamic_variables=agent_in.variables,
+            dynamic_variables=merged_variables,
             built_in_tools=transformed_built_in,
             timezone=agent_in.timezone
         )
         if not el_response.status:
             raise HTTPException(status_code=424, detail="Failed to create agent with the voice provider")
-        
+
         elevenlabs_agent_id = el_response.data.get("agent_id")
-        
+
         new_agent = AgentModel(
             agent_name=agent_in.agent_name,
             first_message=agent_in.first_message,
@@ -713,7 +831,7 @@ async def create_agent(
             user_id=user_id,
             agent_voice=voice.id,
             elevenlabs_agent_id=elevenlabs_agent_id,
-            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {},
+            built_in_tools=full_built_in_tools.model_dump() if full_built_in_tools else {},
             timezone=agent_in.timezone
         )
         db.session.add(new_agent)
@@ -726,16 +844,23 @@ async def create_agent(
 
         db.session.add(AgentAIModelBridge(agent_id=new_agent.id, ai_model_id=ai_model.id))
         db.session.add(AgentLanguageBridge(agent_id=new_agent.id, lang_id=language.id))
-        
+
         for kb_id in kb_ids_ordered:
-            db.session.add(AgentKnowledgeBaseBridge(agent_id=new_agent.id, kb_id=kb_id))
+            db.session.add(PersonalKnowledgeBaseAgentBridgeModel(agent_id=new_agent.id, kb_id=kb_id))
         for tool_id in tool_ids_ordered:
             db.session.add(AgentFunctionBridgeModel(agent_id=new_agent.id, function_id=tool_id))
 
-        finalize_phone_assignment(phone_record, new_agent, phone_connector)
+        for key, value in merged_variables.items():
+            db.session.add(VariablesModel(agent_id=new_agent.id, variable_name=key, variable_value=value))
 
         db.session.commit()
         db.session.refresh(new_agent)
+
+        if kb_ids_ordered:
+            try:
+                ensure_personal_kb_tool_for_agent(new_agent.id)
+            except Exception as e:
+                logger.warning(f"Failed to provision personal KB tool for new agent {new_agent.id}: {e}")
 
         return agent_to_read(new_agent)
 
@@ -797,8 +922,7 @@ async def update_agent_public(
         new_prompt = apply_prompt_block_state(agent.id, agent_in.system_prompt)
 
         from app_v2.routers.agents import (
-            resolve_phone_record, finalize_phone_assignment, unassign_phone,
-            transform_built_in_tools, prompt_requires_timezone,
+            transform_built_in_tools, prompt_requires_timezone, extract_prompt_variable_names,
         )
 
         if prompt_requires_timezone(new_prompt) and not agent_in.timezone:
@@ -829,61 +953,61 @@ async def update_agent_public(
         db.session.query(AgentLanguageBridge).filter(AgentLanguageBridge.agent_id == agent_id).delete()
         db.session.add(AgentLanguageBridge(agent_id=agent_id, lang_id=language.id))
 
-        # ---- Phone Number Update (always applied — omitting `phone` or
-        # sending it as null unassigns any currently assigned number,
-        # matching true PUT semantics. No twilio_connector_id: public
-        # callers can't specify one, same as create.) ----
-        old_phone = db.session.query(PhoneNumberService).filter(
-            PhoneNumberService.assigned_to == agent_id
-        ).first()
-
-        new_phone_value = (agent_in.phone or "").strip()
-
-        if not (old_phone and old_phone.phone_number == new_phone_value):
-            unassign_phone(old_phone)
-            new_phone_record, new_phone_connector = resolve_phone_record(
-                db.session, user_id, agent_in.phone, None, current_agent_id=agent_id
-            )
-            finalize_phone_assignment(new_phone_record, agent, new_phone_connector)
+        # No phone handling here — phone-to-agent assignment only happens
+        # from the /phone dashboard page now, not inline at agent update.
 
         # ---- Knowledge Base Update ----
+        # `knowledgebase` attaches personal KB items (PersonalKnowledgeBaseModel
+        # — the self-hosted, FAISS-backed KB), not the legacy ElevenLabs-native
+        # KnowledgeBaseModel. Personal KB doesn't feed ElevenLabs' native
+        # `knowledge_base` field — it provisions/removes this agent's own
+        # search_personal_knowledge_base tool instead (see
+        # ensure_personal_kb_tool_for_agent / remove_personal_kb_tool_from_agent_if_empty
+        # below). Omit `knowledgebase` to leave the current attachments unchanged.
+        personal_kb_updated = agent_in.knowledgebase is not None
+        new_kb_ids_ordered = []
         if agent_in.knowledgebase is not None:
             raw_ids = [k.get("id") if isinstance(k, dict) else k for k in agent_in.knowledgebase]
-            kb_ids_ordered = list(dict.fromkeys(raw_ids))
-            
-            kb_records = db.session.query(KnowledgeBaseModel).filter(
-                KnowledgeBaseModel.id.in_(kb_ids_ordered),
-                KnowledgeBaseModel.user_id == user_id,
-                KnowledgeBaseModel.elevenlabs_document_id.isnot(None)
-            ).all()
-            
-            kb_map = {kb.id: kb for kb in kb_records}
-            missing_ids = set(kb_ids_ordered) - set(kb_map.keys())
-            
-            if missing_ids:
-                raise HTTPException(status_code=400, detail=f"Some Knowledge Base IDs not found or not synced: {list(missing_ids)}")
-            
-            el_kb_list = []
-            for kb_id in kb_ids_ordered:
-                kb = kb_map[kb_id]
-                el_kb_list.append({
-                    "id": kb.elevenlabs_document_id,
-                    "type": "file",
-                    "name": kb.title or f"KB_{kb.id}"
-                })
-            
-            el_update_params["knowledge_base"] = el_kb_list
+            new_kb_ids_ordered = list(dict.fromkeys(raw_ids))
 
-            db.session.query(AgentKnowledgeBaseBridge).filter(
-                AgentKnowledgeBaseBridge.agent_id == agent_id
+            kb_records = db.session.query(PersonalKnowledgeBaseModel).filter(
+                PersonalKnowledgeBaseModel.id.in_(new_kb_ids_ordered),
+                PersonalKnowledgeBaseModel.user_id == user_id,
+            ).all()
+
+            kb_map = {kb.id: kb for kb in kb_records}
+            missing_ids = set(new_kb_ids_ordered) - set(kb_map.keys())
+
+            if missing_ids:
+                raise HTTPException(status_code=400, detail=f"Knowledge Base IDs not found: {list(missing_ids)}")
+
+            db.session.query(PersonalKnowledgeBaseAgentBridgeModel).filter(
+                PersonalKnowledgeBaseAgentBridgeModel.agent_id == agent_id
             ).delete()
-            for kb_id in kb_ids_ordered:
-                db.session.add(AgentKnowledgeBaseBridge(agent_id=agent_id, kb_id=kb_id))
+            for kb_id in new_kb_ids_ordered:
+                db.session.add(PersonalKnowledgeBaseAgentBridgeModel(agent_id=agent_id, kb_id=kb_id))
 
         # ---- Tools Update ----
         if agent_in.tools is not None:
             raw_ids = [t.get("id") if isinstance(t, dict) else t for t in agent_in.tools]
             tool_ids_ordered = list(dict.fromkeys(raw_ids))
+
+            # search_personal_knowledge_base is provisioned exclusively via
+            # `knowledgebase` (see ensure_personal_kb_tool_for_agent /
+            # remove_personal_kb_tool_from_agent_if_empty below) — reject any
+            # attempt to set it directly, and preserve whatever's already
+            # bound below so replacing `tools` can never silently detach it.
+            system_managed_ids = [
+                row.id for row in db.session.query(FunctionModel.id).filter(
+                    FunctionModel.id.in_(tool_ids_ordered),
+                    FunctionModel.is_system_managed.is_(True),
+                ).all()
+            ]
+            if system_managed_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tool IDs {system_managed_ids} are managed automatically (via `knowledgebase`) and cannot be set directly through `tools`",
+                )
 
             tool_records = db.session.query(FunctionModel).filter(
                 FunctionModel.id.in_(tool_ids_ordered),
@@ -893,43 +1017,72 @@ async def update_agent_public(
                     FunctionModel.user_id.is_(None)
                 )
             ).all()
-            
+
             tool_map = {tool.id: tool for tool in tool_records}
             missing_ids = set(tool_ids_ordered) - set(tool_map.keys())
-            
+
             if missing_ids:
                 raise HTTPException(status_code=400, detail=f"Some Tool IDs not found or synced: {list(missing_ids)}")
-            
+
             el_tool_ids = []
             for tool_id in tool_ids_ordered:
                 el_tool_ids.append(tool_map[tool_id].elevenlabs_tool_id)
 
-            el_update_params["tool_ids"] = el_tool_ids
+            existing_system_bridges = (
+                db.session.query(AgentFunctionBridgeModel, FunctionModel.elevenlabs_tool_id)
+                .join(FunctionModel, FunctionModel.id == AgentFunctionBridgeModel.function_id)
+                .filter(
+                    AgentFunctionBridgeModel.agent_id == agent_id,
+                    FunctionModel.is_system_managed.is_(True),
+                )
+                .all()
+            )
+            preserved_tool_ids = [bridge.function_id for bridge, _ in existing_system_bridges]
+            preserved_el_tool_ids = [el_id for _, el_id in existing_system_bridges if el_id]
+
+            el_update_params["tool_ids"] = el_tool_ids + preserved_el_tool_ids
 
             db.session.query(AgentFunctionBridgeModel).filter(
                 AgentFunctionBridgeModel.agent_id == agent_id
             ).delete()
-            for tool_id in tool_ids_ordered:
+            for tool_id in tool_ids_ordered + preserved_tool_ids:
                 db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=tool_id))
 
         # ---- Built-in Tools Update ----
         if agent_in.built_in_tools is not None:
+            full_built_in_tools = to_internal_built_in_tools(agent_in.built_in_tools)
             # transform_built_in_tools may drop invalid transfers (e.g. an agent_id
-            # that no longer resolves) from agent_in.built_in_tools in place, so run
+            # that no longer resolves) from full_built_in_tools in place, so run
             # it before the model_dump() to keep the persisted config in sync with
             # what was actually sent to ElevenLabs.
-            el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, user_id, current_agent_id=agent_id)
-            agent.built_in_tools = agent_in.built_in_tools.model_dump()
+            el_update_params["built_in_tools"] = transform_built_in_tools(full_built_in_tools, db.session, user_id, current_agent_id=agent_id)
+            agent.built_in_tools = full_built_in_tools.model_dump()
 
         # ---- Variables Update ----
-        if agent_in.variables is not None:
-            el_update_params["dynamic_variables"] = agent_in.variables
+        # The (now-required, always-applied) system prompt is the source of
+        # truth for which variables exist — whatever {{placeholder}} names it
+        # contains is exactly the variable set that survives, fixing both:
+        # a {{key}} placeholder with no matching entry in `variables` still
+        # gets created (defaulting to "test" until the caller sets a real
+        # value), and explicit values in `variables` win for placeholders
+        # that ARE present. Existing DB values are the fallback for
+        # placeholders this request's `variables` didn't touch.
+        prompt_var_names = extract_prompt_variable_names(new_prompt)
+        existing_variables = {v.variable_name: v.variable_value for v in agent.variables}
+        explicit_variables = agent_in.variables or {}
 
+        synced_variables = {
+            name: explicit_variables.get(name, existing_variables.get(name, "test"))
+            for name in prompt_var_names
+        }
+
+        if synced_variables != existing_variables:
             db.session.query(VariablesModel).filter(
                 VariablesModel.agent_id == agent_id
             ).delete()
-            for key, value in agent_in.variables.items():
+            for key, value in synced_variables.items():
                 db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
+            el_update_params["dynamic_variables"] = synced_variables
 
         # ---- Sync with ElevenLabs ----
         if agent.elevenlabs_agent_id:
@@ -962,6 +1115,19 @@ async def update_agent_public(
 
         db.session.commit()
         db.session.refresh(agent)
+
+        # If this request touched `knowledgebase`, provision/remove this
+        # agent's search_personal_knowledge_base tool to match the new
+        # attachment set (mirrors what the dedicated attach/detach endpoints
+        # in personal_knowledge_base.py do for a single item at a time).
+        if personal_kb_updated:
+            try:
+                if new_kb_ids_ordered:
+                    ensure_personal_kb_tool_for_agent(agent.id)
+                else:
+                    remove_personal_kb_tool_from_agent_if_empty(agent.id)
+            except Exception as e:
+                logger.warning(f"Failed to sync personal KB tool state for agent {agent.id}: {e}")
 
         # Best-effort: this update may have replaced the agent's whole
         # tool_ids list without knowing about its personal KB search tool (if

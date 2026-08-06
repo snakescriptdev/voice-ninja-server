@@ -230,6 +230,27 @@ def _openapi_31_anyof_null_to_30_nullable(node):
             _openapi_31_anyof_null_to_30_nullable(item)
 
 
+# Pydantic v2's Field(examples=[...]) and model_config json_schema_extra
+# with an "examples" list produce the JSON-Schema-2020-12-style `examples`
+# array (OpenAPI 3.1) on the Schema Object. OpenAPI 3.0 Schema Objects only
+# recognize a single `example` value — Postman's 3.0 importer silently
+# ignores an `examples` array there, which is why fields/models given only
+# `examples=` (e.g. PublicAgentCreate's request body example, `tools`,
+# `knowledgebase`, `variables`) weren't populating any default value in
+# imported request bodies. Downgrades by keeping the first entry.
+def _openapi_31_examples_to_30_example(node):
+    if isinstance(node, dict):
+        if isinstance(node.get("examples"), list) and node["examples"]:
+            node["example"] = node.pop("examples")[0]
+        else:
+            node.pop("examples", None)
+        for value in node.values():
+            _openapi_31_examples_to_30_example(value)
+    elif isinstance(node, list):
+        for item in node:
+            _openapi_31_examples_to_30_example(item)
+
+
 # Every response on /api/v2/public/* actually goes out wrapped in
 # `_public_envelope` (see PublicAPIRoute.get_route_handler in
 # app_v2/routers/public_api.py), not as the bare `response_model` FastAPI
@@ -282,6 +303,7 @@ def custom_openapi():
         routes=app.routes,
     )
     _openapi_31_anyof_null_to_30_nullable(openapi_schema)
+    _openapi_31_examples_to_30_example(openapi_schema)
     _wrap_public_api_responses_in_envelope(openapi_schema)
     # Add security scheme
     if "components" not in openapi_schema:
