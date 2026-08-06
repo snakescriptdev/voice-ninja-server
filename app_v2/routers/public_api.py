@@ -197,9 +197,17 @@ class PublicAPIRoute(APIRoute):
                 response = await original(request)
                 status_code = response.status_code
                 payload = _try_parse_json_bytes(getattr(response, "body", None))
+                # A handler can set request.state.public_message (and,
+                # optionally, a distinct request.state.public_detail) to
+                # surface extra context on an otherwise-plain success
+                # response — e.g. update_agent_public reporting how many
+                # widgets/web agents got cascaded-disabled along with the
+                # agent. Empty/unset for every other endpoint.
+                success_message = getattr(request.state, "public_message", "")
+                success_detail = getattr(request.state, "public_detail", success_message)
                 response = JSONResponse(
                     status_code=status_code,
-                    content=_public_envelope("success", data=payload),
+                    content=_public_envelope("success", data=payload, message=success_message, detail=success_detail),
                 )
                 return response
             except HTTPException as e:
@@ -524,10 +532,10 @@ def voice_to_read(voice: VoiceModel) -> PublicVoiceRead:
     response_model=PublicPaginatedResponse[PublicAgentListRead],
     description=(
         "Lists this account's agents. Supports filtering with `agent_name` (partial, "
-        "case-insensitive match on agent name) and `voice` (partial, case-insensitive "
-        "match on voice name). Supports sorting via `sort_by` (`created_at`, "
-        "`modified_at`, `agent_name`, `kb_count`, `tool_count`, `conversation_count`) "
-        "and `sort_order` (`asc`, `desc`)."
+        "case-insensitive match on agent name), `voice` (partial, case-insensitive "
+        "match on voice name), and `is_enabled` (exact match). Supports sorting via "
+        "`sort_by` (`created_at`, `modified_at`, `agent_name`, `kb_count`, `tool_count`, "
+        "`conversation_count`) and `sort_order` (`asc`, `desc`)."
     ),
 )
 async def list_agents(
@@ -535,6 +543,7 @@ async def list_agents(
     size: int = Query(20, ge=1, le=50),
     agent_name: Optional[str] = Query(None, description="Filter by partial agent name (case-insensitive)"),
     voice: Optional[str] = Query(None, description="Filter by partial voice name (case-insensitive)"),
+    is_enabled: Optional[bool] = Query(None, description="Filter by whether the agent is enabled", examples=[True]),
     sort_by: Literal[
         "created_at", "modified_at", "agent_name", "kb_count", "tool_count", "conversation_count"
     ] = Query("created_at", description="Field to sort agents by"),
@@ -549,6 +558,8 @@ async def list_agents(
             query = query.filter(AgentModel.agent_name.ilike(f"%{agent_name}%"))
         if voice:
             query = query.join(AgentModel.voice).filter(VoiceModel.voice_name.ilike(f"%{voice}%"))
+        if is_enabled is not None:
+            query = query.filter(AgentModel.is_enabled.is_(is_enabled))
 
         # kb_count/tool_count/conversation_count live on other tables - join in
         # grouped subqueries (same shape as agents.py's get_all_agents) so ORDER BY
@@ -879,6 +890,7 @@ async def create_agent(
 async def update_agent_public(
     agent_id: int,
     agent_in: PublicAgentUpdate,
+    request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
@@ -947,6 +959,38 @@ async def update_agent_public(
         agent.first_message = agent_in.first_message
         agent.timezone = agent_in.timezone
         agent.agent_voice = voice.id
+
+        # ---- is_enabled ----
+        # Mirrors the internal PATCH endpoint's cascade (see agents.py
+        # update_agent): disabling/enabling an agent disables/enables all of
+        # its widgets and web agent pages along with it, since a widget or
+        # web agent page backed by a disabled agent can't take calls anyway.
+        # request.state.public_message surfaces the affected counts back to
+        # the caller (see PublicAPIRoute.custom above) — silently flipping
+        # widgets/web agents the caller didn't ask about would be confusing.
+        if agent_in.is_enabled is not None and agent_in.is_enabled != agent.is_enabled:
+            if agent_in.is_enabled:
+                check_can_enable_resource(user_id, "ai_voice_agents", allow_coin_fallback=True)
+
+            widget_count = db.session.query(WidgetModel).filter(WidgetModel.agent_id == agent.id).count()
+            web_agent_count = db.session.query(WebAgentPageModel).filter(WebAgentPageModel.agent_id == agent.id).count()
+
+            db.session.query(WidgetModel).filter(
+                WidgetModel.agent_id == agent.id
+            ).update({WidgetModel.is_enabled: agent_in.is_enabled})
+            db.session.query(WebAgentPageModel).filter(
+                WebAgentPageModel.agent_id == agent.id
+            ).update({WebAgentPageModel.is_enabled: agent_in.is_enabled})
+
+            agent.is_enabled = agent_in.is_enabled
+
+            state_word = "enabled" if agent_in.is_enabled else "disabled"
+            cascade_message = (
+                f"The agent has {widget_count} widgets and {web_agent_count} web agents "
+                f"and they are also {state_word} now."
+            )
+            request.state.public_message = cascade_message
+            request.state.public_detail = cascade_message
 
         el_update_params = {
             "name": agent_in.agent_name,
@@ -1183,11 +1227,26 @@ async def delete_agent_public(
 # WidgetS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/widgets", response_model=PublicPaginatedResponse[WidgetListResponse])
+@router.get(
+    "/widgets",
+    response_model=PublicPaginatedResponse[WidgetListResponse],
+    description=(
+        "Lists this account's widgets. Supports filtering with `widget_name` (partial, "
+        "case-insensitive), `agent_name` (partial, case-insensitive match on the "
+        "linked agent's name), and `is_enabled` (exact match). Supports sorting via "
+        "`sort_by` (`created_at`, `updated_at`, `widget_name`) and `sort_order` "
+        "(`asc`, `desc`)."
+    ),
+)
 async def list_widgets(
     request: Request,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    widget_name: Optional[str] = Query(None, description="Filter by partial widget name (case-insensitive)", examples=["Sales Widget"]),
+    agent_name: Optional[str] = Query(None, description="Filter by partial linked agent name (case-insensitive)", examples=["Sales Assistant"]),
+    is_enabled: Optional[bool] = Query(None, description="Filter by whether the widget is enabled", examples=[True]),
+    sort_by: Literal["created_at", "updated_at", "widget_name"] = Query("created_at", description="Field to sort widgets by"),
+    sort_order: Literal["asc", "desc"] = Query("desc", description="Sort direction"),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
@@ -1195,9 +1254,24 @@ async def list_widgets(
     base_url = str(request.base_url).rstrip("/")
     with db():
         query = db.session.query(WidgetModel).filter(WidgetModel.user_id == current_user.id)
+        if widget_name:
+            query = query.filter(WidgetModel.widget_name.ilike(f"%{widget_name}%"))
+        if is_enabled is not None:
+            query = query.filter(WidgetModel.is_enabled.is_(is_enabled))
+        if agent_name:
+            query = query.join(WidgetModel.agent).filter(AgentModel.agent_name.ilike(f"%{agent_name}%"))
+
+        sort_col = {
+            "updated_at": WidgetModel.modified_at,
+            "widget_name": WidgetModel.widget_name,
+        }.get(sort_by, WidgetModel.created_at)
+
         total = query.count()
         widgets = (
-            query.order_by(WidgetModel.created_at.desc(), WidgetModel.id.desc())
+            query.order_by(
+                sort_col.asc() if sort_order == "asc" else sort_col.desc(),
+                WidgetModel.id.desc(),
+            )
             .offset(skip).limit(size).all()
         )
 
@@ -1209,6 +1283,8 @@ async def list_widgets(
                 shareable_link=f"{base_url}/api/v2/widget/preview/{wa.public_id}",
                 is_enabled=wa.is_enabled,
                 created_at=wa.created_at,
+                updated_at=wa.modified_at,
+                agent_id=wa.agent_id,
                 agent_name=wa.agent.agent_name
             ) for wa in widgets
         ]
@@ -1712,17 +1788,28 @@ async def delete_twilio_connector(
 @router.get(
     "/languages",
     response_model=PublicPaginatedResponse[LanguageRead],
-    description="Lists supported languages. Each item's numeric `id` is the value to pass as `language` in POST /agents.",
+    description=(
+        "Lists supported languages. Each item's numeric `id` is the value to pass as "
+        "`language` in POST /agents. Supports filtering with `lang_code` (partial, "
+        "case-insensitive match on the code, e.g. `en`) and `language_name` (partial, "
+        "case-insensitive match on the name, e.g. `English`)."
+    ),
 )
 async def list_languages_public(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    lang_code: Optional[str] = Query(None, description="Filter by partial language code match (case-insensitive)", examples=["en"]),
+    language_name: Optional[str] = Query(None, description="Filter by partial language name match (case-insensitive)", examples=["English"]),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (page - 1) * size
     with db():
         query = db.session.query(LanguageModel)
+        if lang_code:
+            query = query.filter(LanguageModel.lang_code.ilike(f"%{lang_code}%"))
+        if language_name:
+            query = query.filter(LanguageModel.language.ilike(f"%{language_name}%"))
         total = query.count()
         languages = query.order_by(LanguageModel.id.asc()).offset(skip).limit(size).all()
         total_pages = math.ceil(total / size) if total else 0

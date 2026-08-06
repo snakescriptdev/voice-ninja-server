@@ -175,6 +175,12 @@ _PUBLIC_AGENT_PAYLOAD_EXAMPLE = {
     "timezone": "America/New_York",
 }
 
+# PublicAgentUpdate-only variant of the example above — adds `is_enabled`,
+# which PublicAgentCreate has no field for (agents are always created
+# enabled), so it can't go in the shared example without misleadingly
+# suggesting it's accepted on create too.
+_PUBLIC_AGENT_UPDATE_PAYLOAD_EXAMPLE = {**_PUBLIC_AGENT_PAYLOAD_EXAMPLE, "is_enabled": True}
+
 
 class PublicAgentCreate(BaseModel):
     # Reject any field not listed below instead of silently ignoring it —
@@ -228,7 +234,7 @@ class PublicAgentUpdate(BaseModel):
     # Reject any field not listed below instead of silently ignoring it —
     # a typo'd or unsupported field name in the request body should surface
     # as an error, not disappear.
-    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [_PUBLIC_AGENT_PAYLOAD_EXAMPLE]})
+    model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [_PUBLIC_AGENT_UPDATE_PAYLOAD_EXAMPLE]})
 
     agent_name: str = Field(..., description="(string) Display name for the agent — plain text, not an id. Must be unique per account (case-insensitive).")
     first_message: str = Field(..., min_length=1, description="(string) Opening line the agent speaks when a call starts — free-form text. Required, cannot be blank/whitespace-only.")
@@ -241,6 +247,7 @@ class PublicAgentUpdate(BaseModel):
     tools: Optional[List[int | Dict]] = Field(default=None, description="(list of numeric ids, NOT strings) Tool ids to attach — either a list of integer ids or a list of objects shaped `{\"id\": <int>}`. Each id is the `id` field from a GET /api/v2/public/functions response item. Omit to leave the current tools unchanged.", examples=[[201, 202]])
     built_in_tools: Optional[PublicBuiltInToolsParams] = Field(default=None, description="(nested object, not a string or id) Configuration for built-in tools. Only end_call and transfer_to_agent are supported via this API. Omit to leave unchanged.")
     timezone: Optional[str] = Field(default=None, description="(string, not an id) IANA timezone name for the agent, e.g. 'America/New_York'. Omit or send null to clear.")
+    is_enabled: Optional[bool] = Field(default=None, description="(boolean) Whether the agent is enabled. Omit to leave unchanged. Setting this to `false` also disables all of this agent's widgets and web agent pages; setting it back to `true` re-enables them.")
 
     _validate_timezone = field_validator("timezone")(_validate_timezone)
     _validate_agent_name = field_validator("agent_name")(validate_entity_name)

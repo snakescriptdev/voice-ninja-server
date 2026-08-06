@@ -65,6 +65,7 @@ def list_widgets(
                 shareable_link=f"{base_url}/api/v2/widget/preview/{wa.public_id}",
                 is_enabled=wa.is_enabled,
                 created_at = wa.created_at,
+                updated_at = wa.modified_at,
                 agent_id=wa.agent_id,
                 agent_name=wa.agent.agent_name if wa.agent else ""
             ) for wa in widgets
