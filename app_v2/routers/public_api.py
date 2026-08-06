@@ -37,7 +37,9 @@ from app_v2.databases.models import (
     ConversationsModel,
     WidgetLeadModel,
     VoiceTraitsModel,
+    CoinUsageSettingsModel,
 )
+from app_v2.utils.conversation_lifecycle import is_agents_first_call
 from app_v2.schemas.function_schema import (
     FunctionCreateSchema,
     FunctionUpdateSchema,
@@ -82,7 +84,7 @@ from twilio.base.exceptions import TwilioRestException
 from app_v2.utils.rate_limit import track_and_limit_api, log_public_api_call
 from app_v2.utils.log_sanitizer import sanitize_for_log
 from app_v2.utils.feature_access import RequireFeaturePublic, require_feature_enabled, check_can_enable_resource
-from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
+from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent, describe_agent_sync_error
 from app_v2.utils.elevenlabs import ElevenLabsKB, describe_kb_sync_error
 from app_v2.utils.scraping_utils import scrape_webpage_title
 from app_v2.utils.activity_logger import log_activity
@@ -92,7 +94,6 @@ from app_v2.utils.faiss_store import remove_embeddings
 from app_v2.utils.personal_kb_tool import (
     ensure_personal_kb_tool_for_agent,
     remove_personal_kb_tool_from_agent_if_empty,
-    resync_personal_kb_tool_for_agent,
     delete_agent_personal_kb_tool,
     strip_prompt_block,
     apply_prompt_block_state,
@@ -370,6 +371,12 @@ def agent_to_read(agent: AgentModel) -> PublicAgentRead:
     ai_model = agent.agent_ai_models[0].ai_model if agent.agent_ai_models else None
     language = agent.agent_languages[0].language if agent.agent_languages else None
 
+    is_first_call_pending = is_agents_first_call(agent.id)
+    first_call_max_duration_seconds = (
+        CoinUsageSettingsModel.get_settings().first_call_max_duration_seconds
+        if is_first_call_pending else None
+    )
+
     return PublicAgentRead(
         id=agent.id,
         agent_name=agent.agent_name,
@@ -400,7 +407,9 @@ def agent_to_read(agent: AgentModel) -> PublicAgentRead:
             for bridge in agent.agent_functions
         ],
         built_in_tools=_public_built_in_tools(agent.built_in_tools),
-        timezone=agent.timezone
+        timezone=agent.timezone,
+        is_first_call_pending=is_first_call_pending,
+        first_call_max_duration_seconds=first_call_max_duration_seconds,
     )
 
 
@@ -820,7 +829,8 @@ async def create_agent(
             timezone=agent_in.timezone
         )
         if not el_response.status:
-            raise HTTPException(status_code=424, detail="Failed to create agent with the voice provider")
+            friendly_detail = describe_agent_sync_error(el_response.error_message)
+            raise HTTPException(status_code=424, detail=friendly_detail or "Failed to create agent with the voice provider")
 
         elevenlabs_agent_id = el_response.data.get("agent_id")
 
@@ -1059,22 +1069,19 @@ async def update_agent_public(
             agent.built_in_tools = full_built_in_tools.model_dump()
 
         # ---- Variables Update ----
-        # The (now-required, always-applied) system prompt is the source of
-        # truth for which variables exist — whatever {{placeholder}} names it
-        # contains is exactly the variable set that survives, fixing both:
-        # a {{key}} placeholder with no matching entry in `variables` still
-        # gets created (defaulting to "test" until the caller sets a real
-        # value), and explicit values in `variables` win for placeholders
-        # that ARE present. Existing DB values are the fallback for
-        # placeholders this request's `variables` didn't touch.
+        # True PUT: `variables` is replaced wholesale with whatever the caller
+        # sends (matching create_agent's merged_variables), then any
+        # {{placeholder}} the system prompt references that the caller didn't
+        # explicitly set gets added defaulting to "test". A variable that's
+        # neither passed here nor referenced by the current prompt does not
+        # survive from the old row — that's the whole point of PUT.
         prompt_var_names = extract_prompt_variable_names(new_prompt)
         existing_variables = {v.variable_name: v.variable_value for v in agent.variables}
         explicit_variables = agent_in.variables or {}
 
-        synced_variables = {
-            name: explicit_variables.get(name, existing_variables.get(name, "test"))
-            for name in prompt_var_names
-        }
+        synced_variables = dict(explicit_variables)
+        for var_name in prompt_var_names:
+            synced_variables.setdefault(var_name, "test")
 
         if synced_variables != existing_variables:
             db.session.query(VariablesModel).filter(
@@ -1094,9 +1101,10 @@ async def update_agent_public(
                 )
                 if not el_response.status:
                     db.session.rollback()
+                    friendly_detail = describe_agent_sync_error(el_response.error_message)
                     raise HTTPException(
                         status_code=424,
-                        detail=f"Failed to update agent: {el_response.error_message}"
+                        detail=friendly_detail or f"Failed to update agent: {el_response.error_message}"
                     )
 
                 # Refresh the stored LLM price now that ElevenLabs has the new
@@ -1129,13 +1137,14 @@ async def update_agent_public(
             except Exception as e:
                 logger.warning(f"Failed to sync personal KB tool state for agent {agent.id}: {e}")
 
-        # Best-effort: this update may have replaced the agent's whole
-        # tool_ids list without knowing about its personal KB search tool (if
-        # it has one). Re-push it so it doesn't get silently dropped.
-        try:
-            resync_personal_kb_tool_for_agent(agent.id)
-        except Exception as e:
-            logger.warning(f"Failed to re-sync personal KB tool onto agent {agent.id} after update: {e}")
+        # No extra resync call here: unlike the internal PATCH endpoint, the
+        # ---- Tools Update ---- block above always preserves any pre-existing
+        # system-managed (personal KB) tool bridge into el_update_params
+        # itself (see preserved_tool_ids/preserved_el_tool_ids) whenever
+        # `tools` is touched, and ensure_/remove_personal_kb_tool_* already
+        # push their own resync when `knowledgebase` is touched. A trailing
+        # unconditional resync here would just repeat one of those two calls
+        # with an identical payload on every single PUT.
 
         return agent_to_read(agent)
 
