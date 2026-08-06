@@ -40,6 +40,7 @@ class PublicVoiceListRead(BaseModel):
     voice_name: str
     is_custom_voice: bool
     gender: Optional[GenderEnum] = GenderEnum.male
+    nationality: Optional[str] = None
     has_sample_audio: Optional[bool] = False
     sample_audio_url: Optional[str] = None
     is_enabled: bool
