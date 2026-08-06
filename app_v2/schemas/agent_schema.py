@@ -270,6 +270,10 @@ class PublicAgentRead(BaseModel):
     built_in_tools: Optional[Dict] = None
     timezone: Optional[str] = None
     is_first_call_pending: bool = True
+    # Only populated when is_first_call_pending is True — the admin-configured
+    # safety cap (seconds) on this agent's very first call. None once the
+    # agent has had a prior call, since the cap no longer applies.
+    first_call_max_duration_seconds: Optional[int] = None
     kb_count: int = 0
     tool_count: int = 0
     conversation_count: int = 0
