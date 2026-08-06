@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     RAZOR_KEY_SECRET: str = os.getenv("RAZOR_KEY_SECRET")
     RAZOR_WEBHOOK_SECRET: str = os.getenv("RAZOR_WEBHOOK_SECRET")
 
+    # When true, /docs (Swagger) and /openapi.json (also what a Postman
+    # "import from link" pulls) list every route in the app. When false
+    # (the default — safe for production), both only list /api/v2/public/*
+    # routes, so internal/admin endpoints never leak into the public-facing
+    # docs. See main.py custom_openapi().
+    SHOW_ALL_APIS_IN_SWAGGER: bool = False
+
     class Config:
         env_file = ".env"
         extra = "ignore"
