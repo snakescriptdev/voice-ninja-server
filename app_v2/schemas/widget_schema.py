@@ -1,4 +1,4 @@
-from pydantic import BaseModel,AnyHttpUrl, field_serializer, field_validator
+from pydantic import BaseModel,AnyHttpUrl, field_validator
 from typing import Optional,Literal
 from app_v2.schemas.enum_types import WidgetPosition
 from app_v2.utils.validation_utils import validate_entity_name, validate_entity_name_optional
@@ -74,12 +74,9 @@ class WidgetListResponse(BaseModel):
     shareable_link: str
     is_enabled: bool | None = True
     created_at: datetime
+    updated_at: datetime
     agent_id: int | None = None
     agent_name: str
-
-    @field_serializer("created_at")
-    def serialize_datetime(self,dt:datetime):
-        return dt.date()
 
 
 
