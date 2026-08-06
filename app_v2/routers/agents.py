@@ -222,74 +222,69 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
         config = built_in_tools_params.transfer_to_agent
         if config.enabled:
             el_transfers = []
-            valid_transfers = []
-            seen_transfers = set()
+            seen_conditions = set()
             for t in config.transfers:
                 transfer_data = t.model_dump()
-                requested_id = str(transfer_data.get("agent_id"))
-
-                # Enforce numeric ID for internal lookups
-                if not requested_id.isdigit():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Agent ID '{requested_id}' must be an internal numeric ID for transfer to agent tool"
-                    )
+                requested_id = transfer_data.get("agent_id")
 
                 # An agent can't transfer a call to itself
-                if current_agent_id is not None and int(requested_id) == current_agent_id:
+                if current_agent_id is not None and requested_id == current_agent_id:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="An agent cannot be configured to transfer a call to itself"
                     )
 
+                # Two transfers can't share the same condition, even when they
+                # point at different target agents — ElevenLabs would have no
+                # way to decide which one to fire. Checked before the DB
+                # lookup below so a duplicate condition is caught without
+                # needing a resolved target agent to name in the message.
+                condition_key = t.condition.strip().lower()
+                if condition_key in seen_conditions:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "message": (
+                                f"The condition \"{t.condition}\" is used more than once in "
+                                "transfer_to_agent. Each condition must be unique, even across "
+                                "different agents."
+                            ),
+                            "detail": (
+                                f"Duplicate transfer_to_agent condition (case-insensitive, "
+                                f"trimmed match): '{t.condition}'"
+                            ),
+                        },
+                    )
+                seen_conditions.add(condition_key)
+
                 # Dynamic lookup: find agent by internal ID
                 target_agent = session.query(AgentModel).filter(
-                    AgentModel.id == int(requested_id),
+                    AgentModel.id == requested_id,
                     AgentModel.user_id == user_id
                 ).first()
 
-                # Duplicate detection (same target + condition) happens here,
-                # after the lookup, so the error can name the agent instead of
-                # showing its raw internal id.
-                dup_key = (requested_id, t.condition.strip().lower())
-                if dup_key in seen_transfers:
-                    agent_label = target_agent.agent_name if target_agent else requested_id
+                if not target_agent:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Duplicate transfer to agent '{agent_label}' with the same condition '{t.condition}'"
+                        detail=f"Transfer agent not found: no agent with id {requested_id} exists on this account"
                     )
-                seen_transfers.add(dup_key)
+                if not target_agent.elevenlabs_agent_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Transfer agent not found: agent with id {requested_id} hasn't finished syncing to the voice provider yet"
+                    )
 
-                if target_agent and target_agent.elevenlabs_agent_id:
-                    transfer_data["agent_id"] = target_agent.elevenlabs_agent_id
-                    logger.info(f"Resolved agent transfer ID: {requested_id} -> {target_agent.elevenlabs_agent_id}")
-                else:
-                    logger.info(f"NOT FOUND agent transfer ID: {requested_id}, dropping this transfer")
-                    continue
-
+                transfer_data["agent_id"] = target_agent.elevenlabs_agent_id
+                logger.info(f"Resolved agent transfer ID: {requested_id} -> {target_agent.elevenlabs_agent_id}")
                 el_transfers.append(transfer_data)
-                valid_transfers.append(t)
 
-            # Drop invalid transfers from the source config too, so the caller
-            # persists the same set it just sent to ElevenLabs instead of
-            # keeping stale/unresolvable agent_id references in the DB.
-            config.transfers = valid_transfers
-
-            if valid_transfers:
-                el_tools["transfer_to_agent"] = {
-                    "name": config.name or "transfer_to_agent",
-                    "params": {
-                        "system_tool_type": "transfer_to_agent",
-                        "transfers": el_transfers
-                    }
+            el_tools["transfer_to_agent"] = {
+                "name": config.name or "transfer_to_agent",
+                "params": {
+                    "system_tool_type": "transfer_to_agent",
+                    "transfers": el_transfers
                 }
-            else:
-                # None of the configured transfers resolved to a real agent —
-                # don't send the tool to ElevenLabs, and mark it disabled in
-                # what gets persisted so the frontend doesn't show transfer to
-                # agent as enabled with nothing to transfer to.
-                logger.info("No valid transfers remain for transfer_to_agent; disabling the tool")
-                config.enabled = False
+            }
             
     # Transfer to Number
     if built_in_tools_params.transfer_to_number:
