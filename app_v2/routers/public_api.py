@@ -489,12 +489,13 @@ def _voice_traits(voice: VoiceModel):
 
 
 def voice_to_list_read(voice: VoiceModel) -> PublicVoiceListRead:
-    gender, _ = _voice_traits(voice)
+    gender, nationality = _voice_traits(voice)
     return PublicVoiceListRead(
         id=voice.id,
         voice_name=voice.voice_name,
         is_custom_voice=voice.is_custom_voice,
         gender=gender,
+        nationality=nationality,
         has_sample_audio=voice.has_sample_audio,
         sample_audio_url=voice.audio_file,
         is_enabled=voice.is_enabled,
@@ -1548,7 +1549,10 @@ async def delete_web_agent_public(
 # TWILIO CONNECTORS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/twilio-connectors", response_model=PublicPaginatedResponse[TwilioConnectorResponse])
+# Public Twilio connector APIs disabled — decorators commented out so they
+# don't register as routes (hidden from Swagger, 404 for any caller). Code
+# kept in place, not deleted, in case these need to come back.
+# @router.get("/twilio-connectors", response_model=PublicPaginatedResponse[TwilioConnectorResponse])
 async def list_twilio_connectors(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
@@ -1572,7 +1576,7 @@ async def list_twilio_connectors(
             has_next=page < total_pages, has_previous=page > 1, items=items,
         )
 
-@router.get("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
+# @router.get("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
 async def get_twilio_connector(
     connector_id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1587,7 +1591,7 @@ async def get_twilio_connector(
             raise HTTPException(status_code=404, detail="Twilio connector not found")
         return twilio_connector_to_response(connector)
 
-@router.post("/twilio-connectors", response_model=TwilioConnectorResponse, status_code=status.HTTP_201_CREATED)
+# @router.post("/twilio-connectors", response_model=TwilioConnectorResponse, status_code=status.HTTP_201_CREATED)
 async def create_twilio_connector(
     connector_in: TwilioConnectorCreate,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
@@ -1627,7 +1631,7 @@ async def create_twilio_connector(
         db.session.refresh(new_connector)
         return twilio_connector_to_response(new_connector)
 
-@router.put("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
+# @router.put("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
 async def update_twilio_connector(
     connector_id: int,
     connector_in: TwilioConnectorUpdate,
@@ -1680,7 +1684,7 @@ async def update_twilio_connector(
         db.session.refresh(connector)
         return twilio_connector_to_response(connector)
 
-@router.delete("/twilio-connectors/{connector_id}")
+# @router.delete("/twilio-connectors/{connector_id}")
 async def delete_twilio_connector(
     connector_id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))

@@ -289,6 +289,17 @@ def _wrap_public_api_responses_in_envelope(openapi_schema):
                 }
 
 
+# Gates the docs surface behind SHOW_ALL_APIS_IN_SWAGGER (see config.py):
+# with it unset/false, /docs and /openapi.json (and therefore anything
+# imported from that link into Postman) only list /api/v2/public/* routes —
+# internal/admin/auth endpoints stay out of any externally-shared docs link.
+def _restrict_openapi_to_public_v2(openapi_schema):
+    paths = openapi_schema.get("paths", {})
+    openapi_schema["paths"] = {
+        path: item for path, item in paths.items() if path.startswith("/api/v2/public")
+    }
+
+
 # Custom OpenAPI function to add security scheme
 def custom_openapi():
     if app.openapi_schema:
@@ -305,6 +316,8 @@ def custom_openapi():
     _openapi_31_anyof_null_to_30_nullable(openapi_schema)
     _openapi_31_examples_to_30_example(openapi_schema)
     _wrap_public_api_responses_in_envelope(openapi_schema)
+    if not VoiceSettings.SHOW_ALL_APIS_IN_SWAGGER:
+        _restrict_openapi_to_public_v2(openapi_schema)
     # Add security scheme
     if "components" not in openapi_schema:
         openapi_schema["components"] = {}
