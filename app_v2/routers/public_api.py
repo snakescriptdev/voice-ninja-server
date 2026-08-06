@@ -56,7 +56,7 @@ from app_v2.schemas.agent_schema import (
     PublicAgentListRead,
 )
 from app_v2.schemas.built_in_tools import BuiltInToolsParams, TransferToAgentConfig, PublicBuiltInToolsParams
-from app_v2.schemas.widget_schema import WidgetConfig, WidgetConfigResponse, WidgetConfigUpdate, WidgetListResponse
+from app_v2.schemas.widget_schema import WidgetConfigResponse, WidgetListResponse, PublicWidgetConfig, PublicWidgetConfigUpdate
 from app_v2.schemas.web_agent_schema import WebAgentCreate, WebAgentUpdate, WebAgentResponse, WebAgentListResponse
 from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
 from app_v2.schemas.language_schema import LanguageRead
@@ -1311,7 +1311,7 @@ async def get_widget(
 
 @router.post("/widgets", response_model=WidgetConfigResponse, status_code=status.HTTP_201_CREATED)
 async def create_widget(
-    wa_in: WidgetConfig,
+    wa_in: PublicWidgetConfig,
     request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
@@ -1355,7 +1355,7 @@ async def create_widget(
 @router.put("/widgets/{public_id}", response_model=WidgetConfigResponse)
 async def update_widget(
     public_id: str,
-    wa_in: WidgetConfigUpdate,
+    wa_in: PublicWidgetConfigUpdate,
     request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
