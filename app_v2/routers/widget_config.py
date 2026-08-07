@@ -67,7 +67,9 @@ def list_widgets(
                 created_at = wa.created_at,
                 updated_at = wa.modified_at,
                 agent_id=wa.agent_id,
-                agent_name=wa.agent.agent_name if wa.agent else ""
+                agent_name=wa.agent.agent_name if wa.agent else "",
+                primary_color=wa.primary_color,
+                show_branding=wa.show_branding,
             ) for wa in widgets
         ],
     )
