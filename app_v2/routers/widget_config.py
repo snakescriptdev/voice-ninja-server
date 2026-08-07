@@ -123,7 +123,10 @@ def create_widget(request: Request, config: WidgetConfig, user=Depends(RequireFe
     widget_name=widget.widget_name,
     shareable_link=shareable_link,
     agent_id=agent.id,
+    agent_name=agent.agent_name,
     is_enabled=widget.is_enabled,
+    created_at=widget.created_at,
+    updated_at=widget.modified_at,
     appearance=config.appearance,
     prechat=config.prechat,
   )
@@ -158,7 +161,10 @@ def get_widget(request: Request, public_id: str, user=Depends(require_active_use
     widget_name=widget.widget_name,
     shareable_link=shareable_link,
     agent_id=agent.id if agent else "",
+    agent_name=agent.agent_name if agent else "",
     is_enabled=widget.is_enabled,
+    created_at=widget.created_at,
+    updated_at=widget.modified_at,
     appearance=appearance,
     prechat=prechat,
   )
@@ -299,7 +305,10 @@ def update_widget(
         widget_name=widget.widget_name,
         shareable_link=shareable_link,
         agent_id=agent.id if agent else None,
+        agent_name=agent.agent_name if agent else "",
         is_enabled=widget.is_enabled,
+        created_at=widget.created_at,
+        updated_at=widget.modified_at,
         appearance=appearance,
         prechat=prechat,
     )
