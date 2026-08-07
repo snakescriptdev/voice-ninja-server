@@ -81,6 +81,11 @@ class WidgetListResponse(BaseModel):
     updated_at: datetime
     agent_id: int | None = None
     agent_name: str
+    # Surfaced so callers picking a widget from this list (e.g. the web-agent
+    # create/edit form's widget selector) can preview its accent color /
+    # branding without a second request per widget.
+    primary_color: str
+    show_branding: bool
 
 
 

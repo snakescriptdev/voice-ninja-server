@@ -1316,7 +1316,9 @@ async def list_widgets(
                 created_at=wa.created_at,
                 updated_at=wa.modified_at,
                 agent_id=wa.agent_id,
-                agent_name=wa.agent.agent_name
+                agent_name=wa.agent.agent_name,
+                primary_color=wa.primary_color,
+                show_branding=wa.show_branding,
             ) for wa in widgets
         ]
         total_pages = math.ceil(total / size) if total else 0
@@ -1536,6 +1538,8 @@ async def list_web_agents_public(
                 agent_name=wa.agent.agent_name if wa.agent else "",
                 widget_id=wa.widget_id,
                 widget_name=wa.widget.widget_name if wa.widget else "",
+                widget_primary_color=wa.widget.primary_color if wa.widget else "#562C7C",
+                widget_show_branding=wa.widget.show_branding if wa.widget else True,
                 shareable_link=_shareable_link(request, wa.public_id),
                 created_at=wa.created_at,
             )

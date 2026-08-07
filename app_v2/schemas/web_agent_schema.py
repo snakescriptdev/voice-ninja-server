@@ -34,6 +34,12 @@ class WebAgentResponse(BaseModel):
     agent_name: str
     widget_id: int
     widget_name: str
+    # Pulled from the linked widget so the hosted full-page call experience
+    # can share the same accent color / "Powered by Voice Ninja" branding as
+    # the widget, without duplicating a whole appearance config on web agent
+    # pages themselves.
+    widget_primary_color: str
+    widget_show_branding: bool
     is_enabled: bool
     bg_color: str
     agent_position: WebAgentPosition
@@ -54,6 +60,8 @@ class WebAgentListResponse(BaseModel):
     agent_name: str
     widget_id: int
     widget_name: str
+    widget_primary_color: str
+    widget_show_branding: bool
     shareable_link: str
     created_at: datetime
 
