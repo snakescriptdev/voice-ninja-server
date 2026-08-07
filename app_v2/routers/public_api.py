@@ -56,7 +56,10 @@ from app_v2.schemas.agent_schema import (
     PublicAgentListRead,
 )
 from app_v2.schemas.built_in_tools import BuiltInToolsParams, TransferToAgentConfig, PublicBuiltInToolsParams
-from app_v2.schemas.widget_schema import WidgetConfigResponse, WidgetListResponse, PublicWidgetConfig, PublicWidgetConfigUpdate
+from app_v2.schemas.widget_schema import (
+    WidgetConfigResponse, WidgetListResponse, PublicWidgetConfig, PublicWidgetConfigUpdate,
+    PUBLIC_CREATE_WIDGET_BODY_EXAMPLE, PUBLIC_UPDATE_WIDGET_BODY_EXAMPLE,
+)
 from app_v2.schemas.web_agent_schema import WebAgentCreate, WebAgentUpdate, WebAgentResponse, WebAgentListResponse
 from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
 from app_v2.schemas.language_schema import LanguageRead
@@ -461,7 +464,10 @@ def widget_to_response(widget: WidgetModel, request: Request = None) -> WidgetCo
         widget_name=widget.widget_name,
         shareable_link=f"{base_url}/api/v2/widget/preview/{widget.public_id}",
         agent_id=widget.agent_id,
+        agent_name=widget.agent.agent_name if widget.agent else "",
         is_enabled=widget.is_enabled,
+        created_at=widget.created_at,
+        updated_at=widget.modified_at,
         appearance={
             "widget_title": widget.widget_title,
             "widget_subtitle": widget.widget_subtitle,
@@ -1309,7 +1315,24 @@ async def get_widget(
             raise HTTPException(status_code=404, detail="Widget not found")
         return widget_to_response(wa, request)
 
-@router.post("/widgets", response_model=WidgetConfigResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/widgets",
+    response_model=WidgetConfigResponse,
+    status_code=status.HTTP_201_CREATED,
+    description=(
+        "Creates a widget for an agent. `prechat.custom_fields` in the example "
+        "payload (e.g. `Company Name`) is just a sample — add, remove, or rename "
+        "as many custom fields as you need based on your own use case. Allowed "
+        "`field_type` values: text, number, email, textarea, phone."
+    ),
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"example": PUBLIC_CREATE_WIDGET_BODY_EXAMPLE}
+            }
+        }
+    },
+)
 async def create_widget(
     wa_in: PublicWidgetConfig,
     request: Request,
@@ -1352,7 +1375,25 @@ async def create_widget(
         db.session.refresh(new_wa)
         return widget_to_response(new_wa, request)
 
-@router.put("/widgets/{public_id}", response_model=WidgetConfigResponse)
+@router.put(
+    "/widgets/{public_id}",
+    response_model=WidgetConfigResponse,
+    description=(
+        "Replaces a widget's config. This is a full PUT, not a PATCH: every "
+        "field (`widget_name`, `agent_id`, `is_enabled`, `appearance`, and "
+        "`prechat`) is required and always fully replaces the widget's "
+        "current values — nothing is left as-is by omitting it. Validation "
+        "is identical to POST /widgets (see there for details on "
+        "`prechat.custom_fields`, allowed `field_type` values, etc)."
+    ),
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"example": PUBLIC_UPDATE_WIDGET_BODY_EXAMPLE}
+            }
+        }
+    },
+)
 async def update_widget(
     public_id: str,
     wa_in: PublicWidgetConfigUpdate,
@@ -1367,45 +1408,53 @@ async def update_widget(
         if not wa:
             raise HTTPException(status_code=404, detail="Widget not found")
 
-        update_data = wa_in.model_dump(exclude_unset=True)
+        agent = db.session.query(AgentModel).filter(
+            AgentModel.id == wa_in.agent_id, AgentModel.user_id == current_user.id
+        ).first()
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
 
-        if "agent_id" in update_data:
-            agent = db.session.query(AgentModel).filter(
-                AgentModel.id == update_data["agent_id"], AgentModel.user_id == current_user.id
-            ).first()
-            if not agent:
-                raise HTTPException(status_code=403, detail="Agent does not belong to user")
-            wa.agent_id = update_data["agent_id"]
+        # A brand-new assignment to a different agent must land on an enabled
+        # agent (mirrors POST /widgets). Re-saving the widget's *current*
+        # agent while that agent happens to be disabled is still allowed —
+        # e.g. fixing up the widget's config while waiting to re-enable it.
+        if wa_in.agent_id != wa.agent_id and not agent.is_enabled:
+            raise HTTPException(status_code=403, detail="Agent is disabled")
 
-        if "widget_name" in update_data:
-            wa.widget_name = update_data["widget_name"]
+        # Same-name-per-agent uniqueness as POST /widgets, excluding this
+        # widget itself so re-saving its own unchanged name doesn't collide.
+        name_taken = db.session.query(WidgetModel).filter(
+            WidgetModel.agent_id == wa_in.agent_id,
+            func.lower(WidgetModel.widget_name) == wa_in.widget_name.lower(),
+            WidgetModel.id != wa.id,
+        ).first()
+        if name_taken:
+            raise HTTPException(status_code=400, detail="Widget with same name already exists for this Voice Agent.")
 
-        if "is_enabled" in update_data:
-            if update_data["is_enabled"] and not wa.is_enabled:
-                voice_agent = db.session.query(AgentModel).filter(AgentModel.id == wa.agent_id).first()
-                if not voice_agent or not voice_agent.is_enabled:
+        wa.agent_id = wa_in.agent_id
+        wa.widget_name = wa_in.widget_name
+
+        if wa_in.is_enabled != wa.is_enabled:
+            if wa_in.is_enabled:
+                if not agent.is_enabled:
                     raise HTTPException(
                         status_code=400,
                         detail="Cannot enable widget: its Voice Agent is disabled",
                     )
                 check_can_enable_resource(current_user.id, "widget_agent", allow_coin_fallback=True)
-            wa.is_enabled = update_data["is_enabled"]
+            wa.is_enabled = wa_in.is_enabled
 
-        if "appearance" in update_data:
-            appearance_data = update_data["appearance"]
-            if "widget_title" in appearance_data: wa.widget_title = appearance_data["widget_title"]
-            if "widget_subtitle" in appearance_data: wa.widget_subtitle = appearance_data["widget_subtitle"]
-            if "primary_color" in appearance_data: wa.primary_color = appearance_data["primary_color"]
-            if "position" in appearance_data: wa.position = appearance_data["position"]
-            if "show_branding" in appearance_data: wa.show_branding = appearance_data["show_branding"]
+        wa.widget_title = wa_in.appearance.widget_title
+        wa.widget_subtitle = wa_in.appearance.widget_subtitle
+        wa.primary_color = wa_in.appearance.primary_color
+        wa.position = wa_in.appearance.position
+        wa.show_branding = wa_in.appearance.show_branding
 
-        if "prechat" in update_data and update_data.get("prechat") is not None:
-            prechat_data = update_data["prechat"]
-            if "enable_prechat" in prechat_data: wa.enable_prechat = prechat_data["enable_prechat"]
-            if "require_name" in prechat_data: wa.require_name = prechat_data["require_name"]
-            if "require_email" in prechat_data: wa.require_email = prechat_data["require_email"]
-            if "require_phone" in prechat_data: wa.require_phone = prechat_data["require_phone"]
-            if "custom_fields" in prechat_data: wa.custom_fields = prechat_data["custom_fields"] or []
+        wa.enable_prechat = wa_in.prechat.enable_prechat
+        wa.require_name = wa_in.prechat.require_name
+        wa.require_email = wa_in.prechat.require_email
+        wa.require_phone = wa_in.prechat.require_phone
+        wa.custom_fields = [f.model_dump() for f in wa_in.prechat.custom_fields]
 
         db.session.commit()
         db.session.refresh(wa)
