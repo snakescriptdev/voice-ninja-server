@@ -191,7 +191,7 @@ class PublicAppearanceConfig(BaseModel):
     widget_subtitle: Optional[str] = Field(default=None, description="(string) Subtitle shown under the title. Omit or send null for no subtitle — cannot be an empty/whitespace-only string.")
     primary_color: str = Field(..., description="(string) Hex color code for the widget's accent color, e.g. '#AC1E7A' or '#ABC'.")
     position: WidgetPosition = Field(..., description="(string) Where the widget bubble docks on the page. One of: top-right, top-left, bottom-right, bottom-left.")
-    show_branding: bool = Field(default=True, description='(boolean) When true, displays the text "Powered by Voice Ninja" on the widget.')
+    show_branding: bool = Field(..., description='(boolean) When true, displays the text "Powered by Voice Ninja" on the widget.')
 
     _validate_color = field_validator("primary_color")(_validate_hex_color)
     _validate_title = field_validator("widget_title")(_validate_non_blank_optional_text)

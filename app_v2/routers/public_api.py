@@ -247,10 +247,35 @@ class PublicAPIRoute(APIRoute):
                     loc = err.get("loc", [])
                     field = loc[-1] if loc else "field"
                     raw_msg = err.get("msg", "Invalid value")
+                    is_list_item_error = isinstance(field, int) and len(loc) >= 2 and isinstance(loc[-2], str)
+                    raw_msg_lower = raw_msg.lower()
+                    # A list item that's the wrong shape entirely (e.g.
+                    # `"custom_fields": [null, " "]` instead of
+                    # `[{"field_name": ...}, ...]`) — pydantic reports one
+                    # identical error per bad item. Keying the message off
+                    # just the parent field (not "field (item N)") means every
+                    # bad item in the same list collapses to one readable
+                    # "Invalid custom_fields." line below instead of N
+                    # near-duplicate ones; `detail` still lists every
+                    # offending index individually.
+                    is_item_shape_error = is_list_item_error and "valid dictionary" in raw_msg_lower and (
+                        "instance of" in raw_msg_lower or "extract fields from" in raw_msg_lower
+                    )
+                    if is_item_shape_error:
+                        field = loc[-2]
+                    elif is_list_item_error:
+                        # Other in-list errors (e.g. a bad `field_type` value
+                        # inside one specific item) still benefit from
+                        # knowing which item, 1-based, failed.
+                        field = f"{loc[-2]} (item {field + 1})"
                     field_errors.append(get_readable_message(field, raw_msg))
                     loc_path = ".".join(str(part) for part in loc) if loc else str(field)
                     detail_errors.append(f"{loc_path} ({err.get('type', 'unknown')}): {raw_msg}")
-                error_message = "; ".join(field_errors)
+                # De-duplicate identical messages (e.g. several bad items in
+                # the same list all producing the same "Invalid X." line)
+                # while preserving first-seen order — `detail` stays
+                # un-deduplicated so nothing is lost for debugging.
+                error_message = "; ".join(dict.fromkeys(field_errors))
                 detail_message = "; ".join(detail_errors)
                 response = JSONResponse(
                     status_code=status_code,
