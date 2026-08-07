@@ -78,6 +78,21 @@ def get_readable_message(field: str, msg: str) -> str:
         max_len = "".join(c for c in msg if c.isdigit())
         return f"{field_name} is too long. Please enter at most {max_len} letters"
 
+    # Pydantic's error for a nested-object field that got a non-object value
+    # instead (e.g. `"custom_fields": [" "]` — a plain string where an object
+    # like `{"field_name": ...}` was expected). Both wordings ("...instance
+    # of {class_name}" and "...object to extract fields from") leak an
+    # internal Python class name that means nothing to an API caller, so
+    # they're collapsed to one plain "Invalid <field>." line instead. Checked
+    # before the generic "input should be" catch-all below, which would
+    # otherwise match first and let the class name through. Caller passes a
+    # plain field name here (no "(item N)" suffix, see public_api.py) so
+    # repeated bad items in the same list all produce this identical string
+    # and can be de-duplicated.
+    if "valid dictionary" in msg_lower and ("instance of" in msg_lower or "extract fields from" in msg_lower):
+        plain_field = field.replace("_", " ") if isinstance(field, str) else field_name
+        return f"Invalid {plain_field}."
+
     # Pydantic v2 numeric range errors, e.g. "Input should be greater than 0"
     if msg_lower.startswith("input should be"):
         return f"{field_name} must be {msg[len('Input should be'):].strip()}"
