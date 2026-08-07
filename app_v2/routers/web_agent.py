@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/v2/web-agents", tags=["web-agent"])
 
 _SAFE_COLOR_RE = re.compile(r"^#[0-9a-fA-F]{3,8}$")
 _DEFAULT_BG_COLOR = "#0B0B0F"
+_DEFAULT_ACCENT_COLOR = "#562C7C"
 
 _JUSTIFY_BY_POSITION = {
     "left": "flex-start",
@@ -33,14 +34,52 @@ _JUSTIFY_BY_POSITION = {
 }
 
 
+def _safe_hex_color(color: str, default: str) -> str:
+    return color if _SAFE_COLOR_RE.match(color or "") else default
+
+
 def _safe_bg_color(bg_color: str) -> str:
-    return bg_color if _SAFE_COLOR_RE.match(bg_color or "") else _DEFAULT_BG_COLOR
+    return _safe_hex_color(bg_color, _DEFAULT_BG_COLOR)
 
 
-def _build_web_agent_page_html(request: Request, web_agent_name: str, bg_color: str, agent_position: str, widget_public_id: str) -> str:
+def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+    """3- or 6-digit hex (leading '#') -> (r, g, b). Caller must have already
+    validated the string via _safe_hex_color."""
+    h = hex_color.lstrip("#")
+    if len(h) == 3:
+        h = "".join(c * 2 for c in h)
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+
+def _darken(hex_color: str, factor: float = 0.6) -> str:
+    r, g, b = _hex_to_rgb(hex_color)
+    return f"#{int(r * factor):02x}{int(g * factor):02x}{int(b * factor):02x}"
+
+
+def _rgba(hex_color: str, alpha: float) -> str:
+    r, g, b = _hex_to_rgb(hex_color)
+    return f"rgba({r},{g},{b},{alpha})"
+
+
+def _build_web_agent_page_html(
+    request: Request,
+    web_agent_name: str,
+    bg_color: str,
+    agent_position: str,
+    widget_public_id: str,
+    primary_color: str,
+    show_branding: bool,
+) -> str:
     justify_content = _JUSTIFY_BY_POSITION.get(agent_position, "center")
     safe_bg_color = _safe_bg_color(bg_color)
     safe_name = html.escape(web_agent_name)
+    # Accent color comes from the linked widget so the hosted full-page call
+    # experience visually matches the embeddable widget for the same agent,
+    # instead of every web agent page defaulting to the same hardcoded brand
+    # gradient regardless of which widget/agent it's for.
+    safe_accent = _safe_hex_color(primary_color, _DEFAULT_ACCENT_COLOR)
+    accent_dark = _darken(safe_accent)
+    branding_html = '<div id="wa-branding">Powered by Voice Ninja</div>' if show_branding else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -61,17 +100,18 @@ def _build_web_agent_page_html(request: Request, web_agent_name: str, bg_color: 
     .wa-wrap {{ display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 0 32px; }}
     #wa-mic-btn {{
       width: 96px; height: 96px; border-radius: 50%; border: none; cursor: pointer;
-      background: linear-gradient(145deg, #E06943, #AC1E7A, #562C7C);
+      background: linear-gradient(145deg, {safe_accent}, {accent_dark});
       display: flex; align-items: center; justify-content: center;
-      box-shadow: 0 8px 32px rgba(86,44,124,0.35);
+      box-shadow: 0 8px 32px {_rgba(safe_accent, 0.35)};
       transition: box-shadow 0.3s ease, transform 0.2s ease;
     }}
     #wa-mic-btn:hover {{ transform: scale(1.04); }}
     #wa-mic-btn.wa-connecting {{ animation: wa-pulse 1.6s ease-in-out infinite; }}
-    #wa-mic-btn.wa-active {{ box-shadow: 0 0 0 10px rgba(224,105,67,0.18), 0 8px 32px rgba(86,44,124,0.35); }}
-    @keyframes wa-pulse {{ 0%, 100% {{ box-shadow: 0 0 0 0 rgba(86,44,124,0.35); }} 50% {{ box-shadow: 0 0 0 16px rgba(86,44,124,0.05); }} }}
+    #wa-mic-btn.wa-active {{ box-shadow: 0 0 0 10px {_rgba(safe_accent, 0.18)}, 0 8px 32px {_rgba(safe_accent, 0.35)}; }}
+    @keyframes wa-pulse {{ 0%, 100% {{ box-shadow: 0 0 0 0 {_rgba(safe_accent, 0.35)}; }} 50% {{ box-shadow: 0 0 0 16px {_rgba(safe_accent, 0.05)}; }} }}
     #wa-mic-btn svg {{ width: 36px; height: 36px; fill: #fff; }}
     #wa-status {{ color: #fff; opacity: 0.85; font-size: 14px; min-height: 20px; }}
+    #wa-branding {{ color: #fff; opacity: 0.4; font-size: 10px; text-align: center; margin-top: -8px; }}
   </style>
 </head>
 <body>
@@ -80,6 +120,7 @@ def _build_web_agent_page_html(request: Request, web_agent_name: str, bg_color: 
       <svg viewBox="0 0 24 24"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
     </button>
     <div id="wa-status"></div>
+    {branding_html}
   </div>
 
   <script>
@@ -266,6 +307,8 @@ async def web_agent_page(request: Request, public_id: str):
             web_agent.bg_color,
             web_agent.agent_position,
             widget.public_id,
+            widget.primary_color,
+            widget.show_branding,
         )
 
     return HTMLResponse(html_page)
