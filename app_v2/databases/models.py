@@ -839,6 +839,7 @@ class WidgetModel(Base):
     custom_fields: Mapped[list | None] = mapped_column(MutableList.as_mutable(JSONB), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("UnifiedAuthModel", back_populates="widgets")
@@ -909,6 +910,7 @@ class WebAgentPageModel(Base):
     )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 
     # Relationships
     user = relationship("UnifiedAuthModel", back_populates="web_agent_pages")

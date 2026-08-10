@@ -231,66 +231,95 @@ async def get_all_functions(
         page = 1
     skip = (page - 1) * size
 
-    query = db.session.query(FunctionModel).filter(
-        FunctionModel.user_id == current_user.id,
+    def _apply_filters(query):
+        if name:
+            query = query.filter(FunctionModel.name.ilike(f"%{name}%"))
+        if method:
+            query = query.filter(
+                db.session.query(FunctionApiConfig.id)
+                .filter(
+                    FunctionApiConfig.function_id == FunctionModel.id,
+                    FunctionApiConfig.http_method == method,
+                )
+                .exists()
+            )
+        if agent_name:
+            query = query.filter(
+                db.session.query(AgentFunctionBridgeModel.id)
+                .join(AgentModel, AgentModel.id == AgentFunctionBridgeModel.agent_id)
+                .filter(
+                    AgentFunctionBridgeModel.function_id == FunctionModel.id,
+                    AgentModel.user_id == current_user.id,
+                    AgentModel.agent_name.ilike(f"%{agent_name}%"),
+                )
+                .exists()
+            )
+        return query
+
+    # System-managed tools (e.g. search_personal_knowledge_base) are
+    # provisioned one-per-agent under the hood (own ElevenLabs tool, own
+    # scoped webhook - see personal_kb_tool.py), so there's one FunctionModel
+    # row per agent that has one. To users this must still read as a single
+    # tool shared across however many agents use it, so rows sharing the same
+    # name are collapsed into one item here, with agents_count summed across
+    # all of them.
+    custom_query = _apply_filters(
+        db.session.query(FunctionModel).filter(
+            FunctionModel.user_id == current_user.id,
+            FunctionModel.is_system_managed.is_(False),
+        )
     ).options(joinedload(FunctionModel.api_endpoint_url))
+    custom_functions = custom_query.all()
 
-    if name:
-        query = query.filter(FunctionModel.name.ilike(f"%{name}%"))
-
-    if method:
-        query = query.filter(
-            db.session.query(FunctionApiConfig.id)
-            .filter(
-                FunctionApiConfig.function_id == FunctionModel.id,
-                FunctionApiConfig.http_method == method,
-            )
-            .exists()
+    system_query = _apply_filters(
+        db.session.query(FunctionModel).filter(
+            FunctionModel.user_id == current_user.id,
+            FunctionModel.is_system_managed.is_(True),
         )
+    ).options(joinedload(FunctionModel.api_endpoint_url))
+    system_functions = system_query.all()
 
-    if agent_name:
-        query = query.filter(
-            db.session.query(AgentFunctionBridgeModel.id)
-            .join(AgentModel, AgentModel.id == AgentFunctionBridgeModel.agent_id)
-            .filter(
-                AgentFunctionBridgeModel.function_id == FunctionModel.id,
-                AgentModel.user_id == current_user.id,
-                AgentModel.agent_name.ilike(f"%{agent_name}%"),
-            )
-            .exists()
-        )
-
-    query = query.order_by(FunctionModel.modified_at.desc())
-
-    total = query.count()
-    pages = math.ceil(total / size)
-    
-    functions = query.offset(skip).limit(size).all()
-
-    function_ids = [f.id for f in functions]
+    all_function_ids = [f.id for f in custom_functions] + [f.id for f in system_functions]
     counts_by_function_id = {}
-    if function_ids:
+    if all_function_ids:
         counts_by_function_id = dict(
             db.session.query(
                 AgentFunctionBridgeModel.function_id,
                 func.count(AgentFunctionBridgeModel.id),
             )
-            .filter(AgentFunctionBridgeModel.function_id.in_(function_ids))
+            .filter(AgentFunctionBridgeModel.function_id.in_(all_function_ids))
             .group_by(AgentFunctionBridgeModel.function_id)
             .all()
         )
 
     items = [
         function_to_read(f, agents_count=counts_by_function_id.get(f.id, 0))
-        for f in functions
+        for f in custom_functions
     ]
-    
+
+    system_groups: dict = {}
+    for f in system_functions:
+        system_groups.setdefault(f.name, []).append(f)
+
+    for group in system_groups.values():
+        # Most-recently-modified row represents the group (id used for the
+        # agents drill-down, which resolves back to every id in the group).
+        representative = max(group, key=lambda f: f.modified_at)
+        agents_count = sum(counts_by_function_id.get(f.id, 0) for f in group)
+        items.append(function_to_read(representative, agents_count=agents_count))
+
+    items.sort(key=lambda item: item.modified_at, reverse=True)
+
+    total = len(items)
+    pages = math.ceil(total / size) if size else 1
+    page_items = items[skip: skip + size]
+
     return PaginatedResponse(
         total=total,
         page=page,
         size=size,
         pages=pages,
-        items=items
+        items=page_items
     )
 
 # -------------------- GET BY ID --------------------
@@ -345,15 +374,32 @@ async def get_function_agents(
     if page < 1:
         page = 1
 
+    # System-managed tools are collapsed into a single row per name in the
+    # listing (see get_all_functions), even though under the hood each agent
+    # has its own FunctionModel row. Drilling into that row must therefore
+    # pull agents across every row sharing the same name, not just the one
+    # `function_id` happens to point at.
+    if function.is_system_managed:
+        function_ids = [
+            row.id for row in db.session.query(FunctionModel.id).filter(
+                FunctionModel.name == function.name,
+                FunctionModel.is_system_managed.is_(True),
+                FunctionModel.user_id == current_user.id,
+            ).all()
+        ]
+    else:
+        function_ids = [function_id]
+
     # Scoped to the current user's OWN agents regardless of who owns the tool
     # (a shared/global tool must never leak other users' agent names).
     base = (
         db.session.query(AgentModel.id, AgentModel.agent_name)
         .join(AgentFunctionBridgeModel, AgentFunctionBridgeModel.agent_id == AgentModel.id)
         .filter(
-            AgentFunctionBridgeModel.function_id == function_id,
+            AgentFunctionBridgeModel.function_id.in_(function_ids),
             AgentModel.user_id == current_user.id,
         )
+        .distinct()
         .order_by(AgentModel.agent_name)
     )
 

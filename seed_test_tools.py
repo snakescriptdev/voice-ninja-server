@@ -47,8 +47,8 @@ from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 
 BASE_URL = "https://boomless-estelle-nonoppressively.ngrok-free.dev"
 # Target user: first positional CLI arg wins, else env, else default.
-SEED_USER_EMAIL = "priyanshi+31@snakescript.com"
-SEED_USER_ID = "31"
+SEED_USER_EMAIL = "priyanshi+1@wope.ai"
+SEED_USER_ID = "1"
 
 if len(sys.argv) > 1 and sys.argv[1].strip():
     SEED_USER_EMAIL = sys.argv[1].strip()

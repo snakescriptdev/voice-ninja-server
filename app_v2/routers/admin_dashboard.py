@@ -460,6 +460,7 @@ def list_all_conversations_for_admin(
                 elevenlabs_conv_id=conv.elevenlabs_conv_id,
                 elevenlabs_cost=float(conv.cost or 0),
                 coins_deducted=coins_deducted_map.get(conv.id, 0),
+                cost_inr=conv.cost_inr,
                 actual_conversation_credits=conv.actual_conversation_credits,
                 actual_llm_credits=conv.actual_llm_credits,
                 actual_telephony_cost=0.0,

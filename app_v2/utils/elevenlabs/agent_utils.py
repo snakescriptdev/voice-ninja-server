@@ -5,6 +5,8 @@ This module provides utilities for agent-related operations with the ElevenLabs 
 Handles agent creation, retrieval, updating, deletion, and configuration management.
 """
 
+import json
+import re
 from typing import Optional, Dict, Any, List
 from .base import BaseElevenLabs, ElevenLabsResponse
 from app_v2.core.logger import setup_logger
@@ -17,6 +19,40 @@ from app_v2.core.elevenlabs_config import (
 from app_v2.schemas.function_schema import ApiSchema
 
 logger = setup_logger(__name__)
+
+# Known ElevenLabs create/update-agent failure statuses mapped to a short,
+# actionable message a user can actually do something with. Anything not in
+# this map falls back to the caller's own generic message — the raw
+# ElevenLabs body (request_id, "knowledge base size" wording) is for logs
+# only, never for users: this API doesn't feed anything into ElevenLabs'
+# native knowledge_base field (personal KB is a search tool, not that field),
+# so a "knowledge base too large" error is really the prompt/model context
+# budget being exceeded and should read that way to the caller.
+_FRIENDLY_AGENT_SYNC_ERRORS = {
+    "file_too_large": (
+        "The prompt length is too long for this model. Please try changing "
+        "the model or reducing the prompt size."
+    ),
+}
+
+
+def describe_agent_sync_error(raw_error_message: Optional[str]) -> Optional[str]:
+    """
+    Translate a raw ElevenLabs create/update-agent error (typically
+    `Status <code>: <json body>`) into a short, user-facing message for the
+    known failure statuses in _FRIENDLY_AGENT_SYNC_ERRORS. Returns None for
+    anything else so the caller falls back to its own generic message.
+    """
+    match = re.search(r"\{.*\}", raw_error_message or "", re.DOTALL)
+    if not match:
+        return None
+    try:
+        body = json.loads(match.group(0))
+        detail = body.get("detail") if isinstance(body, dict) else None
+        error_status = detail.get("status") if isinstance(detail, dict) else None
+    except (ValueError, AttributeError, TypeError):
+        return None
+    return _FRIENDLY_AGENT_SYNC_ERRORS.get(error_status)
 
 
 class ElevenLabsAgent(BaseElevenLabs):

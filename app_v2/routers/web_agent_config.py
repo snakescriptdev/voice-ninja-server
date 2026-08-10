@@ -44,11 +44,14 @@ def _to_response(request: Request, web_agent: WebAgentPageModel) -> WebAgentResp
         agent_name=web_agent.agent.agent_name if web_agent.agent else "",
         widget_id=web_agent.widget_id,
         widget_name=web_agent.widget.widget_name if web_agent.widget else "",
+        widget_primary_color=web_agent.widget.primary_color if web_agent.widget else "#562C7C",
+        widget_show_branding=web_agent.widget.show_branding if web_agent.widget else True,
         is_enabled=web_agent.is_enabled,
         bg_color=web_agent.bg_color,
         agent_position=web_agent.agent_position,
         shareable_link=_shareable_link(request, web_agent.public_id),
         created_at=web_agent.created_at,
+        updated_at=web_agent.modified_at,
     )
 
 
@@ -59,6 +62,11 @@ def _validate_widget_belongs_to_agent(user_id: int, widget_id: int, agent_id: in
     ).first()
     if not widget:
         raise HTTPException(status_code=403, detail="Widget does not belong to user")
+    if not widget.is_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="Selected widget is disabled. Linked web agents will not work while the widget is disabled.",
+        )
     if widget.agent_id != agent_id:
         raise HTTPException(status_code=400, detail="Widget does not belong to the selected agent")
     return widget
@@ -129,6 +137,8 @@ def list_web_agents(
                 agent_name=wa.agent.agent_name if wa.agent else "",
                 widget_id=wa.widget_id,
                 widget_name=wa.widget.widget_name if wa.widget else "",
+                widget_primary_color=wa.widget.primary_color if wa.widget else "#562C7C",
+                widget_show_branding=wa.widget.show_branding if wa.widget else True,
                 shareable_link=_shareable_link(request, wa.public_id),
                 created_at=wa.created_at,
             )

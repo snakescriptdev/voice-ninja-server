@@ -46,6 +46,11 @@ class AdminConversationItem(BaseModel):
     # actually deducted from the user (coins).
     elevenlabs_cost: float
     coins_deducted: int
+    # INR amount actually charged, computed at call-finalize time using the
+    # rate frozen on that conversation's settings_version snapshot (see
+    # coins_to_inr()/get_credits_per_rupee() in coin_utils.py) — NOT today's
+    # live rate, which can differ if pricing changed since this call.
+    cost_inr: Optional[float] = None
     # Actual ElevenLabs breakdown, split from post-call metadata (EL credits).
     actual_conversation_credits: Optional[float] = None
     actual_llm_credits: Optional[float] = None

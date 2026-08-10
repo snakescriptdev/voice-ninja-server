@@ -20,7 +20,6 @@ from app_v2.databases.models import (
     VoiceModel,
     AIModels,
     LanguageModel,
-    PhoneNumberService,
     KnowledgeBaseModel,
     PersonalKnowledgeBaseModel,
     PersonalKnowledgeBaseChunkModel,
@@ -38,7 +37,9 @@ from app_v2.databases.models import (
     ConversationsModel,
     WidgetLeadModel,
     VoiceTraitsModel,
+    CoinUsageSettingsModel,
 )
+from app_v2.utils.conversation_lifecycle import is_agents_first_call
 from app_v2.schemas.function_schema import (
     FunctionCreateSchema,
     FunctionUpdateSchema,
@@ -49,13 +50,25 @@ from app_v2.schemas.function_schema import (
     PrimitiveField
 )
 from app_v2.schemas.agent_schema import (
-    AgentUpdate,
     PublicAgentCreate,
+    PublicAgentUpdate,
     PublicAgentRead,
     PublicAgentListRead,
 )
-from app_v2.schemas.widget_schema import WidgetConfig, WidgetConfigResponse, WidgetConfigUpdate, WidgetListResponse
-from app_v2.schemas.web_agent_schema import WebAgentCreate, WebAgentUpdate, WebAgentResponse, WebAgentListResponse
+from app_v2.schemas.built_in_tools import BuiltInToolsParams, TransferToAgentConfig, PublicBuiltInToolsParams
+from app_v2.schemas.widget_schema import (
+    WidgetConfigResponse, WidgetListResponse, PublicWidgetConfig, PublicWidgetConfigUpdate,
+    PUBLIC_CREATE_WIDGET_BODY_EXAMPLE, PUBLIC_UPDATE_WIDGET_BODY_EXAMPLE,
+)
+from app_v2.schemas.web_agent_schema import (
+    WebAgentCreate,
+    WebAgentPublicUpdate,
+    WebAgentResponse,
+    WebAgentListResponse,
+    PublicWebAgentListResponse,
+    PUBLIC_CREATE_WEB_AGENT_BODY_EXAMPLE,
+    PUBLIC_UPDATE_WEB_AGENT_BODY_EXAMPLE,
+)
 from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
 from app_v2.schemas.language_schema import LanguageRead
 from app_v2.schemas.voice_schema import VoiceRead, PublicVoiceListRead, PublicVoiceRead
@@ -67,11 +80,12 @@ from app_v2.schemas.knowledge_base_schema import (
     KnowledgeBaseBind
 )
 from app_v2.schemas.personal_knowledge_base_schema import (
-    PersonalKnowledgeBaseResponse,
+    PublicPersonalKnowledgeBaseResponse,
+    PublicPersonalKnowledgeBaseDetailResponse,
     PersonalKnowledgeBaseURLCreate,
     PersonalKnowledgeBaseTextCreate,
-    PersonalKnowledgeBaseURLUpdate,
-    PersonalKnowledgeBaseTextUpdate,
+    PersonalKnowledgeBaseURLPublicUpdate,
+    PersonalKnowledgeBaseTextPublicUpdate,
 )
 from app_v2.schemas.pagination import PublicPaginatedResponse
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum, PublicLogChannelEnum
@@ -82,7 +96,7 @@ from twilio.base.exceptions import TwilioRestException
 from app_v2.utils.rate_limit import track_and_limit_api, log_public_api_call
 from app_v2.utils.log_sanitizer import sanitize_for_log
 from app_v2.utils.feature_access import RequireFeaturePublic, require_feature_enabled, check_can_enable_resource
-from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
+from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent, describe_agent_sync_error
 from app_v2.utils.elevenlabs import ElevenLabsKB, describe_kb_sync_error
 from app_v2.utils.scraping_utils import scrape_webpage_title
 from app_v2.utils.activity_logger import log_activity
@@ -90,8 +104,8 @@ from app_v2.utils.text_extraction import extract_text_from_file
 from app_v2.utils.web_scraper import scrape_url
 from app_v2.utils.faiss_store import remove_embeddings
 from app_v2.utils.personal_kb_tool import (
+    ensure_personal_kb_tool_for_agent,
     remove_personal_kb_tool_from_agent_if_empty,
-    resync_personal_kb_tool_for_agent,
     delete_agent_personal_kb_tool,
     strip_prompt_block,
     apply_prompt_block_state,
@@ -110,6 +124,7 @@ import time
 from app_v2.schemas.api_analytics_schema import APIAnalyticsResponse, APICallLogRead
 from sqlalchemy import func
 from datetime import timedelta
+from app_v2.core.elevenlabs_config import CUSTOM_LLM_MODEL_NAME
 
 logger = setup_logger(__name__)
 
@@ -118,6 +133,7 @@ from typing import Callable
 from fastapi.responses import Response, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from app_v2.core.exceptions import get_readable_message
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 def _try_parse_json_bytes(raw: bytes):
     """Best-effort JSON parse; returns None on empty/invalid/non-JSON bytes."""
@@ -131,6 +147,31 @@ def _try_parse_json_bytes(raw: bytes):
 
 def _public_envelope(status_str: str, data=None, message: str = "", detail: str = "") -> dict:
     return {"status": status_str, "data": data, "message": message, "detail": detail}
+
+
+def _find_duplicate_json_keys(raw: bytes) -> Optional[List[str]]:
+    """Detects repeated keys in a JSON object (at any nesting level, e.g.
+    `variables`). By default `json.loads` silently keeps only the last value
+    for a repeated key, discarding exactly the information needed to flag it
+    as a mistake — so this re-parses with an `object_pairs_hook` that
+    remembers keys seen more than once instead of collapsing them."""
+    if not raw:
+        return None
+    duplicates = []
+
+    def _check_pairs(pairs):
+        seen = set()
+        for k, _ in pairs:
+            if k in seen and k not in duplicates:
+                duplicates.append(k)
+            seen.add(k)
+        return dict(pairs)
+
+    try:
+        json.loads(raw, object_pairs_hook=_check_pairs)
+    except (ValueError, TypeError):
+        return None  # Not valid JSON at all — let the normal request flow report that.
+    return duplicates or None
 
 
 class PublicAPIRoute(APIRoute):
@@ -150,33 +191,120 @@ class PublicAPIRoute(APIRoute):
                 # disconnect mid-body) still comes back enveloped instead of
                 # bypassing _public_envelope entirely.
                 raw_request_body = await request.body()
+                duplicate_keys = _find_duplicate_json_keys(raw_request_body)
+                if duplicate_keys:
+                    status_code = 400
+                    error_message = (
+                        "Your request contains a repeated field name. Please remove the "
+                        "duplicate and try again."
+                    )
+                    detail_message = (
+                        f"Duplicate key(s) found in request body: {', '.join(duplicate_keys)}. "
+                        "Each key must appear only once."
+                    )
+                    response = JSONResponse(
+                        status_code=status_code,
+                        content=_public_envelope("failed", message=error_message, detail=detail_message),
+                    )
+                    return response
                 response = await original(request)
                 status_code = response.status_code
                 payload = _try_parse_json_bytes(getattr(response, "body", None))
+                # A handler can set request.state.public_message (and,
+                # optionally, a distinct request.state.public_detail) to
+                # surface extra context on an otherwise-plain success
+                # response — e.g. update_agent_public reporting how many
+                # widgets/web agents got cascaded-disabled along with the
+                # agent. Empty/unset for every other endpoint.
+                success_message = getattr(request.state, "public_message", "")
+                success_detail = getattr(request.state, "public_detail", success_message)
                 response = JSONResponse(
                     status_code=status_code,
-                    content=_public_envelope("success", data=payload),
+                    content=_public_envelope("success", data=payload, message=success_message, detail=success_detail),
                 )
                 return response
-            except HTTPException as e:
+            except StarletteHTTPException as e:
+                # Catches both fastapi.HTTPException (raised throughout this
+                # file) and the base starlette.exceptions.HTTPException that
+                # FastAPI/Starlette itself raises for lower-level request
+                # parsing failures - e.g. a multipart file upload with no
+                # `file` part at all comes back as a bare starlette
+                # HTTPException("Missing boundary in multipart.") before any
+                # of our own validation runs. `except HTTPException` (the
+                # fastapi subclass) alone doesn't catch that base-class
+                # instance, so it used to fall through to the generic
+                # `except Exception` branch below as an opaque 500.
                 status_code = e.status_code
-                error_message = str(e.detail)
+                # `detail` is usually a plain string shared by both `message`
+                # and `detail` in the envelope, as it always has been - but a
+                # handful of raises (e.g. the transfer_to_agent duplicate-
+                # condition check in agents.py's transform_built_in_tools)
+                # pass a {"message": ..., "detail": ...} dict instead, same
+                # shape main.py's global HTTPException handler already
+                # supports for the internal (non-public) API.
+                if isinstance(e.detail, dict):
+                    error_message = e.detail.get("message", "Something went wrong")
+                    detail_message = e.detail.get("detail", error_message)
+                else:
+                    error_message = str(e.detail)
+                    detail_message = error_message
+                    if "multipart" in error_message.lower() or "boundary" in error_message.lower():
+                        error_message = (
+                            "The request body is missing required file data. Please attach "
+                            "the required file as multipart form-data and try again."
+                        )
                 response = JSONResponse(
                     status_code=status_code,
-                    content=_public_envelope("failed", message=error_message, detail=error_message),
+                    content=_public_envelope("failed", message=error_message, detail=detail_message),
                 )
                 return response
             except RequestValidationError as e:
                 status_code = 400
                 field_errors = []
+                # `detail` is the dev-facing counterpart of `message` (see
+                # `_public_envelope` docstring context above / HTTPException
+                # and generic-Exception branches below, which follow the
+                # same split) — it carries the raw loc/type/input pydantic
+                # gives us, so `message` can stay in plain, user-facing
+                # language without exposing Python-ish internals.
+                detail_errors = []
                 for err in e.errors():
                     loc = err.get("loc", [])
                     field = loc[-1] if loc else "field"
-                    field_errors.append(get_readable_message(field, err.get("msg", "Invalid value")))
-                error_message = "; ".join(field_errors)
+                    raw_msg = err.get("msg", "Invalid value")
+                    is_list_item_error = isinstance(field, int) and len(loc) >= 2 and isinstance(loc[-2], str)
+                    raw_msg_lower = raw_msg.lower()
+                    # A list item that's the wrong shape entirely (e.g.
+                    # `"custom_fields": [null, " "]` instead of
+                    # `[{"field_name": ...}, ...]`) — pydantic reports one
+                    # identical error per bad item. Keying the message off
+                    # just the parent field (not "field (item N)") means every
+                    # bad item in the same list collapses to one readable
+                    # "Invalid custom_fields." line below instead of N
+                    # near-duplicate ones; `detail` still lists every
+                    # offending index individually.
+                    is_item_shape_error = is_list_item_error and "valid dictionary" in raw_msg_lower and (
+                        "instance of" in raw_msg_lower or "extract fields from" in raw_msg_lower
+                    )
+                    if is_item_shape_error:
+                        field = loc[-2]
+                    elif is_list_item_error:
+                        # Other in-list errors (e.g. a bad `field_type` value
+                        # inside one specific item) still benefit from
+                        # knowing which item, 1-based, failed.
+                        field = f"{loc[-2]} (item {field + 1})"
+                    field_errors.append(get_readable_message(field, raw_msg))
+                    loc_path = ".".join(str(part) for part in loc) if loc else str(field)
+                    detail_errors.append(f"{loc_path} ({err.get('type', 'unknown')}): {raw_msg}")
+                # De-duplicate identical messages (e.g. several bad items in
+                # the same list all producing the same "Invalid X." line)
+                # while preserving first-seen order — `detail` stays
+                # un-deduplicated so nothing is lost for debugging.
+                error_message = "; ".join(dict.fromkeys(field_errors))
+                detail_message = "; ".join(detail_errors)
                 response = JSONResponse(
                     status_code=status_code,
-                    content=_public_envelope("failed", message=error_message, detail=error_message),
+                    content=_public_envelope("failed", message=error_message, detail=detail_message),
                 )
                 return response
             except Exception as e:
@@ -255,18 +383,59 @@ router = APIRouter(
 
 # -------------------- HELPERS --------------------
 
+# Public callers can only configure/see end_call and transfer_to_agent (see
+# PublicBuiltInToolsParams) — both are simpler shapes than their internal
+# equivalent (end_call is a plain bool instead of {enabled, name};
+# transfer_to_agent is a flat list instead of {enabled, name, transfers}).
+# These two helpers convert between that public shape and the internal
+# BuiltInToolsParams shape actually stored on the agent / passed to
+# transform_built_in_tools (shared with the internal router).
+
+def to_internal_built_in_tools(public_params: Optional[PublicBuiltInToolsParams]) -> Optional[BuiltInToolsParams]:
+    if not public_params:
+        return None
+
+    transfer_to_agent_config = None
+    if public_params.transfer_to_agent is not None:
+        transfer_to_agent_config = TransferToAgentConfig(
+            enabled=bool(public_params.transfer_to_agent),
+            transfers=public_params.transfer_to_agent,
+        )
+
+    return BuiltInToolsParams(
+        end_call=public_params.end_call,
+        transfer_to_agent=transfer_to_agent_config,
+    )
+
+
+def _public_built_in_tools(built_in_tools: Optional[dict]) -> Optional[dict]:
+    """Renders a stored (internal-shaped) built_in_tools dict back into the
+    simplified public shape: end_call as a plain bool, transfer_to_agent as
+    a flat list of {agent_id, condition} — dropping transfer_to_number and
+    play_keypad_touch_tone entirely, which the public API never exposes."""
+    if not built_in_tools:
+        return built_in_tools
+
+    end_call = built_in_tools.get("end_call")
+    end_call_enabled = bool(end_call.get("enabled")) if isinstance(end_call, dict) else bool(end_call)
+
+    transfer_to_agent = built_in_tools.get("transfer_to_agent")
+    transfers = (transfer_to_agent or {}).get("transfers") or [] if isinstance(transfer_to_agent, dict) else []
+
+    return {
+        "end_call": end_call_enabled,
+        "transfer_to_agent": transfers,
+    }
+
+
 def agent_to_read(agent: AgentModel) -> PublicAgentRead:
-    ai_model = (
-        agent.agent_ai_models[0].ai_model.model_name
-        if agent.agent_ai_models else None
-    )
-    language = (
-        agent.agent_languages[0].language.lang_code
-        if agent.agent_languages else None
-    )
-    phone_number = (
-        agent.phone_number[0].phone_number
-        if agent.phone_number else None
+    ai_model = agent.agent_ai_models[0].ai_model if agent.agent_ai_models else None
+    language = agent.agent_languages[0].language if agent.agent_languages else None
+
+    is_first_call_pending = is_agents_first_call(agent.id)
+    first_call_max_duration_seconds = (
+        CoinUsageSettingsModel.get_settings().first_call_max_duration_seconds
+        if is_first_call_pending else None
     )
 
     return PublicAgentRead(
@@ -278,23 +447,30 @@ def agent_to_read(agent: AgentModel) -> PublicAgentRead:
         # on write via apply_prompt_block_state() if the agent still has an
         # active tool (see update_agent_public below).
         system_prompt=strip_prompt_block(agent.system_prompt),
-        voice=agent.voice.voice_name,
+        voice=agent.voice.id,
+        voice_name=agent.voice.voice_name,
         is_enabled=agent.is_enabled,
-        ai_model=ai_model,
-        language=language,
-        updated_at=agent.modified_at.date(),
-        phone=phone_number,
+        ai_model=ai_model.id if ai_model else None,
+        ai_model_name=ai_model.model_name if ai_model else None,
+        language=language.id if language else None,
+        language_name=language.language if language else None,
+        created_at=agent.created_at,
+        updated_at=agent.modified_at,
+        # Personal KB (PersonalKnowledgeBaseAgentBridgeModel) — see create_agent
+        # for why this API uses personal KB, not the legacy KnowledgeBaseModel.
         knowledgebase = [
             {"id": bridge.knowledge_base.id, "title": bridge.knowledge_base.title, "type": bridge.knowledge_base.kb_type}
-            for bridge in agent.agent_knowledge_bases
+            for bridge in agent.personal_kb_agent_bridges
         ],
         variables={var.variable_name: var.variable_value for var in agent.variables},
         tools=[
             {"id": bridge.function.id, "name": bridge.function.name}
             for bridge in agent.agent_functions
         ],
-        built_in_tools=agent.built_in_tools,
-        timezone=agent.timezone
+        built_in_tools=_public_built_in_tools(agent.built_in_tools),
+        timezone=agent.timezone,
+        is_first_call_pending=is_first_call_pending,
+        first_call_max_duration_seconds=first_call_max_duration_seconds,
     )
 
 
@@ -306,29 +482,22 @@ def agent_to_list_read(
     leads_count: int = 0,
     is_first_call_pending: bool = True,
 ) -> PublicAgentListRead:
-    ai_model = (
-        agent.agent_ai_models[0].ai_model.model_name
-        if agent.agent_ai_models else None
-    )
-    language = (
-        agent.agent_languages[0].language.lang_code
-        if agent.agent_languages else None
-    )
-    phone_number = (
-        agent.phone_number[0].phone_number
-        if agent.phone_number else None
-    )
+    ai_model = agent.agent_ai_models[0].ai_model if agent.agent_ai_models else None
+    language = agent.agent_languages[0].language if agent.agent_languages else None
 
     return PublicAgentListRead(
         id=agent.id,
         agent_name=agent.agent_name,
         first_message=agent.first_message,
-        voice=agent.voice.voice_name,
+        voice=agent.voice.id,
+        voice_name=agent.voice.voice_name,
         is_enabled=agent.is_enabled,
-        ai_model=ai_model,
-        language=language,
-        updated_at=agent.modified_at.date(),
-        phone=phone_number,
+        ai_model=ai_model.id if ai_model else None,
+        ai_model_name=ai_model.model_name if ai_model else None,
+        language=language.id if language else None,
+        language_name=language.language if language else None,
+        created_at=agent.created_at,
+        updated_at=agent.modified_at,
         timezone=agent.timezone,
         kb_count=kb_count,
         tool_count=tool_count,
@@ -345,7 +514,10 @@ def widget_to_response(widget: WidgetModel, request: Request = None) -> WidgetCo
         widget_name=widget.widget_name,
         shareable_link=f"{base_url}/api/v2/widget/preview/{widget.public_id}",
         agent_id=widget.agent_id,
+        agent_name=widget.agent.agent_name if widget.agent else "",
         is_enabled=widget.is_enabled,
+        created_at=widget.created_at,
+        updated_at=widget.modified_at,
         appearance={
             "widget_title": widget.widget_title,
             "widget_subtitle": widget.widget_subtitle,
@@ -381,12 +553,13 @@ def _voice_traits(voice: VoiceModel):
 
 
 def voice_to_list_read(voice: VoiceModel) -> PublicVoiceListRead:
-    gender, _ = _voice_traits(voice)
+    gender, nationality = _voice_traits(voice)
     return PublicVoiceListRead(
         id=voice.id,
         voice_name=voice.voice_name,
         is_custom_voice=voice.is_custom_voice,
         gender=gender,
+        nationality=nationality,
         has_sample_audio=voice.has_sample_audio,
         sample_audio_url=voice.audio_file,
         is_enabled=voice.is_enabled,
@@ -415,10 +588,10 @@ def voice_to_read(voice: VoiceModel) -> PublicVoiceRead:
     response_model=PublicPaginatedResponse[PublicAgentListRead],
     description=(
         "Lists this account's agents. Supports filtering with `agent_name` (partial, "
-        "case-insensitive match on agent name) and `voice` (partial, case-insensitive "
-        "match on voice name). Supports sorting via `sort_by` (`created_at`, "
-        "`modified_at`, `agent_name`, `kb_count`, `tool_count`, `conversation_count`) "
-        "and `sort_order` (`asc`, `desc`)."
+        "case-insensitive match on agent name), `voice` (partial, case-insensitive "
+        "match on voice name), and `is_enabled` (exact match). Supports sorting via "
+        "`sort_by` (`created_at`, `modified_at`, `agent_name`, `kb_count`, `tool_count`, "
+        "`conversation_count`) and `sort_order` (`asc`, `desc`)."
     ),
 )
 async def list_agents(
@@ -426,6 +599,7 @@ async def list_agents(
     size: int = Query(20, ge=1, le=50),
     agent_name: Optional[str] = Query(None, description="Filter by partial agent name (case-insensitive)"),
     voice: Optional[str] = Query(None, description="Filter by partial voice name (case-insensitive)"),
+    is_enabled: Optional[bool] = Query(None, description="Filter by whether the agent is enabled", examples=[True]),
     sort_by: Literal[
         "created_at", "modified_at", "agent_name", "kb_count", "tool_count", "conversation_count"
     ] = Query("created_at", description="Field to sort agents by"),
@@ -440,6 +614,8 @@ async def list_agents(
             query = query.filter(AgentModel.agent_name.ilike(f"%{agent_name}%"))
         if voice:
             query = query.join(AgentModel.voice).filter(VoiceModel.voice_name.ilike(f"%{voice}%"))
+        if is_enabled is not None:
+            query = query.filter(AgentModel.is_enabled.is_(is_enabled))
 
         # kb_count/tool_count/conversation_count live on other tables - join in
         # grouped subqueries (same shape as agents.py's get_all_agents) so ORDER BY
@@ -447,10 +623,10 @@ async def list_agents(
         if sort_by in {"kb_count", "tool_count", "conversation_count"}:
             kb_sub = (
                 db.session.query(
-                    AgentKnowledgeBaseBridge.agent_id.label("agent_id"),
-                    func.count(AgentKnowledgeBaseBridge.kb_id).label("cnt"),
+                    PersonalKnowledgeBaseAgentBridgeModel.agent_id.label("agent_id"),
+                    func.count(PersonalKnowledgeBaseAgentBridgeModel.kb_id).label("cnt"),
                 )
-                .group_by(AgentKnowledgeBaseBridge.agent_id)
+                .group_by(PersonalKnowledgeBaseAgentBridgeModel.agent_id)
                 .subquery()
             )
             tool_sub = (
@@ -501,10 +677,10 @@ async def list_agents(
             {
                 row[0]: row[1]
                 for row in db.session.query(
-                    AgentKnowledgeBaseBridge.agent_id, func.count(AgentKnowledgeBaseBridge.kb_id)
+                    PersonalKnowledgeBaseAgentBridgeModel.agent_id, func.count(PersonalKnowledgeBaseAgentBridgeModel.kb_id)
                 )
-                .filter(AgentKnowledgeBaseBridge.agent_id.in_(agent_ids))
-                .group_by(AgentKnowledgeBaseBridge.agent_id)
+                .filter(PersonalKnowledgeBaseAgentBridgeModel.agent_id.in_(agent_ids))
+                .group_by(PersonalKnowledgeBaseAgentBridgeModel.agent_id)
                 .all()
             }
             if agent_ids else {}
@@ -594,17 +770,26 @@ async def create_agent(
     
     user_id = current_user.id
     with db():
-        voice = db.session.query(VoiceModel).filter(VoiceModel.voice_name == agent_in.voice).first()
+        voice = db.session.query(VoiceModel).filter(
+            VoiceModel.id == agent_in.voice,
+            or_(VoiceModel.user_id == user_id, VoiceModel.user_id.is_(None)),
+        ).first()
         if not voice or not voice.elevenlabs_voice_id:
-            raise HTTPException(status_code=400, detail="Invalid voice")
-        
-        ai_model = db.session.query(AIModels).filter(AIModels.model_name == agent_in.ai_model).first()
+            raise HTTPException(status_code=400, detail="Invalid voice id")
+        if not voice.is_enabled:
+            raise HTTPException(status_code=400, detail="This voice is disabled and cannot be used to create an agent")
+        if not voice.has_sample_audio:
+            raise HTTPException(status_code=400, detail="This voice has no sample audio available and cannot be used to create an agent")
+
+        ai_model = db.session.query(AIModels).filter(AIModels.id == agent_in.ai_model).first()
         if not ai_model:
-            raise HTTPException(status_code=400, detail="Invalid AI model")
-        
-        language = db.session.query(LanguageModel).filter(LanguageModel.lang_code == agent_in.language).first()
+            raise HTTPException(status_code=400, detail="Invalid AI model id")
+        if ai_model.model_name == CUSTOM_LLM_MODEL_NAME:
+            raise HTTPException(status_code=400, detail="The custom-llm model cannot be used to create an agent via this API")
+
+        language = db.session.query(LanguageModel).filter(LanguageModel.id == agent_in.language).first()
         if not language:
-            raise HTTPException(status_code=400, detail="Invalid language")
+            raise HTTPException(status_code=400, detail="Invalid language id")
 
         # Same uniqueness rule as update_agent_public below: no other agent of
         # this user may share the name (case-insensitive). Checked before the
@@ -617,44 +802,51 @@ async def create_agent(
         if name_taken:
             raise HTTPException(status_code=400, detail="Agent with this name already exists")
 
-        from app_v2.routers.agents import resolve_phone_record, finalize_phone_assignment
-        # Public callers can't specify a twilio_connector_id (removed from
-        # PublicAgentCreate) — resolve_phone_record falls back to requiring
-        # an already-owned, previously imported number for `phone`.
-        phone_record, phone_connector = resolve_phone_record(
-            db.session, user_id, agent_in.phone, None
-        )
-
         # -------------------------------------------------
-        # KB & Tools validation and lookup
+        # Personal KB & Tools validation and lookup
+        #
+        # `knowledgebase` attaches personal KB items (PersonalKnowledgeBaseModel
+        # — the self-hosted, FAISS-backed KB also exposed at GET
+        # /api/v2/public/personal-kb), not the legacy ElevenLabs-native
+        # KnowledgeBaseModel. Personal KB items don't feed ElevenLabs'
+        # `knowledge_base` field at all — attaching one instead provisions
+        # this agent's own search_personal_knowledge_base tool (see
+        # ensure_personal_kb_tool_for_agent below, called once the agent exists).
         # -------------------------------------------------
-        el_kb_list = []
         kb_ids_ordered = []
         if agent_in.knowledgebase:
             raw_ids = [k.get("id") if isinstance(k, dict) else k for k in agent_in.knowledgebase]
             kb_ids_ordered = list(dict.fromkeys(raw_ids))
-            kb_records = db.session.query(KnowledgeBaseModel).filter(
-                KnowledgeBaseModel.id.in_(kb_ids_ordered),
-                KnowledgeBaseModel.user_id == user_id,
-                KnowledgeBaseModel.elevenlabs_document_id.isnot(None)
+            kb_records = db.session.query(PersonalKnowledgeBaseModel).filter(
+                PersonalKnowledgeBaseModel.id.in_(kb_ids_ordered),
+                PersonalKnowledgeBaseModel.user_id == user_id,
             ).all()
             kb_map = {kb.id: kb for kb in kb_records}
             missing_ids = set(kb_ids_ordered) - set(kb_map.keys())
             if missing_ids:
-                raise HTTPException(status_code=400, detail=f"Some Knowledge Base IDs not found or synced: {list(missing_ids)}")
-            for kb_id in kb_ids_ordered:
-                kb = kb_map[kb_id]
-                el_kb_list.append({
-                    "id": kb.elevenlabs_document_id,
-                    "type": "file",
-                    "name": kb.title or f"KB_{kb.id}"
-                })
+                raise HTTPException(status_code=400, detail=f"Knowledge Base IDs not found: {list(missing_ids)}")
 
         el_tool_ids = []
         tool_ids_ordered = []
         if agent_in.tools:
             raw_ids = [t.get("id") if isinstance(t, dict) else t for t in agent_in.tools]
             tool_ids_ordered = list(dict.fromkeys(raw_ids))
+
+            # search_personal_knowledge_base is provisioned exclusively via
+            # `knowledgebase` (see ensure_personal_kb_tool_for_agent below) —
+            # never something a caller adds directly through `tools`.
+            system_managed_ids = [
+                row.id for row in db.session.query(FunctionModel.id).filter(
+                    FunctionModel.id.in_(tool_ids_ordered),
+                    FunctionModel.is_system_managed.is_(True),
+                ).all()
+            ]
+            if system_managed_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tool IDs {system_managed_ids} are managed automatically (via `knowledgebase`) and cannot be set directly through `tools`",
+                )
+
             tool_records = db.session.query(FunctionModel).filter(
                 FunctionModel.id.in_(tool_ids_ordered),
                 FunctionModel.elevenlabs_tool_id.isnot(None),
@@ -667,8 +859,10 @@ async def create_agent(
             for tool_id in tool_ids_ordered:
                 el_tool_ids.append(tool_map[tool_id].elevenlabs_tool_id)
 
-        from app_v2.routers.agents import transform_built_in_tools, prompt_requires_timezone
-        transformed_built_in = transform_built_in_tools(agent_in.built_in_tools, db.session, user_id)
+        from app_v2.routers.agents import transform_built_in_tools, prompt_requires_timezone, extract_prompt_variable_names
+
+        full_built_in_tools = to_internal_built_in_tools(agent_in.built_in_tools)
+        transformed_built_in = transform_built_in_tools(full_built_in_tools, db.session, user_id)
 
         if prompt_requires_timezone(agent_in.system_prompt) and not agent_in.timezone:
             raise HTTPException(
@@ -676,7 +870,19 @@ async def create_agent(
                 detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
             )
 
-        # Create in ElevenLabs
+        # Merge in any {{var_name}} placeholder found in the prompt that the
+        # caller didn't explicitly declare in `variables`, so it still gets
+        # persisted (and sent to ElevenLabs) as a placeholder variable instead
+        # of being silently left unresolved — "test" until the caller sets
+        # the real value via a later PUT.
+        merged_variables = dict(agent_in.variables or {})
+        for var_name in extract_prompt_variable_names(agent_in.system_prompt):
+            merged_variables.setdefault(var_name, "test")
+
+        # Create in ElevenLabs — no `knowledge_base=`: personal KB items don't
+        # feed ElevenLabs' native knowledge_base field, they provision this
+        # agent's own search_personal_knowledge_base tool once it exists (see
+        # ensure_personal_kb_tool_for_agent below).
         el_client = ElevenLabsAgent()
         el_response = el_client.create_agent(
             name=agent_in.agent_name,
@@ -686,16 +892,16 @@ async def create_agent(
             language=language.lang_code,
             llm_model=ai_model.model_name,
             tool_ids=el_tool_ids,
-            knowledge_base=el_kb_list,
-            dynamic_variables=agent_in.variables,
+            dynamic_variables=merged_variables,
             built_in_tools=transformed_built_in,
             timezone=agent_in.timezone
         )
         if not el_response.status:
-            raise HTTPException(status_code=424, detail="Failed to create agent with the voice provider")
-        
+            friendly_detail = describe_agent_sync_error(el_response.error_message)
+            raise HTTPException(status_code=424, detail=friendly_detail or "Failed to create agent with the voice provider")
+
         elevenlabs_agent_id = el_response.data.get("agent_id")
-        
+
         new_agent = AgentModel(
             agent_name=agent_in.agent_name,
             first_message=agent_in.first_message,
@@ -703,7 +909,7 @@ async def create_agent(
             user_id=user_id,
             agent_voice=voice.id,
             elevenlabs_agent_id=elevenlabs_agent_id,
-            built_in_tools=agent_in.built_in_tools.model_dump() if agent_in.built_in_tools else {},
+            built_in_tools=full_built_in_tools.model_dump() if full_built_in_tools else {},
             timezone=agent_in.timezone
         )
         db.session.add(new_agent)
@@ -716,178 +922,278 @@ async def create_agent(
 
         db.session.add(AgentAIModelBridge(agent_id=new_agent.id, ai_model_id=ai_model.id))
         db.session.add(AgentLanguageBridge(agent_id=new_agent.id, lang_id=language.id))
-        
+
         for kb_id in kb_ids_ordered:
-            db.session.add(AgentKnowledgeBaseBridge(agent_id=new_agent.id, kb_id=kb_id))
+            db.session.add(PersonalKnowledgeBaseAgentBridgeModel(agent_id=new_agent.id, kb_id=kb_id))
         for tool_id in tool_ids_ordered:
             db.session.add(AgentFunctionBridgeModel(agent_id=new_agent.id, function_id=tool_id))
 
-        finalize_phone_assignment(phone_record, new_agent, phone_connector)
+        for key, value in merged_variables.items():
+            db.session.add(VariablesModel(agent_id=new_agent.id, variable_name=key, variable_value=value))
 
         db.session.commit()
         db.session.refresh(new_agent)
+
+        if kb_ids_ordered:
+            try:
+                ensure_personal_kb_tool_for_agent(new_agent.id)
+            except Exception as e:
+                logger.warning(f"Failed to provision personal KB tool for new agent {new_agent.id}: {e}")
 
         return agent_to_read(new_agent)
 
 @router.put("/agents/{agent_id}", response_model=PublicAgentRead)
 async def update_agent_public(
     agent_id: int,
-    agent_in: AgentUpdate,
+    agent_in: PublicAgentUpdate,
+    request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
+    user_id = current_user.id
     with db():
         agent = db.session.query(AgentModel).filter(
-            AgentModel.id == agent_id, AgentModel.user_id == current_user.id
+            AgentModel.id == agent_id, AgentModel.user_id == user_id
         ).first()
         if not agent:
             raise HTTPException(status_code=404, detail="Agent not found")
-        
-        el_update_params = {}
-        
-        # Simplified update: name, prompt, first_message
-        if agent_in.agent_name is not None:
-            # Same uniqueness rule as create: no OTHER agent of this user may
-            # share the name (case-insensitive).
-            name_taken = db.session.query(AgentModel).filter(
-                func.lower(AgentModel.agent_name) == agent_in.agent_name.lower(),
-                AgentModel.user_id == current_user.id,
-                AgentModel.id != agent_id,
-            ).first()
-            if name_taken:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Agent with this name already exists",
-                )
-            agent.agent_name = agent_in.agent_name
-            el_update_params["name"] = agent_in.agent_name
-        if agent_in.system_prompt is not None:
-            # Re-apply (or keep absent) the personal-KB tool prompt block
-            # based on this agent's actual current tool state — the client
-            # never sees the block (see agent_to_read), so it can't be
-            # trusted to round-trip it correctly on its own.
-            new_prompt = apply_prompt_block_state(agent.id, agent_in.system_prompt)
-            agent.system_prompt = new_prompt
-            el_update_params["prompt"] = new_prompt
-        if agent_in.first_message is not None:
-            agent.first_message = agent_in.first_message
-            el_update_params["first_message"] = agent_in.first_message
-        if agent_in.timezone is not None:
-            agent.timezone = agent_in.timezone
-            el_update_params["timezone"] = agent_in.timezone
 
-        # ---- Phone Number Update ----
-        if agent_in.phone is not None:
-            from app_v2.routers.agents import resolve_phone_record, finalize_phone_assignment, unassign_phone
+        # True PUT: agent_name/first_message/system_prompt/voice/ai_model/
+        # language are required (see PublicAgentUpdate) and always applied
+        # below — unlike the internal PATCH-style AgentUpdate, omitting one
+        # is a validation error instead of silently keeping the old value.
+        name_taken = db.session.query(AgentModel).filter(
+            func.lower(AgentModel.agent_name) == agent_in.agent_name.lower(),
+            AgentModel.user_id == user_id,
+            AgentModel.id != agent_id,
+        ).first()
+        if name_taken:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Agent with this name already exists",
+            )
 
-            old_phone = db.session.query(PhoneNumberService).filter(
-                PhoneNumberService.assigned_to == agent_id
-            ).first()
+        voice = db.session.query(VoiceModel).filter(
+            VoiceModel.id == agent_in.voice,
+            or_(VoiceModel.user_id == user_id, VoiceModel.user_id.is_(None)),
+        ).first()
+        if not voice or not voice.elevenlabs_voice_id:
+            raise HTTPException(status_code=400, detail="Invalid voice id")
+        if not voice.is_enabled:
+            raise HTTPException(status_code=400, detail="This voice is disabled and cannot be used for an agent")
+        if not voice.has_sample_audio:
+            raise HTTPException(status_code=400, detail="This voice has no sample audio available and cannot be used for an agent")
 
-            new_phone_value = agent_in.phone.strip() if agent_in.phone else ""
+        ai_model = db.session.query(AIModels).filter(AIModels.id == agent_in.ai_model).first()
+        if not ai_model:
+            raise HTTPException(status_code=400, detail="Invalid AI model id")
+        if ai_model.model_name == CUSTOM_LLM_MODEL_NAME:
+            raise HTTPException(status_code=400, detail="The custom-llm model cannot be used for an agent via this API")
 
-            if not (old_phone and old_phone.phone_number == new_phone_value):
-                unassign_phone(old_phone)
-                new_phone_record, new_phone_connector = resolve_phone_record(
-                    db.session, current_user.id, agent_in.phone, agent_in.twilio_connector_id, current_agent_id=agent_id
-                )
-                finalize_phone_assignment(new_phone_record, agent, new_phone_connector)
+        language = db.session.query(LanguageModel).filter(LanguageModel.id == agent_in.language).first()
+        if not language:
+            raise HTTPException(status_code=400, detail="Invalid language id")
+
+        # Re-apply (or keep absent) the personal-KB tool prompt block based
+        # on this agent's actual current tool state — the client never sees
+        # the block (see agent_to_read), so it can't be trusted to round-trip
+        # it correctly on its own.
+        new_prompt = apply_prompt_block_state(agent.id, agent_in.system_prompt)
+
+        from app_v2.routers.agents import (
+            transform_built_in_tools, prompt_requires_timezone, extract_prompt_variable_names,
+        )
+
+        if prompt_requires_timezone(new_prompt) and not agent_in.timezone:
+            raise HTTPException(
+                status_code=400,
+                detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
+            )
+
+        agent.agent_name = agent_in.agent_name
+        agent.system_prompt = new_prompt
+        agent.first_message = agent_in.first_message
+        agent.timezone = agent_in.timezone
+        agent.agent_voice = voice.id
+
+        # ---- is_enabled ----
+        # Mirrors the internal PATCH endpoint's cascade (see agents.py
+        # update_agent): disabling/enabling an agent disables/enables all of
+        # its widgets and web agent pages along with it, since a widget or
+        # web agent page backed by a disabled agent can't take calls anyway.
+        # request.state.public_message surfaces the affected counts back to
+        # the caller (see PublicAPIRoute.custom above) — silently flipping
+        # widgets/web agents the caller didn't ask about would be confusing.
+        if agent_in.is_enabled is not None and agent_in.is_enabled != agent.is_enabled:
+            if agent_in.is_enabled:
+                check_can_enable_resource(user_id, "ai_voice_agents", allow_coin_fallback=True)
+
+            widget_count = db.session.query(WidgetModel).filter(WidgetModel.agent_id == agent.id).count()
+            web_agent_count = db.session.query(WebAgentPageModel).filter(WebAgentPageModel.agent_id == agent.id).count()
+
+            db.session.query(WidgetModel).filter(
+                WidgetModel.agent_id == agent.id
+            ).update({WidgetModel.is_enabled: agent_in.is_enabled})
+            db.session.query(WebAgentPageModel).filter(
+                WebAgentPageModel.agent_id == agent.id
+            ).update({WebAgentPageModel.is_enabled: agent_in.is_enabled})
+
+            agent.is_enabled = agent_in.is_enabled
+
+            state_word = "enabled" if agent_in.is_enabled else "disabled"
+            cascade_message = (
+                f"The agent has {widget_count} widgets and {web_agent_count} web agents "
+                f"and they are also {state_word} now."
+            )
+            request.state.public_message = cascade_message
+            request.state.public_detail = cascade_message
+
+        el_update_params = {
+            "name": agent_in.agent_name,
+            "voice_id": voice.elevenlabs_voice_id,
+            "prompt": new_prompt,
+            "first_message": agent_in.first_message,
+            "language": language.lang_code,
+            "llm_model": ai_model.model_name,
+            "timezone": agent_in.timezone,
+        }
+
+        db.session.query(AgentAIModelBridge).filter(AgentAIModelBridge.agent_id == agent_id).delete()
+        db.session.add(AgentAIModelBridge(agent_id=agent_id, ai_model_id=ai_model.id))
+
+        db.session.query(AgentLanguageBridge).filter(AgentLanguageBridge.agent_id == agent_id).delete()
+        db.session.add(AgentLanguageBridge(agent_id=agent_id, lang_id=language.id))
+
+        # No phone handling here — phone-to-agent assignment only happens
+        # from the /phone dashboard page now, not inline at agent update.
 
         # ---- Knowledge Base Update ----
+        # `knowledgebase` attaches personal KB items (PersonalKnowledgeBaseModel
+        # — the self-hosted, FAISS-backed KB), not the legacy ElevenLabs-native
+        # KnowledgeBaseModel. Personal KB doesn't feed ElevenLabs' native
+        # `knowledge_base` field — it provisions/removes this agent's own
+        # search_personal_knowledge_base tool instead (see
+        # ensure_personal_kb_tool_for_agent / remove_personal_kb_tool_from_agent_if_empty
+        # below). Omit `knowledgebase` to leave the current attachments unchanged.
+        personal_kb_updated = agent_in.knowledgebase is not None
+        new_kb_ids_ordered = []
         if agent_in.knowledgebase is not None:
             raw_ids = [k.get("id") if isinstance(k, dict) else k for k in agent_in.knowledgebase]
-            kb_ids_ordered = list(dict.fromkeys(raw_ids))
-            
-            kb_records = db.session.query(KnowledgeBaseModel).filter(
-                KnowledgeBaseModel.id.in_(kb_ids_ordered),
-                KnowledgeBaseModel.user_id == current_user.id,
-                KnowledgeBaseModel.elevenlabs_document_id.isnot(None)
-            ).all()
-            
-            kb_map = {kb.id: kb for kb in kb_records}
-            missing_ids = set(kb_ids_ordered) - set(kb_map.keys())
-            
-            if missing_ids:
-                raise HTTPException(status_code=400, detail=f"Some Knowledge Base IDs not found or not synced: {list(missing_ids)}")
-            
-            el_kb_list = []
-            for kb_id in kb_ids_ordered:
-                kb = kb_map[kb_id]
-                el_kb_list.append({
-                    "id": kb.elevenlabs_document_id,
-                    "type": "file",
-                    "name": kb.title or f"KB_{kb.id}"
-                })
-            
-            el_update_params["knowledge_base"] = el_kb_list
+            new_kb_ids_ordered = list(dict.fromkeys(raw_ids))
 
-            db.session.query(AgentKnowledgeBaseBridge).filter(
-                AgentKnowledgeBaseBridge.agent_id == agent_id
+            kb_records = db.session.query(PersonalKnowledgeBaseModel).filter(
+                PersonalKnowledgeBaseModel.id.in_(new_kb_ids_ordered),
+                PersonalKnowledgeBaseModel.user_id == user_id,
+            ).all()
+
+            kb_map = {kb.id: kb for kb in kb_records}
+            missing_ids = set(new_kb_ids_ordered) - set(kb_map.keys())
+
+            if missing_ids:
+                raise HTTPException(status_code=400, detail=f"Knowledge Base IDs not found: {list(missing_ids)}")
+
+            db.session.query(PersonalKnowledgeBaseAgentBridgeModel).filter(
+                PersonalKnowledgeBaseAgentBridgeModel.agent_id == agent_id
             ).delete()
-            for kb_id in kb_ids_ordered:
-                db.session.add(AgentKnowledgeBaseBridge(agent_id=agent_id, kb_id=kb_id))
+            for kb_id in new_kb_ids_ordered:
+                db.session.add(PersonalKnowledgeBaseAgentBridgeModel(agent_id=agent_id, kb_id=kb_id))
 
         # ---- Tools Update ----
         if agent_in.tools is not None:
             raw_ids = [t.get("id") if isinstance(t, dict) else t for t in agent_in.tools]
             tool_ids_ordered = list(dict.fromkeys(raw_ids))
 
+            # search_personal_knowledge_base is provisioned exclusively via
+            # `knowledgebase` (see ensure_personal_kb_tool_for_agent /
+            # remove_personal_kb_tool_from_agent_if_empty below) — reject any
+            # attempt to set it directly, and preserve whatever's already
+            # bound below so replacing `tools` can never silently detach it.
+            system_managed_ids = [
+                row.id for row in db.session.query(FunctionModel.id).filter(
+                    FunctionModel.id.in_(tool_ids_ordered),
+                    FunctionModel.is_system_managed.is_(True),
+                ).all()
+            ]
+            if system_managed_ids:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Tool IDs {system_managed_ids} are managed automatically (via `knowledgebase`) and cannot be set directly through `tools`",
+                )
+
             tool_records = db.session.query(FunctionModel).filter(
                 FunctionModel.id.in_(tool_ids_ordered),
                 FunctionModel.elevenlabs_tool_id.isnot(None),
                 or_(
-                    FunctionModel.user_id == current_user.id,
+                    FunctionModel.user_id == user_id,
                     FunctionModel.user_id.is_(None)
                 )
             ).all()
-            
+
             tool_map = {tool.id: tool for tool in tool_records}
             missing_ids = set(tool_ids_ordered) - set(tool_map.keys())
-            
+
             if missing_ids:
                 raise HTTPException(status_code=400, detail=f"Some Tool IDs not found or synced: {list(missing_ids)}")
-            
+
             el_tool_ids = []
             for tool_id in tool_ids_ordered:
                 el_tool_ids.append(tool_map[tool_id].elevenlabs_tool_id)
 
-            el_update_params["tool_ids"] = el_tool_ids
+            existing_system_bridges = (
+                db.session.query(AgentFunctionBridgeModel, FunctionModel.elevenlabs_tool_id)
+                .join(FunctionModel, FunctionModel.id == AgentFunctionBridgeModel.function_id)
+                .filter(
+                    AgentFunctionBridgeModel.agent_id == agent_id,
+                    FunctionModel.is_system_managed.is_(True),
+                )
+                .all()
+            )
+            preserved_tool_ids = [bridge.function_id for bridge, _ in existing_system_bridges]
+            preserved_el_tool_ids = [el_id for _, el_id in existing_system_bridges if el_id]
+
+            el_update_params["tool_ids"] = el_tool_ids + preserved_el_tool_ids
 
             db.session.query(AgentFunctionBridgeModel).filter(
                 AgentFunctionBridgeModel.agent_id == agent_id
             ).delete()
-            for tool_id in tool_ids_ordered:
+            for tool_id in tool_ids_ordered + preserved_tool_ids:
                 db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=tool_id))
 
         # ---- Built-in Tools Update ----
         if agent_in.built_in_tools is not None:
+            full_built_in_tools = to_internal_built_in_tools(agent_in.built_in_tools)
             # transform_built_in_tools may drop invalid transfers (e.g. an agent_id
-            # that no longer resolves) from agent_in.built_in_tools in place, so run
+            # that no longer resolves) from full_built_in_tools in place, so run
             # it before the model_dump() to keep the persisted config in sync with
             # what was actually sent to ElevenLabs.
-            from app_v2.routers.agents import transform_built_in_tools
-            el_update_params["built_in_tools"] = transform_built_in_tools(agent_in.built_in_tools, db.session, current_user.id, current_agent_id=agent_id)
-            agent.built_in_tools = agent_in.built_in_tools.model_dump()
+            el_update_params["built_in_tools"] = transform_built_in_tools(full_built_in_tools, db.session, user_id, current_agent_id=agent_id)
+            agent.built_in_tools = full_built_in_tools.model_dump()
 
         # ---- Variables Update ----
-        if agent_in.variables is not None:
-            el_update_params["dynamic_variables"] = agent_in.variables
-            
+        # True PUT: `variables` is replaced wholesale with whatever the caller
+        # sends (matching create_agent's merged_variables), then any
+        # {{placeholder}} the system prompt references that the caller didn't
+        # explicitly set gets added defaulting to "test". A variable that's
+        # neither passed here nor referenced by the current prompt does not
+        # survive from the old row — that's the whole point of PUT.
+        prompt_var_names = extract_prompt_variable_names(new_prompt)
+        existing_variables = {v.variable_name: v.variable_value for v in agent.variables}
+        explicit_variables = agent_in.variables or {}
+
+        synced_variables = dict(explicit_variables)
+        for var_name in prompt_var_names:
+            synced_variables.setdefault(var_name, "test")
+
+        if synced_variables != existing_variables:
             db.session.query(VariablesModel).filter(
                 VariablesModel.agent_id == agent_id
             ).delete()
-            for key, value in agent_in.variables.items():
+            for key, value in synced_variables.items():
                 db.session.add(VariablesModel(agent_id=agent_id, variable_name=key, variable_value=value))
-
-        from app_v2.routers.agents import prompt_requires_timezone
-        if prompt_requires_timezone(agent.system_prompt) and not agent.timezone:
-            raise HTTPException(
-                status_code=400,
-                detail="timezone is required when the system prompt uses {{system__time}}, {{system__time_utc}}, or {{system__timezone}}"
-            )
+            el_update_params["dynamic_variables"] = synced_variables
 
         # ---- Sync with ElevenLabs ----
-        if el_update_params and agent.elevenlabs_agent_id:
+        if agent.elevenlabs_agent_id:
             try:
                 el_client = ElevenLabsAgent()
                 el_response = el_client.update_agent(
@@ -896,25 +1202,17 @@ async def update_agent_public(
                 )
                 if not el_response.status:
                     db.session.rollback()
+                    friendly_detail = describe_agent_sync_error(el_response.error_message)
                     raise HTTPException(
                         status_code=424,
-                        detail=f"Failed to update agent: {el_response.error_message}"
+                        detail=friendly_detail or f"Failed to update agent: {el_response.error_message}"
                     )
 
                 # Refresh the stored LLM price now that ElevenLabs has the new
                 # config (best-effort; prompt/KB/RAG/model all affect it).
-                effective_model = el_update_params.get("llm_model")
-                if not effective_model:
-                    effective_model = (
-                        db.session.query(AIModels.model_name)
-                        .join(AgentAIModelBridge, AgentAIModelBridge.ai_model_id == AIModels.id)
-                        .filter(AgentAIModelBridge.agent_id == agent_id)
-                        .scalar()
-                    )
-                if effective_model:
-                    agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
-                        agent.elevenlabs_agent_id, effective_model
-                    )
+                agent.llm_price_per_minute = el_client.get_llm_price_per_minute(
+                    agent.elevenlabs_agent_id, ai_model.model_name
+                )
             except HTTPException:
                 raise
             except Exception as e:
@@ -927,13 +1225,27 @@ async def update_agent_public(
         db.session.commit()
         db.session.refresh(agent)
 
-        # Best-effort: this update may have replaced the agent's whole
-        # tool_ids list without knowing about its personal KB search tool (if
-        # it has one). Re-push it so it doesn't get silently dropped.
-        try:
-            resync_personal_kb_tool_for_agent(agent.id)
-        except Exception as e:
-            logger.warning(f"Failed to re-sync personal KB tool onto agent {agent.id} after update: {e}")
+        # If this request touched `knowledgebase`, provision/remove this
+        # agent's search_personal_knowledge_base tool to match the new
+        # attachment set (mirrors what the dedicated attach/detach endpoints
+        # in personal_knowledge_base.py do for a single item at a time).
+        if personal_kb_updated:
+            try:
+                if new_kb_ids_ordered:
+                    ensure_personal_kb_tool_for_agent(agent.id)
+                else:
+                    remove_personal_kb_tool_from_agent_if_empty(agent.id)
+            except Exception as e:
+                logger.warning(f"Failed to sync personal KB tool state for agent {agent.id}: {e}")
+
+        # No extra resync call here: unlike the internal PATCH endpoint, the
+        # ---- Tools Update ---- block above always preserves any pre-existing
+        # system-managed (personal KB) tool bridge into el_update_params
+        # itself (see preserved_tool_ids/preserved_el_tool_ids) whenever
+        # `tools` is touched, and ensure_/remove_personal_kb_tool_* already
+        # push their own resync when `knowledgebase` is touched. A trailing
+        # unconditional resync here would just repeat one of those two calls
+        # with an identical payload on every single PUT.
 
         return agent_to_read(agent)
 
@@ -971,11 +1283,26 @@ async def delete_agent_public(
 # WidgetS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/widgets", response_model=PublicPaginatedResponse[WidgetListResponse])
+@router.get(
+    "/widgets",
+    response_model=PublicPaginatedResponse[WidgetListResponse],
+    description=(
+        "Lists this account's widgets. Supports filtering with `widget_name` (partial, "
+        "case-insensitive), `agent_name` (partial, case-insensitive match on the "
+        "linked agent's name), and `is_enabled` (exact match). Supports sorting via "
+        "`sort_by` (`created_at`, `updated_at`, `widget_name`) and `sort_order` "
+        "(`asc`, `desc`)."
+    ),
+)
 async def list_widgets(
     request: Request,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    widget_name: Optional[str] = Query(None, description="Filter by partial widget name (case-insensitive)", examples=["Sales Widget"]),
+    agent_name: Optional[str] = Query(None, description="Filter by partial linked agent name (case-insensitive)", examples=["Sales Assistant"]),
+    is_enabled: Optional[bool] = Query(None, description="Filter by whether the widget is enabled", examples=[True]),
+    sort_by: Literal["created_at", "updated_at", "widget_name"] = Query("created_at", description="Field to sort widgets by"),
+    sort_order: Literal["asc", "desc"] = Query("desc", description="Sort direction"),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
@@ -983,9 +1310,24 @@ async def list_widgets(
     base_url = str(request.base_url).rstrip("/")
     with db():
         query = db.session.query(WidgetModel).filter(WidgetModel.user_id == current_user.id)
+        if widget_name:
+            query = query.filter(WidgetModel.widget_name.ilike(f"%{widget_name}%"))
+        if is_enabled is not None:
+            query = query.filter(WidgetModel.is_enabled.is_(is_enabled))
+        if agent_name:
+            query = query.join(WidgetModel.agent).filter(AgentModel.agent_name.ilike(f"%{agent_name}%"))
+
+        sort_col = {
+            "updated_at": WidgetModel.modified_at,
+            "widget_name": WidgetModel.widget_name,
+        }.get(sort_by, WidgetModel.created_at)
+
         total = query.count()
         widgets = (
-            query.order_by(WidgetModel.created_at.desc(), WidgetModel.id.desc())
+            query.order_by(
+                sort_col.asc() if sort_order == "asc" else sort_col.desc(),
+                WidgetModel.id.desc(),
+            )
             .offset(skip).limit(size).all()
         )
 
@@ -997,7 +1339,11 @@ async def list_widgets(
                 shareable_link=f"{base_url}/api/v2/widget/preview/{wa.public_id}",
                 is_enabled=wa.is_enabled,
                 created_at=wa.created_at,
-                agent_name=wa.agent.agent_name
+                updated_at=wa.modified_at,
+                agent_id=wa.agent_id,
+                agent_name=wa.agent.agent_name,
+                primary_color=wa.primary_color,
+                show_branding=wa.show_branding,
             ) for wa in widgets
         ]
         total_pages = math.ceil(total / size) if total else 0
@@ -1021,9 +1367,26 @@ async def get_widget(
             raise HTTPException(status_code=404, detail="Widget not found")
         return widget_to_response(wa, request)
 
-@router.post("/widgets", response_model=WidgetConfigResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/widgets",
+    response_model=WidgetConfigResponse,
+    status_code=status.HTTP_201_CREATED,
+    description=(
+        "Creates a widget for an agent. `prechat.custom_fields` in the example "
+        "payload (e.g. `Company Name`) is just a sample — add, remove, or rename "
+        "as many custom fields as you need based on your own use case. Allowed "
+        "`field_type` values: text, number, email, textarea, phone."
+    ),
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"example": PUBLIC_CREATE_WIDGET_BODY_EXAMPLE}
+            }
+        }
+    },
+)
 async def create_widget(
-    wa_in: WidgetConfig,
+    wa_in: PublicWidgetConfig,
     request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
@@ -1064,10 +1427,28 @@ async def create_widget(
         db.session.refresh(new_wa)
         return widget_to_response(new_wa, request)
 
-@router.put("/widgets/{public_id}", response_model=WidgetConfigResponse)
+@router.put(
+    "/widgets/{public_id}",
+    response_model=WidgetConfigResponse,
+    description=(
+        "Replaces a widget's config. This is a full PUT, not a PATCH: every "
+        "field (`widget_name`, `agent_id`, `is_enabled`, `appearance`, and "
+        "`prechat`) is required and always fully replaces the widget's "
+        "current values — nothing is left as-is by omitting it. Validation "
+        "is identical to POST /widgets (see there for details on "
+        "`prechat.custom_fields`, allowed `field_type` values, etc)."
+    ),
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"example": PUBLIC_UPDATE_WIDGET_BODY_EXAMPLE}
+            }
+        }
+    },
+)
 async def update_widget(
     public_id: str,
-    wa_in: WidgetConfigUpdate,
+    wa_in: PublicWidgetConfigUpdate,
     request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
@@ -1079,45 +1460,66 @@ async def update_widget(
         if not wa:
             raise HTTPException(status_code=404, detail="Widget not found")
 
-        update_data = wa_in.model_dump(exclude_unset=True)
+        agent = db.session.query(AgentModel).filter(
+            AgentModel.id == wa_in.agent_id, AgentModel.user_id == current_user.id
+        ).first()
+        if not agent:
+            raise HTTPException(status_code=404, detail="Agent not found")
 
-        if "agent_id" in update_data:
-            agent = db.session.query(AgentModel).filter(
-                AgentModel.id == update_data["agent_id"], AgentModel.user_id == current_user.id
-            ).first()
-            if not agent:
-                raise HTTPException(status_code=403, detail="Agent does not belong to user")
-            wa.agent_id = update_data["agent_id"]
+        # A brand-new assignment to a different agent must land on an enabled
+        # agent (mirrors POST /widgets). Re-saving the widget's *current*
+        # agent while that agent happens to be disabled is still allowed —
+        # e.g. fixing up the widget's config while waiting to re-enable it.
+        if wa_in.agent_id != wa.agent_id and not agent.is_enabled:
+            raise HTTPException(status_code=403, detail="Agent is disabled")
 
-        if "widget_name" in update_data:
-            wa.widget_name = update_data["widget_name"]
+        # Same-name-per-agent uniqueness as POST /widgets, excluding this
+        # widget itself so re-saving its own unchanged name doesn't collide.
+        name_taken = db.session.query(WidgetModel).filter(
+            WidgetModel.agent_id == wa_in.agent_id,
+            func.lower(WidgetModel.widget_name) == wa_in.widget_name.lower(),
+            WidgetModel.id != wa.id,
+        ).first()
+        if name_taken:
+            raise HTTPException(status_code=400, detail="Widget with same name already exists for this Voice Agent.")
 
-        if "is_enabled" in update_data:
-            if update_data["is_enabled"] and not wa.is_enabled:
-                voice_agent = db.session.query(AgentModel).filter(AgentModel.id == wa.agent_id).first()
-                if not voice_agent or not voice_agent.is_enabled:
+        wa.agent_id = wa_in.agent_id
+        wa.widget_name = wa_in.widget_name
+
+        # Every PUT is a full replace and `is_enabled` is required on every
+        # call (see PublicWidgetConfigUpdate), so the warning is keyed off
+        # what the caller sent, not off whether this call actually flips the
+        # value — sending `is_enabled: false` while it's already disabled
+        # still means "linked web agents will not work" and should say so.
+        # request.state.public_message surfaces this at the top-level
+        # `message` key of the envelope (see PublicAPIRoute.custom above),
+        # matching the pattern update_agent_public uses for its own
+        # disable-cascade notice.
+        if not wa_in.is_enabled:
+            disabled_message = "Widget disabled. Linked web agents will not work while this widget is disabled."
+            request.state.public_message = disabled_message
+            request.state.public_detail = disabled_message
+        if wa_in.is_enabled != wa.is_enabled:
+            if wa_in.is_enabled:
+                if not agent.is_enabled:
                     raise HTTPException(
                         status_code=400,
                         detail="Cannot enable widget: its Voice Agent is disabled",
                     )
                 check_can_enable_resource(current_user.id, "widget_agent", allow_coin_fallback=True)
-            wa.is_enabled = update_data["is_enabled"]
+            wa.is_enabled = wa_in.is_enabled
 
-        if "appearance" in update_data:
-            appearance_data = update_data["appearance"]
-            if "widget_title" in appearance_data: wa.widget_title = appearance_data["widget_title"]
-            if "widget_subtitle" in appearance_data: wa.widget_subtitle = appearance_data["widget_subtitle"]
-            if "primary_color" in appearance_data: wa.primary_color = appearance_data["primary_color"]
-            if "position" in appearance_data: wa.position = appearance_data["position"]
-            if "show_branding" in appearance_data: wa.show_branding = appearance_data["show_branding"]
+        wa.widget_title = wa_in.appearance.widget_title
+        wa.widget_subtitle = wa_in.appearance.widget_subtitle
+        wa.primary_color = wa_in.appearance.primary_color
+        wa.position = wa_in.appearance.position
+        wa.show_branding = wa_in.appearance.show_branding
 
-        if "prechat" in update_data and update_data.get("prechat") is not None:
-            prechat_data = update_data["prechat"]
-            if "enable_prechat" in prechat_data: wa.enable_prechat = prechat_data["enable_prechat"]
-            if "require_name" in prechat_data: wa.require_name = prechat_data["require_name"]
-            if "require_email" in prechat_data: wa.require_email = prechat_data["require_email"]
-            if "require_phone" in prechat_data: wa.require_phone = prechat_data["require_phone"]
-            if "custom_fields" in prechat_data: wa.custom_fields = prechat_data["custom_fields"] or []
+        wa.enable_prechat = wa_in.prechat.enable_prechat
+        wa.require_name = wa_in.prechat.require_name
+        wa.require_email = wa_in.prechat.require_email
+        wa.require_phone = wa_in.prechat.require_phone
+        wa.custom_fields = [f.model_dump() for f in wa_in.prechat.custom_fields]
 
         db.session.commit()
         db.session.refresh(wa)
@@ -1143,11 +1545,17 @@ async def delete_widget(
 # WEB AGENTS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/web-agents", response_model=PublicPaginatedResponse[WebAgentListResponse])
+@router.get("/web-agents", response_model=PublicPaginatedResponse[PublicWebAgentListResponse])
 async def list_web_agents_public(
     request: Request,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    is_enabled: Optional[bool] = Query(None, description="Filter by whether the web agent is enabled."),
+    web_agent_name: Optional[str] = Query(None, description="Case-insensitive substring match on web agent name."),
+    agent_id: Optional[int] = Query(None, description="Filter by linked Voice Agent id."),
+    widget_id: Optional[int] = Query(None, description="Filter by linked Widget id."),
+    sort_by: Literal["created_at", "updated_at"] = Query("created_at", description="Field to sort by."),
+    sort_order: Literal["asc", "desc"] = Query("desc", description="Sort direction."),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
@@ -1157,25 +1565,35 @@ async def list_web_agents_public(
         from app_v2.routers.web_agent_config import _shareable_link
 
         query = db.session.query(WebAgentPageModel).filter(WebAgentPageModel.user_id == current_user.id)
+        if is_enabled is not None:
+            query = query.filter(WebAgentPageModel.is_enabled == is_enabled)
+        if web_agent_name:
+            query = query.filter(func.lower(WebAgentPageModel.web_agent_name).contains(web_agent_name.lower()))
+        if agent_id is not None:
+            query = query.filter(WebAgentPageModel.agent_id == agent_id)
+        if widget_id is not None:
+            query = query.filter(WebAgentPageModel.widget_id == widget_id)
+
         total = query.count()
+        sort_column = WebAgentPageModel.created_at if sort_by == "created_at" else WebAgentPageModel.modified_at
+        order_column = sort_column.asc() if sort_order == "asc" else sort_column.desc()
         web_agents = (
-            query.order_by(WebAgentPageModel.created_at.desc(), WebAgentPageModel.id.desc())
+            query.order_by(order_column, WebAgentPageModel.id.desc())
             .offset(skip).limit(size).all()
         )
         items = [
-            WebAgentListResponse(
+            PublicWebAgentListResponse(
                 id=wa.id,
                 public_id=wa.public_id,
                 web_agent_name=wa.web_agent_name,
                 is_enabled=wa.is_enabled,
-                bg_color=wa.bg_color,
-                agent_position=wa.agent_position,
                 agent_id=wa.agent_id,
                 agent_name=wa.agent.agent_name if wa.agent else "",
                 widget_id=wa.widget_id,
                 widget_name=wa.widget.widget_name if wa.widget else "",
                 shareable_link=_shareable_link(request, wa.public_id),
                 created_at=wa.created_at,
+                updated_at=wa.modified_at,
             )
             for wa in web_agents
         ]
@@ -1205,7 +1623,18 @@ async def get_web_agent_public(
         return _to_response(request, web_agent)
 
 
-@router.post("/web-agents", response_model=WebAgentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/web-agents",
+    response_model=WebAgentResponse,
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"example": PUBLIC_CREATE_WEB_AGENT_BODY_EXAMPLE}
+            }
+        }
+    },
+)
 async def create_web_agent_public(
     payload: WebAgentCreate,
     request: Request,
@@ -1214,7 +1643,11 @@ async def create_web_agent_public(
     track_and_limit_api(current_user.id)
     require_feature_enabled(current_user.id, PlanFeatureEnum.web_agent)
     with db():
-        from app_v2.routers.web_agent_config import _to_response, _validate_widget_belongs_to_agent
+        from app_v2.routers.web_agent_config import (
+            _to_response,
+            _validate_widget_belongs_to_agent,
+            _check_web_agent_name_unique,
+        )
 
         agent = db.session.query(AgentModel).filter(
             AgentModel.id == payload.agent_id, AgentModel.user_id == current_user.id
@@ -1225,6 +1658,7 @@ async def create_web_agent_public(
             raise HTTPException(status_code=403, detail="Agent is disabled")
 
         _validate_widget_belongs_to_agent(current_user.id, payload.widget_id, payload.agent_id)
+        _check_web_agent_name_unique(payload.agent_id, payload.widget_id, payload.web_agent_name)
 
         web_agent = WebAgentPageModel(
             public_id=str(uuid.uuid4()),
@@ -1249,17 +1683,31 @@ async def create_web_agent_public(
         return _to_response(request, web_agent)
 
 
-@router.put("/web-agents/{public_id}", response_model=WebAgentResponse)
+@router.put(
+    "/web-agents/{public_id}",
+    response_model=WebAgentResponse,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"example": PUBLIC_UPDATE_WEB_AGENT_BODY_EXAMPLE}
+            }
+        }
+    },
+)
 async def update_web_agent_public(
     public_id: str,
-    payload: WebAgentUpdate,
+    payload: WebAgentPublicUpdate,
     request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     require_feature_enabled(current_user.id, PlanFeatureEnum.web_agent)
     with db():
-        from app_v2.routers.web_agent_config import _to_response, _validate_widget_belongs_to_agent
+        from app_v2.routers.web_agent_config import (
+            _to_response,
+            _validate_widget_belongs_to_agent,
+            _check_web_agent_name_unique,
+        )
 
         web_agent = db.session.query(WebAgentPageModel).filter(
             WebAgentPageModel.public_id == public_id, WebAgentPageModel.user_id == current_user.id
@@ -1267,41 +1715,44 @@ async def update_web_agent_public(
         if not web_agent:
             raise HTTPException(status_code=404, detail="Web agent not found")
 
-        update_data = payload.model_dump(exclude_unset=True)
+        # PUT is a full replace: agent_id/widget_id/web_agent_name are mandatory
+        # on WebAgentPublicUpdate, so every one of these is always re-validated
+        # against the new payload rather than only when the field is present.
+        agent = db.session.query(AgentModel).filter(
+            AgentModel.id == payload.agent_id, AgentModel.user_id == current_user.id
+        ).first()
+        if not agent:
+            raise HTTPException(status_code=403, detail="Agent does not belong to user")
+        if not agent.is_enabled:
+            raise HTTPException(status_code=403, detail="Selected agent is disabled")
 
-        new_agent_id = update_data.get("agent_id", web_agent.agent_id)
-        if "agent_id" in update_data:
-            agent = db.session.query(AgentModel).filter(
-                AgentModel.id == new_agent_id, AgentModel.user_id == current_user.id
-            ).first()
-            if not agent:
-                raise HTTPException(status_code=403, detail="Agent does not belong to user")
-            web_agent.agent_id = new_agent_id
+        _validate_widget_belongs_to_agent(current_user.id, payload.widget_id, payload.agent_id)
+        _check_web_agent_name_unique(
+            payload.agent_id, payload.widget_id, payload.web_agent_name, exclude_id=web_agent.id
+        )
 
-        if "widget_id" in update_data:
-            _validate_widget_belongs_to_agent(current_user.id, update_data["widget_id"], new_agent_id)
-            web_agent.widget_id = update_data["widget_id"]
-        elif "agent_id" in update_data:
-            # Agent changed but widget wasn't re-specified — the existing widget must
-            # still belong to the (new) agent for the record to stay consistent.
-            _validate_widget_belongs_to_agent(current_user.id, web_agent.widget_id, new_agent_id)
+        target_is_enabled = payload.is_enabled if payload.is_enabled is not None else web_agent.is_enabled
+        no_changes = (
+            payload.agent_id == web_agent.agent_id
+            and payload.widget_id == web_agent.widget_id
+            and payload.web_agent_name == web_agent.web_agent_name
+            and payload.bg_color.lower() == (web_agent.bg_color or "").lower()
+            and payload.agent_position == web_agent.agent_position
+            and target_is_enabled == web_agent.is_enabled
+        )
+        if no_changes:
+            raise HTTPException(status_code=400, detail="No changes detected.")
 
-        if "web_agent_name" in update_data:
-            web_agent.web_agent_name = update_data["web_agent_name"]
-        if "bg_color" in update_data:
-            web_agent.bg_color = update_data["bg_color"]
-        if "agent_position" in update_data:
-            web_agent.agent_position = update_data["agent_position"]
+        web_agent.agent_id = payload.agent_id
+        web_agent.widget_id = payload.widget_id
+        web_agent.web_agent_name = payload.web_agent_name
+        web_agent.bg_color = payload.bg_color
+        web_agent.agent_position = payload.agent_position
 
-        if "is_enabled" in update_data:
-            if update_data["is_enabled"] and not web_agent.is_enabled:
-                voice_agent = db.session.query(AgentModel).filter(AgentModel.id == web_agent.agent_id).first()
-                if not voice_agent or not voice_agent.is_enabled:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Cannot enable web agent: its Voice Agent is disabled",
-                    )
-            web_agent.is_enabled = update_data["is_enabled"]
+        # agent.is_enabled was already confirmed True above, so the linked Voice
+        # Agent can never be the reason an enable here would be rejected.
+        if payload.is_enabled is not None:
+            web_agent.is_enabled = payload.is_enabled
 
         db.session.commit()
         db.session.refresh(web_agent)
@@ -1337,7 +1788,10 @@ async def delete_web_agent_public(
 # TWILIO CONNECTORS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/twilio-connectors", response_model=PublicPaginatedResponse[TwilioConnectorResponse])
+# Public Twilio connector APIs disabled — decorators commented out so they
+# don't register as routes (hidden from Swagger, 404 for any caller). Code
+# kept in place, not deleted, in case these need to come back.
+# @router.get("/twilio-connectors", response_model=PublicPaginatedResponse[TwilioConnectorResponse])
 async def list_twilio_connectors(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
@@ -1361,7 +1815,7 @@ async def list_twilio_connectors(
             has_next=page < total_pages, has_previous=page > 1, items=items,
         )
 
-@router.get("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
+# @router.get("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
 async def get_twilio_connector(
     connector_id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1376,7 +1830,7 @@ async def get_twilio_connector(
             raise HTTPException(status_code=404, detail="Twilio connector not found")
         return twilio_connector_to_response(connector)
 
-@router.post("/twilio-connectors", response_model=TwilioConnectorResponse, status_code=status.HTTP_201_CREATED)
+# @router.post("/twilio-connectors", response_model=TwilioConnectorResponse, status_code=status.HTTP_201_CREATED)
 async def create_twilio_connector(
     connector_in: TwilioConnectorCreate,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
@@ -1416,7 +1870,7 @@ async def create_twilio_connector(
         db.session.refresh(new_connector)
         return twilio_connector_to_response(new_connector)
 
-@router.put("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
+# @router.put("/twilio-connectors/{connector_id}", response_model=TwilioConnectorResponse)
 async def update_twilio_connector(
     connector_id: int,
     connector_in: TwilioConnectorUpdate,
@@ -1469,7 +1923,7 @@ async def update_twilio_connector(
         db.session.refresh(connector)
         return twilio_connector_to_response(connector)
 
-@router.delete("/twilio-connectors/{connector_id}")
+# @router.delete("/twilio-connectors/{connector_id}")
 async def delete_twilio_connector(
     connector_id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -1494,16 +1948,31 @@ async def delete_twilio_connector(
 # LANGUAGES
 # -------------------------------------------------------------------
 
-@router.get("/languages", response_model=PublicPaginatedResponse[LanguageRead])
+@router.get(
+    "/languages",
+    response_model=PublicPaginatedResponse[LanguageRead],
+    description=(
+        "Lists supported languages. Each item's numeric `id` is the value to pass as "
+        "`language` in POST /agents. Supports filtering with `lang_code` (partial, "
+        "case-insensitive match on the code, e.g. `en`) and `language_name` (partial, "
+        "case-insensitive match on the name, e.g. `English`)."
+    ),
+)
 async def list_languages_public(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    lang_code: Optional[str] = Query(None, description="Filter by partial language code match (case-insensitive)", examples=["en"]),
+    language_name: Optional[str] = Query(None, description="Filter by partial language name match (case-insensitive)", examples=["English"]),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (page - 1) * size
     with db():
         query = db.session.query(LanguageModel)
+        if lang_code:
+            query = query.filter(LanguageModel.lang_code.ilike(f"%{lang_code}%"))
+        if language_name:
+            query = query.filter(LanguageModel.language.ilike(f"%{language_name}%"))
         total = query.count()
         languages = query.order_by(LanguageModel.id.asc()).offset(skip).limit(size).all()
         total_pages = math.ceil(total / size) if total else 0
@@ -1534,7 +2003,9 @@ async def get_language_public(
     description=(
         "Lists voices available to this account (enabled voices only). Supports "
         "filtering with `voice_name` (partial, case-insensitive), `gender` "
-        "(`male`/`female`), and `nationality` (partial, case-insensitive)."
+        "(`male`/`female`), and `nationality` (partial, case-insensitive). "
+        "Each item's numeric `id` is the value to pass as `voice` in POST "
+        "/agents — only voices with `has_sample_audio: true` can be used."
     ),
 )
 async def list_voices_public(
@@ -1604,7 +2075,10 @@ async def get_voice_public(
     response_model=PublicPaginatedResponse[AIModelRead],
     description=(
         "Lists available AI models, sorted by id. Supports filtering with "
-        "`model_name` and `provider` (both partial, case-insensitive)."
+        "`model_name` and `provider` (both partial, case-insensitive). Every "
+        "model returned here can be used as `ai_model` in POST /agents — "
+        "`custom-llm` is excluded since it can't be used to create an agent "
+        "through this API."
     ),
 )
 async def list_ai_models_public(
@@ -1617,7 +2091,7 @@ async def list_ai_models_public(
     track_and_limit_api(current_user.id)
     skip = (page - 1) * size
     with db():
-        query = db.session.query(AIModels)
+        query = db.session.query(AIModels).filter(AIModels.model_name != CUSTOM_LLM_MODEL_NAME)
         if model_name:
             query = query.filter(AIModels.model_name.ilike(f"%{model_name}%"))
         if provider:
@@ -1929,12 +2403,78 @@ async def bind_kb_public(
 # at least one item attached (app_v2/utils/personal_kb_tool.py).
 # -------------------------------------------------------------------
 
-@router.get("/personal-kb", response_model=PublicPaginatedResponse[PersonalKnowledgeBaseResponse])
+def _public_kb_fields(item: PersonalKnowledgeBaseModel, request: Request) -> dict:
+    """Shared field mapping for the public API's personal-kb responses: for
+    file-type items, rewrites `content_path` from the raw on-disk path (e.g.
+    "uploads/personal_kb/pub_1_..._x.txt", meaningless to an external caller)
+    into a full clickable URL served by the `/uploads` static mount (see
+    main.py)."""
+    base = _personal_kb_to_read(item)
+    content_path = base.content_path
+    if item.kb_type == "file" and content_path:
+        base_url = str(request.base_url).rstrip("/")
+        content_path = f"{base_url}/{content_path.lstrip('/')}"
+    return dict(
+        id=base.id,
+        kb_type=base.kb_type,
+        title=base.title,
+        content_path=content_path,
+        content_text=base.content_text,
+        file_size_kb=base.file_size,
+        num_chunks=base.num_chunks,
+        agent_count=base.agent_count,
+        created_at=base.created_at,
+        modified_at=base.modified_at,
+    )
+
+
+def _public_kb_to_read(item: PersonalKnowledgeBaseModel, request: Request) -> PublicPersonalKnowledgeBaseResponse:
+    """List-row projection - excludes `content_text` (see
+    PublicPersonalKnowledgeBaseResponse)."""
+    fields = _public_kb_fields(item, request)
+    fields.pop("content_text", None)
+    return PublicPersonalKnowledgeBaseResponse(**fields)
+
+
+def _public_kb_to_detail(item: PersonalKnowledgeBaseModel, request: Request) -> PublicPersonalKnowledgeBaseDetailResponse:
+    """Single-item projection - includes `content_text` (see
+    PublicPersonalKnowledgeBaseDetailResponse)."""
+    return PublicPersonalKnowledgeBaseDetailResponse(**_public_kb_fields(item, request))
+
+
+def _reject_duplicate_kb_file(user_id: int, filename: str, exclude_id: int = None) -> None:
+    query = db.session.query(PersonalKnowledgeBaseModel).filter(
+        PersonalKnowledgeBaseModel.user_id == user_id,
+        PersonalKnowledgeBaseModel.kb_type == "file",
+        func.lower(PersonalKnowledgeBaseModel.title) == filename.lower(),
+    )
+    if exclude_id is not None:
+        query = query.filter(PersonalKnowledgeBaseModel.id != exclude_id)
+    if query.first():
+        raise HTTPException(status_code=400, detail=f"A file named '{filename}' already exists in your knowledge base.")
+
+
+async def _reject_multiple_files(request: Request, field_name: str = "file") -> None:
+    """Guards against a client (e.g. a Postman collection generated from an
+    older/array-typed version of this endpoint's OpenAPI schema) attaching
+    more than one file under the same form field - only one file is allowed
+    per request. FastAPI's own binding for a singular `UploadFile` param
+    silently keeps just the first part and drops the rest, so this has to be
+    checked against the raw form data instead."""
+    form = await request.form()
+    if len(form.getlist(field_name)) > 1:
+        raise HTTPException(status_code=400, detail="Only one file can be uploaded per request.")
+
+
+@router.get("/personal-kb", response_model=PublicPaginatedResponse[PublicPersonalKnowledgeBaseResponse])
 async def list_personal_kb_public(
+    request: Request,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
     title: str = None,
     kb_type: str = None,
+    sort_by: Literal["created_at", "modified_at"] = Query("created_at", description="Field to sort by."),
+    sort_order: Literal["asc", "desc"] = Query("desc", description="Sort direction."),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
@@ -1949,18 +2489,24 @@ async def list_personal_kb_public(
 
         total = query.count()
         skip = (page - 1) * size
-        items = query.order_by(PersonalKnowledgeBaseModel.id.asc()).offset(skip).limit(size).all()
+        sort_col = PersonalKnowledgeBaseModel.created_at if sort_by == "created_at" else PersonalKnowledgeBaseModel.modified_at
+        order_col = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+        items = (
+            query.order_by(order_col, PersonalKnowledgeBaseModel.id.desc())
+            .offset(skip).limit(size).all()
+        )
         total_pages = math.ceil(total / size) if total else 0
         return PublicPaginatedResponse(
             total=total, current_page=page, size=size, total_pages=total_pages,
             has_next=page < total_pages, has_previous=page > 1,
-            items=[_personal_kb_to_read(item) for item in items],
+            items=[_public_kb_to_read(item, request) for item in items],
         )
 
 
-@router.get("/personal-kb/{id}", response_model=PersonalKnowledgeBaseResponse)
+@router.get("/personal-kb/{id}", response_model=PublicPersonalKnowledgeBaseDetailResponse)
 async def get_personal_kb_public(
     id: int,
+    request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
@@ -1970,12 +2516,13 @@ async def get_personal_kb_public(
         ).first()
         if not kb_entry:
             raise HTTPException(status_code=404, detail="Knowledge Base item not found")
-        return _personal_kb_to_read(kb_entry)
+        return _public_kb_to_detail(kb_entry, request)
 
 
-@router.post("/personal-kb/url", response_model=PersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/personal-kb/url", response_model=PublicPersonalKnowledgeBaseDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_personal_kb_url_public(
     request: PersonalKnowledgeBaseURLCreate,
+    http_request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
@@ -1991,14 +2538,15 @@ async def create_personal_kb_url_public(
 
         title, text = scrape_url(url_str)
         kb_entry = _store_personal_kb_entry(user_id=current_user.id, kb_type="url", title=title, text=text, content_path=url_str)
-        result = _personal_kb_to_read(kb_entry)
+        result = _public_kb_to_detail(kb_entry, http_request)
 
     return result
 
 
-@router.post("/personal-kb/text", response_model=PersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/personal-kb/text", response_model=PublicPersonalKnowledgeBaseDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_personal_kb_text_public(
     request: PersonalKnowledgeBaseTextCreate,
+    http_request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
@@ -2015,69 +2563,64 @@ async def create_personal_kb_text_public(
             user_id=current_user.id, kb_type="text", title=request.title, text=request.content,
             embed_text=f"{request.title}\n\n{request.content}",
         )
-        result = _personal_kb_to_read(kb_entry)
+        result = _public_kb_to_detail(kb_entry, http_request)
 
     return result
 
 
-@router.post("/personal-kb/file", response_model=List[PersonalKnowledgeBaseResponse], status_code=status.HTTP_201_CREATED)
+@router.post("/personal-kb/file", response_model=PublicPersonalKnowledgeBaseDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_personal_kb_file_public(
-    files: List[UploadFile] = File(...),
+    request: Request,
+    file: UploadFile = File(...),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
+    await _reject_multiple_files(request)
     with db():
-        uploaded_entries = []
-        seen_filenames = set()
-        for file in files:
-            _, ext = os.path.splitext(file.filename)
-            if ext.lower() not in PERSONAL_KB_ALLOWED_EXTENSIONS:
-                raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
+        _, ext = os.path.splitext(file.filename)
+        if ext.lower() not in PERSONAL_KB_ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
 
-            filename_key = file.filename.lower()
-            if filename_key in seen_filenames:
-                raise HTTPException(status_code=400, detail=f"Duplicate file name '{file.filename}' in this upload request.")
-            seen_filenames.add(filename_key)
+        _reject_duplicate_kb_file(current_user.id, file.filename)
 
-            file.file.seek(0, 2)
-            file_size = file.file.tell()
-            file.file.seek(0)
-            if file_size == 0:
-                raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
-            if file_size > PERSONAL_KB_MAX_FILE_SIZE_IN_MB * 1024 * 1024:
-                raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds {PERSONAL_KB_MAX_FILE_SIZE_IN_MB}MB limit")
+        file.file.seek(0, 2)
+        file_size = file.file.tell()
+        file.file.seek(0)
+        if file_size == 0:
+            raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
+        if file_size > PERSONAL_KB_MAX_FILE_SIZE_IN_MB * 1024 * 1024:
+            raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds {PERSONAL_KB_MAX_FILE_SIZE_IN_MB}MB limit")
 
-            file_path = os.path.join(PERSONAL_KB_UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+        file_path = os.path.join(PERSONAL_KB_UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-            try:
-                text = extract_text_from_file(file_path)
-                kb_entry = _store_personal_kb_entry(
-                    user_id=current_user.id, kb_type="file", title=file.filename, text=text,
-                    content_path=file_path, file_size=round(file_size / 1024, 2),
-                )
-            except HTTPException:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                raise
-            except Exception as e:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                logger.error(f"Error processing file '{file.filename}' for public personal KB: {e}")
-                raise HTTPException(status_code=422, detail=f"Could not process file {file.filename}")
+        try:
+            text = extract_text_from_file(file_path)
+            kb_entry = _store_personal_kb_entry(
+                user_id=current_user.id, kb_type="file", title=file.filename, text=text,
+                content_path=file_path, file_size=round(file_size / 1024, 2),
+            )
+        except HTTPException:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise
+        except Exception as e:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            logger.error(f"Error processing file '{file.filename}' for public personal KB: {e}")
+            raise HTTPException(status_code=422, detail=f"Could not process file {file.filename}")
 
-            uploaded_entries.append(kb_entry)
-
-        result = [_personal_kb_to_read(entry) for entry in uploaded_entries]
+        result = _public_kb_to_detail(kb_entry, request)
 
     return result
 
 
-@router.put("/personal-kb/{id}/url", response_model=PersonalKnowledgeBaseResponse)
+@router.put("/personal-kb/{id}/url", response_model=PublicPersonalKnowledgeBaseDetailResponse)
 async def update_personal_kb_url_public(
     id: int,
-    request: PersonalKnowledgeBaseURLUpdate,
+    request: PersonalKnowledgeBaseURLPublicUpdate,
+    http_request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
@@ -2090,24 +2633,36 @@ async def update_personal_kb_url_public(
         if not kb_entry:
             raise HTTPException(status_code=404, detail="URL Knowledge Base item not found")
 
-        if request.url is not None:
-            new_url = str(request.url)
-            title, text = scrape_url(new_url)
+        new_url = str(request.url)
+        # Blank/whitespace-only title is treated the same as "not provided" -
+        # falls back to the (re-)scraped page title instead of being stored
+        # as an empty string.
+        requested_title = request.title.strip() if request.title and request.title.strip() else None
+        url_unchanged = new_url.lower() == (kb_entry.content_path or "").lower()
+        title_unchanged = requested_title is None or requested_title == kb_entry.title
+
+        if url_unchanged and title_unchanged:
+            raise HTTPException(status_code=400, detail="No changes detected.")
+
+        if url_unchanged:
+            # Only the title is changing - no need to re-scrape/re-embed.
+            kb_entry.title = requested_title
+        else:
+            scraped_title, text = scrape_url(new_url)
             _replace_personal_kb_content(kb_entry, text)
             kb_entry.content_path = new_url
-            kb_entry.title = request.title if request.title is not None else title
-        elif request.title is not None:
-            kb_entry.title = request.title
+            kb_entry.title = requested_title if requested_title else scraped_title
 
         db.session.commit()
         db.session.refresh(kb_entry)
-        return _personal_kb_to_read(kb_entry)
+        return _public_kb_to_detail(kb_entry, http_request)
 
 
-@router.put("/personal-kb/{id}/text", response_model=PersonalKnowledgeBaseResponse)
+@router.put("/personal-kb/{id}/text", response_model=PublicPersonalKnowledgeBaseDetailResponse)
 async def update_personal_kb_text_public(
     id: int,
-    request: PersonalKnowledgeBaseTextUpdate,
+    request: PersonalKnowledgeBaseTextPublicUpdate,
+    http_request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
@@ -2120,25 +2675,28 @@ async def update_personal_kb_text_public(
         if not kb_entry:
             raise HTTPException(status_code=404, detail="Text Knowledge Base item not found")
 
-        if request.content is not None:
-            new_title = request.title if request.title is not None else kb_entry.title
-            _replace_personal_kb_content(kb_entry, request.content, embed_text=f"{new_title}\n\n{request.content}")
-        if request.title is not None:
-            kb_entry.title = request.title
+        if request.title == kb_entry.title and request.content == kb_entry.content_text:
+            raise HTTPException(status_code=400, detail="No changes detected.")
+
+        _replace_personal_kb_content(kb_entry, request.content, embed_text=f"{request.title}\n\n{request.content}")
+        kb_entry.title = request.title
 
         db.session.commit()
         db.session.refresh(kb_entry)
-        return _personal_kb_to_read(kb_entry)
+        return _public_kb_to_detail(kb_entry, http_request)
 
 
-@router.put("/personal-kb/{id}/file", response_model=PersonalKnowledgeBaseResponse)
+@router.put("/personal-kb/{id}/file", response_model=PublicPersonalKnowledgeBaseDetailResponse)
 async def update_personal_kb_file_public(
     id: int,
+    request: Request,
     title: str = Form(None),
     file: UploadFile = File(None),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
+    if file is not None:
+        await _reject_multiple_files(request)
     with db():
         kb_entry = db.session.query(PersonalKnowledgeBaseModel).filter(
             PersonalKnowledgeBaseModel.id == id,
@@ -2148,10 +2706,14 @@ async def update_personal_kb_file_public(
         if not kb_entry:
             raise HTTPException(status_code=404, detail="File Knowledge Base item not found")
 
+        requested_title = title.strip() if title and title.strip() else None
+
         if file is not None:
             _, ext = os.path.splitext(file.filename)
             if ext.lower() not in PERSONAL_KB_ALLOWED_EXTENSIONS:
                 raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
+
+            _reject_duplicate_kb_file(current_user.id, file.filename, exclude_id=kb_entry.id)
 
             file.file.seek(0, 2)
             file_size = file.file.tell()
@@ -2181,18 +2743,20 @@ async def update_personal_kb_file_public(
             old_path = kb_entry.content_path
             kb_entry.content_path = new_file_path
             kb_entry.file_size = round(file_size / 1024, 2)
-            kb_entry.title = title if title is not None else file.filename
+            # Blank/omitted title falls back to the new file's own name,
+            # instead of being stored as an empty string.
+            kb_entry.title = requested_title if requested_title else file.filename
             if old_path and os.path.exists(old_path):
                 try:
                     os.remove(old_path)
                 except OSError:
                     pass
-        elif title is not None:
-            kb_entry.title = title
+        elif requested_title is not None:
+            kb_entry.title = requested_title
 
         db.session.commit()
         db.session.refresh(kb_entry)
-        return _personal_kb_to_read(kb_entry)
+        return _public_kb_to_detail(kb_entry, request)
 
 
 @router.delete("/personal-kb/{id}")
@@ -2245,7 +2809,10 @@ async def get_ai_model_public(
 ):
     track_and_limit_api(current_user.id)
     with db():
-        model = db.session.query(AIModels).filter(AIModels.id == id).first()
+        model = db.session.query(AIModels).filter(
+            AIModels.id == id,
+            AIModels.model_name != CUSTOM_LLM_MODEL_NAME,
+        ).first()
         if not model:
             raise HTTPException(status_code=404, detail="AI Model not found")
         return model

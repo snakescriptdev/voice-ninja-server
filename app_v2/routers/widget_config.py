@@ -65,8 +65,11 @@ def list_widgets(
                 shareable_link=f"{base_url}/api/v2/widget/preview/{wa.public_id}",
                 is_enabled=wa.is_enabled,
                 created_at = wa.created_at,
+                updated_at = wa.modified_at,
                 agent_id=wa.agent_id,
-                agent_name=wa.agent.agent_name if wa.agent else ""
+                agent_name=wa.agent.agent_name if wa.agent else "",
+                primary_color=wa.primary_color,
+                show_branding=wa.show_branding,
             ) for wa in widgets
         ],
     )
@@ -122,7 +125,10 @@ def create_widget(request: Request, config: WidgetConfig, user=Depends(RequireFe
     widget_name=widget.widget_name,
     shareable_link=shareable_link,
     agent_id=agent.id,
+    agent_name=agent.agent_name,
     is_enabled=widget.is_enabled,
+    created_at=widget.created_at,
+    updated_at=widget.modified_at,
     appearance=config.appearance,
     prechat=config.prechat,
   )
@@ -157,7 +163,10 @@ def get_widget(request: Request, public_id: str, user=Depends(require_active_use
     widget_name=widget.widget_name,
     shareable_link=shareable_link,
     agent_id=agent.id if agent else "",
+    agent_name=agent.agent_name if agent else "",
     is_enabled=widget.is_enabled,
+    created_at=widget.created_at,
+    updated_at=widget.modified_at,
     appearance=appearance,
     prechat=prechat,
   )
@@ -298,7 +307,10 @@ def update_widget(
         widget_name=widget.widget_name,
         shareable_link=shareable_link,
         agent_id=agent.id if agent else None,
+        agent_name=agent.agent_name if agent else "",
         is_enabled=widget.is_enabled,
+        created_at=widget.created_at,
+        updated_at=widget.modified_at,
         appearance=appearance,
         prechat=prechat,
     )

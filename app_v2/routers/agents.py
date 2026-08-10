@@ -3,11 +3,19 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, func
 from fastapi_sqlalchemy import db
-from app_v2.schemas.agent_config import AgentConfigGenerator, AgentConfigOut
+from app_v2.schemas.agent_config import (
+    AgentConfigGenerator,
+    AgentConfigOut,
+    GeneratePromptRequest,
+    GeneratePromptResponse,
+)
 from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus
 import math
-from app_v2.utils.llm_utils import generate_system_prompt_async
+from app_v2.utils.llm_utils import (
+    generate_system_prompt_async,
+    generate_system_prompt_from_instructions_async,
+)
 from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.utils.elevenlabs.kb_utils import ElevenLabsKB
 from app_v2.utils.elevenlabs.phone_connection import ElevenLabsPhoneConnection
@@ -135,7 +143,8 @@ def agent_to_read(
         tools=[
             {
                 "id": bridge.function.id,
-                "name": bridge.function.name
+                "name": bridge.function.name,
+                "is_system_managed": bridge.function.is_system_managed,
             }
             for bridge in agent.agent_functions
         ],
@@ -213,74 +222,69 @@ def transform_built_in_tools(built_in_tools_params, session: Session, user_id: i
         config = built_in_tools_params.transfer_to_agent
         if config.enabled:
             el_transfers = []
-            valid_transfers = []
-            seen_transfers = set()
+            seen_conditions = set()
             for t in config.transfers:
                 transfer_data = t.model_dump()
-                requested_id = str(transfer_data.get("agent_id"))
-
-                # Enforce numeric ID for internal lookups
-                if not requested_id.isdigit():
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Agent ID '{requested_id}' must be an internal numeric ID for transfer to agent tool"
-                    )
+                requested_id = transfer_data.get("agent_id")
 
                 # An agent can't transfer a call to itself
-                if current_agent_id is not None and int(requested_id) == current_agent_id:
+                if current_agent_id is not None and requested_id == current_agent_id:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="An agent cannot be configured to transfer a call to itself"
                     )
 
+                # Two transfers can't share the same condition, even when they
+                # point at different target agents — ElevenLabs would have no
+                # way to decide which one to fire. Checked before the DB
+                # lookup below so a duplicate condition is caught without
+                # needing a resolved target agent to name in the message.
+                condition_key = t.condition.strip().lower()
+                if condition_key in seen_conditions:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail={
+                            "message": (
+                                f"The condition \"{t.condition}\" is used more than once in "
+                                "transfer_to_agent. Each condition must be unique, even across "
+                                "different agents."
+                            ),
+                            "detail": (
+                                f"Duplicate transfer_to_agent condition (case-insensitive, "
+                                f"trimmed match): '{t.condition}'"
+                            ),
+                        },
+                    )
+                seen_conditions.add(condition_key)
+
                 # Dynamic lookup: find agent by internal ID
                 target_agent = session.query(AgentModel).filter(
-                    AgentModel.id == int(requested_id),
+                    AgentModel.id == requested_id,
                     AgentModel.user_id == user_id
                 ).first()
 
-                # Duplicate detection (same target + condition) happens here,
-                # after the lookup, so the error can name the agent instead of
-                # showing its raw internal id.
-                dup_key = (requested_id, t.condition.strip().lower())
-                if dup_key in seen_transfers:
-                    agent_label = target_agent.agent_name if target_agent else requested_id
+                if not target_agent:
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Duplicate transfer to agent '{agent_label}' with the same condition '{t.condition}'"
+                        detail=f"Transfer agent not found: no agent with id {requested_id} exists on this account"
                     )
-                seen_transfers.add(dup_key)
+                if not target_agent.elevenlabs_agent_id:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Transfer agent not found: agent with id {requested_id} hasn't finished syncing to the voice provider yet"
+                    )
 
-                if target_agent and target_agent.elevenlabs_agent_id:
-                    transfer_data["agent_id"] = target_agent.elevenlabs_agent_id
-                    logger.info(f"Resolved agent transfer ID: {requested_id} -> {target_agent.elevenlabs_agent_id}")
-                else:
-                    logger.info(f"NOT FOUND agent transfer ID: {requested_id}, dropping this transfer")
-                    continue
-
+                transfer_data["agent_id"] = target_agent.elevenlabs_agent_id
+                logger.info(f"Resolved agent transfer ID: {requested_id} -> {target_agent.elevenlabs_agent_id}")
                 el_transfers.append(transfer_data)
-                valid_transfers.append(t)
 
-            # Drop invalid transfers from the source config too, so the caller
-            # persists the same set it just sent to ElevenLabs instead of
-            # keeping stale/unresolvable agent_id references in the DB.
-            config.transfers = valid_transfers
-
-            if valid_transfers:
-                el_tools["transfer_to_agent"] = {
-                    "name": config.name or "transfer_to_agent",
-                    "params": {
-                        "system_tool_type": "transfer_to_agent",
-                        "transfers": el_transfers
-                    }
+            el_tools["transfer_to_agent"] = {
+                "name": config.name or "transfer_to_agent",
+                "params": {
+                    "system_tool_type": "transfer_to_agent",
+                    "transfers": el_transfers
                 }
-            else:
-                # None of the configured transfers resolved to a real agent —
-                # don't send the tool to ElevenLabs, and mark it disabled in
-                # what gets persisted so the frontend doesn't show transfer to
-                # agent as enabled with nothing to transfer to.
-                logger.info("No valid transfers remain for transfer_to_agent; disabling the tool")
-                config.enabled = False
+            }
             
     # Transfer to Number
     if built_in_tools_params.transfer_to_number:
@@ -950,8 +954,9 @@ async def clone_agent(
             detail="Source agent is missing voice/model/language and cannot be cloned",
         )
 
-    # Generate a unique clone name: "<name> (copy)", "<name> (copy) 2", ...
-    base_name = f"{source.agent_name} (copy)"
+    # Generate a unique clone name: "<name> copy", "<name> copy 2", ...
+    # (parentheses aren't in the allowed agent_name charset - see validation_utils.py)
+    base_name = f"{source.agent_name} copy"
     clone_name = base_name
     suffix = 2
     while (
@@ -1898,3 +1903,38 @@ async def generate_system_prompt_for_agent(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"failed to generate system prompt at the moment: {str(e)}"
             )
+
+
+@router.post(
+    "/generate-prompt",
+    response_model=GeneratePromptResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Generate a system prompt from a freeform description via AI",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def generate_prompt_from_instructions(
+    payload: GeneratePromptRequest,
+    current_user: UnifiedAuthModel = Depends(require_active_user()),
+):
+    """
+    Backs the "Generate with AI" panel under the system prompt editor on the
+    create/edit agent pages — unlike /config, this takes no structured agent
+    fields and isn't blocked by an existing agent name, since it's used for
+    both brand-new agents and regenerating an existing one's prompt.
+    """
+    try:
+        system_prompt = await generate_system_prompt_from_instructions_async(payload.instructions)
+        if not system_prompt:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Could not generate a prompt at the moment. Please try again.",
+            )
+        return GeneratePromptResponse(system_prompt=system_prompt)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"error while generating prompt from instructions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not generate a prompt at the moment. Please try again.",
+        )

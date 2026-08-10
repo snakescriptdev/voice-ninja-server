@@ -1,8 +1,8 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from typing import Optional, List, Union
 
 class TransferToAgentParams(BaseModel):
-    agent_id: str = Field(..., description="The ID of the agent to transfer to")
+    agent_id: int = Field(..., description="The internal numeric `id` of the agent to transfer to (the `id` field from a GET /api/v2/public/agents item) — not its display name.")
     condition: str = Field(..., description="The condition that triggers this transfer (e.g., 'User wants to speak to sales')")
 
     @field_validator("condition")
@@ -28,15 +28,28 @@ class ToolConfig(BaseModel):
 class TransferToAgentConfig(ToolConfig):
     transfers: List[TransferToAgentParams] = Field(
         default=[],
-        description="List of possible transfers. Each item specifies an agent_id to transfer to and the condition for that transfer.",
+        description=(
+            "List of possible transfers — accepts multiple entries, one per "
+            "condition, so a single agent can route to different target "
+            "agents depending on what the caller says."
+        ),
         examples=[
-             [{"agent_id": "agent_xyz123", "condition": "User asks for sales department"}]
+            [
+                {"agent_id": 42, "condition": "User asks for the sales department"},
+                {"agent_id": 57, "condition": "User asks for billing or a refund"},
+            ]
         ]
     )
     # Duplicate-transfer detection (same agent_id + condition) happens in the
     # router (transform_built_in_tools in app_v2/routers/agents.py) instead of
     # here, so the error message can show the target agent's name rather than
     # its raw id — this schema has no DB access to resolve that name.
+
+    @model_validator(mode="after")
+    def enabled_requires_at_least_one_transfer(self):
+        if self.enabled and not self.transfers:
+            raise ValueError("transfer_to_agent is enabled but has no transfers configured — add at least one {agent_id, condition} entry")
+        return self
 
 class TransferToNumberConfig(ToolConfig):
     transfers: List[TransferToNumberParams] = Field(
@@ -59,3 +72,42 @@ class BuiltInToolsParams(BaseModel):
     transfer_to_agent: Optional[TransferToAgentConfig] = Field(default=None, description="Enable and config transfer_to_agent tool")
     transfer_to_number: Optional[TransferToNumberConfig] = Field(default=None, description="Enable and config transfer_to_number tool")
     play_keypad_touch_tone: Optional[Union[bool, ToolConfig]] = Field(default=None, description="Enable play_keypad_touch_tone tool")
+
+
+class PublicBuiltInToolsParams(BaseModel):
+    """
+    built_in_tools payload for the public API (POST/PUT /api/v2/public/agents).
+
+    Deliberately simpler than the internal BuiltInToolsParams:
+    - No transfer_to_number or play_keypad_touch_tone — both depend on a
+      Twilio phone connection, which the public API has never supported
+      configuring.
+    - end_call is a plain bool, not the internal {enabled, name} object —
+      `name` only overrides the label ElevenLabs shows the LLM for the tool
+      (e.g. "call ending" instead of "end_call") and isn't meaningful to set
+      through this API.
+    - transfer_to_agent is a flat list of {agent_id, condition} — there's no
+      separate `enabled` flag; an empty/omitted list means disabled, any
+      entries mean enabled. Converted to a full BuiltInToolsParams (with
+      transfer_to_number/play_keypad_touch_tone forced to None, and
+      transfer_to_agent wrapped back into {enabled, transfers}) before being
+      passed to transform_built_in_tools in app_v2/routers/agents.py, which
+      is shared with the internal router.
+    """
+    model_config = ConfigDict(extra="forbid")
+
+    end_call: Optional[bool] = Field(default=None, description="(boolean) Whether the agent can end the call on its own once the conversation is complete.")
+    transfer_to_agent: Optional[List[TransferToAgentParams]] = Field(
+        default=None,
+        description=(
+            "(list of objects, NOT a single object) Agents this agent can transfer to, one entry per "
+            "condition — accepts multiple entries so a single agent can route to different targets "
+            "depending on what the caller says. Omit or send an empty list to disable transfer_to_agent."
+        ),
+        examples=[
+            [
+                {"agent_id": 42, "condition": "User asks for the sales department"},
+                {"agent_id": 57, "condition": "User asks for billing or a refund"},
+            ]
+        ],
+    )
