@@ -27,8 +27,11 @@ def _reject_local_or_private_url(v: HttpUrl) -> HttpUrl:
 
 
 def _non_blank(v: Optional[str]) -> Optional[str]:
+    # Phrased to read naturally once get_readable_message prefixes it with
+    # the field's display name (e.g. "Title cannot be empty or contain only
+    # whitespace.") instead of as its own standalone sentence.
     if v is not None and not v.strip():
-        raise ValueError("This field cannot be empty or contain only whitespace.")
+        raise ValueError("cannot be empty or contain only whitespace.")
     return v.strip() if v is not None else v
 
 
@@ -114,13 +117,14 @@ class PersonalKnowledgeBaseResponse(BaseModel):
 
 
 class PublicPersonalKnowledgeBaseResponse(BaseModel):
-    """Response shape for the public API's personal-kb endpoints.
+    """List-item shape for GET /api/v2/public/personal-kb.
 
     Narrower than PersonalKnowledgeBaseResponse (used by the internal
-    dashboard router): drops `content_text` (an internal implementation
-    detail the caller already knows, having submitted it themselves) and
-    reports file size as `file_size_kb` so the unit is unambiguous, instead
-    of a bare `file_size` number.
+    dashboard router): drops `content_text` (not worth repeating in full for
+    every row of a list - see PublicPersonalKnowledgeBaseDetailResponse for
+    single-item responses, which do include it) and reports file size as
+    `file_size_kb` so the unit is unambiguous, instead of a bare `file_size`
+    number.
     """
 
     id: int
@@ -135,6 +139,15 @@ class PublicPersonalKnowledgeBaseResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PublicPersonalKnowledgeBaseDetailResponse(PublicPersonalKnowledgeBaseResponse):
+    """Single-item shape for the public API's personal-kb endpoints (GET by
+    id, and every create/update endpoint) - same as
+    PublicPersonalKnowledgeBaseResponse but with `content_text` included, so
+    a text/url item's actual content is visible without a second call."""
+
+    content_text: Optional[str] = None
 
 
 class PersonalKnowledgeBaseAgentItem(BaseModel):
