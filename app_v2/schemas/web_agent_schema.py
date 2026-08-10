@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field, field_serializer, field_validator
-from typing import Optional
+from typing import Literal, Optional
 from datetime import datetime
 from app_v2.schemas.enum_types import WebAgentPosition
 from app_v2.utils.validation_utils import (
@@ -20,7 +20,13 @@ class WebAgentCreate(BaseModel):
     agent_id: int
     widget_id: int
     bg_color: str = "#0B0B0F"
-    agent_position: WebAgentPosition = Field(WebAgentPosition.center, description=_POSITION_DESCRIPTION)
+    # Literal (not the WebAgentPosition enum) so the OpenAPI property carries
+    # its enum values + description inline instead of as a sibling of a
+    # `$ref` — per the JSON Schema spec, siblings next to `$ref` are supposed
+    # to be ignored, and Postman's OpenAPI-to-collection converter does
+    # exactly that, silently dropping the description (and thus the comment
+    # on this field) when generating an example request body.
+    agent_position: Literal["left", "center", "right"] = Field("center", description=_POSITION_DESCRIPTION)
 
     model_config = {"extra": "forbid"}
 
@@ -33,7 +39,7 @@ class WebAgentUpdate(BaseModel):
     agent_id: Optional[int] = None
     widget_id: Optional[int] = None
     bg_color: Optional[str] = None
-    agent_position: Optional[WebAgentPosition] = Field(None, description=_POSITION_DESCRIPTION)
+    agent_position: Optional[Literal["left", "center", "right"]] = Field(None, description=_POSITION_DESCRIPTION)
     is_enabled: Optional[bool] = None
 
     _validate_web_agent_name = field_validator("web_agent_name")(validate_entity_name_optional)
@@ -55,13 +61,44 @@ class WebAgentPublicUpdate(BaseModel):
     agent_id: int
     widget_id: int
     bg_color: str = "#0B0B0F"
-    agent_position: WebAgentPosition = Field(WebAgentPosition.center, description=_POSITION_DESCRIPTION)
+    agent_position: Literal["left", "center", "right"] = Field("center", description=_POSITION_DESCRIPTION)
     is_enabled: Optional[bool] = None
 
     model_config = {"extra": "forbid"}
 
     _validate_web_agent_name = field_validator("web_agent_name")(validate_entity_name)
     _validate_bg_color = field_validator("bg_color")(validate_hex_color)
+
+
+# Raw, hand-formatted JSON (with real "//" comments) used ONLY as the
+# request body example shown in Swagger/Postman for POST and PUT
+# /web-agents (wired in via `openapi_extra` in public_api.py). Kept as a
+# plain string — not a dict — specifically so the "//" comments render as
+# visible comments in the generated docs/Postman body instead of becoming
+# literal JSON fields the API would reject. A `description` on the
+# `agent_position` field alone isn't enough: OpenAPI emits it as a sibling
+# of the property's `$ref`/schema, and Postman's OpenAPI-to-collection
+# converter drops schema-level descriptions when building the example body,
+# so the only way the allowed values reliably show up next to the key in
+# the generated payload is this hand-written comment.
+PUBLIC_CREATE_WEB_AGENT_BODY_EXAMPLE = """{
+  "web_agent_name": "Sales Web Agent",
+  "agent_id": 42,
+  "widget_id": 7,
+  "bg_color": "#0B0B0F",
+  // allowed values in agent_position field are left, center, right.
+  "agent_position": "center"
+}"""
+
+PUBLIC_UPDATE_WEB_AGENT_BODY_EXAMPLE = """{
+  "web_agent_name": "Sales Web Agent",
+  "agent_id": 42,
+  "widget_id": 7,
+  "is_enabled": true,
+  "bg_color": "#0B0B0F",
+  // allowed values in agent_position field are left, center, right.
+  "agent_position": "center"
+}"""
 
 
 class WebAgentResponse(BaseModel):
