@@ -66,6 +66,8 @@ from app_v2.schemas.web_agent_schema import (
     WebAgentResponse,
     WebAgentListResponse,
     PublicWebAgentListResponse,
+    PUBLIC_CREATE_WEB_AGENT_BODY_EXAMPLE,
+    PUBLIC_UPDATE_WEB_AGENT_BODY_EXAMPLE,
 )
 from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
 from app_v2.schemas.language_schema import LanguageRead
@@ -1467,6 +1469,19 @@ async def update_widget(
         wa.agent_id = wa_in.agent_id
         wa.widget_name = wa_in.widget_name
 
+        # Every PUT is a full replace and `is_enabled` is required on every
+        # call (see PublicWidgetConfigUpdate), so the warning is keyed off
+        # what the caller sent, not off whether this call actually flips the
+        # value — sending `is_enabled: false` while it's already disabled
+        # still means "linked web agents will not work" and should say so.
+        # request.state.public_message surfaces this at the top-level
+        # `message` key of the envelope (see PublicAPIRoute.custom above),
+        # matching the pattern update_agent_public uses for its own
+        # disable-cascade notice.
+        if not wa_in.is_enabled:
+            disabled_message = "Widget disabled. Linked web agents will not work while this widget is disabled."
+            request.state.public_message = disabled_message
+            request.state.public_detail = disabled_message
         if wa_in.is_enabled != wa.is_enabled:
             if wa_in.is_enabled:
                 if not agent.is_enabled:
@@ -1590,7 +1605,18 @@ async def get_web_agent_public(
         return _to_response(request, web_agent)
 
 
-@router.post("/web-agents", response_model=WebAgentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/web-agents",
+    response_model=WebAgentResponse,
+    status_code=status.HTTP_201_CREATED,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"example": PUBLIC_CREATE_WEB_AGENT_BODY_EXAMPLE}
+            }
+        }
+    },
+)
 async def create_web_agent_public(
     payload: WebAgentCreate,
     request: Request,
@@ -1639,7 +1665,17 @@ async def create_web_agent_public(
         return _to_response(request, web_agent)
 
 
-@router.put("/web-agents/{public_id}", response_model=WebAgentResponse)
+@router.put(
+    "/web-agents/{public_id}",
+    response_model=WebAgentResponse,
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"example": PUBLIC_UPDATE_WEB_AGENT_BODY_EXAMPLE}
+            }
+        }
+    },
+)
 async def update_web_agent_public(
     public_id: str,
     payload: WebAgentPublicUpdate,
