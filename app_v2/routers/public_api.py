@@ -81,6 +81,7 @@ from app_v2.schemas.knowledge_base_schema import (
 )
 from app_v2.schemas.personal_knowledge_base_schema import (
     PublicPersonalKnowledgeBaseResponse,
+    PublicPersonalKnowledgeBaseDetailResponse,
     PersonalKnowledgeBaseURLCreate,
     PersonalKnowledgeBaseTextCreate,
     PersonalKnowledgeBaseURLPublicUpdate,
@@ -2402,22 +2403,23 @@ async def bind_kb_public(
 # at least one item attached (app_v2/utils/personal_kb_tool.py).
 # -------------------------------------------------------------------
 
-def _public_kb_to_read(item: PersonalKnowledgeBaseModel, request: Request) -> PublicPersonalKnowledgeBaseResponse:
-    """Public-API-facing projection of a personal KB row: drops the internal
-    `content_text` field and, for file-type items, rewrites `content_path`
-    from the raw on-disk path (e.g. "uploads/personal_kb/pub_1_..._x.txt",
-    meaningless to an external caller) into a full clickable URL served by
-    the `/uploads` static mount (see main.py)."""
+def _public_kb_fields(item: PersonalKnowledgeBaseModel, request: Request) -> dict:
+    """Shared field mapping for the public API's personal-kb responses: for
+    file-type items, rewrites `content_path` from the raw on-disk path (e.g.
+    "uploads/personal_kb/pub_1_..._x.txt", meaningless to an external caller)
+    into a full clickable URL served by the `/uploads` static mount (see
+    main.py)."""
     base = _personal_kb_to_read(item)
     content_path = base.content_path
     if item.kb_type == "file" and content_path:
         base_url = str(request.base_url).rstrip("/")
         content_path = f"{base_url}/{content_path.lstrip('/')}"
-    return PublicPersonalKnowledgeBaseResponse(
+    return dict(
         id=base.id,
         kb_type=base.kb_type,
         title=base.title,
         content_path=content_path,
+        content_text=base.content_text,
         file_size_kb=base.file_size,
         num_chunks=base.num_chunks,
         agent_count=base.agent_count,
@@ -2426,13 +2428,29 @@ def _public_kb_to_read(item: PersonalKnowledgeBaseModel, request: Request) -> Pu
     )
 
 
-def _reject_duplicate_kb_file(user_id: int, filename: str) -> None:
-    duplicate = db.session.query(PersonalKnowledgeBaseModel).filter(
+def _public_kb_to_read(item: PersonalKnowledgeBaseModel, request: Request) -> PublicPersonalKnowledgeBaseResponse:
+    """List-row projection - excludes `content_text` (see
+    PublicPersonalKnowledgeBaseResponse)."""
+    fields = _public_kb_fields(item, request)
+    fields.pop("content_text", None)
+    return PublicPersonalKnowledgeBaseResponse(**fields)
+
+
+def _public_kb_to_detail(item: PersonalKnowledgeBaseModel, request: Request) -> PublicPersonalKnowledgeBaseDetailResponse:
+    """Single-item projection - includes `content_text` (see
+    PublicPersonalKnowledgeBaseDetailResponse)."""
+    return PublicPersonalKnowledgeBaseDetailResponse(**_public_kb_fields(item, request))
+
+
+def _reject_duplicate_kb_file(user_id: int, filename: str, exclude_id: int = None) -> None:
+    query = db.session.query(PersonalKnowledgeBaseModel).filter(
         PersonalKnowledgeBaseModel.user_id == user_id,
         PersonalKnowledgeBaseModel.kb_type == "file",
         func.lower(PersonalKnowledgeBaseModel.title) == filename.lower(),
-    ).first()
-    if duplicate:
+    )
+    if exclude_id is not None:
+        query = query.filter(PersonalKnowledgeBaseModel.id != exclude_id)
+    if query.first():
         raise HTTPException(status_code=400, detail=f"A file named '{filename}' already exists in your knowledge base.")
 
 
@@ -2485,7 +2503,7 @@ async def list_personal_kb_public(
         )
 
 
-@router.get("/personal-kb/{id}", response_model=PublicPersonalKnowledgeBaseResponse)
+@router.get("/personal-kb/{id}", response_model=PublicPersonalKnowledgeBaseDetailResponse)
 async def get_personal_kb_public(
     id: int,
     request: Request,
@@ -2498,10 +2516,10 @@ async def get_personal_kb_public(
         ).first()
         if not kb_entry:
             raise HTTPException(status_code=404, detail="Knowledge Base item not found")
-        return _public_kb_to_read(kb_entry, request)
+        return _public_kb_to_detail(kb_entry, request)
 
 
-@router.post("/personal-kb/url", response_model=PublicPersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/personal-kb/url", response_model=PublicPersonalKnowledgeBaseDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_personal_kb_url_public(
     request: PersonalKnowledgeBaseURLCreate,
     http_request: Request,
@@ -2520,12 +2538,12 @@ async def create_personal_kb_url_public(
 
         title, text = scrape_url(url_str)
         kb_entry = _store_personal_kb_entry(user_id=current_user.id, kb_type="url", title=title, text=text, content_path=url_str)
-        result = _public_kb_to_read(kb_entry, http_request)
+        result = _public_kb_to_detail(kb_entry, http_request)
 
     return result
 
 
-@router.post("/personal-kb/text", response_model=PublicPersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/personal-kb/text", response_model=PublicPersonalKnowledgeBaseDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_personal_kb_text_public(
     request: PersonalKnowledgeBaseTextCreate,
     http_request: Request,
@@ -2545,12 +2563,12 @@ async def create_personal_kb_text_public(
             user_id=current_user.id, kb_type="text", title=request.title, text=request.content,
             embed_text=f"{request.title}\n\n{request.content}",
         )
-        result = _public_kb_to_read(kb_entry, http_request)
+        result = _public_kb_to_detail(kb_entry, http_request)
 
     return result
 
 
-@router.post("/personal-kb/file", response_model=PublicPersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/personal-kb/file", response_model=PublicPersonalKnowledgeBaseDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_personal_kb_file_public(
     request: Request,
     file: UploadFile = File(...),
@@ -2593,12 +2611,12 @@ async def create_personal_kb_file_public(
             logger.error(f"Error processing file '{file.filename}' for public personal KB: {e}")
             raise HTTPException(status_code=422, detail=f"Could not process file {file.filename}")
 
-        result = _public_kb_to_read(kb_entry, request)
+        result = _public_kb_to_detail(kb_entry, request)
 
     return result
 
 
-@router.put("/personal-kb/{id}/url", response_model=PublicPersonalKnowledgeBaseResponse)
+@router.put("/personal-kb/{id}/url", response_model=PublicPersonalKnowledgeBaseDetailResponse)
 async def update_personal_kb_url_public(
     id: int,
     request: PersonalKnowledgeBaseURLPublicUpdate,
@@ -2637,10 +2655,10 @@ async def update_personal_kb_url_public(
 
         db.session.commit()
         db.session.refresh(kb_entry)
-        return _public_kb_to_read(kb_entry, http_request)
+        return _public_kb_to_detail(kb_entry, http_request)
 
 
-@router.put("/personal-kb/{id}/text", response_model=PublicPersonalKnowledgeBaseResponse)
+@router.put("/personal-kb/{id}/text", response_model=PublicPersonalKnowledgeBaseDetailResponse)
 async def update_personal_kb_text_public(
     id: int,
     request: PersonalKnowledgeBaseTextPublicUpdate,
@@ -2665,10 +2683,10 @@ async def update_personal_kb_text_public(
 
         db.session.commit()
         db.session.refresh(kb_entry)
-        return _public_kb_to_read(kb_entry, http_request)
+        return _public_kb_to_detail(kb_entry, http_request)
 
 
-@router.put("/personal-kb/{id}/file", response_model=PublicPersonalKnowledgeBaseResponse)
+@router.put("/personal-kb/{id}/file", response_model=PublicPersonalKnowledgeBaseDetailResponse)
 async def update_personal_kb_file_public(
     id: int,
     request: Request,
@@ -2694,6 +2712,8 @@ async def update_personal_kb_file_public(
             _, ext = os.path.splitext(file.filename)
             if ext.lower() not in PERSONAL_KB_ALLOWED_EXTENSIONS:
                 raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
+
+            _reject_duplicate_kb_file(current_user.id, file.filename, exclude_id=kb_entry.id)
 
             file.file.seek(0, 2)
             file_size = file.file.tell()
@@ -2736,7 +2756,7 @@ async def update_personal_kb_file_public(
 
         db.session.commit()
         db.session.refresh(kb_entry)
-        return _public_kb_to_read(kb_entry, request)
+        return _public_kb_to_detail(kb_entry, request)
 
 
 @router.delete("/personal-kb/{id}")
