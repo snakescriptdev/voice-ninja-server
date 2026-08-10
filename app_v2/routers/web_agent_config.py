@@ -51,6 +51,7 @@ def _to_response(request: Request, web_agent: WebAgentPageModel) -> WebAgentResp
         agent_position=web_agent.agent_position,
         shareable_link=_shareable_link(request, web_agent.public_id),
         created_at=web_agent.created_at,
+        updated_at=web_agent.modified_at,
     )
 
 
@@ -61,6 +62,11 @@ def _validate_widget_belongs_to_agent(user_id: int, widget_id: int, agent_id: in
     ).first()
     if not widget:
         raise HTTPException(status_code=403, detail="Widget does not belong to user")
+    if not widget.is_enabled:
+        raise HTTPException(
+            status_code=400,
+            detail="Selected widget is disabled. Linked web agents will not work while the widget is disabled.",
+        )
     if widget.agent_id != agent_id:
         raise HTTPException(status_code=400, detail="Widget does not belong to the selected agent")
     return widget
