@@ -70,3 +70,24 @@ def validate_entity_name_optional(value: Optional[str]) -> Optional[str]:
     if value is None:
         return None
     return _check_entity_name(value)
+
+
+_HEX_COLOR_RE = re.compile(r"^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+_HEX_COLOR_ERROR_MESSAGE = (
+    "bg_color must be a valid hex color code, e.g. #0B0B0F or #FFF."
+)
+
+
+def validate_hex_color(value: str) -> str:
+    """Field validator for a required hex color field (e.g. *Create schemas)."""
+    if value is None or not _HEX_COLOR_RE.match(value):
+        raise ValueError(_HEX_COLOR_ERROR_MESSAGE)
+    return value
+
+
+def validate_hex_color_optional(value: Optional[str]) -> Optional[str]:
+    """Field validator for an optional hex color field (e.g. *Update schemas)."""
+    if value is None:
+        return None
+    return validate_hex_color(value)
