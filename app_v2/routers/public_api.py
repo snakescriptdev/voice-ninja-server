@@ -80,11 +80,11 @@ from app_v2.schemas.knowledge_base_schema import (
     KnowledgeBaseBind
 )
 from app_v2.schemas.personal_knowledge_base_schema import (
-    PersonalKnowledgeBaseResponse,
+    PublicPersonalKnowledgeBaseResponse,
     PersonalKnowledgeBaseURLCreate,
     PersonalKnowledgeBaseTextCreate,
-    PersonalKnowledgeBaseURLUpdate,
-    PersonalKnowledgeBaseTextUpdate,
+    PersonalKnowledgeBaseURLPublicUpdate,
+    PersonalKnowledgeBaseTextPublicUpdate,
 )
 from app_v2.schemas.pagination import PublicPaginatedResponse
 from app_v2.schemas.enum_types import PhoneNumberAssignStatus, GenderEnum, RequestMethodEnum, PlanFeatureEnum, PublicLogChannelEnum
@@ -132,6 +132,7 @@ from typing import Callable
 from fastapi.responses import Response, JSONResponse
 from fastapi.exceptions import RequestValidationError
 from app_v2.core.exceptions import get_readable_message
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 def _try_parse_json_bytes(raw: bytes):
     """Best-effort JSON parse; returns None on empty/invalid/non-JSON bytes."""
@@ -221,7 +222,17 @@ class PublicAPIRoute(APIRoute):
                     content=_public_envelope("success", data=payload, message=success_message, detail=success_detail),
                 )
                 return response
-            except HTTPException as e:
+            except StarletteHTTPException as e:
+                # Catches both fastapi.HTTPException (raised throughout this
+                # file) and the base starlette.exceptions.HTTPException that
+                # FastAPI/Starlette itself raises for lower-level request
+                # parsing failures - e.g. a multipart file upload with no
+                # `file` part at all comes back as a bare starlette
+                # HTTPException("Missing boundary in multipart.") before any
+                # of our own validation runs. `except HTTPException` (the
+                # fastapi subclass) alone doesn't catch that base-class
+                # instance, so it used to fall through to the generic
+                # `except Exception` branch below as an opaque 500.
                 status_code = e.status_code
                 # `detail` is usually a plain string shared by both `message`
                 # and `detail` in the envelope, as it always has been - but a
@@ -236,6 +247,11 @@ class PublicAPIRoute(APIRoute):
                 else:
                     error_message = str(e.detail)
                     detail_message = error_message
+                    if "multipart" in error_message.lower() or "boundary" in error_message.lower():
+                        error_message = (
+                            "The request body is missing required file data. Please attach "
+                            "the required file as multipart form-data and try again."
+                        )
                 response = JSONResponse(
                     status_code=status_code,
                     content=_public_envelope("failed", message=error_message, detail=detail_message),
@@ -1576,6 +1592,7 @@ async def list_web_agents_public(
                 widget_name=wa.widget.widget_name if wa.widget else "",
                 shareable_link=_shareable_link(request, wa.public_id),
                 created_at=wa.created_at,
+                updated_at=wa.modified_at,
             )
             for wa in web_agents
         ]
@@ -1712,6 +1729,18 @@ async def update_web_agent_public(
         _check_web_agent_name_unique(
             payload.agent_id, payload.widget_id, payload.web_agent_name, exclude_id=web_agent.id
         )
+
+        target_is_enabled = payload.is_enabled if payload.is_enabled is not None else web_agent.is_enabled
+        no_changes = (
+            payload.agent_id == web_agent.agent_id
+            and payload.widget_id == web_agent.widget_id
+            and payload.web_agent_name == web_agent.web_agent_name
+            and payload.bg_color.lower() == (web_agent.bg_color or "").lower()
+            and payload.agent_position == web_agent.agent_position
+            and target_is_enabled == web_agent.is_enabled
+        )
+        if no_changes:
+            raise HTTPException(status_code=400, detail="No changes detected.")
 
         web_agent.agent_id = payload.agent_id
         web_agent.widget_id = payload.widget_id
@@ -2373,12 +2402,61 @@ async def bind_kb_public(
 # at least one item attached (app_v2/utils/personal_kb_tool.py).
 # -------------------------------------------------------------------
 
-@router.get("/personal-kb", response_model=PublicPaginatedResponse[PersonalKnowledgeBaseResponse])
+def _public_kb_to_read(item: PersonalKnowledgeBaseModel, request: Request) -> PublicPersonalKnowledgeBaseResponse:
+    """Public-API-facing projection of a personal KB row: drops the internal
+    `content_text` field and, for file-type items, rewrites `content_path`
+    from the raw on-disk path (e.g. "uploads/personal_kb/pub_1_..._x.txt",
+    meaningless to an external caller) into a full clickable URL served by
+    the `/uploads` static mount (see main.py)."""
+    base = _personal_kb_to_read(item)
+    content_path = base.content_path
+    if item.kb_type == "file" and content_path:
+        base_url = str(request.base_url).rstrip("/")
+        content_path = f"{base_url}/{content_path.lstrip('/')}"
+    return PublicPersonalKnowledgeBaseResponse(
+        id=base.id,
+        kb_type=base.kb_type,
+        title=base.title,
+        content_path=content_path,
+        file_size_kb=base.file_size,
+        num_chunks=base.num_chunks,
+        agent_count=base.agent_count,
+        created_at=base.created_at,
+        modified_at=base.modified_at,
+    )
+
+
+def _reject_duplicate_kb_file(user_id: int, filename: str) -> None:
+    duplicate = db.session.query(PersonalKnowledgeBaseModel).filter(
+        PersonalKnowledgeBaseModel.user_id == user_id,
+        PersonalKnowledgeBaseModel.kb_type == "file",
+        func.lower(PersonalKnowledgeBaseModel.title) == filename.lower(),
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=400, detail=f"A file named '{filename}' already exists in your knowledge base.")
+
+
+async def _reject_multiple_files(request: Request, field_name: str = "file") -> None:
+    """Guards against a client (e.g. a Postman collection generated from an
+    older/array-typed version of this endpoint's OpenAPI schema) attaching
+    more than one file under the same form field - only one file is allowed
+    per request. FastAPI's own binding for a singular `UploadFile` param
+    silently keeps just the first part and drops the rest, so this has to be
+    checked against the raw form data instead."""
+    form = await request.form()
+    if len(form.getlist(field_name)) > 1:
+        raise HTTPException(status_code=400, detail="Only one file can be uploaded per request.")
+
+
+@router.get("/personal-kb", response_model=PublicPaginatedResponse[PublicPersonalKnowledgeBaseResponse])
 async def list_personal_kb_public(
+    request: Request,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
     title: str = None,
     kb_type: str = None,
+    sort_by: Literal["created_at", "modified_at"] = Query("created_at", description="Field to sort by."),
+    sort_order: Literal["asc", "desc"] = Query("desc", description="Sort direction."),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
@@ -2393,18 +2471,24 @@ async def list_personal_kb_public(
 
         total = query.count()
         skip = (page - 1) * size
-        items = query.order_by(PersonalKnowledgeBaseModel.id.asc()).offset(skip).limit(size).all()
+        sort_col = PersonalKnowledgeBaseModel.created_at if sort_by == "created_at" else PersonalKnowledgeBaseModel.modified_at
+        order_col = sort_col.asc() if sort_order == "asc" else sort_col.desc()
+        items = (
+            query.order_by(order_col, PersonalKnowledgeBaseModel.id.desc())
+            .offset(skip).limit(size).all()
+        )
         total_pages = math.ceil(total / size) if total else 0
         return PublicPaginatedResponse(
             total=total, current_page=page, size=size, total_pages=total_pages,
             has_next=page < total_pages, has_previous=page > 1,
-            items=[_personal_kb_to_read(item) for item in items],
+            items=[_public_kb_to_read(item, request) for item in items],
         )
 
 
-@router.get("/personal-kb/{id}", response_model=PersonalKnowledgeBaseResponse)
+@router.get("/personal-kb/{id}", response_model=PublicPersonalKnowledgeBaseResponse)
 async def get_personal_kb_public(
     id: int,
+    request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
@@ -2414,12 +2498,13 @@ async def get_personal_kb_public(
         ).first()
         if not kb_entry:
             raise HTTPException(status_code=404, detail="Knowledge Base item not found")
-        return _personal_kb_to_read(kb_entry)
+        return _public_kb_to_read(kb_entry, request)
 
 
-@router.post("/personal-kb/url", response_model=PersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/personal-kb/url", response_model=PublicPersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_personal_kb_url_public(
     request: PersonalKnowledgeBaseURLCreate,
+    http_request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
@@ -2435,14 +2520,15 @@ async def create_personal_kb_url_public(
 
         title, text = scrape_url(url_str)
         kb_entry = _store_personal_kb_entry(user_id=current_user.id, kb_type="url", title=title, text=text, content_path=url_str)
-        result = _personal_kb_to_read(kb_entry)
+        result = _public_kb_to_read(kb_entry, http_request)
 
     return result
 
 
-@router.post("/personal-kb/text", response_model=PersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/personal-kb/text", response_model=PublicPersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_personal_kb_text_public(
     request: PersonalKnowledgeBaseTextCreate,
+    http_request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
@@ -2459,69 +2545,64 @@ async def create_personal_kb_text_public(
             user_id=current_user.id, kb_type="text", title=request.title, text=request.content,
             embed_text=f"{request.title}\n\n{request.content}",
         )
-        result = _personal_kb_to_read(kb_entry)
+        result = _public_kb_to_read(kb_entry, http_request)
 
     return result
 
 
-@router.post("/personal-kb/file", response_model=List[PersonalKnowledgeBaseResponse], status_code=status.HTTP_201_CREATED)
+@router.post("/personal-kb/file", response_model=PublicPersonalKnowledgeBaseResponse, status_code=status.HTTP_201_CREATED)
 async def create_personal_kb_file_public(
-    files: List[UploadFile] = File(...),
+    request: Request,
+    file: UploadFile = File(...),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
+    await _reject_multiple_files(request)
     with db():
-        uploaded_entries = []
-        seen_filenames = set()
-        for file in files:
-            _, ext = os.path.splitext(file.filename)
-            if ext.lower() not in PERSONAL_KB_ALLOWED_EXTENSIONS:
-                raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
+        _, ext = os.path.splitext(file.filename)
+        if ext.lower() not in PERSONAL_KB_ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"Invalid file type for {file.filename}. Allowed: .docx, .pdf, .txt")
 
-            filename_key = file.filename.lower()
-            if filename_key in seen_filenames:
-                raise HTTPException(status_code=400, detail=f"Duplicate file name '{file.filename}' in this upload request.")
-            seen_filenames.add(filename_key)
+        _reject_duplicate_kb_file(current_user.id, file.filename)
 
-            file.file.seek(0, 2)
-            file_size = file.file.tell()
-            file.file.seek(0)
-            if file_size == 0:
-                raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
-            if file_size > PERSONAL_KB_MAX_FILE_SIZE_IN_MB * 1024 * 1024:
-                raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds {PERSONAL_KB_MAX_FILE_SIZE_IN_MB}MB limit")
+        file.file.seek(0, 2)
+        file_size = file.file.tell()
+        file.file.seek(0)
+        if file_size == 0:
+            raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
+        if file_size > PERSONAL_KB_MAX_FILE_SIZE_IN_MB * 1024 * 1024:
+            raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds {PERSONAL_KB_MAX_FILE_SIZE_IN_MB}MB limit")
 
-            file_path = os.path.join(PERSONAL_KB_UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
-            with open(file_path, "wb") as buffer:
-                shutil.copyfileobj(file.file, buffer)
+        file_path = os.path.join(PERSONAL_KB_UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
-            try:
-                text = extract_text_from_file(file_path)
-                kb_entry = _store_personal_kb_entry(
-                    user_id=current_user.id, kb_type="file", title=file.filename, text=text,
-                    content_path=file_path, file_size=round(file_size / 1024, 2),
-                )
-            except HTTPException:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                raise
-            except Exception as e:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                logger.error(f"Error processing file '{file.filename}' for public personal KB: {e}")
-                raise HTTPException(status_code=422, detail=f"Could not process file {file.filename}")
+        try:
+            text = extract_text_from_file(file_path)
+            kb_entry = _store_personal_kb_entry(
+                user_id=current_user.id, kb_type="file", title=file.filename, text=text,
+                content_path=file_path, file_size=round(file_size / 1024, 2),
+            )
+        except HTTPException:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise
+        except Exception as e:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            logger.error(f"Error processing file '{file.filename}' for public personal KB: {e}")
+            raise HTTPException(status_code=422, detail=f"Could not process file {file.filename}")
 
-            uploaded_entries.append(kb_entry)
-
-        result = [_personal_kb_to_read(entry) for entry in uploaded_entries]
+        result = _public_kb_to_read(kb_entry, request)
 
     return result
 
 
-@router.put("/personal-kb/{id}/url", response_model=PersonalKnowledgeBaseResponse)
+@router.put("/personal-kb/{id}/url", response_model=PublicPersonalKnowledgeBaseResponse)
 async def update_personal_kb_url_public(
     id: int,
-    request: PersonalKnowledgeBaseURLUpdate,
+    request: PersonalKnowledgeBaseURLPublicUpdate,
+    http_request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
@@ -2534,24 +2615,36 @@ async def update_personal_kb_url_public(
         if not kb_entry:
             raise HTTPException(status_code=404, detail="URL Knowledge Base item not found")
 
-        if request.url is not None:
-            new_url = str(request.url)
-            title, text = scrape_url(new_url)
+        new_url = str(request.url)
+        # Blank/whitespace-only title is treated the same as "not provided" -
+        # falls back to the (re-)scraped page title instead of being stored
+        # as an empty string.
+        requested_title = request.title.strip() if request.title and request.title.strip() else None
+        url_unchanged = new_url.lower() == (kb_entry.content_path or "").lower()
+        title_unchanged = requested_title is None or requested_title == kb_entry.title
+
+        if url_unchanged and title_unchanged:
+            raise HTTPException(status_code=400, detail="No changes detected.")
+
+        if url_unchanged:
+            # Only the title is changing - no need to re-scrape/re-embed.
+            kb_entry.title = requested_title
+        else:
+            scraped_title, text = scrape_url(new_url)
             _replace_personal_kb_content(kb_entry, text)
             kb_entry.content_path = new_url
-            kb_entry.title = request.title if request.title is not None else title
-        elif request.title is not None:
-            kb_entry.title = request.title
+            kb_entry.title = requested_title if requested_title else scraped_title
 
         db.session.commit()
         db.session.refresh(kb_entry)
-        return _personal_kb_to_read(kb_entry)
+        return _public_kb_to_read(kb_entry, http_request)
 
 
-@router.put("/personal-kb/{id}/text", response_model=PersonalKnowledgeBaseResponse)
+@router.put("/personal-kb/{id}/text", response_model=PublicPersonalKnowledgeBaseResponse)
 async def update_personal_kb_text_public(
     id: int,
-    request: PersonalKnowledgeBaseTextUpdate,
+    request: PersonalKnowledgeBaseTextPublicUpdate,
+    http_request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
@@ -2564,25 +2657,28 @@ async def update_personal_kb_text_public(
         if not kb_entry:
             raise HTTPException(status_code=404, detail="Text Knowledge Base item not found")
 
-        if request.content is not None:
-            new_title = request.title if request.title is not None else kb_entry.title
-            _replace_personal_kb_content(kb_entry, request.content, embed_text=f"{new_title}\n\n{request.content}")
-        if request.title is not None:
-            kb_entry.title = request.title
+        if request.title == kb_entry.title and request.content == kb_entry.content_text:
+            raise HTTPException(status_code=400, detail="No changes detected.")
+
+        _replace_personal_kb_content(kb_entry, request.content, embed_text=f"{request.title}\n\n{request.content}")
+        kb_entry.title = request.title
 
         db.session.commit()
         db.session.refresh(kb_entry)
-        return _personal_kb_to_read(kb_entry)
+        return _public_kb_to_read(kb_entry, http_request)
 
 
-@router.put("/personal-kb/{id}/file", response_model=PersonalKnowledgeBaseResponse)
+@router.put("/personal-kb/{id}/file", response_model=PublicPersonalKnowledgeBaseResponse)
 async def update_personal_kb_file_public(
     id: int,
+    request: Request,
     title: str = Form(None),
     file: UploadFile = File(None),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
+    if file is not None:
+        await _reject_multiple_files(request)
     with db():
         kb_entry = db.session.query(PersonalKnowledgeBaseModel).filter(
             PersonalKnowledgeBaseModel.id == id,
@@ -2591,6 +2687,8 @@ async def update_personal_kb_file_public(
         ).first()
         if not kb_entry:
             raise HTTPException(status_code=404, detail="File Knowledge Base item not found")
+
+        requested_title = title.strip() if title and title.strip() else None
 
         if file is not None:
             _, ext = os.path.splitext(file.filename)
@@ -2625,18 +2723,20 @@ async def update_personal_kb_file_public(
             old_path = kb_entry.content_path
             kb_entry.content_path = new_file_path
             kb_entry.file_size = round(file_size / 1024, 2)
-            kb_entry.title = title if title is not None else file.filename
+            # Blank/omitted title falls back to the new file's own name,
+            # instead of being stored as an empty string.
+            kb_entry.title = requested_title if requested_title else file.filename
             if old_path and os.path.exists(old_path):
                 try:
                     os.remove(old_path)
                 except OSError:
                     pass
-        elif title is not None:
-            kb_entry.title = title
+        elif requested_title is not None:
+            kb_entry.title = requested_title
 
         db.session.commit()
         db.session.refresh(kb_entry)
-        return _personal_kb_to_read(kb_entry)
+        return _public_kb_to_read(kb_entry, request)
 
 
 @router.delete("/personal-kb/{id}")

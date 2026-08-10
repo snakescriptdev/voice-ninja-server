@@ -165,7 +165,8 @@ class PublicWebAgentListResponse(BaseModel):
     widget_name: str
     shareable_link: str
     created_at: datetime
+    updated_at: datetime
 
-    @field_serializer("created_at")
+    @field_serializer("created_at", "updated_at")
     def serialize_datetime(self, dt: datetime):
         return dt.date()

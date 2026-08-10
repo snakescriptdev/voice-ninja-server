@@ -66,6 +66,15 @@ BASE_DIR = Path(__file__).resolve().parent
 
 app.mount("/static", StaticFiles(directory=BASE_DIR / "app_v2"/"static"), name="static")
 
+# Serves personal-KB (and other) uploaded files directly by their on-disk
+# relative path (e.g. "uploads/personal_kb/pub_1_..._x.txt") so the public
+# API can hand back a plain, clickable URL as `content_path` for file-type
+# KB items (see _public_kb_to_read in app_v2/routers/public_api.py) instead
+# of a server-local path meaningless to an external caller.
+_uploads_dir = BASE_DIR / "uploads"
+_uploads_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=_uploads_dir), name="uploads")
+
 @app.get("/docs", include_in_schema=False)
 def custom_docs():
     html = open(BASE_DIR / "app_v2"/"templates" / "swagger.html").read()
