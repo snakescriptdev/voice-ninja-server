@@ -60,7 +60,13 @@ from app_v2.schemas.widget_schema import (
     WidgetConfigResponse, WidgetListResponse, PublicWidgetConfig, PublicWidgetConfigUpdate,
     PUBLIC_CREATE_WIDGET_BODY_EXAMPLE, PUBLIC_UPDATE_WIDGET_BODY_EXAMPLE,
 )
-from app_v2.schemas.web_agent_schema import WebAgentCreate, WebAgentUpdate, WebAgentResponse, WebAgentListResponse
+from app_v2.schemas.web_agent_schema import (
+    WebAgentCreate,
+    WebAgentPublicUpdate,
+    WebAgentResponse,
+    WebAgentListResponse,
+    PublicWebAgentListResponse,
+)
 from app_v2.schemas.twilio_connector_schema import TwilioConnectorCreate, TwilioConnectorUpdate, TwilioConnectorResponse
 from app_v2.schemas.language_schema import LanguageRead
 from app_v2.schemas.voice_schema import VoiceRead, PublicVoiceListRead, PublicVoiceRead
@@ -1507,11 +1513,17 @@ async def delete_widget(
 # WEB AGENTS CRUD
 # -------------------------------------------------------------------
 
-@router.get("/web-agents", response_model=PublicPaginatedResponse[WebAgentListResponse])
+@router.get("/web-agents", response_model=PublicPaginatedResponse[PublicWebAgentListResponse])
 async def list_web_agents_public(
     request: Request,
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    is_enabled: Optional[bool] = Query(None, description="Filter by whether the web agent is enabled."),
+    web_agent_name: Optional[str] = Query(None, description="Case-insensitive substring match on web agent name."),
+    agent_id: Optional[int] = Query(None, description="Filter by linked Voice Agent id."),
+    widget_id: Optional[int] = Query(None, description="Filter by linked Widget id."),
+    sort_by: Literal["created_at", "updated_at"] = Query("created_at", description="Field to sort by."),
+    sort_order: Literal["asc", "desc"] = Query("desc", description="Sort direction."),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
@@ -1521,25 +1533,32 @@ async def list_web_agents_public(
         from app_v2.routers.web_agent_config import _shareable_link
 
         query = db.session.query(WebAgentPageModel).filter(WebAgentPageModel.user_id == current_user.id)
+        if is_enabled is not None:
+            query = query.filter(WebAgentPageModel.is_enabled == is_enabled)
+        if web_agent_name:
+            query = query.filter(func.lower(WebAgentPageModel.web_agent_name).contains(web_agent_name.lower()))
+        if agent_id is not None:
+            query = query.filter(WebAgentPageModel.agent_id == agent_id)
+        if widget_id is not None:
+            query = query.filter(WebAgentPageModel.widget_id == widget_id)
+
         total = query.count()
+        sort_column = WebAgentPageModel.created_at if sort_by == "created_at" else WebAgentPageModel.modified_at
+        order_column = sort_column.asc() if sort_order == "asc" else sort_column.desc()
         web_agents = (
-            query.order_by(WebAgentPageModel.created_at.desc(), WebAgentPageModel.id.desc())
+            query.order_by(order_column, WebAgentPageModel.id.desc())
             .offset(skip).limit(size).all()
         )
         items = [
-            WebAgentListResponse(
+            PublicWebAgentListResponse(
                 id=wa.id,
                 public_id=wa.public_id,
                 web_agent_name=wa.web_agent_name,
                 is_enabled=wa.is_enabled,
-                bg_color=wa.bg_color,
-                agent_position=wa.agent_position,
                 agent_id=wa.agent_id,
                 agent_name=wa.agent.agent_name if wa.agent else "",
                 widget_id=wa.widget_id,
                 widget_name=wa.widget.widget_name if wa.widget else "",
-                widget_primary_color=wa.widget.primary_color if wa.widget else "#562C7C",
-                widget_show_branding=wa.widget.show_branding if wa.widget else True,
                 shareable_link=_shareable_link(request, wa.public_id),
                 created_at=wa.created_at,
             )
@@ -1580,7 +1599,11 @@ async def create_web_agent_public(
     track_and_limit_api(current_user.id)
     require_feature_enabled(current_user.id, PlanFeatureEnum.web_agent)
     with db():
-        from app_v2.routers.web_agent_config import _to_response, _validate_widget_belongs_to_agent
+        from app_v2.routers.web_agent_config import (
+            _to_response,
+            _validate_widget_belongs_to_agent,
+            _check_web_agent_name_unique,
+        )
 
         agent = db.session.query(AgentModel).filter(
             AgentModel.id == payload.agent_id, AgentModel.user_id == current_user.id
@@ -1591,6 +1614,7 @@ async def create_web_agent_public(
             raise HTTPException(status_code=403, detail="Agent is disabled")
 
         _validate_widget_belongs_to_agent(current_user.id, payload.widget_id, payload.agent_id)
+        _check_web_agent_name_unique(payload.agent_id, payload.widget_id, payload.web_agent_name)
 
         web_agent = WebAgentPageModel(
             public_id=str(uuid.uuid4()),
@@ -1618,14 +1642,18 @@ async def create_web_agent_public(
 @router.put("/web-agents/{public_id}", response_model=WebAgentResponse)
 async def update_web_agent_public(
     public_id: str,
-    payload: WebAgentUpdate,
+    payload: WebAgentPublicUpdate,
     request: Request,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access, allow_coin_fallback=True))
 ):
     track_and_limit_api(current_user.id)
     require_feature_enabled(current_user.id, PlanFeatureEnum.web_agent)
     with db():
-        from app_v2.routers.web_agent_config import _to_response, _validate_widget_belongs_to_agent
+        from app_v2.routers.web_agent_config import (
+            _to_response,
+            _validate_widget_belongs_to_agent,
+            _check_web_agent_name_unique,
+        )
 
         web_agent = db.session.query(WebAgentPageModel).filter(
             WebAgentPageModel.public_id == public_id, WebAgentPageModel.user_id == current_user.id
@@ -1633,41 +1661,32 @@ async def update_web_agent_public(
         if not web_agent:
             raise HTTPException(status_code=404, detail="Web agent not found")
 
-        update_data = payload.model_dump(exclude_unset=True)
+        # PUT is a full replace: agent_id/widget_id/web_agent_name are mandatory
+        # on WebAgentPublicUpdate, so every one of these is always re-validated
+        # against the new payload rather than only when the field is present.
+        agent = db.session.query(AgentModel).filter(
+            AgentModel.id == payload.agent_id, AgentModel.user_id == current_user.id
+        ).first()
+        if not agent:
+            raise HTTPException(status_code=403, detail="Agent does not belong to user")
+        if not agent.is_enabled:
+            raise HTTPException(status_code=403, detail="Selected agent is disabled")
 
-        new_agent_id = update_data.get("agent_id", web_agent.agent_id)
-        if "agent_id" in update_data:
-            agent = db.session.query(AgentModel).filter(
-                AgentModel.id == new_agent_id, AgentModel.user_id == current_user.id
-            ).first()
-            if not agent:
-                raise HTTPException(status_code=403, detail="Agent does not belong to user")
-            web_agent.agent_id = new_agent_id
+        _validate_widget_belongs_to_agent(current_user.id, payload.widget_id, payload.agent_id)
+        _check_web_agent_name_unique(
+            payload.agent_id, payload.widget_id, payload.web_agent_name, exclude_id=web_agent.id
+        )
 
-        if "widget_id" in update_data:
-            _validate_widget_belongs_to_agent(current_user.id, update_data["widget_id"], new_agent_id)
-            web_agent.widget_id = update_data["widget_id"]
-        elif "agent_id" in update_data:
-            # Agent changed but widget wasn't re-specified — the existing widget must
-            # still belong to the (new) agent for the record to stay consistent.
-            _validate_widget_belongs_to_agent(current_user.id, web_agent.widget_id, new_agent_id)
+        web_agent.agent_id = payload.agent_id
+        web_agent.widget_id = payload.widget_id
+        web_agent.web_agent_name = payload.web_agent_name
+        web_agent.bg_color = payload.bg_color
+        web_agent.agent_position = payload.agent_position
 
-        if "web_agent_name" in update_data:
-            web_agent.web_agent_name = update_data["web_agent_name"]
-        if "bg_color" in update_data:
-            web_agent.bg_color = update_data["bg_color"]
-        if "agent_position" in update_data:
-            web_agent.agent_position = update_data["agent_position"]
-
-        if "is_enabled" in update_data:
-            if update_data["is_enabled"] and not web_agent.is_enabled:
-                voice_agent = db.session.query(AgentModel).filter(AgentModel.id == web_agent.agent_id).first()
-                if not voice_agent or not voice_agent.is_enabled:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Cannot enable web agent: its Voice Agent is disabled",
-                    )
-            web_agent.is_enabled = update_data["is_enabled"]
+        # agent.is_enabled was already confirmed True above, so the linked Voice
+        # Agent can never be the reason an enable here would be rejected.
+        if payload.is_enabled is not None:
+            web_agent.is_enabled = payload.is_enabled
 
         db.session.commit()
         db.session.refresh(web_agent)
