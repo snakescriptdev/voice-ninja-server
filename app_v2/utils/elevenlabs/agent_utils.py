@@ -33,6 +33,10 @@ _FRIENDLY_AGENT_SYNC_ERRORS = {
         "The prompt length is too long for this model. Please try changing "
         "the model or reducing the prompt size."
     ),
+    "rag_documents_size_too_large": (
+        "The agent's selected model and prompt is too large. Please decrease "
+        "or remove some prompt content."
+    ),
 }
 
 
@@ -109,8 +113,16 @@ class ElevenLabsAgent(BaseElevenLabs):
                     "max_tokens": -1,
                     "tool_ids": tool_ids or [],
                     "knowledge_base": knowledge_base or [],
-                    "rag":{
-                        "enabled": True
+                    # RAG is only meaningful (and only budget-checked by
+                    # ElevenLabs against the model's context window) when
+                    # there's actual knowledge_base content to search.
+                    # Forcing it on unconditionally used to make ElevenLabs
+                    # reject the request outright for small-context models
+                    # (e.g. gpt-4-0613, 8k tokens) even with an empty
+                    # knowledge_base and a short prompt — see
+                    # rag_documents_size_too_large in describe_agent_sync_error.
+                    "rag": {
+                        "enabled": bool(knowledge_base)
                     }
                 },
                 "first_message": first_message,
@@ -379,6 +391,13 @@ class ElevenLabsAgent(BaseElevenLabs):
             if "prompt" not in current_config["agent"]:
                 current_config["agent"]["prompt"] = {}
             current_config["agent"]["prompt"]["knowledge_base"] = knowledge_base
+            # Keep rag.enabled in sync with whether there's still any
+            # knowledge_base content — otherwise removing the last document
+            # leaves RAG stuck enabled with nothing to search, which can
+            # make ElevenLabs reject a later model change on this same
+            # agent (small-context models fail the RAG budget check even
+            # against an empty knowledge_base once rag.enabled is true).
+            current_config["agent"]["prompt"]["rag"] = {"enabled": bool(knowledge_base)}
             config_updated = True
         
         if dynamic_variables is not None:

@@ -461,22 +461,20 @@ def agent_to_read(agent: AgentModel) -> PublicAgentRead:
         updated_at=agent.modified_at,
         # Personal KB (PersonalKnowledgeBaseAgentBridgeModel) — see create_agent
         # for why this API uses personal KB, not the legacy KnowledgeBaseModel.
-        # is_system_managed is always False here: unlike the search_personal_
-        # knowledge_base tool it provisions (see `tools` below), a KB item
-        # itself is always something the user uploaded/added, never
-        # system-provisioned.
         knowledgebase = [
             {
                 "id": bridge.knowledge_base.id,
                 "title": bridge.knowledge_base.title,
                 "type": bridge.knowledge_base.kb_type,
-                "is_system_managed": False,
             }
             for bridge in agent.personal_kb_agent_bridges
         ],
         variables={var.variable_name: var.variable_value for var in agent.variables},
+        # is_system_managed flags the auto-provisioned search_personal_
+        # knowledge_base tool (see personal_kb_tool.py) — never something a
+        # caller adds directly via `tools` (see create_agent/update_agent_public).
         tools=[
-            {"id": bridge.function.id, "name": bridge.function.name}
+            {"id": bridge.function.id, "name": bridge.function.name, "is_system_managed": bridge.function.is_system_managed}
             for bridge in agent.agent_functions
         ],
         built_in_tools=_public_built_in_tools(agent.built_in_tools),
@@ -1068,6 +1066,17 @@ async def update_agent_public(
             "language": language.lang_code,
             "llm_model": ai_model.model_name,
             "timezone": agent_in.timezone,
+            # This API never attaches ElevenLabs-native knowledge_base
+            # documents (personal KB uses its own search tool instead — see
+            # ensure_personal_kb_tool_for_agent) — sending [] explicitly on
+            # every update (rather than omitting the key) also self-heals
+            # any agent whose rag.enabled got stuck true from before RAG was
+            # made conditional on actual knowledge_base content (see
+            # ElevenLabsAgent.create_agent/update_agent), which could
+            # otherwise make ElevenLabs reject a later model change with
+            # rag_documents_size_too_large even though nothing here is
+            # actually using RAG.
+            "knowledge_base": [],
         }
 
         db.session.query(AgentAIModelBridge).filter(AgentAIModelBridge.agent_id == agent_id).delete()
