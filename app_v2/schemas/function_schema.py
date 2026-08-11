@@ -1,3 +1,4 @@
+import ipaddress
 import re
 from typing import Dict, List, Optional, Literal, Any
 from datetime import datetime
@@ -28,6 +29,110 @@ PrimitiveType = Literal["string", "integer", "number", "boolean"]
 
 
 # -------------------------------------------------
+# Shared validation helpers
+# -------------------------------------------------
+
+def _require_non_blank(value: Optional[str], label: str) -> Optional[str]:
+    if value is not None and not value.strip():
+        raise ValueError(f"{label} cannot be empty or only whitespace")
+    return value
+
+
+def _validate_headers_dict(headers: Optional[Dict[str, str]]) -> Optional[Dict[str, str]]:
+    # Messages here deliberately avoid restating "request_headers" (the
+    # multi-word snake_case field name) — get_readable_message's generic
+    # fallback already prepends the humanized field name ("Request
+    # headers"), and since that check is an exact-substring match, a
+    # message starting with the literal underscored name doesn't match it
+    # and ends up double-prefixed (e.g. "Request headers request_headers...").
+    if not headers:
+        return headers
+    for k, v in headers.items():
+        if not isinstance(k, str) or not k.strip():
+            raise ValueError("cannot contain an empty or whitespace-only key")
+        if not isinstance(v, str) or not v.strip():
+            raise ValueError(f"cannot contain an empty or whitespace-only value for header {k!r}")
+    return headers
+
+
+def _validate_response_variables_dict(value: Any) -> Any:
+    # Same rationale as _validate_headers_dict above re: not restating the
+    # "response_variables" field name in these messages.
+    if value is None:
+        return value
+    if not isinstance(value, dict):
+        raise ValueError(
+            "must be an object mapping each variable name to a string "
+            "path into the response, e.g. {\"order_status\": \"status\"}"
+        )
+    for k, v in value.items():
+        if not isinstance(k, str) or not k.strip():
+            raise ValueError("cannot contain an empty or whitespace-only key")
+        if not isinstance(v, str):
+            raise ValueError(
+                f"the value for {k!r} must be a string path into the response "
+                f"(e.g. \"status\"), not a nested object/array"
+            )
+        if not v.strip():
+            raise ValueError(f"cannot contain an empty or whitespace-only value for key {k!r}")
+    return value
+
+
+def _validate_required_against_properties(
+    required: Optional[List[str]], properties: Dict[str, Any], label: str
+) -> Optional[List[str]]:
+    if not required:
+        return required
+    prefix = f"{label}." if label else ""
+    for name in required:
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError(f"{prefix}required cannot contain an empty or whitespace-only entry")
+    missing = [name for name in required if name not in properties]
+    if missing:
+        raise ValueError(f"{prefix}required references field(s) not present in properties: {missing}")
+    return required
+
+
+_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _validate_function_name(value: str) -> str:
+    if not value.strip():
+        raise ValueError("name cannot be empty or only whitespace")
+    if not _NAME_PATTERN.match(value):
+        raise ValueError(
+            "name must be snake_case: lowercase letters, numbers, and underscores only, "
+            "starting with a letter (e.g. \"get_weather_forecast\")"
+        )
+    return value
+
+
+# Loopback/private hosts a tool's URL must never point to (SSRF-adjacent —
+# these can never be reachable from ElevenLabs' side anyway).
+_BLOCKED_HOSTNAMES = {"localhost"}
+
+
+def _validate_api_url(v: str) -> str:
+    parsed = urlparse(v)
+    if parsed.scheme != "https":
+        raise ValueError("URL must use https:// — http:// is not allowed")
+    if not parsed.netloc:
+        raise ValueError("URL must have a valid domain")
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        raise ValueError("URL must have a valid domain")
+    if hostname in _BLOCKED_HOSTNAMES or hostname.endswith(".localhost"):
+        raise ValueError("URL cannot point to localhost")
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        ip = None
+    if ip is not None and (ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified):
+        raise ValueError("URL cannot point to a private or loopback address")
+    return v
+
+
+# -------------------------------------------------
 # Basic Field Types
 # -------------------------------------------------
 
@@ -38,10 +143,15 @@ class PrimitiveField(BaseModel):
     `object`/`array`): string, integer, number, boolean.
     """
     type: PrimitiveType
-    description: str
+    description: str = Field(..., min_length=1)
     # dynamic_variable: Optional[str] = None
 
-    model_config = {"extra": "ignore"}
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, v: str) -> str:
+        return _require_non_blank(v, "description")
+
+    model_config = {"extra": "forbid"}
 
 
 # -------------------------------------------------
@@ -59,10 +169,15 @@ class QueryParamsSchema(BaseModel):
     """
     properties: Dict[str, PrimitiveField]
 
-    # "ignore" (not "forbid"): a caller/old stored row that still sends a
-    # `required` key here — from before this field was removed — is
-    # silently dropped rather than rejected.
-    model_config = {"extra": "ignore"}
+    @field_validator("properties")
+    @classmethod
+    def _validate_property_names(cls, v: Dict[str, PrimitiveField]) -> Dict[str, PrimitiveField]:
+        for key in v:
+            if not key.strip():
+                raise ValueError("query_params_schema.properties cannot contain an empty or whitespace-only key")
+        return v
+
+    model_config = {"extra": "forbid"}
 
 # -------------------------------------------------
 # Request Body Schema
@@ -75,32 +190,110 @@ class BodyField(BaseModel):
     """
     A single JSON body field. Unlike query/path params (restricted to
     `PrimitiveType`: string, integer, number, boolean), body fields also
-    allow nested shapes: `type` may additionally be object or array — for
-    `object`, describe its members via `properties`; for `array`, describe
-    the element shape via `items`.
+    allow nested shapes: `type` may additionally be object or array.
+      - `object`: describe its members via `properties` (required); `items`
+        is not allowed.
+      - `array`: describe the element shape via `items` (required);
+        `properties` is not allowed.
+      - string/integer/number/boolean: neither `properties` nor `items` is
+        allowed.
     """
-    type: Optional[BodyFieldType] = None
-    description: Optional[str] = None
+    type: BodyFieldType
+    description: str = Field(..., min_length=1)
     items: Optional["BodyField"] = None
     properties: Optional[Dict[str, "BodyField"]] = None
     required: Optional[List[str]] = None
 
-    model_config = {"extra": "ignore"}
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, v: str) -> str:
+        return _require_non_blank(v, "description")
+
+    @field_validator("properties")
+    @classmethod
+    def _validate_property_names(cls, v):
+        if v:
+            for key in v:
+                if not key.strip():
+                    raise ValueError("properties cannot contain an empty or whitespace-only key")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_shape(self):
+        if self.type == "object":
+            if not self.properties:
+                raise ValueError("properties is required when type is 'object'")
+            if self.items is not None:
+                raise ValueError("items is not allowed when type is 'object' (use properties instead)")
+            _validate_required_against_properties(self.required, self.properties, "properties")
+        elif self.type == "array":
+            if self.items is None:
+                raise ValueError("items is required when type is 'array'")
+            if self.properties is not None:
+                raise ValueError("properties is not allowed when type is 'array' (use items instead)")
+            if self.required:
+                raise ValueError("required is not allowed when type is 'array'")
+        else:  # string, integer, number, boolean
+            if self.properties is not None:
+                raise ValueError(f"properties is not allowed when type is '{self.type}'")
+            if self.items is not None:
+                raise ValueError(f"items is not allowed when type is '{self.type}'")
+            if self.required:
+                raise ValueError(f"required is not allowed when type is '{self.type}'")
+        return self
+
+    model_config = {"extra": "forbid"}
 BodyField.model_rebuild()
 
 
 class RequestBodySchema(BaseModel):
     """
     JSON request body shape for a POST/PUT/PATCH tool call — always an
-    `object` at the top level, with `properties` (name -> `BodyField`) and
-    `required` listing which of those names are mandatory. GET/DELETE tools
-    may never carry a request body at all (see `ApiSchema`).
+    `object` at the top level (there's no `type` field here — it can only
+    ever be "object", so it's implied rather than accepted as input), with
+    `properties` (name -> `BodyField`) and `required` listing which of those
+    names are mandatory (every name must actually exist in `properties`).
+    GET/DELETE tools may never carry a request body at all (see `ApiSchema`).
     """
-    type: Literal["object"]
     properties: Dict[str, BodyField] = Field(default_factory=dict)
     required: List[str] = Field(default_factory=list)
 
+    @field_validator("required", mode="before")
+    @classmethod
+    def _required_not_null(cls, v):
+        if v is None:
+            raise ValueError("Required is invalid — must be a list of field names, or omitted")
+        return v
+
+    @field_validator("properties")
+    @classmethod
+    def _validate_property_names(cls, v: Dict[str, BodyField]) -> Dict[str, BodyField]:
+        for key in v:
+            if not key.strip():
+                raise ValueError("properties cannot contain an empty or whitespace-only key")
+        return v
+
+    @model_validator(mode="after")
+    def _validate_required_keys(self):
+        _validate_required_against_properties(self.required, self.properties, "")
+        return self
+
     model_config = {"extra": "forbid"}
+
+
+def sanitize_stored_body_schema(body_schema: Optional[dict]) -> Optional[dict]:
+    """
+    Rows written before the top-level `type` field was removed from
+    `RequestBodySchema` still have `{"type": "object", "properties": ...}`
+    stored in the DB — strip that stray key before reconstructing a
+    `RequestBodySchema`/`ApiSchema` from stored data, so reading an
+    old/existing function doesn't fail extra="forbid" validation.
+    """
+    if not body_schema or "type" not in body_schema:
+        return body_schema
+    sanitized = dict(body_schema)
+    sanitized.pop("type", None)
+    return sanitized
 
 
 
@@ -114,15 +307,16 @@ class ApiSchema(BaseModel):
     invokes it.
 
     Allowed `method` values: GET, POST, PUT, PATCH, DELETE.
-      - POST must always carry a `request_body_schema` (+ matching
-        `content_type`) — ElevenLabs rejects a bodiless POST tool.
-      - PUT/PATCH may optionally carry a `request_body_schema` the same way.
-      - GET/DELETE may never carry a `request_body_schema` or `content_type`
-        — attach parameters via `query_params_schema`/`path_params_schema`
-        instead.
+      - POST must always carry a `request_body_schema` and `content_type` —
+        ElevenLabs rejects a bodiless POST tool.
+      - PUT/PATCH may optionally carry a `request_body_schema` (+ matching
+        `content_type`, required whenever a body is present).
+      - GET/DELETE may never carry a `request_body_schema`, but `content_type`
+        is still accepted (just has no effect without a body).
     Any method may use `path_params_schema` (must exactly match every
-    `{placeholder}` in `url`) and/or `query_params_schema`, and path/query
-    param names may never collide.
+    `{placeholder}` in `url`) and/or `query_params_schema` — and no property
+    name may be reused across path params, query params, and body fields
+    (ElevenLabs does not support that).
     `response_variables` maps a variable name to a dot-path into the
     response JSON (e.g. `{"order_status": "status"}`), letting a later step
     of the conversation reference a value the call returned.
@@ -130,22 +324,19 @@ class ApiSchema(BaseModel):
     url: str
     method: HttpMethod = Field(
         ...,
-        description="Allowed values: GET, POST, PUT, PATCH, DELETE. POST requires request_body_schema + content_type; GET/DELETE cannot carry either.",
+        description="Allowed values: GET, POST, PUT, PATCH, DELETE. POST requires request_body_schema + content_type; GET/DELETE cannot carry a request_body_schema.",
     )
     request_headers: Dict[str, str] = Field(default_factory=dict)
 
     @field_validator("url")
     @classmethod
     def validate_url(cls, v: str) -> str:
-        try:
-            parsed = urlparse(v)
-            if not parsed.scheme or parsed.scheme not in ("http", "https"):
-                raise ValueError("URL must start with http:// or https://")
-            if not parsed.netloc:
-                raise ValueError("URL must have a valid domain")
-            return v
-        except Exception:
-            raise ValueError("Invalid URL format")
+        return _validate_api_url(v)
+
+    @field_validator("request_headers")
+    @classmethod
+    def _validate_request_headers(cls, v):
+        return _validate_headers_dict(v)
 
     path_params_schema: Optional[Dict[str, PrimitiveField]] = None
     query_params_schema: Optional[QueryParamsSchema] = None
@@ -156,6 +347,20 @@ class ApiSchema(BaseModel):
         default=None,
         description="Maps a variable name to a dot-path into the API's JSON response, e.g. {\"order_status\": \"status\"}.",
     )
+
+    @field_validator("path_params_schema")
+    @classmethod
+    def _validate_path_params_names(cls, v):
+        if v:
+            for key in v:
+                if not key.strip():
+                    raise ValueError("path_params_schema cannot contain an empty or whitespace-only key")
+        return v
+
+    @field_validator("response_variables", mode="before")
+    @classmethod
+    def _validate_response_variables(cls, v):
+        return _validate_response_variables_dict(v)
 
     model_config = {"extra": "forbid"}
 
@@ -186,34 +391,45 @@ class ApiSchema(BaseModel):
         # ---------------------------
         # KEY OVERLAP VALIDATION
         # ---------------------------
-        if self.path_params_schema and self.query_params_schema:
-            path_keys = set(self.path_params_schema.keys())
-            query_keys = set(self.query_params_schema.properties.keys())
-            overlap = path_keys.intersection(query_keys)
-            if overlap:
-                raise ValueError(f"Path and query parameter keys cannot be same: {overlap}")
+        path_keys = set(self.path_params_schema.keys()) if self.path_params_schema else set()
+        query_keys = set(self.query_params_schema.properties.keys()) if self.query_params_schema else set()
+        body_keys = set(self.request_body_schema.properties.keys()) if self.request_body_schema else set()
+
+        path_query_overlap = path_keys & query_keys
+        if path_query_overlap:
+            raise ValueError(f"Path and query parameter keys cannot be the same: {sorted(path_query_overlap)}")
+
+        path_body_overlap = path_keys & body_keys
+        if path_body_overlap:
+            raise ValueError(f"Path parameter and body field keys cannot be the same: {sorted(path_body_overlap)}")
+
+        # ElevenLabs does not support a query param and a body field sharing
+        # the same name.
+        query_body_overlap = query_keys & body_keys
+        if query_body_overlap:
+            raise ValueError(
+                f"Query parameter and body field keys cannot be the same: {sorted(query_body_overlap)}"
+            )
 
         # ---------------------------
         # BODY + CONTENT TYPE VALIDATION
         # ---------------------------
-        if self.method in {HttpMethod.POST, HttpMethod.PUT, HttpMethod.PATCH}:
-
-            if self.request_body_schema:
-                if not self.content_type:
-                    raise ValueError("content_type is required when request_body_schema is provided")
-            else:
-                if self.content_type:
-                    raise ValueError("content_type cannot be set without request_body_schema")
-                # ElevenLabs rejects POST tools with no request body at tool-creation
-                # time — catch it here instead of surfacing that raw 422 to the user.
-                if self.method == HttpMethod.POST:
-                    raise ValueError("request_body_schema is required for POST requests")
-
+        if self.method == HttpMethod.POST:
+            # ElevenLabs rejects POST tools with no request body at
+            # tool-creation time — catch it here instead of surfacing that
+            # raw 422 to the user.
+            if not self.request_body_schema:
+                raise ValueError("request_body_schema is required for POST requests")
+            if not self.content_type:
+                raise ValueError("content_type is required for POST requests")
+        elif self.method in {HttpMethod.PUT, HttpMethod.PATCH}:
+            if self.request_body_schema and not self.content_type:
+                raise ValueError("content_type is required when request_body_schema is provided")
+            # content_type without a request_body_schema is allowed here.
         else:  # GET / DELETE
             if self.request_body_schema:
                 raise ValueError(f"{self.method} does not allow request_body_schema")
-            if self.content_type:
-                raise ValueError(f"{self.method} does not allow content_type")
+            # content_type alone (with no body) is allowed even for GET/DELETE.
 
         return self
 
@@ -238,10 +454,25 @@ class FunctionCreateSchema(BaseModel):
     header, and a `response_variables` mapping — plus inline `//` comments
     covering the other allowed HTTP methods and field types.
     """
-    name: str = Field(..., min_length=3)
+    name: str = Field(..., min_length=3, description="snake_case: lowercase letters, numbers, and underscores only, starting with a letter (e.g. \"get_weather_forecast\").")
     description: str = Field(..., min_length=10)
     # Using the new ApiSchema for execution config
     api_config: ApiSchema
+    # Server-assigned; a caller can never set this — accepted (so sending it
+    # isn't a hard error) but always ignored.
+    is_system_managed: Optional[bool] = Field(default=None, description="Ignored — this flag is server-assigned and cannot be set by the caller.")
+
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        return _validate_function_name(v)
+
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, v: str) -> str:
+        return _require_non_blank(v, "description")
+
+    model_config = {"extra": "forbid"}
 
 
 # Raw, hand-formatted JSON (with real "//" comments) used ONLY as the request
@@ -260,13 +491,14 @@ PUBLIC_CREATE_FUNCTION_BODY_EXAMPLE = """{
     // method: GET, POST, PUT, PATCH, or DELETE.
     // - POST always requires request_body_schema + content_type.
     // - PUT/PATCH may optionally have request_body_schema + content_type.
-    // - GET/DELETE can never have a request_body_schema or content_type —
-    //   use query_params_schema / path_params_schema for their inputs instead.
+    // - GET/DELETE can never have a request_body_schema (content_type is
+    //   still accepted for them, it just has no effect without a body).
+    // url must be https:// — http:// and localhost/private addresses are rejected.
     "url": "https://api.mybusiness.com/v1/appointments",
     "method": "POST",
     // Authorization is just a common example header name — replace the
     // value below with whatever your own API actually expects (Bearer
-    // token, API key, Basic auth, etc).
+    // token, API key, Basic auth, etc). Keys and values must be non-empty.
     "request_headers": {
       "Authorization": "Bearer YOUR_API_ACCESS_TOKEN"
     },
@@ -276,18 +508,20 @@ PUBLIC_CREATE_FUNCTION_BODY_EXAMPLE = """{
     // types: string, integer, number, boolean — no object/array, since a
     // URL query string/path segment can't represent a nested shape.
     // every query param is optional (no "required" list) — an agent may or
-    // may not supply it depending on the conversation.
+    // may not supply it depending on the conversation. A query/path param
+    // name can never also be used as a body field name below.
     "query_params_schema": {
       "properties": {
         "send_confirmation": {"type": "boolean", "description": "Whether to email the caller a confirmation once booked"}
       }
     },
-    // request_body_schema fields allow those same 4 types PLUS 2 more,
-    // since a JSON body can hold nested shapes: object (describe its
-    // members via "properties", like "attendee" below) and array
-    // (describe the element shape via "items", like "guest_names" below).
+    // request_body_schema is implicitly an object — there's no "type" key
+    // here (only inside each property). Its fields allow string/integer/
+    // number/boolean plus nested shapes: object (describe its members via
+    // "properties", like "attendee" below) and array (describe the element
+    // shape via "items", like "guest_names" below). Every field needs both
+    // "type" and a non-empty "description".
     "request_body_schema": {
-      "type": "object",
       "properties": {
         "customer_name": {"type": "string", "description": "Full name of the customer booking the appointment"},
         "appointment_date": {"type": "string", "description": "Appointment date in YYYY-MM-DD format"},
@@ -307,6 +541,7 @@ PUBLIC_CREATE_FUNCTION_BODY_EXAMPLE = """{
           "items": {"type": "string", "description": "A single guest's full name"}
         }
       },
+      // every name here must exist as a key in "properties" above.
       "required": ["customer_name", "appointment_date", "appointment_time"]
     },
     // response_variables maps a variable name to a dot-path into the API's
@@ -335,12 +570,31 @@ class ApiUpdateSchema(BaseModel):
     @field_validator("url")
     @classmethod
     def validate_url(cls, v: str) -> str:
-        return ApiSchema.validate_url(v)
+        return _validate_api_url(v)
+
+    @field_validator("request_headers")
+    @classmethod
+    def _validate_request_headers(cls, v):
+        return _validate_headers_dict(v)
+
+    @field_validator("path_params_schema")
+    @classmethod
+    def _validate_path_params_names(cls, v):
+        if v:
+            for key in v:
+                if not key.strip():
+                    raise ValueError("path_params_schema cannot contain an empty or whitespace-only key")
+        return v
+
+    @field_validator("response_variables", mode="before")
+    @classmethod
+    def _validate_response_variables(cls, v):
+        return _validate_response_variables_dict(v)
 
     @model_validator(mode="after")
     def validate_schema_rules(self):
-        # We can reuse the logic by temporarily creating an ApiSchema if needed, 
-        # but better to just share the method logic. 
+        # We can reuse the logic by temporarily creating an ApiSchema if needed,
+        # but better to just share the method logic.
         # Since self has same attributes as ApiSchema (or compatible), it works.
         return ApiSchema._validate_schema_rules(self)
 
@@ -351,16 +605,32 @@ class FunctionUpdateSchema(BaseModel):
     description, and api_config are all required and replace the tool
     wholesale). See `PUBLIC_UPDATE_FUNCTION_BODY_EXAMPLE` below for a
     complete, realistic request body. `is_system_managed` is deliberately
-    not a field here: it's a server-assigned flag, not something a caller
-    can set, and any such key sent in the request body is silently dropped
-    rather than applied.
+    accepted-but-ignored: it's a server-assigned flag, not something a
+    caller can set, so it's a known field (sending it is never an error)
+    whose value is simply never applied.
     """
-    name: str
+    name: str = Field(..., min_length=3, description="snake_case: lowercase letters, numbers, and underscores only, starting with a letter (e.g. \"get_weather_forecast\").")
     description: str = Field(..., min_length=10)
     api_config: ApiUpdateSchema
     response_variables: Optional[Dict[str, str]] = None # Allow top-level update too
+    is_system_managed: Optional[bool] = Field(default=None, description="Ignored — this flag is server-assigned and cannot be set by the caller.")
 
-    model_config = {"extra": "ignore"}
+    @field_validator("name")
+    @classmethod
+    def _validate_name(cls, v: str) -> str:
+        return _validate_function_name(v)
+
+    @field_validator("description")
+    @classmethod
+    def _validate_description(cls, v: str) -> str:
+        return _require_non_blank(v, "description")
+
+    @field_validator("response_variables", mode="before")
+    @classmethod
+    def _validate_response_variables(cls, v):
+        return _validate_response_variables_dict(v)
+
+    model_config = {"extra": "forbid"}
 
 
 # Same convention/rationale as PUBLIC_CREATE_FUNCTION_BODY_EXAMPLE above —
@@ -384,11 +654,12 @@ PUBLIC_UPDATE_FUNCTION_BODY_EXAMPLE = """{
         "reschedule": {"type": "boolean", "description": "Whether this booking replaces an existing appointment"}
       }
     },
-    // request_body_schema fields allow string/integer/number/boolean plus
-    // object ("attendee" below, via "properties") and array ("guest_names"
-    // below, via "items") — query/path params above cannot use those last two.
+    // request_body_schema is implicitly an object — no "type" key here
+    // (only inside each property). Fields allow string/integer/number/
+    // boolean plus object ("attendee" below, via "properties") and array
+    // ("guest_names" below, via "items") — query/path params above cannot
+    // use those last two, and no name here may repeat a query/path name.
     "request_body_schema": {
-      "type": "object",
       "properties": {
         "customer_name": {"type": "string", "description": "Full name of the customer booking the appointment"},
         "appointment_date": {"type": "string", "description": "Appointment date in YYYY-MM-DD format"},
@@ -518,11 +789,11 @@ class FunctionUnbind(BaseModel):
                 "request_headers": decrypted_headers,
                 "path_params_schema": {k: PrimitiveField(**v) for k, v in db_config.path_params.items()} if db_config.path_params else None,
                 "query_params_schema": db_config.query_params if db_config.query_params else None,
-                "request_body_schema": db_config.body_schema if db_config.body_schema else None,
+                "request_body_schema": sanitize_stored_body_schema(db_config.body_schema),
                 "response_variables": db_config.response_variables if db_config.response_variables else None,
                 "content_type": "application/json" if db_config.body_schema else None,
             }
-            
+
             # Create a dict that Pydantic can use to populate FunctionRead
             return {
                 "id": data.id,

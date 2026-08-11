@@ -136,7 +136,6 @@ def _create_system_tool(user_id: int, agent_id: int) -> FunctionModel:
         request_headers={"Authorization": auth_header},
         content_type=ContentType.JSON,
         request_body_schema=RequestBodySchema(
-            type="object",
             properties={
                 "query": BodyField(type="string", description=body_field["query"]["description"]),
                 "conversation_context": BodyField(type="string", description=body_field["conversation_context"]["description"]),
@@ -171,7 +170,7 @@ def _create_system_tool(user_id: int, agent_id: int) -> FunctionModel:
         headers={"Authorization": encrypt_data(auth_header)} if secret else {},
         query_params={},
         path_params={},
-        body_schema={"type": "object", "properties": body_field, "required": ["query"]},
+        body_schema={"properties": body_field, "required": ["query"]},
         response_variables={},
         timeout_ms=30000,
         speak_while_execution=False,

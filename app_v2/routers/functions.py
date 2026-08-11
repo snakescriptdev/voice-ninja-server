@@ -18,7 +18,8 @@ from app_v2.schemas.function_schema import (
     FunctionRead,
     FunctionAgentItem,
     ApiSchema,
-    PrimitiveField
+    PrimitiveField,
+    sanitize_stored_body_schema,
 )
 from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.core.logger import setup_logger
@@ -81,7 +82,7 @@ def function_to_read(f: FunctionModel, agents_count: int = 0) -> FunctionRead:
                 if db_config.path_params else None
             ),
             query_params_schema=db_config.query_params if db_config.query_params else None,
-            request_body_schema=db_config.body_schema,
+            request_body_schema=sanitize_stored_body_schema(db_config.body_schema),
             response_variables=db_config.response_variables,
             content_type="application/json" if db_config.body_schema else None,
         )
@@ -529,7 +530,7 @@ async def update_function(
         "request_headers": decrypted_headers,
         "path_params_schema": api_config.path_params,
         "query_params_schema": api_config.query_params if api_config.query_params else None,
-        "request_body_schema": api_config.body_schema,
+        "request_body_schema": sanitize_stored_body_schema(api_config.body_schema),
         "response_variables": api_config.response_variables,
         "content_type": "application/json" if api_config.body_schema else None,
     }
