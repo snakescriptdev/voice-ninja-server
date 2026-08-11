@@ -61,7 +61,6 @@ from app_v2.utils.feature_access import RequireFeature
 from app_v2.utils.crypto_utils import decrypt_data
 from app_v2.utils.twillio_phone_service import TwilioPhoneService
 from app_v2.utils.personal_kb_tool import (
-    resync_personal_kb_tool_for_agent,
     delete_agent_personal_kb_tool,
     strip_prompt_block,
     apply_prompt_block_state,
@@ -733,6 +732,24 @@ async def create_agent(
         raw_ids = [t.get("id") if isinstance(t, dict) else t for t in agent_in.tools]
         tool_ids_ordered = list(dict.fromkeys(raw_ids)) # Deduplicate preserving order
 
+        # search_personal_knowledge_base is provisioned one-per-agent
+        # automatically (via the dedicated attach/detach KB endpoints — see
+        # personal_kb_tool.py), and the FE's agent read response includes it
+        # in `tools` (flagged via is_system_managed) purely for display — the
+        # edit page round-trips that same array back on save. Silently drop
+        # any system-managed id here rather than rejecting the request: this
+        # agent's own copy is preserved separately below regardless, and a
+        # DIFFERENT agent's system-managed id is simply ignored rather than
+        # bound onto this one.
+        system_managed_ids = {
+            row.id for row in db.session.query(FunctionModel.id).filter(
+                FunctionModel.id.in_(tool_ids_ordered),
+                FunctionModel.is_system_managed.is_(True),
+            ).all()
+        }
+        if system_managed_ids:
+            tool_ids_ordered = [tid for tid in tool_ids_ordered if tid not in system_managed_ids]
+
         # 2. Fetch from DB
         tool_records = db.session.query(FunctionModel).filter(
             FunctionModel.id.in_(tool_ids_ordered),
@@ -742,20 +759,20 @@ async def create_agent(
                 FunctionModel.user_id.is_(None)
             )
         ).all()
-        
+
         # 3. Create a map for O(1) lookup
         tool_map = {tool.id: tool for tool in tool_records}
 
         # 4. Validate all IDs exist
         found_ids = set(tool_map.keys())
         missing_ids = set(tool_ids_ordered) - found_ids
-        
+
         if missing_ids:
             raise HTTPException(
                 status_code=400,
                 detail=f"Some Tool IDs not found or not synced or not accessible to you: {list(missing_ids)}"
             )
-        
+
         # 5. Construct ElevenLabs list in the original order using the map
         for tool_id in tool_ids_ordered:
             tool = tool_map[tool_id]
@@ -1634,6 +1651,24 @@ async def update_agent(
         raw_ids = [t.get("id") if isinstance(t, dict) else t for t in agent_in.tools]
         tool_ids_ordered = list(dict.fromkeys(raw_ids)) # Deduplicate preserving order
 
+        # search_personal_knowledge_base is provisioned one-per-agent
+        # automatically (via the dedicated attach/detach KB endpoints — see
+        # personal_kb_tool.py), and the FE's agent read response includes it
+        # in `tools` (flagged via is_system_managed) purely for display — the
+        # edit page round-trips that same array back on save. Silently drop
+        # any system-managed id here rather than rejecting the request: this
+        # agent's own copy is preserved separately below regardless, and a
+        # DIFFERENT agent's system-managed id is simply ignored rather than
+        # bound onto this one.
+        system_managed_ids = {
+            row.id for row in db.session.query(FunctionModel.id).filter(
+                FunctionModel.id.in_(tool_ids_ordered),
+                FunctionModel.is_system_managed.is_(True),
+            ).all()
+        }
+        if system_managed_ids:
+            tool_ids_ordered = [tid for tid in tool_ids_ordered if tid not in system_managed_ids]
+
         # 2. Fetch from DB
         tool_records = db.session.query(FunctionModel).filter(
             FunctionModel.id.in_(tool_ids_ordered),
@@ -1643,33 +1678,49 @@ async def update_agent(
                 FunctionModel.user_id.is_(None)
             )
         ).all()
-        
+
         # 3. Create a map for O(1) lookup
         tool_map = {tool.id: tool for tool in tool_records}
 
         # 4. Validate all IDs exist
         found_ids = set(tool_map.keys())
         missing_ids = set(tool_ids_ordered) - found_ids
-        
+
         if missing_ids:
             raise HTTPException(
                 status_code=400,
                 detail=f"Some Tool IDs not found or not synced or not accessible to you: {list(missing_ids)}"
             )
-        
+
         # 5. Construct ElevenLabs list in the original order using the map
         el_tool_ids = []
         for tool_id in tool_ids_ordered:
             tool = tool_map[tool_id]
             el_tool_ids.append(tool.elevenlabs_tool_id)
 
-        el_update_params["tool_ids"] = el_tool_ids
+        # This agent's own system-managed KB tool (if any) is never part of
+        # `agent_in.tools` (the FE excludes it, and it's rejected above if
+        # sent anyway) — carry its existing binding over explicitly instead
+        # of letting the wholesale bridge replace below drop it.
+        existing_system_bridges = (
+            db.session.query(AgentFunctionBridgeModel, FunctionModel.elevenlabs_tool_id)
+            .join(FunctionModel, FunctionModel.id == AgentFunctionBridgeModel.function_id)
+            .filter(
+                AgentFunctionBridgeModel.agent_id == agent_id,
+                FunctionModel.is_system_managed.is_(True),
+            )
+            .all()
+        )
+        preserved_tool_ids = [bridge.function_id for bridge, _ in existing_system_bridges]
+        preserved_el_tool_ids = [el_id for _, el_id in existing_system_bridges if el_id]
+
+        el_update_params["tool_ids"] = el_tool_ids + preserved_el_tool_ids
 
         # Update DB bridge
         db.session.query(AgentFunctionBridgeModel).filter(
             AgentFunctionBridgeModel.agent_id == agent_id
         ).delete()
-        for tool_id in tool_ids_ordered:
+        for tool_id in tool_ids_ordered + preserved_tool_ids:
             db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=tool_id))
 
     # ---- Variables Update ----
@@ -1782,15 +1833,6 @@ async def update_agent(
         description=f"Updated agent: {agent.agent_name}",
         metadata={"agent_id": agent.id, "elevenlabs_agent_id": agent.elevenlabs_agent_id}
     )
-
-    # Best-effort: this update may have replaced the agent's whole tool_ids
-    # list (via agent_in.functions) without knowing about its personal KB
-    # search tool (if it has one). Re-push it so it isn't silently dropped —
-    # must never fail the update itself.
-    try:
-        resync_personal_kb_tool_for_agent(agent.id)
-    except Exception as e:
-        logger.warning(f"Failed to re-sync personal KB tool onto agent {agent.id} after update: {e}")
 
     return agent_to_read(agent)
 

@@ -282,25 +282,6 @@ def remove_personal_kb_tool_from_agent_if_empty(agent_id: int) -> None:
                 logger.warning(f"Failed to delete ElevenLabs tool {elevenlabs_tool_id}: {e}")
 
 
-def resync_personal_kb_tool_for_agent(agent_id: int) -> None:
-    """
-    Best-effort: if this agent already has its own personal KB tool bound,
-    re-push its current tool list/prompt to ElevenLabs. Used after a generic
-    agent update that may have overwritten the agent's tool_ids without
-    knowing about the system-managed KB tool. No-op if this agent has none.
-    """
-    with db():
-        agent = db.session.query(AgentModel).filter(AgentModel.id == agent_id).first()
-        if not agent:
-            return
-        if not _get_agent_system_tool(agent_id):
-            return
-        try:
-            _resync_agent(agent, ElevenLabsAgent())
-        except Exception as e:
-            logger.warning(f"Failed to re-sync personal KB tool onto agent {agent_id}: {e}")
-
-
 def delete_agent_personal_kb_tool(agent_id: int) -> None:
     """
     Unconditionally removes this agent's dedicated personal KB tool (DB row +

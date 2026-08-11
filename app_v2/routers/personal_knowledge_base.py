@@ -346,6 +346,14 @@ async def add_files(
                     raise HTTPException(status_code=400, detail=f"Duplicate file name '{file.filename}' in this upload request.")
                 seen_filenames.add(filename_key)
 
+                existing_file = db.session.query(PersonalKnowledgeBaseModel).filter(
+                    PersonalKnowledgeBaseModel.user_id == current_user.id,
+                    PersonalKnowledgeBaseModel.kb_type == "file",
+                    func.lower(PersonalKnowledgeBaseModel.title) == filename_key,
+                ).first()
+                if existing_file:
+                    raise HTTPException(status_code=400, detail=f"A file named '{file.filename}' has already been added to your knowledge base.")
+
                 file.file.seek(0, 2)
                 file_size = file.file.tell()
                 file.file.seek(0)
