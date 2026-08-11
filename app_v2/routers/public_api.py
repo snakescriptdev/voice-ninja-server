@@ -49,6 +49,7 @@ from app_v2.schemas.function_schema import (
     PUBLIC_UPDATE_FUNCTION_BODY_EXAMPLE,
     sanitize_stored_body_schema,
     ApiSchema,
+    HttpMethod,
     FunctionBind,
     FunctionUnbind,
     PrimitiveField
@@ -3190,6 +3191,13 @@ async def update_function_public(
         el_params = {}
 
         if function_in.name is not None:
+            name_taken = db.session.query(FunctionModel).filter(
+                FunctionModel.name == function_in.name,
+                FunctionModel.user_id == current_user.id,
+                FunctionModel.id != id,
+            ).first()
+            if name_taken:
+                raise HTTPException(status_code=400, detail=f"Function with name '{function_in.name}' already exists")
             function.name = function_in.name
             el_params["name"] = function_in.name
             el_update = True
@@ -3213,6 +3221,13 @@ async def update_function_public(
                     api_config.endpoint_url = function_in.api_config.url
                 if function_in.api_config.method is not None:
                     api_config.http_method = function_in.api_config.method
+                    # GET/DELETE can never carry a request body (see
+                    # ApiSchema) — without this, switching a tool's method
+                    # away from POST/PUT/PATCH left the OLD body_schema
+                    # stored, which then conflicted with the new method the
+                    # next time this row was read back and re-validated.
+                    if function_in.api_config.method in {HttpMethod.GET, HttpMethod.DELETE}:
+                        api_config.body_schema = None
                 if function_in.api_config.request_headers is not None:
                     api_config.headers = {
                         k: (encrypt_data(v) if k.lower() in SENSITIVE_HEADER_KEYS else v)
