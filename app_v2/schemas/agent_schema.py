@@ -271,7 +271,7 @@ class PublicAgentRead(BaseModel):
     ai_model_name: str
     language: int
     language_name: str
-    knowledgebase: List[dict[str,int|str]] = []
+    knowledgebase: List[dict[str,int|str|bool]] = []
     variables: Dict[str, str] = {}
     tools: List[dict[str,int|str]] = []
     built_in_tools: Optional[Dict] = None

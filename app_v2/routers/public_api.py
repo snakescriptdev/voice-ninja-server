@@ -43,7 +43,10 @@ from app_v2.utils.conversation_lifecycle import is_agents_first_call
 from app_v2.schemas.function_schema import (
     FunctionCreateSchema,
     FunctionUpdateSchema,
-    FunctionRead,
+    PublicFunctionRead,
+    PublicFunctionListRead,
+    PUBLIC_CREATE_FUNCTION_BODY_EXAMPLE,
+    PUBLIC_UPDATE_FUNCTION_BODY_EXAMPLE,
     ApiSchema,
     FunctionBind,
     FunctionUnbind,
@@ -458,8 +461,17 @@ def agent_to_read(agent: AgentModel) -> PublicAgentRead:
         updated_at=agent.modified_at,
         # Personal KB (PersonalKnowledgeBaseAgentBridgeModel) — see create_agent
         # for why this API uses personal KB, not the legacy KnowledgeBaseModel.
+        # is_system_managed is always False here: unlike the search_personal_
+        # knowledge_base tool it provisions (see `tools` below), a KB item
+        # itself is always something the user uploaded/added, never
+        # system-provisioned.
         knowledgebase = [
-            {"id": bridge.knowledge_base.id, "title": bridge.knowledge_base.title, "type": bridge.knowledge_base.kb_type}
+            {
+                "id": bridge.knowledge_base.id,
+                "title": bridge.knowledge_base.title,
+                "type": bridge.knowledge_base.kb_type,
+                "is_system_managed": False,
+            }
             for bridge in agent.personal_kb_agent_bridges
         ],
         variables={var.variable_name: var.variable_value for var in agent.variables},
@@ -2827,7 +2839,7 @@ async def get_ai_model_public(
 
 SENSITIVE_HEADER_KEYS = {"authorization", "x-api-key", "api-key", "token"}
 
-def function_to_read(f: FunctionModel) -> FunctionRead:
+def function_to_read(f: FunctionModel, agents_count: int = 0) -> PublicFunctionRead:
     db_config = f.api_endpoint_url
     if not db_config:
         raise HTTPException(status_code=500, detail=f"Function '{f.name}' has no API config")
@@ -2835,20 +2847,32 @@ def function_to_read(f: FunctionModel) -> FunctionRead:
     decrypted_headers = {}
     for k, v in (db_config.headers or {}).items():
         if k.lower() in SENSITIVE_HEADER_KEYS:
-            try:
-                decrypted_headers[k] = decrypt_data(v)
-            except Exception:
-                decrypted_headers[k] = v
+            # System-managed tools (e.g. search_personal_knowledge_base) carry
+            # our own internal webhook secret — never return it in the clear,
+            # even to the user who "owns" the tool. Masked to the real
+            # secret's length so the shape still looks like a normal header.
+            if f.is_system_managed:
+                try:
+                    real_value = decrypt_data(v)
+                except Exception:
+                    real_value = v
+                decrypted_headers[k] = "x" * len(real_value) if real_value else real_value
+            else:
+                try:
+                    decrypted_headers[k] = decrypt_data(v)
+                except Exception:
+                    decrypted_headers[k] = v
         else:
             decrypted_headers[k] = v
 
-    return FunctionRead(
+    return PublicFunctionRead(
         id=f.id,
         name=f.name,
         description=f.description,
-        elevenlabs_tool_id=f.elevenlabs_tool_id,
         created_at=f.created_at,
         modified_at=f.modified_at,
+        is_system_managed=f.is_system_managed,
+        agents_count=agents_count,
         api_config=ApiSchema(
             url=db_config.endpoint_url,
             method=db_config.http_method,
@@ -2862,24 +2886,80 @@ def function_to_read(f: FunctionModel) -> FunctionRead:
     )
 
 
-@router.get("/functions", response_model=PublicPaginatedResponse[FunctionRead])
+def _agents_count_for_function(function_id: int) -> int:
+    return db.session.query(AgentFunctionBridgeModel.id).filter(
+        AgentFunctionBridgeModel.function_id == function_id
+    ).count()
+
+
+@router.get(
+    "/functions",
+    response_model=PublicPaginatedResponse[PublicFunctionListRead],
+    description=(
+        "Lists this account's tools. Supports filtering with `name` (partial, "
+        "case-insensitive match), `method` (the tool's HTTP method — GET, POST, "
+        "PUT, PATCH, or DELETE), and `is_system_managed` (exact match). Supports "
+        "sorting via `sort_by` (`created_at`, `modified_at`) and `sort_order` "
+        "(`asc`, `desc`). Each item omits `api_config` and `elevenlabs_tool_id` — "
+        "fetch a specific tool by id (GET /functions/{id}) to see its full config."
+    ),
+)
 async def list_functions_public(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=50),
+    name: Optional[str] = Query(None, description="Filter by partial tool name (case-insensitive)"),
+    method: Optional[RequestMethodEnum] = Query(None, description="Filter by the tool's HTTP method"),
+    is_system_managed: Optional[bool] = Query(None, description="Filter by whether the tool is managed automatically", examples=[False]),
+    sort_by: Literal["created_at", "modified_at"] = Query("created_at", description="Field to sort tools by"),
+    sort_order: Literal["asc", "desc"] = Query("desc", description="Sort direction"),
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
 ):
     track_and_limit_api(current_user.id)
     skip = (page - 1) * size
     with db():
         query = db.session.query(FunctionModel).filter(FunctionModel.user_id == current_user.id)
+        if name:
+            query = query.filter(FunctionModel.name.ilike(f"%{name}%"))
+        if is_system_managed is not None:
+            query = query.filter(FunctionModel.is_system_managed.is_(is_system_managed))
+        if method is not None:
+            query = query.join(FunctionApiConfig, FunctionApiConfig.function_id == FunctionModel.id).filter(
+                FunctionApiConfig.http_method == method
+            )
+
         total = query.count()
+        sort_col = FunctionModel.modified_at if sort_by == "modified_at" else FunctionModel.created_at
         functions = (
             query
-            .options(selectinload(FunctionModel.api_endpoint_url))
-            .order_by(FunctionModel.created_at.desc(), FunctionModel.id.desc())
+            .order_by(sort_col.asc() if sort_order == "asc" else sort_col.desc(), FunctionModel.id.desc())
             .offset(skip).limit(size).all()
         )
-        items = [function_to_read(f) for f in functions]
+
+        function_ids = [f.id for f in functions]
+        agents_counts = {}
+        methods_by_function_id = {}
+        if function_ids:
+            agents_counts = dict(
+                db.session.query(AgentFunctionBridgeModel.function_id, func.count(AgentFunctionBridgeModel.id))
+                .filter(AgentFunctionBridgeModel.function_id.in_(function_ids))
+                .group_by(AgentFunctionBridgeModel.function_id)
+                .all()
+            )
+            methods_by_function_id = dict(
+                db.session.query(FunctionApiConfig.function_id, FunctionApiConfig.http_method)
+                .filter(FunctionApiConfig.function_id.in_(function_ids))
+                .all()
+            )
+
+        items = [
+            PublicFunctionListRead(
+                id=f.id, name=f.name, created_at=f.created_at, modified_at=f.modified_at,
+                is_system_managed=f.is_system_managed,
+                agents_count=agents_counts.get(f.id, 0),
+                method=methods_by_function_id.get(f.id),
+            )
+            for f in functions
+        ]
         total_pages = math.ceil(total / size) if total else 0
         return PublicPaginatedResponse(
             total=total, current_page=page, size=size, total_pages=total_pages,
@@ -2887,7 +2967,7 @@ async def list_functions_public(
         )
 
 
-@router.get("/functions/{id}", response_model=FunctionRead)
+@router.get("/functions/{id}", response_model=PublicFunctionRead)
 async def get_function_public(
     id: int,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -2902,10 +2982,32 @@ async def get_function_public(
         )
         if not function:
             raise HTTPException(status_code=404, detail="Function not found")
-        return function_to_read(function)
+        return function_to_read(function, agents_count=_agents_count_for_function(function.id))
 
 
-@router.post("/functions", response_model=FunctionRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/functions",
+    response_model=PublicFunctionRead,
+    status_code=status.HTTP_201_CREATED,
+    description=(
+        "Creates a custom tool an agent can call during a conversation, backed by "
+        "your own HTTP API. `api_config.method` may be GET, POST, PUT, PATCH, or "
+        "DELETE — POST always requires a `request_body_schema` + matching "
+        "`content_type`; GET/DELETE can never carry either. Query and path "
+        "parameters only allow string, integer, number, or boolean fields; JSON "
+        "body fields (POST/PUT/PATCH only) additionally allow object/array via "
+        "nested `properties`/`items`. See the request body example below for a "
+        "complete, realistic payload — with inline comments on the other "
+        "allowed methods."
+    ),
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"example": PUBLIC_CREATE_FUNCTION_BODY_EXAMPLE}
+            }
+        }
+    },
+)
 async def create_function_public(
     function_in: FunctionCreateSchema,
     current_user: UnifiedAuthModel = Depends(RequireFeaturePublic(PlanFeatureEnum.api_access))
@@ -2981,7 +3083,24 @@ async def create_function_public(
             raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.patch("/functions/{id}", response_model=FunctionRead)
+@router.put(
+    "/functions/{id}",
+    response_model=PublicFunctionRead,
+    description=(
+        "Updates a tool — a true PUT: `name`, `description`, and `api_config` "
+        "are all required and replace the tool wholesale. System-managed tools "
+        "(e.g. the auto-provisioned search_personal_knowledge_base) cannot be "
+        "edited through this endpoint. See the request body example below for "
+        "a complete, realistic payload."
+    ),
+    openapi_extra={
+        "requestBody": {
+            "content": {
+                "application/json": {"example": PUBLIC_UPDATE_FUNCTION_BODY_EXAMPLE}
+            }
+        }
+    },
+)
 async def update_function_public(
     id: int,
     function_in: FunctionUpdateSchema,
@@ -2997,6 +3116,9 @@ async def update_function_public(
         )
         if not function:
             raise HTTPException(status_code=404, detail="Function not found")
+
+        if function.is_system_managed:
+            raise HTTPException(status_code=403, detail="This tool is managed automatically and cannot be edited")
 
         el_update = False
         el_params = {}
@@ -3070,7 +3192,7 @@ async def update_function_public(
 
         db.session.commit()
         db.session.refresh(function)
-        return function_to_read(function)
+        return function_to_read(function, agents_count=_agents_count_for_function(function.id))
 
 
 @router.delete("/functions/{id}")
