@@ -47,6 +47,7 @@ from app_v2.schemas.function_schema import (
     PublicFunctionListRead,
     PUBLIC_CREATE_FUNCTION_BODY_EXAMPLE,
     PUBLIC_UPDATE_FUNCTION_BODY_EXAMPLE,
+    sanitize_stored_body_schema,
     ApiSchema,
     FunctionBind,
     FunctionUnbind,
@@ -152,29 +153,69 @@ def _public_envelope(status_str: str, data=None, message: str = "", detail: str 
     return {"status": status_str, "data": data, "message": message, "detail": detail}
 
 
-def _find_duplicate_json_keys(raw: bytes) -> Optional[List[str]]:
-    """Detects repeated keys in a JSON object (at any nesting level, e.g.
-    `variables`). By default `json.loads` silently keeps only the last value
-    for a repeated key, discarding exactly the information needed to flag it
-    as a mistake — so this re-parses with an `object_pairs_hook` that
-    remembers keys seen more than once instead of collapsing them."""
+def _find_duplicate_json_keys(raw: bytes) -> Optional[List[dict]]:
+    """Detects repeated keys in a JSON object at ANY nesting level (e.g. a
+    top-level `variables` key, or a nested `email` inside
+    `api_config.request_body_schema.properties.attendee.properties`). By
+    default `json.loads` silently keeps only the last value for a repeated
+    key, discarding exactly the information needed to flag it as a mistake
+    — so this re-parses with an `object_pairs_hook` that remembers keys seen
+    more than once instead of collapsing them, then walks the resulting
+    tree (matching each flagged dict back by object identity) to recover
+    exactly where each duplicate lives.
+
+    Returns a list of {"field": <key>, "location": <dotted path, "" if
+    top-level>} dicts, or None if there were no duplicates (or the body
+    isn't valid JSON at all — the normal request flow reports that case).
+    """
     if not raw:
         return None
-    duplicates = []
+
+    # (id of the dict instance, the instance itself, [dup key names in it])
+    dup_records = []
 
     def _check_pairs(pairs):
         seen = set()
+        dups_here = []
         for k, _ in pairs:
-            if k in seen and k not in duplicates:
-                duplicates.append(k)
+            if k in seen and k not in dups_here:
+                dups_here.append(k)
             seen.add(k)
-        return dict(pairs)
+        result = dict(pairs)
+        if dups_here:
+            dup_records.append((id(result), dups_here))
+        return result
 
     try:
-        json.loads(raw, object_pairs_hook=_check_pairs)
+        parsed = json.loads(raw, object_pairs_hook=_check_pairs)
     except (ValueError, TypeError):
-        return None  # Not valid JSON at all — let the normal request flow report that.
-    return duplicates or None
+        return None
+
+    if not dup_records:
+        return None
+
+    target_ids = {rec[0] for rec in dup_records}
+    paths_by_id = {}
+
+    def _walk(node, path):
+        if isinstance(node, dict):
+            node_id = id(node)
+            if node_id in target_ids and node_id not in paths_by_id:
+                paths_by_id[node_id] = path
+            for k, v in node.items():
+                _walk(v, f"{path}.{k}" if path else k)
+        elif isinstance(node, list):
+            for i, v in enumerate(node):
+                _walk(v, f"{path}[{i}]")
+
+    _walk(parsed, "")
+
+    results = []
+    for dict_id, dup_keys in dup_records:
+        location = paths_by_id.get(dict_id, "")
+        for key in dup_keys:
+            results.append({"field": key, "location": location})
+    return results or None
 
 
 class PublicAPIRoute(APIRoute):
@@ -197,12 +238,28 @@ class PublicAPIRoute(APIRoute):
                 duplicate_keys = _find_duplicate_json_keys(raw_request_body)
                 if duplicate_keys:
                     status_code = 400
+                    # Location-specific description(s), e.g. "'email' in
+                    # api_config.request_body_schema.properties.attendee.properties"
+                    # instead of just naming the bare, possibly-ambiguous field.
+                    descriptions = [
+                        (f"'{d['field']}' in {d['location']}" if d["location"] else f"'{d['field']}' at the top level")
+                        for d in duplicate_keys
+                    ]
                     error_message = (
-                        "Your request contains a repeated field name. Please remove the "
-                        "duplicate and try again."
+                        f"Duplicate field {descriptions[0]} — each field can only appear once. "
+                        "Please remove the duplicate and try again."
+                        if len(descriptions) == 1
+                        else (
+                            f"Duplicate fields found: {'; '.join(descriptions)} — each field can only "
+                            "appear once. Please remove the duplicates and try again."
+                        )
                     )
+                    detail_entries = [
+                        "{!r} at {}".format(d["field"], d["location"] or "<root>")
+                        for d in duplicate_keys
+                    ]
                     detail_message = (
-                        f"Duplicate key(s) found in request body: {', '.join(duplicate_keys)}. "
+                        f"Duplicate key(s) found in request body: {', '.join(detail_entries)}. "
                         "Each key must appear only once."
                     )
                     response = JSONResponse(
@@ -2888,7 +2945,7 @@ def function_to_read(f: FunctionModel, agents_count: int = 0) -> PublicFunctionR
             request_headers=decrypted_headers,
             path_params_schema={k: PrimitiveField(**v) for k, v in db_config.path_params.items()} if db_config.path_params else None,
             query_params_schema=db_config.query_params if db_config.query_params else None,
-            request_body_schema=db_config.body_schema if db_config.body_schema else None,
+            request_body_schema=sanitize_stored_body_schema(db_config.body_schema),
             response_variables=db_config.response_variables if db_config.response_variables else None,
             content_type="application/json" if db_config.body_schema else None,
         )
@@ -3186,7 +3243,7 @@ async def update_function_public(
                 request_headers=decrypted_headers,
                 path_params_schema={k: PrimitiveField(**v) for k, v in api_config.path_params.items()} if api_config.path_params else None,
                 query_params_schema=api_config.query_params if api_config.query_params else None,
-                request_body_schema=api_config.body_schema if api_config.body_schema else None,
+                request_body_schema=sanitize_stored_body_schema(api_config.body_schema),
                 response_variables=api_config.response_variables,
                 content_type="application/json" if api_config.body_schema else None,
             )

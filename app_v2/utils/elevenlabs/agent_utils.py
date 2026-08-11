@@ -543,6 +543,10 @@ class ElevenLabsAgent(BaseElevenLabs):
         if api_schema.request_body_schema:
             rb_dump = api_schema.request_body_schema.model_dump(exclude_none=True)
             if rb_dump.get("properties"):
+                 # Our own schema has no top-level "type" (a request body is
+                 # always implicitly an object), but ElevenLabs' API still
+                 # expects it in this JSON-schema-shaped payload.
+                 rb_dump["type"] = "object"
                  serialized_api["request_body_schema"] = rb_dump
 
         tool_config = {
