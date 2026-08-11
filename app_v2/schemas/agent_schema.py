@@ -271,9 +271,9 @@ class PublicAgentRead(BaseModel):
     ai_model_name: str
     language: int
     language_name: str
-    knowledgebase: List[dict[str,int|str|bool]] = []
+    knowledgebase: List[dict[str,int|str]] = []
     variables: Dict[str, str] = {}
-    tools: List[dict[str,int|str]] = []
+    tools: List[dict[str,int|str|bool]] = []
     built_in_tools: Optional[Dict] = None
     timezone: Optional[str] = None
     is_first_call_pending: bool = True
