@@ -3318,16 +3318,18 @@ async def bind_function_public(
         existing = db.session.query(AgentFunctionBridgeModel).filter(
             AgentFunctionBridgeModel.agent_id == agent_id, AgentFunctionBridgeModel.function_id == function_id
         ).first()
-        
-        if not existing:
-            db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=function_id))
-            db.session.commit()
-            # ElevenLabs Sync
-            if agent.elevenlabs_agent_id:
-                bridges = db.session.query(AgentFunctionBridgeModel).filter(AgentFunctionBridgeModel.agent_id == agent_id).all()
-                tool_ids = [b.function.elevenlabs_tool_id for b in bridges if b.function.elevenlabs_tool_id]
-                ElevenLabsAgent().update_agent(agent_id=agent.elevenlabs_agent_id, tool_ids=tool_ids)
-                
+
+        if existing:
+            raise HTTPException(status_code=400, detail="Function is already attached to this agent")
+
+        db.session.add(AgentFunctionBridgeModel(agent_id=agent_id, function_id=function_id))
+        db.session.commit()
+        # ElevenLabs Sync
+        if agent.elevenlabs_agent_id:
+            bridges = db.session.query(AgentFunctionBridgeModel).filter(AgentFunctionBridgeModel.agent_id == agent_id).all()
+            tool_ids = [b.function.elevenlabs_tool_id for b in bridges if b.function.elevenlabs_tool_id]
+            ElevenLabsAgent().update_agent(agent_id=agent.elevenlabs_agent_id, tool_ids=tool_ids)
+
     return {"message": "Function bound successfully"}
 
 @router.post("/functions/unbind", status_code=status.HTTP_200_OK)
@@ -3341,19 +3343,24 @@ async def unbind_function_public(
     with db():
         agent = db.session.query(AgentModel).filter(AgentModel.id == agent_id, AgentModel.user_id == current_user.id).first()
         if not agent: raise HTTPException(status_code=404, detail="Agent not found")
-        
+
+        function = db.session.query(FunctionModel).filter(FunctionModel.id == function_id, FunctionModel.user_id == current_user.id).first()
+        if not function: raise HTTPException(status_code=404, detail="Function not found")
+
         bridge = db.session.query(AgentFunctionBridgeModel).filter(
             AgentFunctionBridgeModel.agent_id == agent_id, AgentFunctionBridgeModel.function_id == function_id
         ).first()
-        
-        if bridge:
-            db.session.delete(bridge)
-            db.session.commit()
-            # ElevenLabs Sync
-            if agent.elevenlabs_agent_id:
-                bridges = db.session.query(AgentFunctionBridgeModel).filter(AgentFunctionBridgeModel.agent_id == agent_id).all()
-                tool_ids = [b.function.elevenlabs_tool_id for b in bridges if b.function.elevenlabs_tool_id]
-                ElevenLabsAgent().update_agent(agent_id=agent.elevenlabs_agent_id, tool_ids=tool_ids)
-                
+
+        if not bridge:
+            raise HTTPException(status_code=400, detail="Function is not attached to this agent")
+
+        db.session.delete(bridge)
+        db.session.commit()
+        # ElevenLabs Sync
+        if agent.elevenlabs_agent_id:
+            bridges = db.session.query(AgentFunctionBridgeModel).filter(AgentFunctionBridgeModel.agent_id == agent_id).all()
+            tool_ids = [b.function.elevenlabs_tool_id for b in bridges if b.function.elevenlabs_tool_id]
+            ElevenLabsAgent().update_agent(agent_id=agent.elevenlabs_agent_id, tool_ids=tool_ids)
+
     return {"message": "Function unbound successfully"}
 
