@@ -3191,13 +3191,14 @@ async def update_function_public(
         el_params = {}
 
         if function_in.name is not None:
-            name_taken = db.session.query(FunctionModel).filter(
-                FunctionModel.name == function_in.name,
-                FunctionModel.user_id == current_user.id,
-                FunctionModel.id != id,
-            ).first()
-            if name_taken:
-                raise HTTPException(status_code=400, detail=f"Function with name '{function_in.name}' already exists")
+            if function_in.name != function.name:
+                name_taken = db.session.query(FunctionModel).filter(
+                    FunctionModel.name == function_in.name,
+                    FunctionModel.user_id == current_user.id,
+                    FunctionModel.id != id,
+                ).first()
+                if name_taken:
+                    raise HTTPException(status_code=400, detail=f"Function with name '{function_in.name}' already exists")
             function.name = function_in.name
             el_params["name"] = function_in.name
             el_update = True
