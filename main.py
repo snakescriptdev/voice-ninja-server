@@ -220,16 +220,26 @@ def _openapi_31_anyof_null_to_30_nullable(node):
         if isinstance(node.get("anyOf"), list):
             members = node["anyOf"]
             non_null = [m for m in members if m != {"type": "null"}]
-            if len(non_null) == 1 and len(non_null) != len(members):
-                target = non_null[0]
-                rest = {k: v for k, v in node.items() if k != "anyOf"}
-                if "$ref" in target:
-                    rest["allOf"] = [target]
+            if len(non_null) != len(members):
+                if len(non_null) == 1:
+                    target = non_null[0]
+                    rest = {k: v for k, v in node.items() if k != "anyOf"}
+                    if "$ref" in target:
+                        rest["allOf"] = [target]
+                    else:
+                        rest.update(target)
+                    rest["nullable"] = True
+                    node.clear()
+                    node.update(rest)
                 else:
-                    rest.update(target)
-                rest["nullable"] = True
-                node.clear()
-                node.update(rest)
+                    # More than one non-null branch (e.g. Optional[Union[bool,
+                    # SomeModel]]) - OpenAPI 3.0's dialect has no `type: null`
+                    # value at all, so simply dropping the null member and
+                    # keeping `nullable: true` alongside anyOf (both are valid
+                    # 3.0 Schema Object keywords) is enough; there's nothing
+                    # to merge inline like the single-branch case above.
+                    node["anyOf"] = non_null
+                    node["nullable"] = True
         if "const" in node:
             node["enum"] = [node.pop("const")]
         for key, value in node.items():
@@ -309,6 +319,266 @@ def _restrict_openapi_to_public_v2(openapi_schema):
     }
 
 
+def _collect_schema_refs(node, refs):
+    if isinstance(node, dict):
+        ref = node.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+            refs.add(ref.rsplit("/", 1)[-1])
+        for value in node.values():
+            _collect_schema_refs(value, refs)
+    elif isinstance(node, list):
+        for item in node:
+            _collect_schema_refs(item, refs)
+
+
+# get_openapi(routes=app.routes) builds `components.schemas` for every model
+# any route in the whole app uses, not just the (by then already
+# path-filtered) public ones - so with SHOW_ALL_APIS_IN_SWAGGER off, the
+# public docs/Postman collection were still carrying every internal/admin
+# model's schema (e.g. CoinUsageSettings fields), just with no path left
+# pointing at most of them. Recomputes the schema closure actually reachable
+# from the remaining paths and drops the rest, so /docs and any Postman
+# import only ever see models the public API can actually return or accept.
+def _prune_unused_components(openapi_schema):
+    schemas = openapi_schema.get("components", {}).get("schemas")
+    if not schemas:
+        return
+    used = set()
+    _collect_schema_refs(openapi_schema.get("paths", {}), used)
+    frontier = set(used)
+    while frontier:
+        next_frontier = set()
+        for name in frontier:
+            found = set()
+            _collect_schema_refs(schemas.get(name, {}), found)
+            new_names = found - used
+            used |= new_names
+            next_frontier |= new_names
+        frontier = next_frontier
+    openapi_schema["components"]["schemas"] = {
+        name: schema for name, schema in schemas.items() if name in used
+    }
+
+
+# Every public route was previously tagged just "public-api", so Swagger
+# rendered the entire public surface as one flat, undifferentiated list.
+# Regrouping by resource (longest-matching path prefix wins) gives each
+# resource its own collapsible section - Agents, Widgets, etc - the same way
+# a hand-maintained `tags=[...]` per route would, without having to touch
+# every route decorator in public_api.py. Order here is also the section
+# order Swagger renders, via the `tags` list built below.
+_PUBLIC_API_TAG_PREFIXES = [
+    ("/api/v2/public/agents", "Agents"),
+    ("/api/v2/public/widgets", "Widgets"),
+    ("/api/v2/public/web-agents", "Web Agents"),
+    ("/api/v2/public/languages", "Languages"),
+    ("/api/v2/public/voices", "Voices"),
+    ("/api/v2/public/ai-models", "AI Models"),
+    ("/api/v2/public/personal-kb", "Personal Knowledge Base"),
+    ("/api/v2/public/functions", "Functions"),
+    ("/api/v2/public/ws", "Public WebSocket"),
+]
+
+_PUBLIC_API_TAG_DESCRIPTIONS = {
+    "Agents": "Create, configure, and manage your voice AI agents.",
+    "Widgets": "Embeddable chat/voice widgets backed by an agent.",
+    "Web Agents": "Standalone, hosted web pages for an agent.",
+    "Languages": "Languages available to assign to an agent.",
+    "Voices": "Voices available to assign to an agent.",
+    "AI Models": "LLMs available to assign to an agent.",
+    "Personal Knowledge Base": "Per-account knowledge base documents an agent can search, and binding them to agents.",
+    "Functions": "Custom tools/functions an agent can call, and binding/unbinding them to agents.",
+    "Public WebSocket": "Real-time voice conversations over a WebSocket connection.",
+}
+
+
+def _regroup_public_api_tags(openapi_schema):
+    for path, path_item in openapi_schema.get("paths", {}).items():
+        if not path.startswith("/api/v2/public"):
+            continue
+        tag = next((t for prefix, t in _PUBLIC_API_TAG_PREFIXES if path.startswith(prefix)), None)
+        if not tag:
+            continue
+        for method, operation in path_item.items():
+            if method not in ("get", "post", "put", "patch", "delete"):
+                continue
+            operation["tags"] = [tag]
+    openapi_schema["tags"] = [
+        {"name": tag, "description": _PUBLIC_API_TAG_DESCRIPTIONS[tag]}
+        for _, tag in _PUBLIC_API_TAG_PREFIXES
+    ]
+
+
+# FastAPI/Starlette never put websocket routes into the OpenAPI schema (only
+# HTTP routes have a documentable request/response shape), so the public
+# WebSocket endpoint (app_v2/routers/public_websocket_router.py) is otherwise
+# invisible in both Swagger and any Postman collection generated from
+# /openapi.json. There's no OpenAPI 3.0/3.1 operation type for "websocket",
+# so this documents the handshake as a GET (which is what a WS upgrade
+# actually is at the HTTP level) and uses the request/response bodies purely
+# to carry example messages for every event type the connection exchanges -
+# see app_v2/docs/public_websocket_api.md for the prose version of this.
+def _public_websocket_path_item():
+    # Client -> server, in the order they'd actually be sent over one call.
+    client_examples = {
+        "1_connect_auth": {
+            "summary": "Step 1 - connect: authenticate (required first message, within 5s of connecting)",
+            "value": {"type": "auth", "client_id": "YOUR_CLIENT_ID", "client_secret": "YOUR_CLIENT_SECRET"},
+        },
+        "2_stream_audio_note": {
+            "summary": "Step 2 - stream: raw PCM 16kHz/mono/16-bit audio, sent as BINARY frames (not JSON - shown here only as a placeholder)",
+            "value": {"note": "binary frame, not JSON - see the endpoint description"},
+        },
+        "3_optional_ping": {
+            "summary": "Optional - keepalive/control message forwarded as-is to the voice engine",
+            "value": {"type": "ping"},
+        },
+    }
+    # Server -> client, grouped by where they show up in the call lifecycle.
+    server_examples = {
+        "1_connected_authenticated": {
+            "summary": "Connect - auth succeeded, connection is now live",
+            "value": {"type": "status", "message": "Authenticated successfully", "ts": "2024-01-01T10:00:00Z"},
+        },
+        "2_audio_interface_ready": {
+            "summary": "Connect - agent's audio bridge is live, conversation_id assigned",
+            "value": {
+                "type": "status",
+                "message": "Audio interface ready",
+                "conversation_id": "conv_abc123",
+                "ts": "2024-01-01T10:00:01Z",
+            },
+        },
+        "3_audio_event": {
+            "summary": "Stream - audio metadata accompanying each binary audio frame (audio itself is a separate binary frame, stripped here)",
+            "value": {
+                "type": "audio",
+                "audio_event": {"audio_base_64": "[STRIPPED]", "event_id": 12},
+            },
+        },
+        "4_user_transcript": {
+            "summary": "Stream - live transcription of what the caller said",
+            "value": {"type": "user_transcript", "text": "Hello, how are you?", "ts": "2024-01-01T10:00:05.123Z"},
+        },
+        "5_agent_response": {
+            "summary": "Stream - live transcription of what the agent said",
+            "value": {
+                "type": "agent_response",
+                "text": "I am doing well, thank you! How can I help you today?",
+                "ts": "2024-01-01T10:00:07.456Z",
+            },
+        },
+        "6_interruption": {
+            "summary": "Stream - the caller barged in; audio at/before this event_id should be discarded client-side",
+            "value": {"type": "interruption", "interruption_event": {"event_id": 42}},
+        },
+        "7_error_insufficient_coins": {
+            "summary": "Error - not enough coin balance to start the call (closes with code 1008 right after)",
+            "value": {"type": "error", "message": "Insufficient coins. Minimum 10 coins required to start a call.", "code": 1008},
+        },
+        "8_error_monthly_limit_mid_call": {
+            "summary": "Error - monthly minutes limit hit mid-call (closes with code 1008 right after)",
+            "value": {"type": "error", "message": "Monthly minutes limit reached. Call disconnected."},
+        },
+        "9_error_low_balance_mid_call": {
+            "summary": "Error - coin balance ran out mid-call (closes with code 1008 right after)",
+            "value": {"type": "error", "message": "Call ended due to low coins balance"},
+        },
+        "10_error_server_config": {
+            "summary": "Error - server misconfiguration, e.g. missing API key (closes with code 1011 right after)",
+            "value": {"type": "error", "message": "Server configuration error", "code": 1011},
+        },
+        "11_disconnect_call_ended": {
+            "summary": "Disconnect - the agent ended the call normally",
+            "value": {"type": "call_ended", "message": "The agent ended the call.", "ts": "2024-01-01T10:00:30Z"},
+        },
+    }
+    description = (
+        "**This is a WebSocket endpoint, not a plain HTTP GET.** Connect with "
+        "`ws://` or `wss://` at this path - it's documented as a GET here (and "
+        "therefore in any Postman collection imported from this spec) only "
+        "because OpenAPI has no dedicated WebSocket operation type. To get a "
+        "native WebSocket request in Postman (with the WS icon and a Messages "
+        "tab instead of Body), create one manually via **New > WebSocket "
+        "Request** pointed at this same URL, using the examples below for the "
+        "messages you send/expect - Postman's spec importer cannot create that "
+        "request type on its own, for any API, because OpenAPI has no concept "
+        "of a WebSocket operation to import.\n\n"
+        "### Connection lifecycle\n"
+        "1. **Connect & authenticate** - open the socket, then immediately send "
+        "the `auth` message (see the request examples) as the very first "
+        "message, within 5 seconds, or the server closes the connection "
+        "(`1008`, no JSON message sent first). On success you get back a "
+        "`status: Authenticated successfully` message, followed shortly by "
+        "`status: Audio interface ready` once the agent's audio bridge comes "
+        "up.\n"
+        "2. **Stream** - send raw PCM 16kHz mono 16-bit little-endian audio as "
+        "binary frames (~100-200ms per chunk). Audio comes back the same way, "
+        "interleaved with `audio`, `user_transcript`, `agent_response`, and "
+        "`interruption` JSON events (see the response examples).\n"
+        "3. **Errors** - a policy/limit violation sends an `error` JSON message "
+        "(see the response examples for the exact wording of each case), then "
+        "closes the socket - `1008` for balance/limit/auth problems, `1011` for "
+        "server-side failures. A few close reasons (bad auth, agent not found) "
+        "close the socket directly with no JSON message first.\n"
+        "4. **Disconnect** - either side can end the call: the agent hanging up "
+        "sends `call_ended` before closing; the client can simply close the "
+        "socket at any time.\n\n"
+        "### Close codes\n"
+        "| Code | Meaning |\n"
+        "| --- | --- |\n"
+        "| `1008` | Policy violation - bad/missing auth, unknown agent, or a "
+        "coin/usage limit was hit. |\n"
+        "| `1011` | Internal error - server misconfiguration or a failure "
+        "talking to the voice engine. |\n\n"
+        "The request/response examples below cover every JSON message type "
+        "this endpoint sends or accepts, in the order they occur."
+    )
+    return {
+        "get": {
+            "tags": ["Public WebSocket"],
+            "summary": "Real-time voice conversation (WebSocket)",
+            "description": description,
+            "parameters": [
+                {
+                    "name": "agent_id",
+                    "in": "path",
+                    "required": True,
+                    "schema": {"type": "integer"},
+                    "description": "ID of the agent to converse with.",
+                }
+            ],
+            "requestBody": {
+                "description": "Client-to-server JSON messages, sent over the WebSocket connection (audio itself is sent as binary frames, not JSON).",
+                "content": {
+                    "application/json": {
+                        "schema": {"type": "object"},
+                        "examples": client_examples,
+                    }
+                },
+            },
+            "responses": {
+                "101": {
+                    "description": (
+                        "Server-to-client JSON messages, sent over the WebSocket connection. "
+                        "Binary audio frames are also sent but aren't representable here."
+                    ),
+                    "content": {
+                        "application/json": {
+                            "schema": {"type": "object"},
+                            "examples": server_examples,
+                        }
+                    },
+                }
+            },
+        }
+    }
+
+
+def _inject_public_websocket_docs(openapi_schema):
+    openapi_schema.setdefault("paths", {})["/api/v2/public/ws/{agent_id}"] = _public_websocket_path_item()
+
+
 # Custom OpenAPI function to add security scheme
 def custom_openapi():
     if app.openapi_schema:
@@ -325,8 +595,15 @@ def custom_openapi():
     _openapi_31_anyof_null_to_30_nullable(openapi_schema)
     _openapi_31_examples_to_30_example(openapi_schema)
     _wrap_public_api_responses_in_envelope(openapi_schema)
+    # Injected after the envelope wrap above (which only applies to real
+    # response_model-backed routes) so its handwritten examples survive
+    # untouched, but before the public-path restriction/tag regroup below so
+    # it's gated and grouped exactly like every other public route.
+    _inject_public_websocket_docs(openapi_schema)
     if not VoiceSettings.SHOW_ALL_APIS_IN_SWAGGER:
         _restrict_openapi_to_public_v2(openapi_schema)
+        _prune_unused_components(openapi_schema)
+    _regroup_public_api_tags(openapi_schema)
     # Add security scheme
     if "components" not in openapi_schema:
         openapi_schema["components"] = {}
