@@ -23,3 +23,5 @@ temp_auto_push.bat
 temp_interactive_push.bat
 .vscode/tasks.json
 public/fonts/fa-solid-400.woff2
+.vscode/
+*.woff2
