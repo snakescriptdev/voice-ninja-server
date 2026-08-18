@@ -19,7 +19,7 @@ def _validate_timezone(value: Optional[str]) -> Optional[str]:
         return None
     try:
         ZoneInfo(value)
-    except (ZoneInfoNotFoundError, ValueError, KeyError):
+    except (ZoneInfoNotFoundError, ValueError, KeyError, OSError):
         raise ValueError(f"'{value}' is not a valid timezone. Please use a standard timezone name, e.g. 'America/New_York' or 'Asia/Kolkata'.")
     return value
 
