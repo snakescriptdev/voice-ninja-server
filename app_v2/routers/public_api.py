@@ -516,7 +516,7 @@ def agent_to_read(agent: AgentModel) -> PublicAgentRead:
         language=language.id if language else None,
         language_name=language.language if language else None,
         created_at=agent.created_at,
-        updated_at=agent.modified_at,
+        updated_at=agent.modified_at or agent.created_at,
         # Personal KB (PersonalKnowledgeBaseAgentBridgeModel) — see create_agent
         # for why this API uses personal KB, not the legacy KnowledgeBaseModel.
         knowledgebase = [
@@ -565,7 +565,7 @@ def agent_to_list_read(
         language=language.id if language else None,
         language_name=language.language if language else None,
         created_at=agent.created_at,
-        updated_at=agent.modified_at,
+        updated_at=agent.modified_at or agent.created_at,
         timezone=agent.timezone,
         kb_count=kb_count,
         tool_count=tool_count,
@@ -585,7 +585,7 @@ def widget_to_response(widget: WidgetModel, request: Request = None) -> WidgetCo
         agent_name=widget.agent.agent_name if widget.agent else "",
         is_enabled=widget.is_enabled,
         created_at=widget.created_at,
-        updated_at=widget.modified_at,
+        updated_at=widget.modified_at or widget.created_at,
         appearance={
             "widget_title": widget.widget_title,
             "widget_subtitle": widget.widget_subtitle,
@@ -1480,11 +1480,11 @@ async def create_widget(
             raise HTTPException(status_code=403, detail="Agent is disabled")
 
         existing = db.session.query(WidgetModel).filter(
-            WidgetModel.agent_id == wa_in.agent_id,
+            WidgetModel.user_id == current_user.id,
             func.lower(WidgetModel.widget_name) == wa_in.widget_name.lower()
         ).first()
         if existing:
-            raise HTTPException(status_code=400, detail="Widget with same name already exists for this Voice Agent.")
+            raise HTTPException(status_code=400, detail="A widget with this name already exists on your account.")
 
         new_wa = WidgetModel(
             user_id=current_user.id,
@@ -1552,15 +1552,15 @@ async def update_widget(
         if wa_in.agent_id != wa.agent_id and not agent.is_enabled:
             raise HTTPException(status_code=403, detail="Agent is disabled")
 
-        # Same-name-per-agent uniqueness as POST /widgets, excluding this
+        # Same account-wide uniqueness as POST /widgets, excluding this
         # widget itself so re-saving its own unchanged name doesn't collide.
         name_taken = db.session.query(WidgetModel).filter(
-            WidgetModel.agent_id == wa_in.agent_id,
+            WidgetModel.user_id == current_user.id,
             func.lower(WidgetModel.widget_name) == wa_in.widget_name.lower(),
             WidgetModel.id != wa.id,
         ).first()
         if name_taken:
-            raise HTTPException(status_code=400, detail="Widget with same name already exists for this Voice Agent.")
+            raise HTTPException(status_code=400, detail="A widget with this name already exists on your account.")
 
         wa.agent_id = wa_in.agent_id
         wa.widget_name = wa_in.widget_name
@@ -1672,7 +1672,7 @@ async def list_web_agents_public(
                 widget_name=wa.widget.widget_name if wa.widget else "",
                 shareable_link=_shareable_link(request, wa.public_id),
                 created_at=wa.created_at,
-                updated_at=wa.modified_at,
+                updated_at=wa.modified_at or wa.created_at,
             )
             for wa in web_agents
         ]
@@ -2503,7 +2503,7 @@ def _public_kb_fields(item: PersonalKnowledgeBaseModel, request: Request) -> dic
         num_chunks=base.num_chunks,
         agent_count=base.agent_count,
         created_at=base.created_at,
-        modified_at=base.modified_at,
+        modified_at=base.modified_at or base.created_at,
     )
 
 
@@ -2937,7 +2937,7 @@ def function_to_read(f: FunctionModel, agents_count: int = 0) -> PublicFunctionR
         name=f.name,
         description=f.description,
         created_at=f.created_at,
-        modified_at=f.modified_at,
+        modified_at=f.modified_at or f.created_at,
         is_system_managed=f.is_system_managed,
         agents_count=agents_count,
         api_config=ApiSchema(
@@ -3020,7 +3020,7 @@ async def list_functions_public(
 
         items = [
             PublicFunctionListRead(
-                id=f.id, name=f.name, created_at=f.created_at, modified_at=f.modified_at,
+                id=f.id, name=f.name, created_at=f.created_at, modified_at=f.modified_at or f.created_at,
                 is_system_managed=f.is_system_managed,
                 agents_count=agents_counts.get(f.id, 0),
                 method=methods_by_function_id.get(f.id),
