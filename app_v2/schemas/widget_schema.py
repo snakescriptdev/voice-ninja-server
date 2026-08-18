@@ -333,7 +333,7 @@ class PublicWidgetConfig(BaseModel):
     # as an error, not disappear.
     model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [_PUBLIC_WIDGET_PAYLOAD_EXAMPLE]})
 
-    widget_name: str = Field(..., description="(string) Display name for the widget. Must be unique per agent (case-insensitive).")
+    widget_name: str = Field(..., description="(string) Display name for the widget. Must be unique across your account (case-insensitive).")
     agent_id: int = Field(..., description="(numeric id, NOT a string) The `id` field from a GET /api/v2/public/agents response item.")
     appearance: PublicAppearanceConfig
     prechat: PublicPrechatConfig
@@ -356,7 +356,7 @@ class PublicWidgetConfigUpdate(BaseModel):
     # as an error, not disappear.
     model_config = ConfigDict(extra="forbid", json_schema_extra={"examples": [{**_PUBLIC_WIDGET_PAYLOAD_EXAMPLE, "is_enabled": True}]})
 
-    widget_name: str = Field(..., description="(string) Display name for the widget. Must be unique per agent (case-insensitive).")
+    widget_name: str = Field(..., description="(string) Display name for the widget. Must be unique across your account (case-insensitive).")
     agent_id: int = Field(..., description="(numeric id, NOT a string) The `id` field from a GET /api/v2/public/agents response item.")
     appearance: PublicAppearanceConfig
     prechat: PublicPrechatConfig
