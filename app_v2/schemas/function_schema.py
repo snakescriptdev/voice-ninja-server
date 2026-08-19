@@ -604,16 +604,15 @@ class FunctionUpdateSchema(BaseModel):
     Payload for PUT /api/v2/public/functions/{id} — a true PUT (name,
     description, and api_config are all required and replace the tool
     wholesale). See `PUBLIC_UPDATE_FUNCTION_BODY_EXAMPLE` below for a
-    complete, realistic request body. `is_system_managed` is deliberately
-    accepted-but-ignored: it's a server-assigned flag, not something a
-    caller can set, so it's a known field (sending it is never an error)
-    whose value is simply never applied.
+    complete, realistic request body. `is_system_managed` is a
+    server-assigned flag, not something a caller can set — it's deliberately
+    NOT a declared field here, so `extra = "forbid"` below rejects any
+    payload that includes it.
     """
     name: str = Field(..., min_length=3, description="snake_case: lowercase letters, numbers, and underscores only, starting with a letter (e.g. \"get_weather_forecast\").")
     description: str = Field(..., min_length=10)
     api_config: ApiUpdateSchema
     response_variables: Optional[Dict[str, str]] = None # Allow top-level update too
-    is_system_managed: Optional[bool] = Field(default=None, description="Ignored — this flag is server-assigned and cannot be set by the caller.")
 
     @field_validator("name")
     @classmethod
