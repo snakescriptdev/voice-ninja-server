@@ -1,0 +1,436 @@
+<!--
+  Manual test page for the public WebSocket endpoint
+  (app_v2/routers/public_websocket_router.py -> /api/v2/public/ws/{agent_id}).
+
+  Just open this file directly in a browser (double-click it, or
+  File > Open). No server needed to host this page itself - it only needs
+  to reach your backend's WebSocket URL. Mic capture requires either
+  localhost or an https:// page (browser restriction on getUserMedia).
+
+  Audio format matches the agent config (agent_output_audio_format /
+  user_input_audio_format = "pcm_16000" - see
+  app_v2/utils/elevenlabs/agent_utils.py): raw 16-bit signed PCM, mono,
+  16000 Hz, sent/received as binary WebSocket frames (no WAV/JSON wrapper).
+
+  Delete when done testing.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Public WebSocket Test</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 800px; margin: 24px auto; padding: 0 16px; }
+  fieldset { margin-bottom: 16px; }
+  label { display: block; margin: 8px 0 2px; font-size: 13px; color: #333; }
+  input[type=text], input:not([type]), input[type=password] { width: 100%; padding: 6px; box-sizing: border-box; }
+  button { padding: 8px 16px; margin-right: 8px; margin-top: 8px; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+  #status { font-weight: bold; padding: 6px 10px; border-radius: 4px; display: inline-block; }
+  .status-disconnected { background: #fde2e2; color: #a11; }
+  .status-connecting { background: #fff3cd; color: #8a6d3b; }
+  .status-connected { background: #d4edda; color: #155724; }
+  .checkbox-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+  .checkbox-row input { width: auto; }
+  .meters { display: flex; gap: 16px; margin: 12px 0; }
+  .meter-block { flex: 1; }
+  .meter-label { font-size: 12px; color: #555; margin-bottom: 4px; }
+  .meter-bar-bg { background: #e0e0e0; border-radius: 4px; height: 10px; overflow: hidden; }
+  .meter-bar-fill { background: #4caf50; height: 100%; width: 0%; transition: width 60ms linear; }
+  #agentMeterFill { background: #2196f3; }
+  .counters { font-size: 12px; color: #666; margin: 4px 0 12px; }
+  #log {
+    background: #111; color: #0f0; font-family: monospace; font-size: 12px;
+    padding: 10px; height: 380px; overflow-y: auto; white-space: pre-wrap;
+    word-break: break-all; border-radius: 4px;
+  }
+  .log-recv { color: #7fd1ff; }
+  .log-sent { color: #ffd27f; }
+  .log-error { color: #ff6b6b; }
+  .log-info { color: #999; }
+</style>
+</head>
+<body>
+
+<h2>Public WebSocket Test</h2>
+
+<fieldset>
+  <legend>Connection settings</legend>
+  <label for="wsUrl">WebSocket base URL (no path)</label>
+  <input id="wsUrl" value="ws://localhost:8000">
+
+  <label for="agentId">Agent ID</label>
+  <input id="agentId" placeholder="e.g. 12">
+
+  <label for="clientId">Client ID</label>
+  <input id="clientId" placeholder="API key client_id">
+
+  <label for="clientSecret">Client Secret</label>
+  <input id="clientSecret" type="password" placeholder="API key client_secret">
+
+  <div class="checkbox-row">
+    <input type="checkbox" id="micCheckbox" checked>
+    <label for="micCheckbox" style="margin:0;">Stream microphone audio (needed for a real voice conversation)</label>
+  </div>
+</fieldset>
+
+<div>
+  <span id="status" class="status-disconnected">DISCONNECTED</span>
+</div>
+
+<div>
+  <button id="connectBtn">Connect</button>
+  <button id="disconnectBtn" disabled>Disconnect</button>
+  <button id="muteBtn" disabled>Mute Mic</button>
+  <button id="clearBtn">Clear log</button>
+</div>
+
+<div class="meters">
+  <div class="meter-block">
+    <div class="meter-label">Mic input level</div>
+    <div class="meter-bar-bg"><div id="micMeterFill" class="meter-bar-fill"></div></div>
+  </div>
+  <div class="meter-block">
+    <div class="meter-label">Agent audio output level</div>
+    <div class="meter-bar-bg"><div id="agentMeterFill" class="meter-bar-fill"></div></div>
+  </div>
+</div>
+<div class="counters" id="counters">Mic chunks sent: 0 | Agent audio chunks received: 0</div>
+
+<h3>Log</h3>
+<div id="log"></div>
+
+<audio id="agentAudioEl" autoplay style="display:none;"></audio>
+
+<script>
+  const wsUrlInput = document.getElementById('wsUrl');
+  const agentIdInput = document.getElementById('agentId');
+  const clientIdInput = document.getElementById('clientId');
+  const clientSecretInput = document.getElementById('clientSecret');
+  const micCheckbox = document.getElementById('micCheckbox');
+  const statusEl = document.getElementById('status');
+  const connectBtn = document.getElementById('connectBtn');
+  const disconnectBtn = document.getElementById('disconnectBtn');
+  const muteBtn = document.getElementById('muteBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const logEl = document.getElementById('log');
+  const micMeterFill = document.getElementById('micMeterFill');
+  const agentMeterFill = document.getElementById('agentMeterFill');
+  const countersEl = document.getElementById('counters');
+
+  const TARGET_SAMPLE_RATE = 16000; // must match agent_output_audio_format / user_input_audio_format = "pcm_16000"
+
+  let ws = null;
+  let audioCtx = null;
+  let micStream = null;
+  let micSourceNode = null;
+  let micProcessorNode = null;
+  let micAnalyser = null;
+  let agentAnalyser = null;
+  let agentDestNode = null;
+  const agentAudioEl = document.getElementById('agentAudioEl');
+  let micEnabled = true;
+  let micStreamingActive = false;
+  let nextPlayTime = 0;
+  let scheduledSources = [];
+  let micChunksSent = 0;
+  let agentChunksReceived = 0;
+  let meterRafId = null;
+
+  function log(message, cls) {
+    const line = document.createElement('div');
+    if (cls) line.className = cls;
+    const ts = new Date().toLocaleTimeString();
+    line.textContent = `[${ts}] ${message}`;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = cls;
+  }
+
+  function updateCounters() {
+    countersEl.textContent = `Mic chunks sent: ${micChunksSent} | Agent audio chunks received: ${agentChunksReceived}`;
+  }
+
+  function setConnectedUI(connected) {
+    connectBtn.disabled = connected;
+    disconnectBtn.disabled = !connected;
+    muteBtn.disabled = !connected || !micStreamingActive;
+    wsUrlInput.disabled = connected;
+    agentIdInput.disabled = connected;
+    clientIdInput.disabled = connected;
+    clientSecretInput.disabled = connected;
+    micCheckbox.disabled = connected;
+  }
+
+  // --- Audio helpers -------------------------------------------------
+
+  // Downsample/upsample a Float32 buffer between sample rates via linear interpolation.
+  function resampleFloat32(input, fromRate, toRate) {
+    if (fromRate === toRate) return input;
+    const ratio = fromRate / toRate;
+    const outLength = Math.round(input.length / ratio);
+    const output = new Float32Array(outLength);
+    for (let i = 0; i < outLength; i++) {
+      const srcPos = i * ratio;
+      const srcIndex = Math.floor(srcPos);
+      const frac = srcPos - srcIndex;
+      const a = input[srcIndex] || 0;
+      const b = input[srcIndex + 1] !== undefined ? input[srcIndex + 1] : a;
+      output[i] = a + (b - a) * frac;
+    }
+    return output;
+  }
+
+  function floatTo16BitPCM(float32Array) {
+    const out = new Int16Array(float32Array.length);
+    for (let i = 0; i < float32Array.length; i++) {
+      let s = Math.max(-1, Math.min(1, float32Array[i]));
+      out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    return out;
+  }
+
+  function int16PCMToFloat32(int16Array) {
+    const out = new Float32Array(int16Array.length);
+    for (let i = 0; i < int16Array.length; i++) {
+      out[i] = int16Array[i] / (int16Array[i] < 0 ? 0x8000 : 0x7fff);
+    }
+    return out;
+  }
+
+  function computeLevel(analyser) {
+    const data = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(data);
+    let sumSquares = 0;
+    for (let i = 0; i < data.length; i++) {
+      const v = (data[i] - 128) / 128;
+      sumSquares += v * v;
+    }
+    return Math.sqrt(sumSquares / data.length); // RMS, roughly 0..1
+  }
+
+  function tickMeters() {
+    if (micAnalyser) {
+      micMeterFill.style.width = `${Math.min(100, computeLevel(micAnalyser) * 300)}%`;
+    }
+    if (agentAnalyser) {
+      agentMeterFill.style.width = `${Math.min(100, computeLevel(agentAnalyser) * 300)}%`;
+    }
+    meterRafId = requestAnimationFrame(tickMeters);
+  }
+
+  async function startMicCapture() {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+
+    micSourceNode = audioCtx.createMediaStreamSource(micStream);
+
+    micAnalyser = audioCtx.createAnalyser();
+    micAnalyser.fftSize = 1024;
+    micSourceNode.connect(micAnalyser);
+
+    // ScriptProcessorNode is deprecated but is the simplest way to get raw
+    // PCM samples synchronously without shipping a separate AudioWorklet
+    // module file for a throwaway test page.
+    micProcessorNode = audioCtx.createScriptProcessor(4096, 1, 1);
+    micProcessorNode.onaudioprocess = (event) => {
+      if (!micStreamingActive || !micEnabled || !ws || ws.readyState !== WebSocket.OPEN) return;
+      const input = event.inputBuffer.getChannelData(0);
+      const resampled = resampleFloat32(input, audioCtx.sampleRate, TARGET_SAMPLE_RATE);
+      const pcm16 = floatTo16BitPCM(resampled);
+      ws.send(pcm16.buffer);
+      micChunksSent++;
+      updateCounters();
+    };
+    micSourceNode.connect(micProcessorNode);
+    // Some browsers only fire onaudioprocess if the node is connected to a
+    // destination; route to destination through a zero-gain node so the mic
+    // is never actually heard through the speakers (avoiding feedback).
+    const silentGain = audioCtx.createGain();
+    silentGain.gain.value = 0;
+    micProcessorNode.connect(silentGain);
+    silentGain.connect(audioCtx.destination);
+
+    micStreamingActive = true;
+    log('Microphone capture started.', 'log-info');
+  }
+
+  function stopMicCapture() {
+    micStreamingActive = false;
+    if (micProcessorNode) { micProcessorNode.disconnect(); micProcessorNode.onaudioprocess = null; micProcessorNode = null; }
+    if (micSourceNode) { micSourceNode.disconnect(); micSourceNode = null; }
+    if (micAnalyser) { micAnalyser.disconnect(); micAnalyser = null; }
+    if (micStream) { micStream.getTracks().forEach(t => t.stop()); micStream = null; }
+  }
+
+  // Agent audio is routed through a real <audio> element (via a
+  // MediaStreamDestination) instead of straight to audioCtx.destination.
+  // On speaker playback, the mic's echoCancellation constraint only cancels
+  // out audio the browser can see going through its normal media-element
+  // pipeline - raw AudioContext.destination output isn't tracked as an echo
+  // reference on most browsers, so without this the agent's own voice loops
+  // back into the mic and never lets ElevenLabs' VAD register a clean
+  // interruption. Headphones sidestep this entirely, which is why it only
+  // shows up on speakers.
+  function ensureAgentAnalyser() {
+    if (!agentAnalyser) {
+      agentAnalyser = audioCtx.createAnalyser();
+      agentAnalyser.fftSize = 1024;
+      agentDestNode = audioCtx.createMediaStreamDestination();
+      agentAnalyser.connect(agentDestNode);
+      agentAudioEl.srcObject = agentDestNode.stream;
+      agentAudioEl.play().catch(() => {});
+    }
+    return agentAnalyser;
+  }
+
+  function playAgentAudioChunk(arrayBuffer) {
+    const int16 = new Int16Array(arrayBuffer);
+    const float32 = int16PCMToFloat32(int16);
+
+    // Buffer is tagged at TARGET_SAMPLE_RATE regardless of the AudioContext's
+    // actual rate - Web Audio resamples automatically on playback to match
+    // the context/destination rate.
+    const buffer = audioCtx.createBuffer(1, float32.length, TARGET_SAMPLE_RATE);
+    buffer.copyToChannel(float32, 0);
+
+    const source = audioCtx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ensureAgentAnalyser());
+
+    const startAt = Math.max(audioCtx.currentTime, nextPlayTime);
+    source.start(startAt);
+    nextPlayTime = startAt + buffer.duration;
+
+    scheduledSources.push(source);
+    source.onended = () => {
+      scheduledSources = scheduledSources.filter(s => s !== source);
+    };
+
+    agentChunksReceived++;
+    updateCounters();
+  }
+
+  // Barge-in: drop everything queued/playing so stale agent audio doesn't
+  // keep coming out of the speakers after the user interrupts.
+  function flushAgentAudio() {
+    scheduledSources.forEach(s => { try { s.stop(); } catch (e) { /* already ended */ } });
+    scheduledSources = [];
+    nextPlayTime = audioCtx.currentTime;
+  }
+
+  // --- Connect / disconnect -------------------------------------------
+
+  connectBtn.addEventListener('click', async () => {
+    const base = wsUrlInput.value.trim().replace(/\/+$/, '');
+    const agentId = agentIdInput.value.trim();
+    const clientId = clientIdInput.value.trim();
+    const clientSecret = clientSecretInput.value;
+    const wantMic = micCheckbox.checked;
+
+    if (!base || !agentId || !clientId || !clientSecret) {
+      alert('Fill in WebSocket URL, Agent ID, Client ID, and Client Secret first.');
+      return;
+    }
+
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: TARGET_SAMPLE_RATE });
+    nextPlayTime = 0;
+
+    if (wantMic) {
+      try {
+        await startMicCapture();
+      } catch (err) {
+        log(`Microphone access failed: ${err.message}`, 'log-error');
+        alert(`Could not access microphone: ${err.message}`);
+        await audioCtx.close();
+        audioCtx = null;
+        return;
+      }
+    }
+
+    const url = `${base}/api/v2/public/ws/${agentId}`;
+    log(`Connecting to ${url} ...`, 'log-info');
+    setStatus('CONNECTING', 'status-connecting');
+
+    ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
+
+    ws.onopen = () => {
+      log('Connection opened. Sending auth message...', 'log-info');
+      const authMsg = { type: 'auth', client_id: clientId, client_secret: clientSecret };
+      ws.send(JSON.stringify(authMsg));
+      log(`SENT: ${JSON.stringify(authMsg)}`, 'log-sent');
+      setStatus('CONNECTED', 'status-connected');
+      setConnectedUI(true);
+      if (!meterRafId) tickMeters();
+    };
+
+    ws.onmessage = (event) => {
+      if (typeof event.data === 'string') {
+        log(`RECV: ${event.data}`, 'log-recv');
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'interruption') flushAgentAudio();
+          if (data.reason) {
+            log(`Server ending call — reason: ${data.reason} (${data.message || ''})`, 'log-error');
+          }
+        } catch (e) { /* not JSON, ignore */ }
+      } else {
+        playAgentAudioChunk(event.data);
+      }
+    };
+
+    ws.onerror = (event) => {
+      log('WebSocket error (see browser console for details)', 'log-error');
+      console.error('WebSocket error', event);
+    };
+
+    ws.onclose = (event) => {
+      log(`Connection closed (code=${event.code}, reason="${event.reason}")`, 'log-error');
+      setStatus('DISCONNECTED', 'status-disconnected');
+      cleanupAudio();
+      setConnectedUI(false);
+      ws = null;
+    };
+  });
+
+  disconnectBtn.addEventListener('click', () => {
+    if (ws) {
+      log('Disconnecting...', 'log-info');
+      ws.close(1000, 'Client requested disconnect');
+    }
+  });
+
+  muteBtn.addEventListener('click', () => {
+    micEnabled = !micEnabled;
+    muteBtn.textContent = micEnabled ? 'Mute Mic' : 'Unmute Mic';
+    log(micEnabled ? 'Mic unmuted.' : 'Mic muted (still capturing, not sending).', 'log-info');
+  });
+
+  clearBtn.addEventListener('click', () => {
+    logEl.innerHTML = '';
+  });
+
+  function cleanupAudio() {
+    stopMicCapture();
+    flushAgentAudio();
+    if (meterRafId) { cancelAnimationFrame(meterRafId); meterRafId = null; }
+    micMeterFill.style.width = '0%';
+    agentMeterFill.style.width = '0%';
+    agentAnalyser = null;
+    agentDestNode = null;
+    agentAudioEl.pause();
+    agentAudioEl.srcObject = null;
+    micEnabled = true;
+    muteBtn.textContent = 'Mute Mic';
+    if (audioCtx) { audioCtx.close(); audioCtx = null; }
+  }
+</script>
+
+</body>
+</html>

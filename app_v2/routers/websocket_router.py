@@ -412,11 +412,26 @@ async def browser_to_elevenlabs(
     websocket: WebSocket,
     el_ws: aiohttp.ClientWebSocketResponse,
     ctx: CallContext,
+    send_lock: asyncio.Lock,
 ) -> None:
     """
     Relays audio/text from browser → ElevenLabs.
     Auto-disconnects when monthly minute limit is reached.
     """
+    # This task and elevenlabs_to_browser both write to the same client
+    # `websocket` concurrently (limit-check disconnects from here, audio/event
+    # streaming from there). Without this shared lock, a close() from one task
+    # can race a still-in-flight send() from the other and silently corrupt
+    # the connection's state instead of raising — the browser then never sees
+    # a close frame at all and the socket is left dangling.
+    async def ws_send_json(data: dict) -> None:
+        async with send_lock:
+            await websocket.send_json(data)
+
+    async def ws_close(code: int = status.WS_1000_NORMAL_CLOSURE) -> None:
+        async with send_lock:
+            await websocket.close(code=code)
+
     chunk_count = 0
     try:
         while True:
@@ -425,8 +440,8 @@ async def browser_to_elevenlabs(
                 if ctx.minute_limit is not None and (ctx.initial_usage + elapsed_min) >= ctx.minute_limit:
                     logger.warning(f"Auto-disconnect user {ctx.user_id}: monthly minutes limit")
                     ctx.limit_reached = True
-                    await websocket.send_json({"type": "error", "message": "Monthly minutes limit reached."})
-                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    await ws_send_json({"type": "error", "message": "Monthly minutes limit reached."})
+                    await ws_close(code=status.WS_1008_POLICY_VIOLATION)
                     return
 
                 with db():
@@ -440,8 +455,8 @@ async def browser_to_elevenlabs(
                 if low_balance:
                     logger.warning(f"Auto-disconnect user {ctx.user_id}: low balance")
                     ctx.low_balance_reached = True
-                    await websocket.send_json({"type": "error", "message": "Low balance. Call ended to avoid exceeding your available credits."})
-                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    await ws_send_json({"type": "error", "message": "Low balance. Call ended to avoid exceeding your available credits."})
+                    await ws_close(code=status.WS_1008_POLICY_VIOLATION)
                     return
 
                 with db():
@@ -449,8 +464,8 @@ async def browser_to_elevenlabs(
                 if first_call_capped:
                     logger.warning(f"Auto-disconnect user {ctx.user_id}: first-call duration limit")
                     ctx.first_call_limit_reached = True
-                    await websocket.send_json({"type": "error", "message": "First call duration limit reached. Call ended."})
-                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    await ws_send_json({"type": "error", "message": "First call duration limit reached. Call ended."})
+                    await ws_close(code=status.WS_1008_POLICY_VIOLATION)
                     return
 
             message = await websocket.receive()
@@ -483,6 +498,7 @@ async def elevenlabs_to_browser(
     websocket: WebSocket,
     el_ws: aiohttp.ClientWebSocketResponse,
     conversation_row_id: int,
+    send_lock: asyncio.Lock,
 ) -> Optional[str]:
     """
     Relays events/audio from ElevenLabs → browser.
@@ -495,6 +511,20 @@ async def elevenlabs_to_browser(
     that stale agent audio gets relayed and played right as the user is
     speaking — bleeding into the mic and corrupting what ElevenLabs transcribes.
     """
+    # Shared with browser_to_elevenlabs - see the comment there for why sends
+    # and closes on the client `websocket` must be serialized across both tasks.
+    async def ws_send_json(data: dict) -> None:
+        async with send_lock:
+            await websocket.send_json(data)
+
+    async def ws_send_bytes(data: bytes) -> None:
+        async with send_lock:
+            await websocket.send_bytes(data)
+
+    async def ws_close() -> None:
+        async with send_lock:
+            await websocket.close()
+
     conversation_id: Optional[str] = None
     last_interrupt_id = 0
     try:
@@ -523,11 +553,11 @@ async def elevenlabs_to_browser(
                         continue
                     audio_b64 = audio_event.get("audio_base_64")
                     if audio_b64:
-                        await websocket.send_bytes(base64.b64decode(audio_b64))
+                        await ws_send_bytes(base64.b64decode(audio_b64))
                         data["audio_event"]["audio_base_64"] = "[STRIPPED]"
-                        await websocket.send_json(data)
+                        await ws_send_json(data)
                 else:
-                    await websocket.send_json(data)
+                    await ws_send_json(data)
                     if etype and etype != "ping":
                         logger.info(f"Relayed EL event: {etype}")
 
@@ -540,7 +570,7 @@ async def elevenlabs_to_browser(
         # browser disconnected first. Tell the browser explicitly instead of
         # just dropping the connection.
         try:
-            await websocket.send_json({
+            await ws_send_json({
                 "type": "call_ended",
                 "message": "The agent ended the call.",
                 "ts": datetime.now(timezone.utc).isoformat(),
@@ -554,7 +584,7 @@ async def elevenlabs_to_browser(
         logger.error(f"elevenlabs_to_browser error:\n{traceback.format_exc()}")
     finally:
         try:
-            await websocket.close()
+            await ws_close()
         except RuntimeError:
             pass
 
@@ -573,12 +603,13 @@ async def run_bridge(
     Returns conversation_id.
     """
     conversation_id_holder: list[Optional[str]] = [None]
+    send_lock = asyncio.Lock()
 
     async def _el_to_browser_wrapper():
-        conversation_id_holder[0] = await elevenlabs_to_browser(websocket, el_ws, conversation_row_id)
+        conversation_id_holder[0] = await elevenlabs_to_browser(websocket, el_ws, conversation_row_id, send_lock)
 
     tasks = [
-        asyncio.create_task(browser_to_elevenlabs(websocket, el_ws, ctx), name="browser_task"),
+        asyncio.create_task(browser_to_elevenlabs(websocket, el_ws, ctx, send_lock), name="browser_task"),
         asyncio.create_task(_el_to_browser_wrapper(), name="elevenlabs_task"),
     ]
     _, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
