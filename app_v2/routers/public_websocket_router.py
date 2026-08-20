@@ -44,6 +44,19 @@ router = APIRouter(
     tags=["public-websocket"],
 )
 
+
+async def _send_disconnect_notice(websocket: WebSocket, reason: str, message: str, msg_type: str = "error") -> None:
+    """
+    Best-effort notice sent to the client right before we close the socket
+    ourselves, so callers can tell programmatically WHY the call ended
+    (limit reached, low balance, auth failure, etc.) via the stable `reason`
+    code instead of having to parse the free-text `message`.
+    """
+    try:
+        await websocket.send_json({"type": msg_type, "reason": reason, "message": message})
+    except Exception:
+        pass
+
 @router.websocket("/ws/{agent_id}")
 async def public_websocket_agent(
     websocket: WebSocket,
@@ -63,13 +76,16 @@ async def public_websocket_agent(
             timeout=5
         )
     except asyncio.TimeoutError:
+        await _send_disconnect_notice(websocket, "invalid_auth", "Authentication timed out")
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Auth timeout")
         return
     except Exception:
+        await _send_disconnect_notice(websocket, "invalid_auth", "Invalid auth message format")
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid auth message format")
         return
-    
+
     if auth_msg.get("type") != "auth" or "client_id" not in auth_msg or "client_secret" not in auth_msg:
+        await _send_disconnect_notice(websocket, "invalid_auth", "Auth required: client_id and client_secret")
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Auth required: client_id and client_secret")
         return
     
@@ -80,6 +96,7 @@ async def public_websocket_agent(
     with db():
         api_key_record = db.session.query(APIKeyModel).filter(APIKeyModel.client_id == client_id, APIKeyModel.is_active == True).first()
         if not api_key_record:
+            await _send_disconnect_notice(websocket, "invalid_auth", "Invalid Client ID or inactive key")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid Client ID or inactive key")
             return
 
@@ -100,6 +117,7 @@ async def public_websocket_agent(
         # Verify secret
         if not bcrypt.checkpw(client_secret.encode('utf-8'), api_key_record.client_secret_hash.encode('utf-8')):
             finalize_ws_call_log(ws_log_id, is_success=False, status_code=1008, error_message="Invalid Client Secret")
+            await _send_disconnect_notice(websocket, "invalid_auth", "Invalid Client Secret")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid Client Secret")
             return
 
@@ -107,6 +125,7 @@ async def public_websocket_agent(
         agent = db.session.query(AgentModel).filter(AgentModel.id == agent_id, AgentModel.user_id == user_id).first()
         if not agent or not agent.elevenlabs_agent_id:
             finalize_ws_call_log(ws_log_id, is_success=False, status_code=1008, error_message="Agent not found or not configured")
+            await _send_disconnect_notice(websocket, "agent_not_found", "Agent not found or not configured")
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Agent not found or not configured")
             return
         
@@ -128,6 +147,7 @@ async def public_websocket_agent(
             )
             await websocket.send_json({
                 "type": "error",
+                "reason": "insufficient_credits",
                 "message": f"Insufficient coins. Minimum {minimum_required} coins required to start a call.",
                 "code": 1008,
             })
@@ -140,7 +160,7 @@ async def public_websocket_agent(
             conversation_row_id = start_conversation(user_id, agent_id, ChannelEnum.api)
             mark_conversation_failed(conversation_row_id, "Monthly minutes limit reached")
             finalize_ws_call_log(ws_log_id, is_success=False, status_code=1008, error_message="Monthly minutes limit reached")
-            await websocket.send_json({"type": "error", "message": str(e), "code": 1008})
+            await websocket.send_json({"type": "error", "reason": "monthly_minute_limit_reached", "message": str(e), "code": 1008})
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Limit reached")
             return
 
@@ -182,8 +202,8 @@ async def public_websocket_agent(
             with db():
                 mark_conversation_failed(conversation_row_id, "Server configuration error: ELEVENLABS_API_KEY missing")
                 finalize_ws_call_log(ws_log_id, is_success=False, status_code=1011, error_message="Server configuration error: ELEVENLABS_API_KEY missing")
-            await websocket.send_json({"type": "error", "message": "Server configuration error", "code": 1011})
-            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+            await websocket.send_json({"type": "error", "reason": "server_error", "message": "Server configuration error", "code": 1011})
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Server configuration error")
             return
 
         try:
@@ -201,10 +221,11 @@ async def public_websocket_agent(
                                 if minute_limit is not None and (initial_usage + current_call_minutes) >= minute_limit:
                                     limit_reached = True
                                     await websocket.send_json({
-                                        "type": "error",
+                                        "type": "call_ended",
+                                        "reason": "monthly_minute_limit_reached",
                                         "message": "Monthly minutes limit reached. Call disconnected."
                                     })
-                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Monthly minutes limit reached")
                                     return
 
                                 with db():
@@ -218,10 +239,11 @@ async def public_websocket_agent(
                                 if low_balance:
                                     low_balance_reached = True
                                     await websocket.send_json({
-                                        "type": "error",
+                                        "type": "call_ended",
+                                        "reason": "low_balance",
                                         "message": "Low balance. Call ended to avoid exceeding your available credits."
                                     })
-                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Low balance")
                                     return
 
                                 with db():
@@ -229,10 +251,11 @@ async def public_websocket_agent(
                                 if first_call_capped:
                                     first_call_limit_reached = True
                                     await websocket.send_json({
-                                        "type": "error",
+                                        "type": "call_ended",
+                                        "reason": "first_call_duration_limit_reached",
                                         "message": "First call duration limit reached. Call ended."
                                     })
-                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="First call duration limit reached")
                                     return
 
                             message = await websocket.receive()
@@ -330,6 +353,7 @@ async def public_websocket_agent(
                         try:
                             await websocket.send_json({
                                 "type": "call_ended",
+                                "reason": "agent_ended_call",
                                 "message": "The agent ended the call.",
                                 "ts": datetime.now(timezone.utc).isoformat(),
                             })
@@ -363,8 +387,8 @@ async def public_websocket_agent(
             with db():
                 mark_conversation_failed(conversation_row_id, "Failed to connect to voice engine")
                 finalize_ws_call_log(ws_log_id, is_success=False, status_code=1011, error_message="Failed to connect to voice engine")
-            await websocket.send_json({"type": "error", "message": "Failed to connect to voice engine", "code": 1011})
-            await websocket.close(code=status.WS_1011_INTERNAL_ERROR)
+            await websocket.send_json({"type": "error", "reason": "server_error", "message": "Failed to connect to voice engine", "code": 1011})
+            await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Failed to connect to voice engine")
 
     if limit_reached:
         limit_error = "Monthly minutes limit reached"
@@ -414,7 +438,7 @@ async def public_websocket_agent(
             def _finalize():
                 with db():
                     conversation_data = finalize_conversation(
-                        conversation_row_id, metadata, conversation_id, reference_type="api_conversation",
+                        conversation_row_id, metadata, conversation_id,
                         error_message=limit_error,
                     )
                     finalize_ws_call_log(

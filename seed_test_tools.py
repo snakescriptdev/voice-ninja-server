@@ -47,8 +47,8 @@ from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 
 BASE_URL = "https://boomless-estelle-nonoppressively.ngrok-free.dev"
 # Target user: first positional CLI arg wins, else env, else default.
-SEED_USER_EMAIL = "priyanshi+1@wope.ai"
-SEED_USER_ID = "1"
+SEED_USER_EMAIL = ""
+SEED_USER_ID = ""
 
 if len(sys.argv) > 1 and sys.argv[1].strip():
     SEED_USER_EMAIL = sys.argv[1].strip()
@@ -68,7 +68,6 @@ def _i(desc):
 
 def _body(properties: dict, required: list) -> RequestBodySchema:
     return RequestBodySchema(
-        type="object",
         properties={k: BodyField(**v) for k, v in properties.items()},
         required=required,
     )
@@ -96,7 +95,6 @@ def build_tools() -> list:
                 method=HttpMethod.GET,
                 query_params_schema=QueryParamsSchema(
                     properties={"location": PrimitiveField(type="string", description="City or place to get the weather for.")},
-                    required=["location"],
                 ),
             ),
         ),

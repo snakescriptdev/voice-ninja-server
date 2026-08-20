@@ -330,7 +330,7 @@ async def check_elevenlabs_credits(
     On low credits or an API error, persists a failed conversation record
     (for admin visibility), notifies the browser, and closes the socket.
     """
-    async def _reject() -> None:
+    async def _reject(reason: str) -> None:
         error_message = "Some error occurred on server, please contact administrator."
         with db():
             record = ConversationsModel(
@@ -344,7 +344,7 @@ async def check_elevenlabs_credits(
             db.session.add(record)
             db.session.commit()
 
-        await websocket.send_json({"type": "error", "message": error_message})
+        await websocket.send_json({"type": "error", "reason": reason, "message": error_message})
         await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="ElevenLabs credits exhausted")
 
     try:
@@ -355,12 +355,12 @@ async def check_elevenlabs_credits(
         credits_left = character_limit - character_count
         if credits_left <= 10:
             logger.info(f"Credits left: {credits_left}")
-            await _reject()
+            await _reject("elevenlabs_credits_exhausted")
             return False
 
     except Exception as ex:
         logger.exception(f"check_elevenlabs_credits failed: {str(ex)}")
-        await _reject()
+        await _reject("server_error")
         return False
 
     return True
