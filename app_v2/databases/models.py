@@ -872,7 +872,7 @@ class WidgetLeadModel(Base):
     conversation = relationship("ConversationsModel", back_populates="lead")
 
 
-class WebAgentPageModel(Base):
+class WebAgentPageModel(Base): 
     __tablename__ = "web_agent_pages"
 
     id: Mapped[int] = mapped_column(primary_key=True)
