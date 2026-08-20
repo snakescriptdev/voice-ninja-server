@@ -28,6 +28,18 @@ logger = setup_logger(__name__)
 # native knowledge_base field (personal KB is a search tool, not that field),
 # so a "knowledge base too large" error is really the prompt/model context
 # budget being exceeded and should read that way to the caller.
+# Appended to every agent's prompt (create and update, dashboard and public
+# API alike) regardless of the caller's own prompt content. Without this,
+# the LLM has no way to know it's in a phone/audio-only call and falls back
+# to generic chat-assistant habits when the user goes quiet - e.g. asking
+# them to "type" or "text" a reply, which makes no sense since this product
+# has no text input surface at all.
+_VOICE_ONLY_GUARDRAIL = (
+    "\n\nThis is a real-time voice conversation over audio only - there is no "
+    "text chat, keyboard, or screen for the user to type into. Never ask the "
+    "user to type, text, or write anything; always ask them to speak instead."
+)
+
 _FRIENDLY_AGENT_SYNC_ERRORS = {
     "file_too_large": (
         "The prompt length is too long for this model. Please try changing "
@@ -107,7 +119,7 @@ class ElevenLabsAgent(BaseElevenLabs):
         conversation_config = {
             "agent": {
                 "prompt": {
-                    "prompt": prompt,
+                    "prompt": prompt + _VOICE_ONLY_GUARDRAIL,
                     "llm": llm_model,
                     "temperature": 0.0,
                     "max_tokens": -1,
@@ -332,7 +344,7 @@ class ElevenLabsAgent(BaseElevenLabs):
                 current_config["agent"] = {}
             if "prompt" not in current_config["agent"]:
                 current_config["agent"]["prompt"] = {}
-            current_config["agent"]["prompt"]["prompt"] = prompt
+            current_config["agent"]["prompt"]["prompt"] = prompt + _VOICE_ONLY_GUARDRAIL
             config_updated = True
         
         if llm_model:
@@ -543,11 +555,7 @@ class ElevenLabsAgent(BaseElevenLabs):
         if api_schema.request_body_schema:
             rb_dump = api_schema.request_body_schema.model_dump(exclude_none=True)
             if rb_dump.get("properties"):
-                 # Our own schema has no top-level "type" (a request body is
-                 # always implicitly an object), but ElevenLabs' API still
-                 # expects it in this JSON-schema-shaped payload.
-                 rb_dump["type"] = "object"
-                 serialized_api["request_body_schema"] = rb_dump
+                serialized_api["request_body_schema"] = rb_dump
 
         tool_config = {
             "type": "webhook",

@@ -209,7 +209,28 @@ async def public_websocket_agent(
         try:
             async with session.ws_connect(elevenlabs_ws_url, headers={"xi-api-key": ELEVENLABS_API_KEY}) as el_ws:
                 logger.info(f"Connected to ElevenLabs WebSocket for agent {elevenlabs_agent_id}")
-                
+
+                # browser_to_elevenlabs and elevenlabs_to_browser run concurrently and
+                # both write to the same client `websocket` (limit-check disconnects
+                # from one, audio/event streaming from the other). Without this lock,
+                # a close() from one task can race a still-in-flight send() from the
+                # other and silently corrupt the connection's state instead of raising
+                # — the browser then never sees a close frame at all and the socket
+                # is left dangling until the client disconnects itself.
+                send_lock = asyncio.Lock()
+
+                async def ws_send_json(data: dict) -> None:
+                    async with send_lock:
+                        await websocket.send_json(data)
+
+                async def ws_send_bytes(data: bytes) -> None:
+                    async with send_lock:
+                        await websocket.send_bytes(data)
+
+                async def ws_close(code: int = status.WS_1000_NORMAL_CLOSURE, reason: str = "") -> None:
+                    async with send_lock:
+                        await websocket.close(code=code, reason=reason)
+
                 async def browser_to_elevenlabs():
                     nonlocal limit_reached, low_balance_reached, first_call_limit_reached
                     chunk_count = 0
@@ -220,12 +241,12 @@ async def public_websocket_agent(
                                 current_call_minutes = (datetime.now(timezone.utc) - call_start_time).total_seconds() / 60
                                 if minute_limit is not None and (initial_usage + current_call_minutes) >= minute_limit:
                                     limit_reached = True
-                                    await websocket.send_json({
+                                    await ws_send_json({
                                         "type": "call_ended",
                                         "reason": "monthly_minute_limit_reached",
                                         "message": "Monthly minutes limit reached. Call disconnected."
                                     })
-                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Monthly minutes limit reached")
+                                    await ws_close(code=status.WS_1008_POLICY_VIOLATION, reason="Monthly minutes limit reached")
                                     return
 
                                 with db():
@@ -238,24 +259,24 @@ async def public_websocket_agent(
                                     )
                                 if low_balance:
                                     low_balance_reached = True
-                                    await websocket.send_json({
+                                    await ws_send_json({
                                         "type": "call_ended",
                                         "reason": "low_balance",
                                         "message": "Low balance. Call ended to avoid exceeding your available credits."
                                     })
-                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Low balance")
+                                    await ws_close(code=status.WS_1008_POLICY_VIOLATION, reason="Low balance")
                                     return
 
                                 with db():
                                     first_call_capped = is_first_call_duration_exceeded(call_start_time, is_first_call)
                                 if first_call_capped:
                                     first_call_limit_reached = True
-                                    await websocket.send_json({
+                                    await ws_send_json({
                                         "type": "call_ended",
                                         "reason": "first_call_duration_limit_reached",
                                         "message": "First call duration limit reached. Call ended."
                                     })
-                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="First call duration limit reached")
+                                    await ws_close(code=status.WS_1008_POLICY_VIOLATION, reason="First call duration limit reached")
                                     return
 
                             message = await websocket.receive()
@@ -300,7 +321,7 @@ async def public_websocket_agent(
                                     if conversation_id:
                                         with db():
                                             set_conversation_conv_id(conversation_row_id, conversation_id)
-                                    await websocket.send_json({
+                                    await ws_send_json({
                                         "type": "status",
                                         "message": "Audio interface ready",
                                         "conversation_id": conversation_id,
@@ -322,25 +343,25 @@ async def public_websocket_agent(
                                     audio_b64 = audio_event.get("audio_base_64")
                                     if audio_b64:
                                         audio_bytes = base64.b64decode(audio_b64)
-                                        await websocket.send_bytes(audio_bytes)
+                                        await ws_send_bytes(audio_bytes)
                                         # Also send metadata but strip audio
                                         data["audio_event"]["audio_base_64"] = "[STRIPPED]"
-                                        await websocket.send_json(data)
+                                        await ws_send_json(data)
                                 elif etype == "user_transcript":
-                                    await websocket.send_json({
+                                    await ws_send_json({
                                         "type": "user_transcript",
                                         "text": data.get("user_transcript_event", {}).get("transcript"),
                                         "ts": datetime.now(timezone.utc).isoformat()
                                     })
                                 elif etype == "agent_response":
-                                    await websocket.send_json({
+                                    await ws_send_json({
                                         "type": "agent_response",
                                         "text": data.get("agent_response_event", {}).get("agent_response"),
                                         "ts": datetime.now(timezone.utc).isoformat()
                                     })
                                 else:
                                     # Forward all other events
-                                    await websocket.send_json(data)
+                                    await ws_send_json(data)
 
                             elif msg.type == aiohttp.WSMsgType.ERROR:
                                 break
@@ -351,7 +372,7 @@ async def public_websocket_agent(
                         # timeout) rather than this task being cancelled — tell the client
                         # explicitly instead of just dropping the connection.
                         try:
-                            await websocket.send_json({
+                            await ws_send_json({
                                 "type": "call_ended",
                                 "reason": "agent_ended_call",
                                 "message": "The agent ended the call.",
@@ -365,7 +386,7 @@ async def public_websocket_agent(
                         logger.error(f"Error in public_elevenlabs_to_browser: {e}")
                     finally:
                         try:
-                            await websocket.close()
+                            await ws_close()
                         except RuntimeError:
                             pass
 
