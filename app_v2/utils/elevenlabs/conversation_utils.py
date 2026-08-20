@@ -8,6 +8,7 @@ Handles fetching conversation lists, details, audio, and deletion.
 from typing import Optional, Dict, Any, List
 from .base import BaseElevenLabs, ElevenLabsResponse
 from app_v2.core.logger import setup_logger
+from app_v2.utils.log_sanitizer import redact
 
 logger = setup_logger(__name__)
 
@@ -189,7 +190,15 @@ class ElevenLabsConversation(BaseElevenLabs):
                             {
                                 "role": msg.get("role", "user"),  # 'user' or 'agent'
                                 "message": msg.get("message", ""),
-                                "tool_calls": msg.get("tool_calls"),
+                                # tool_calls carries the raw outbound webhook request
+                                # ElevenLabs made for each tool (URL, headers, body) -
+                                # for our own system tools (e.g. the personal-KB
+                                # search webhook) that includes the internal
+                                # Authorization bearer secret we configured on the
+                                # tool. redact() strips that before this ever leaves
+                                # the server, since it's a static, account-wide
+                                # secret that also guards other internal endpoints.
+                                "tool_calls": redact(msg.get("tool_calls")),
                                 "tool_result": msg.get("tool_results"),
                                 "rag_retrieval_info": msg.get("rag_retrieval_info")
                             }
