@@ -1,42 +1,42 @@
-# 🤖 Retell-like Agent Platform
+# Retell-like Agent Platform
 
 A conversational AI platform built similar to **Retell**, powered by **Gemini LLM** and **ElevenLabs TTS/Voice Cloning**.  
 Supports **agents**, **function calling**, **knowledge bases**, **webhooks**, and **custom voice integration**.
 
 ---
 
-## 📑 Table of Contents
+## Table of Contents
 
-- [✨ Overview](#-overview)
-- [🛠 Features](#-features)
-- [👤 Agent Page](#-agent-page)
-- [📝 Prompt, Variables & Function Calling](#-prompt-dynamic-variables-and-function-calling)
-- [🎙️ Voice Settings](#-voice-settings)
-- [🌐 Webhooks](#-webhooks)
-- [⚙️ Function Calls](#-function-calls)
-- [🗣️ Custom Voice](#-custom-voice)
-- [📚 Knowledge Base](#-knowledge-base)
-- [📂 ElevenLabs Project Structure](#-elevenlabs-project-structure)
-- [🔄 Switching Between Pipecat and ElevenLabs](#-switching-between-pipecat-and-elevenlabs)
-  - [✅ Using ElevenLabs (Default)](#-using-elevenlabs-default)
+- [Overview](#overview)
+- [Features](#features)
+- [Agent Page](#agent-page)
+- [Prompt, Variables & Function Calling](#prompt-dynamic-variables-and-function-calling)
+- [Voice Settings](#voice-settings)
+- [Webhooks](#webhooks-page)
+- [Function Calls](#function-calls)
+- [Custom Voice](#custom-voice)
+- [Knowledge Base](#knowledge-base)
+- [ElevenLabs Project Structure](#elevenlabs-project-structure)
+- [Switching Between Pipecat and ElevenLabs](#switching-between-pipecat-and-elevenlabs)
+  - [Using ElevenLabs (Default)](#using-elevenlabs-default)
   - [Reverting Back to Pipecat](#reverting-back-to-pipecat)
 - [Database Population for ElevenLabs](#database-population-for-elevenlabs)
-  - [1️⃣ Voices](#1️⃣-voices)
-  - [2️⃣ LLM Models](#2️⃣-llm-models)
-  - [3️⃣ Languages](#3️⃣-languages)
+  - [Voices](#1-voices)
+  - [LLM Models](#2-llm-models)
+  - [Languages](#3-languages)
 - [ElevenLabs Code](#elevenlabs-code)
 - [ElevenLabs Configuration Reference](#elevenlabs-configuration-reference)
-- [🚀 ElevenLabs Workflow Summary](#-elevenlabs-workflow-summary)
+- [ElevenLabs Workflow Summary](#elevenlabs-workflow-summary)
 
 ---
 
-## ✨ Overview
+## Overview
 
 This project enables users to **create AI agents** with configurable prompts, voices, knowledge bases, and integrations.  
 Agents can respond intelligently, call APIs via function calls, and use custom cloned voices.
 ---
 
-## 🛠 Features
+## Features
 
 - Create and manage **Agents**
 - **Gemini LLM** integration for natural conversations
@@ -50,10 +50,10 @@ Agents can respond intelligently, call APIs via function calls, and use custom c
 
 ---
 
-## 👤 Agent Page
+## Agent Page
 
 - Create an **Agent**  
-- ⚠️ **Important:** Before chatting with the agent, configure settings (max token limit, etc.) in **Update Agent Page**   Because otherwise bot won't work as we have logic of deducting coins at backend. And also Payment is important so that tokens appear to user's account.
+- **Important:** Before chatting with the agent, configure settings (max token limit, etc.) in **Update Agent Page**   Because otherwise bot won't work as we have logic of deducting coins at backend. And also Payment is important so that tokens appear to user's account.
 - Add approved domains  
 - Configure:
   - Prompt  
@@ -66,7 +66,7 @@ Agents can respond intelligently, call APIs via function calls, and use custom c
 - Payment Page:
 Right now its stage mode razorpay payment integration. Use any test card and make payment. after that tokens credited to  user's account. User can preview agent and talk to it now.
 
-## 📝 Prompt, Dynamic Variables and Function Calling
+## Prompt, Dynamic Variables and Function Calling
 
 **Dynamic variables:**
 Dynamic variables are enclosed in {{variable}} and displayed in the UI with {} icon.
@@ -213,7 +213,7 @@ Follow this conversational flow precisely, ensuring each step completes fully be
 """
 
 
-## 🎙️ Voice Settings
+## Voice Settings
 
 - Settings are passed to `AUDIO_CONFIG` in `bot.py → run_bot`.
 - Default noise settings come from `DEFAULT_VARS` in `app.core.config`.
@@ -229,7 +229,7 @@ Follow this conversational flow precisely, ensuring each step completes fully be
     If elevenlabs bot to be used then we don't need that.
 ---
 
-## 🌐 Webhooks Page
+## Webhooks Page
 
 - Webhooks are triggered on **all agent calls** (start, end, etc.)
 - Works similar to Retell’s webhook system.
@@ -237,7 +237,7 @@ Follow this conversational flow precisely, ensuring each step completes fully be
 
 ---
 
-## ⚙️ Function Calls
+## Function Calls
 
 - Each agent can have **custom function calls**.
 - User can:
@@ -247,7 +247,7 @@ Follow this conversational flow precisely, ensuring each step completes fully be
 
 ---
 
-## 🗣️ Custom Voice
+## Custom Voice
 
 - **Add Voice** → Record 10s sample → Upload to ElevenLabs → Store in DB
 - Used in `bot.py` for TTS in pipeline
@@ -256,7 +256,7 @@ Follow this conversational flow precisely, ensuring each step completes fully be
 
 ---
 
-## 📚 Knowledge Base
+## Knowledge Base
 
 - Each Knowledge Base can store **multiple files**.
 - Agent can reference KB while chatting for **context-aware responses**.
@@ -271,7 +271,7 @@ To support this, new models and foreign key relationships were added in `AgentsM
 
 ---
 
-## 📂 ElevenLabs Project Structure
+## ElevenLabs Project Structure
 
 - `app/` → Old Pipecat integration (still present if you need to revert)
 - `elevenlabs_app/` → New ElevenLabs integration (APIs + updated UI)
@@ -280,9 +280,9 @@ To support this, new models and foreign key relationships were added in `AgentsM
 
 ---
 
-## 🔄 Switching Between Pipecat and ElevenLabs
+## Switching Between Pipecat and ElevenLabs
 
-### ✅ Using ElevenLabs (Default)
+### Using ElevenLabs (Default)
 - Keep URLs in templates pointing to:
   - `elevenlabs/web/v1/create_agent`
   - `elevenlabs/web/v1/update_agent`
@@ -291,7 +291,7 @@ To support this, new models and foreign key relationships were added in `AgentsM
 
 ---
 
-### ⬅️ Reverting Back to Pipecat
+### Reverting Back to Pipecat
 1. Remove ElevenLabs routes from HTML templates:
    - `/elevenlabs/api/v1/...`
    - `/elevenlabs/web/v1/...`
@@ -304,11 +304,11 @@ To support this, new models and foreign key relationships were added in `AgentsM
 
 ---
 
-## 🗄️ Database Population for ElevenLabs
+## Database Population for ElevenLabs
 
 ElevenLabs does not allow hardcoding — instead, tables must be populated dynamically.
 
-### 1️⃣ Voices
+### 1. Voices
 - Script: `scripts/elevenlab_voices_add.py`  
 - This script fetches valid ElevenLabs voices and inserts them into the `custom_voices` table.
 
@@ -328,14 +328,14 @@ WHERE elevenlabs_voice_id IS NULL;
 
 ---
 
-### 2️⃣ LLM Models
+### 2. LLM Models
 - File: `elevenlabs_app/services/eleven_lab_agent_utils.py`
 - Search for **`VALID_LLMS`** to see supported Large Language Models.
 - Populate your `llm_models` table using these entries.
 
 ---
 
-### 3️⃣ Languages
+### 3. Languages
 - File: `elevenlabs_app/elevenlabs_config.py`
 - Config variable: **`ELEVENLABS_MODELS`** For each Eleven Lab model, different alloed languages present.
 - ElevenLabs supports different languages for different models.  
@@ -347,12 +347,12 @@ We use `DEFAULT_MODEL_ELEVENLAB` of `elevenlabs_app/elevenlabs_config.py` file f
 
 ---
 
-## ⚙️ Elevenlabs Code
+## Elevenlabs Code
 
 Elevenlabs APIs code is in elevenlabs_app/services/eleven_lab_agent_utils.py
 Please check elevenlabs_app/elevenlabs_config.py as it has mentions of default llm model, default elevenlabs model, languages config, voice config,llm models config.
 
-## ⚙️ Elevenlabs Configuration Reference
+## Elevenlabs Configuration Reference
 
 Check file:  
 `elevenlabs_app/elevenlabs_config.py`
@@ -366,7 +366,7 @@ This contains:
 
 ---
 
-## 🚀 ElevenLabs Workflow Summary
+## ElevenLabs Workflow Summary
 
 1. Run **`elevenlab_voices_add.py`** to populate voices.  
 2. Clean DB of invalid voices using the provided SQL.  
