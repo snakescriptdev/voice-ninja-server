@@ -296,19 +296,19 @@ def update_agent_database(agent_rec, update_data, agent_id):
             for field, value in update_data.items():
                 if value is not None and hasattr(current_agent, field):
                     setattr(current_agent, field, value)
-                    # print(f"🔍 Debug: Updated {field} to: {value}")
+                    # print(f"Debug: Updated {field} to: {value}")
             
             # Update the updated_at timestamp
             current_agent.updated_at = func.now()
             
-            # print(f"🔍 Debug: About to commit changes to database...")
+            # print(f"Debug: About to commit changes to database...")
             db.session.commit()
-            # print(f"🔍 Debug: Database commit successful!")
+            # print(f"Debug: Database commit successful!")
             
             # Refresh the object to ensure we have latest values
             db.session.refresh(current_agent)
-            # print(f"🔍 Debug: After refresh - agent_prompt: {current_agent.agent_prompt}")
-            # print(f"🔍 Debug: After refresh - selected_language: {current_agent.selected_language}")
+            # print(f"Debug: After refresh - agent_prompt: {current_agent.agent_prompt}")
+            # print(f"Debug: After refresh - selected_language: {current_agent.selected_language}")
             
             # Verify by direct database query
             from sqlalchemy import text
@@ -317,12 +317,12 @@ def update_agent_database(agent_rec, update_data, agent_id):
                 {"agent_id": agent_id}
             )
             row = result.fetchone()
-            # print(f"🔍 Debug: Direct DB query - agent_prompt: {row[0] if row else 'None'}, selected_language: {row[1] if row else 'None'}, welcome_msg: {row[2] if row else 'None'}")
+            # print(f"Debug: Direct DB query - agent_prompt: {row[0] if row else 'None'}, selected_language: {row[1] if row else 'None'}, welcome_msg: {row[2] if row else 'None'}")
             
             return True, None, current_agent
             
     except Exception as e:
-        # print(f"🔍 Debug: Database update error: {str(e)}")
+        # print(f"Debug: Database update error: {str(e)}")
         return False, str(e), None
 
 
@@ -436,7 +436,7 @@ async def edit_agent(request: Request):
                 if new_variables:
                     new_variables_dict = {v: "" for v in new_variables}
                     update_data['dynamic_variable'] = new_variables_dict
-                    # print(f"🔍 Debug: Added dynamic_variable to update data")
+                    # print(f"Debug: Added dynamic_variable to update data")
                 
             except Exception as parse_error:
                 return JSONResponse(
@@ -466,11 +466,11 @@ async def edit_agent(request: Request):
         if phone_number:
             update_data['phone_number'] = phone_number
 
-        # print(f"🔍 Debug: Fields to update: {list(update_data.keys())}")
+        # print(f"Debug: Fields to update: {list(update_data.keys())}")
         # if 'welcome_msg' in update_data:
-            # print(f"🔍 Debug: Welcome message to update: {update_data['welcome_msg']}")
+            # print(f"Debug: Welcome message to update: {update_data['welcome_msg']}")
         # if 'dynamic_variable' in update_data:
-            # print(f"🔍 Debug: Dynamic variables to update: {update_data['dynamic_variable']}")
+            # print(f"Debug: Dynamic variables to update: {update_data['dynamic_variable']}")
         
         # Update local database using the dedicated function
         db_success, db_error, updated_agent = update_agent_database(agent_rec, update_data, agent_id)
@@ -487,7 +487,7 @@ async def edit_agent(request: Request):
 
         # Update ElevenLabs agent if we have an existing ElevenLabs agent ID
         if agent_rec.elvn_lab_agent_id:
-            # print(f"🔍 Debug: About to call ElevenLabs update_agent:")
+            # print(f"Debug: About to call ElevenLabs update_agent:")
             # print(f"  - agent_id: {agent_rec.elvn_lab_agent_id}")
             # print(f"  - name: {agent_name if agent_name else None}")
             # print(f"  - prompt: {prompt if prompt else None}")
@@ -497,12 +497,12 @@ async def edit_agent(request: Request):
             # print(f"  - selected_elevenlab_model: {DEFAULT_MODEL_ELEVENLAB if DEFAULT_MODEL_ELEVENLAB else None}")
             # print(f"  - first_message: {welcome_msg if welcome_msg else None}")
             # if welcome_msg:
-            #     print(f"🔍 Debug: ElevenLabs will receive welcome message: {welcome_msg}")
+            #     print(f"Debug: ElevenLabs will receive welcome message: {welcome_msg}")
             
             # Get dynamic variables from update data if available
             dynamic_vars = update_data.get('dynamic_variable')
             # if dynamic_vars:
-            #     print(f"🔍 Debug: ElevenLabs will receive dynamic variables: {dynamic_vars}")
+            #     print(f"Debug: ElevenLabs will receive dynamic variables: {dynamic_vars}")
             
             try:
                 creator = ElevenLabsAgentCRUD()
@@ -546,11 +546,11 @@ async def edit_agent(request: Request):
             # Save dynamic variables to local database if they exist
             if update_data.get('dynamic_variable'):
                 try:
-                    # print(f"🔍 Debug: Saving dynamic variables to local database: {update_data['dynamic_variable']}")
+                    # print(f"Debug: Saving dynamic variables to local database: {update_data['dynamic_variable']}")
                     AgentModel.update_dynamic_variables(agent_id, update_data['dynamic_variable'])
-                    # print(f"✅ Success: Dynamic variables saved to local database")
+                    # print(f"Success: Dynamic variables saved to local database")
                 except Exception as e:
-                    print(f"⚠️ Warning: Failed to save dynamic variables to local database: {str(e)}")
+                    print(f"Warning: Failed to save dynamic variables to local database: {str(e)}")
 
             if selected_knowledge_base:
                 # If no association exists, insert a new one
@@ -605,11 +605,11 @@ async def save_variables(request: Request):
         # Now append variables to prompt and update agent (mimicking edit agent approach)
         if agent.elvn_lab_agent_id:
             try:
-                # print(f"🔍 Debug: Updating agent {agent.elvn_lab_agent_id} with new variables")
+                # print(f"Debug: Updating agent {agent.elvn_lab_agent_id} with new variables")
                 
                 # Get the current prompt from the agent record
                 current_prompt = agent.agent_prompt or ""
-                # print(f"🔍 Debug: Current prompt: {current_prompt}")
+                # print(f"Debug: Current prompt: {current_prompt}")
                 
                 # Remove existing variable placeholders from the prompt
                 import re
@@ -624,7 +624,7 @@ async def save_variables(request: Request):
                 
                 if new_variables_text:
                     updated_prompt = base_prompt + new_variables_text
-                    # print(f"🔍 Debug: Updated prompt with variables: {updated_prompt}")
+                    # print(f"Debug: Updated prompt with variables: {updated_prompt}")
                     
                     # Update the agent with the new prompt (mimicking edit agent approach)
                     update_result = ElevenLabsAgentCRUD().update_agent(
@@ -634,13 +634,13 @@ async def save_variables(request: Request):
                     )
                     
                     if "error" in update_result:
-                        # print(f"❌ Error: Failed to update agent: {update_result}")
+                        # print(f"Error: Failed to update agent: {update_result}")
                         return JSONResponse(status_code=500, content={
                             "status": "error", 
                             "message": f"Failed to update ElevenLabs agent: {update_result.get('exc', 'Unknown error')}"
                         })
                     else:
-                        # print(f"✅ Success: Agent updated with new prompt and variables")
+                        # print(f"Success: Agent updated with new prompt and variables")
                         pass
                         
                         # Also update the local agent record with the new prompt
@@ -651,20 +651,20 @@ async def save_variables(request: Request):
                             # Use the proper update_prompt method
                             LocalAgentModel.update_prompt(agent_id, updated_prompt)
                             
-                            # print(f"✅ Success: Local agent prompt updated with variables")
+                            # print(f"Success: Local agent prompt updated with variables")
                         except Exception as local_update_error:
-                            # print(f"⚠️ Warning: Failed to update local agent prompt: {str(local_update_error)}")
+                            # print(f"Warning: Failed to update local agent prompt: {str(local_update_error)}")
                             pass
                 else:
-                    print(f"ℹ️ Info: No new variables to append to prompt")
+                    print(f"ℹInfo: No new variables to append to prompt")
             except Exception as e:
-                print(f"❌ Error: Failed to update ElevenLabs agent: {str(e)}")
+                print(f"Error: Failed to update ElevenLabs agent: {str(e)}")
                 return JSONResponse(status_code=500, content={
                     "status": "error", 
                     "message": f"Failed to update ElevenLabs agent: {str(e)}"
                 })
         else:
-            print(f"⚠️ Warning: Agent {agent_id} has no elvn_lab_agent_id")
+            print(f"Warning: Agent {agent_id} has no elvn_lab_agent_id")
         
         return JSONResponse(status_code=200, content={"status": "success", "message": "Variables saved successfully"})
     except Exception as e:
@@ -776,9 +776,9 @@ async def upload_file(request: Request):
                 content={"status": "error", "message": f"No readable text found in {file.filename}."}
             )
         #Add files to ElevenLabs
-        # print(f"🔍 Debug: Uploading file to ElevenLabs: {file.filename}")
+        # print(f"Debug: Uploading file to ElevenLabs: {file.filename}")
         file_info = ElevenLabsAgentCRUD().upload_file_to_knowledge_base(file_path, name=file.filename)
-        # print(f"🔍 Debug: ElevenLabs response: {file_info}")
+        # print(f"Debug: ElevenLabs response: {file_info}")
         
         elevenlabs_doc_id = file_info.get("id")
         elevenlabs_doc_name = file_info.get("name")
@@ -803,7 +803,7 @@ async def upload_file(request: Request):
                 result = db.session.execute(query)
                 agent_relations = result.fetchall()  # Get ALL agents
             
-            # print(f"🔍 Debug: Found {len(agent_relations)} agents using this knowledge base")
+            # print(f"Debug: Found {len(agent_relations)} agents using this knowledge base")
             
             if agent_relations:
                 # Process each agent
@@ -812,7 +812,7 @@ async def upload_file(request: Request):
                     agent = AgentModel.get_by_id(agent_id)
                     
                     if agent and hasattr(agent, 'elvn_lab_agent_id') and agent.elvn_lab_agent_id:
-                        # print(f"🔍 Debug: Updating agent {agent.elvn_lab_agent_id} with new file")
+                        # print(f"Debug: Updating agent {agent.elvn_lab_agent_id} with new file")
                         
                         # Just add the new file to the agent's knowledge base
                         new_file_data = {
@@ -832,11 +832,11 @@ async def upload_file(request: Request):
                                 old_xi_kb_files["conversation_config"]["agent"]["prompt"].get("knowledge_base")):
                                 
                                 existing_kb_files = old_xi_kb_files["conversation_config"]["agent"]["prompt"]["knowledge_base"]
-                                # print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} has {len(existing_kb_files)} existing knowledge base files")
+                                # print(f"Debug: Agent {agent.elvn_lab_agent_id} has {len(existing_kb_files)} existing knowledge base files")
                             
                             # Add the new file to existing files
                             combined_kb_files = existing_kb_files + [new_file_data]
-                            # print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} combined knowledge base files: {combined_kb_files}")
+                            # print(f"Debug: Agent {agent.elvn_lab_agent_id} combined knowledge base files: {combined_kb_files}")
                             
                             # Update the agent with all files
                             update_result = ElevenLabsAgentCRUD().update_agent(
@@ -845,20 +845,20 @@ async def upload_file(request: Request):
                             )
                             
                             if "error" in update_result:
-                                print(f"❌ Error: Failed to update agent {agent.elvn_lab_agent_id}: {update_result}")
+                                print(f"Error: Failed to update agent {agent.elvn_lab_agent_id}: {update_result}")
                                 raise Exception(f"Failed to update agent {agent.elvn_lab_agent_id}: {update_result}")
                             else:
-                                print(f"✅ Success: Agent {agent.elvn_lab_agent_id} updated with new file")
+                                print(f"Success: Agent {agent.elvn_lab_agent_id} updated with new file")
                         else:
-                            print(f"❌ Error: Failed to get agent {agent.elvn_lab_agent_id} details: {old_xi_kb_files}")
+                            print(f"Error: Failed to get agent {agent.elvn_lab_agent_id} details: {old_xi_kb_files}")
                             raise Exception(f"Failed to get agent {agent.elvn_lab_agent_id} details: {old_xi_kb_files}")
                     else:
-                        print(f"⚠️ Warning: Agent {agent_id} has no elvn_lab_agent_id")
+                        print(f"Warning: Agent {agent_id} has no elvn_lab_agent_id")
             else:
-                print(f"ℹ️ Info: No agents found using this knowledge base")
+                print(f"ℹInfo: No agents found using this knowledge base")
         
         except Exception as e:
-            print(f"❌ Error: Failed to update agent knowledge bases: {str(e)}")
+            print(f"Error: Failed to update agent knowledge bases: {str(e)}")
             raise e
         return JSONResponse(status_code=200, content={"status": "success", "message": "File uploaded successfully"})
     except Exception as e:
@@ -872,13 +872,13 @@ async def delete_file(request: Request):
         knowledge_base_id = int(data.get("knowledge_base_id"))
         elevenlabs_doc_id = None
         # Debug logging
-        # print(f"🔍 Debug: Deleting file - file_id: {file_id}, knowledge_base_id: {knowledge_base_id}, elevenlabs_doc_id: {elevenlabs_doc_id}")
+        # print(f"Debug: Deleting file - file_id: {file_id}, knowledge_base_id: {knowledge_base_id}, elevenlabs_doc_id: {elevenlabs_doc_id}")
         
         file = KnowledgeBaseFileModel.get_by_id(file_id)
         if file:
             elevenlabs_doc_id = file.elevenlabs_doc_id
             if file.knowledge_base_id == knowledge_base_id:
-                # print(f"🔍 Debug: Found file in database - file_id: {file_id}, knowledge_base_id: {knowledge_base_id}")
+                # print(f"Debug: Found file in database - file_id: {file_id}, knowledge_base_id: {knowledge_base_id}")
                                 # Get all files for this knowledge base
                 files = KnowledgeBaseFileModel.get_all_by_knowledge_base(knowledge_base_id)
 
@@ -893,7 +893,7 @@ async def delete_file(request: Request):
                         result = db.session.execute(query)
                         agent_relations = result.fetchall()  # Get ALL agents
                     
-                    # print(f"🔍 Debug: Found {len(agent_relations)} agents using this knowledge base")
+                    # print(f"Debug: Found {len(agent_relations)} agents using this knowledge base")
                     
                     if agent_relations:
                         # Process each agent
@@ -902,7 +902,7 @@ async def delete_file(request: Request):
                             agent = AgentModel.get_by_id(agent_id)
                             
                             if agent and hasattr(agent, 'elvn_lab_agent_id') and agent.elvn_lab_agent_id:
-                                # print(f"🔍 Debug: Removing file from agent {agent.elvn_lab_agent_id}")
+                                # print(f"Debug: Removing file from agent {agent.elvn_lab_agent_id}")
                                 
                                 # Get current agent details from ElevenLabs
                                 agent_details = ElevenLabsAgentCRUD().get_agent(agent.elvn_lab_agent_id)
@@ -916,11 +916,11 @@ async def delete_file(request: Request):
                                         agent_details["conversation_config"]["agent"]["prompt"].get("knowledge_base")):
                                         
                                         existing_kb_files = agent_details["conversation_config"]["agent"]["prompt"]["knowledge_base"]
-                                        # print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} has {len(existing_kb_files)} existing knowledge base files")
+                                        # print(f"Debug: Agent {agent.elvn_lab_agent_id} has {len(existing_kb_files)} existing knowledge base files")
                                     
                                     # Remove the file we're deleting
                                     updated_kb_files = [kb_file for kb_file in existing_kb_files if kb_file.get("id") != elevenlabs_doc_id]
-                                    # print(f"🔍 Debug: Agent {agent.elvn_lab_agent_id} updated KB files (removed {elevenlabs_doc_id}): {updated_kb_files}")
+                                    # print(f"Debug: Agent {agent.elvn_lab_agent_id} updated KB files (removed {elevenlabs_doc_id}): {updated_kb_files}")
                                     
                                     # Update the agent with the updated knowledge base
                                     update_result = ElevenLabsAgentCRUD().update_agent(
@@ -929,77 +929,77 @@ async def delete_file(request: Request):
                                     )
                                     
                                     if "error" in update_result:
-                                        print(f"❌ Error: Failed to update agent {agent.elvn_lab_agent_id}: {update_result}")
+                                        print(f"Error: Failed to update agent {agent.elvn_lab_agent_id}: {update_result}")
                                         raise Exception(f"Failed to update agent {agent.elvn_lab_agent_id}: {update_result}")
                                     else:
-                                        print(f"✅ Success: Agent {agent.elvn_lab_agent_id} updated, file removed from knowledge base")
+                                        print(f"Success: Agent {agent.elvn_lab_agent_id} updated, file removed from knowledge base")
                                 else:
-                                    print(f"❌ Error: Failed to get agent {agent.elvn_lab_agent_id} details: {agent_details}")
+                                    print(f"Error: Failed to get agent {agent.elvn_lab_agent_id} details: {agent_details}")
                                     raise Exception(f"Failed to get agent {agent.elvn_lab_agent_id} details: {agent_details}")
                             else:
-                                print(f"⚠️ Warning: Agent {agent_id} has no elvn_lab_agent_id")
+                                print(f"Warning: Agent {agent_id} has no elvn_lab_agent_id")
                     else:
-                        print(f"ℹ️ Info: No agents found using this knowledge base")
+                        print(f"ℹInfo: No agents found using this knowledge base")
                 
                 except Exception as e:
-                    print(f"❌ Error: Failed to update agent knowledge bases: {str(e)}")
+                    print(f"Error: Failed to update agent knowledge bases: {str(e)}")
                     raise e
                 
                 # Now delete the file from ElevenLabs KB
-                # print(f"🔍 Debug: Attempting to delete file from ElevenLabs with doc_id: {elevenlabs_doc_id}")
+                # print(f"Debug: Attempting to delete file from ElevenLabs with doc_id: {elevenlabs_doc_id}")
                 if elevenlabs_doc_id:
                     elevenlabs_result = ElevenLabsAgentCRUD().delete_file_from_knowledge_base(elevenlabs_doc_id)
                     
                     # Check if ElevenLabs deletion was successful
                     if elevenlabs_result.get("error"):
-                        print(f"❌ Error: Failed to delete file from ElevenLabs: {elevenlabs_result}")
+                        print(f"Error: Failed to delete file from ElevenLabs: {elevenlabs_result}")
                         return JSONResponse(status_code=500, content={
                             "status": "error", 
                             "message": f"Failed to delete file from ElevenLabs: {elevenlabs_result.get('exc', 'Unknown error')}"
                         })
                     
-                    print(f"✅ Success: File deleted from ElevenLabs successfully")
+                    print(f"Success: File deleted from ElevenLabs successfully")
                     
                 # Only delete from local storage if ElevenLabs deletion was successful
                 try:
-                    # print(f"🔍 Debug: Deleting file from local storage with file_id: {file_id}")
+                    # print(f"Debug: Deleting file from local storage with file_id: {file_id}")
                     KnowledgeBaseFileModel.delete(file_id)
-                    print(f"✅ Success: File deleted from local storage successfully")
+                    print(f"Success: File deleted from local storage successfully")
                 except Exception as local_delete_error:
                     # If local deletion fails, log the error but don't fail the entire operation
                     # since ElevenLabs deletion was successful
-                    print(f"⚠️ Warning: Failed to delete file from local storage: {str(local_delete_error)}")
+                    print(f"Warning: Failed to delete file from local storage: {str(local_delete_error)}")
                 
                 # If this was the last file, delete the knowledge base too
                 if len(files) == 1:  # Only had 1 file which we just deleted
                     try:
-                        # print(f"🔍 Debug: Deleting knowledge base with id: {knowledge_base_id}")
+                        # print(f"Debug: Deleting knowledge base with id: {knowledge_base_id}")
                         KnowledgeBaseModel.delete(knowledge_base_id)
-                        print(f"✅ Success: Knowledge base deleted successfully")
+                        print(f"Success: Knowledge base deleted successfully")
                         return JSONResponse(status_code=200, content={
                             "status": "success", 
                             "message": "File and knowledge base deleted successfully"
                         })
                     except Exception as kb_delete_error:
-                        print(f"⚠️ Warning: Failed to delete knowledge base: {str(kb_delete_error)}")
+                        print(f"Warning: Failed to delete knowledge base: {str(kb_delete_error)}")
                         return JSONResponse(status_code=200, content={
                             "status": "success", 
                             "message": "File deleted successfully (knowledge base deletion failed)"
                         })
                 
-                print(f"✅ Success: File deletion operation completed successfully")
+                print(f"Success: File deletion operation completed successfully")
                 return JSONResponse(status_code=200, content={
                     "status": "success", 
                     "message": "File deleted successfully"
                 })
             else:
-                print(f"❌ Error: File knowledge_base_id mismatch - expected: {knowledge_base_id}, actual: {file.knowledge_base_id}")
+                print(f"Error: File knowledge_base_id mismatch - expected: {knowledge_base_id}, actual: {file.knowledge_base_id}")
                 return JSONResponse(status_code=400, content={
                     "status": "error", 
                     "message": "File not found in specified knowledge base"
                 })
         else:
-            print(f"❌ Error: File not found in database with file_id: {file_id}")
+            print(f"Error: File not found in database with file_id: {file_id}")
             return JSONResponse(status_code=400, content={
                 "status": "error", 
                 "message": "File not found in database"
@@ -1041,11 +1041,11 @@ async def attach_knowledge_base(request: Request):
                     for file in knowledge_base_files:
                         if file.elevenlabs_doc_id and file.elevenlabs_doc_id.strip():
                             elevenlabs_kb_ids.append(file.elevenlabs_doc_id)
-                            # print(f"🔍 Debug: Found file '{file.file_name}' with ElevenLabs doc_id: {file.elevenlabs_doc_id}")
+                            # print(f"Debug: Found file '{file.file_name}' with ElevenLabs doc_id: {file.elevenlabs_doc_id}")
                     
-                    # print(f"🔍 Debug: Total files found for KB {knowledge_base_id}: {len(knowledge_base_files)}")
-                    # print(f"🔍 Debug: Valid ElevenLabs doc_ids: {len(elevenlabs_kb_ids)}")
-                    # print(f"🔍 Debug: ElevenLabs doc_ids: {elevenlabs_kb_ids}")
+                    # print(f"Debug: Total files found for KB {knowledge_base_id}: {len(knowledge_base_files)}")
+                    # print(f"Debug: Valid ElevenLabs doc_ids: {len(elevenlabs_kb_ids)}")
+                    # print(f"Debug: ElevenLabs doc_ids: {elevenlabs_kb_ids}")
                     
                     if not elevenlabs_kb_ids:
                         return JSONResponse(status_code=400, content={
@@ -1053,10 +1053,10 @@ async def attach_knowledge_base(request: Request):
                             "message": f"No valid ElevenLabs files found in knowledge base {knowledge_base_id}"
                         })
                     
-                    # print(f"🔍 Debug: Will attach {len(elevenlabs_kb_ids)} files to agent {agent_id}")
+                    # print(f"Debug: Will attach {len(elevenlabs_kb_ids)} files to agent {agent_id}")
                     
                 except Exception as kb_error:
-                    print(f"❌ Error: Failed to get ElevenLabs KB IDs: {str(kb_error)}")
+                    print(f"Error: Failed to get ElevenLabs KB IDs: {str(kb_error)}")
                     return JSONResponse(status_code=500, content={
                         "status": "error", 
                         "message": f"Failed to retrieve knowledge base files: {str(kb_error)}"
@@ -1075,7 +1075,7 @@ async def attach_knowledge_base(request: Request):
                                     "type": "file"
                                 })
                         
-                        # print(f"🔍 Debug: Formatted knowledge base data for ElevenLabs: {knowledge_base_data}")
+                        # print(f"Debug: Formatted knowledge base data for ElevenLabs: {knowledge_base_data}")
                         
                         elevenlabs_result = ElevenLabsAgentCRUD().update_agent(
                             agent_id=agent.elvn_lab_agent_id,
@@ -1083,18 +1083,18 @@ async def attach_knowledge_base(request: Request):
                         )
                         
                         if elevenlabs_result.get("error"):
-                            print(f"❌ Error: Failed to update ElevenLabs agent: {elevenlabs_result}")
+                            print(f"Error: Failed to update ElevenLabs agent: {elevenlabs_result}")
                             return JSONResponse(status_code=500, content={
                                 "status": "error", 
                                 "message": f"Failed to update ElevenLabs agent: {elevenlabs_result.get('exc')}"
                             })
                         
-                        print(f"✅ Success: ElevenLabs agent {agent.elvn_lab_agent_id} updated with {len(knowledge_base_data)} knowledge base files")
+                        print(f"Success: ElevenLabs agent {agent.elvn_lab_agent_id} updated with {len(knowledge_base_data)} knowledge base files")
                     else:
-                        print(f"⚠️ Warning: Agent {agent_id} has no elvn_lab_agent_id, skipping ElevenLabs update")
+                        print(f"Warning: Agent {agent_id} has no elvn_lab_agent_id, skipping ElevenLabs update")
                         
                 except Exception as elevenlabs_error:
-                    print(f"❌ Error: Failed to update ElevenLabs agent: {str(elevenlabs_error)}")
+                    print(f"Error: Failed to update ElevenLabs agent: {str(elevenlabs_error)}")
                     return JSONResponse(status_code=500, content={
                         "status": "error", 
                         "message": f"Failed to update ElevenLabs agent: {str(elevenlabs_error)}"
@@ -1123,7 +1123,7 @@ async def attach_knowledge_base(request: Request):
                         )
                         session.execute(delete_stmt)
                         session.commit()  # Ensure deletion is applied
-                        # print(f"🔍 Debug: Removed old knowledge base association for agent {agent_id}")
+                        # print(f"Debug: Removed old knowledge base association for agent {agent_id}")
 
                     if knowledge_base_id:
                         # If no association exists, insert a new one
@@ -1134,12 +1134,12 @@ async def attach_knowledge_base(request: Request):
                             )
                             session.execute(stmt)
                             session.commit()
-                            # print(f"🔍 Debug: Created new knowledge base association for agent {agent_id}")
+                            # print(f"Debug: Created new knowledge base association for agent {agent_id}")
 
                     session.close()
                     
                 except Exception as db_error:
-                    print(f"❌ Error: Failed to update local database: {str(db_error)}")
+                    print(f"Error: Failed to update local database: {str(db_error)}")
                     return JSONResponse(status_code=500, content={
                         "status": "error", 
                         "message": f"Failed to update local database: {str(db_error)}"
@@ -1159,7 +1159,7 @@ async def attach_knowledge_base(request: Request):
         else:
             return JSONResponse(status_code=500, content={"status": "error", "message": "Agent details is not exist!"})
     except Exception as e:
-        print(f"❌ Error: Unexpected error in attach_knowledge_base: {str(e)}")
+        print(f"Error: Unexpected error in attach_knowledge_base: {str(e)}")
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
     
 
@@ -1510,12 +1510,12 @@ async def delete_custom_functions(request: Request):
         if not tool:
             return JSONResponse(status_code=404, content={"status": "error", "message": "Webhook tool not found"})
         
-        # print(f"🔍 Debug: Deleting tool {function_id} with ElevenLabs ID: {tool.elevenlabs_tool_id}")
+        # print(f"Debug: Deleting tool {function_id} with ElevenLabs ID: {tool.elevenlabs_tool_id}")
         
         # Get the agent to get the ElevenLabs agent ID
         agent = AgentModel.get_by_id(tool.agent_id)
         if not agent or not agent.elvn_lab_agent_id:
-            print(f"⚠️ Warning: Agent or ElevenLabs agent ID not found for agent {tool.agent_id}")
+            print(f"Warning: Agent or ElevenLabs agent ID not found for agent {tool.agent_id}")
         else:
             # Step 1: Remove tool from agent's tool list in ElevenLabs
             try:
@@ -1530,40 +1530,40 @@ async def delete_custom_functions(request: Request):
                     # Remove the tool ID from the list
                     updated_tool_ids = [tid for tid in existing_tool_ids if tid != tool.elevenlabs_tool_id]
                     
-                    # print(f"🔍 Debug: Updating agent {agent.elvn_lab_agent_id} with tools: {updated_tool_ids}")
+                    # print(f"Debug: Updating agent {agent.elvn_lab_agent_id} with tools: {updated_tool_ids}")
                     
                     # Update agent with remaining tools
                     update_result = ElevenLabsAgentCRUD().update_agent_tools(agent.elvn_lab_agent_id, updated_tool_ids)
                     if "error" in update_result:
-                        print(f"⚠️ Warning: Failed to remove tool from agent: {update_result.get('exc')}")
+                        print(f"Warning: Failed to remove tool from agent: {update_result.get('exc')}")
                     else:
-                        print(f"✅ Success: Removed tool from agent")
+                        print(f"Success: Removed tool from agent")
                         
             except Exception as el_error:
-                print(f"⚠️ Warning: Failed to update agent tools: {str(el_error)}")
+                print(f"Warning: Failed to update agent tools: {str(el_error)}")
         
         # Step 2: Delete the tool from ElevenLabs (if we have the tool ID)
         if tool.elevenlabs_tool_id:
             try:
                 delete_result = ElevenLabsAgentCRUD().delete_webhook_function(tool.elevenlabs_tool_id)
                 if "error" in delete_result:
-                    print(f"⚠️ Warning: Failed to delete tool from ElevenLabs: {delete_result.get('exc')}")
+                    print(f"Warning: Failed to delete tool from ElevenLabs: {delete_result.get('exc')}")
                 else:
-                    print(f"✅ Success: Deleted tool from ElevenLabs")
+                    print(f"Success: Deleted tool from ElevenLabs")
             except Exception as el_error:
-                print(f"⚠️ Warning: Failed to delete tool from ElevenLabs: {str(el_error)}")
+                print(f"Warning: Failed to delete tool from ElevenLabs: {str(el_error)}")
         
         # Step 3: Delete from local database
         success = ElevenLabsWebhookToolModel.delete(function_id)
         
         if success:
-            print(f"✅ Success: Deleted webhook tool from local database")
+            print(f"Success: Deleted webhook tool from local database")
             return JSONResponse(status_code=200, content={"status": "success", "message": "Webhook tool deleted successfully"})
         else:
             return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to delete webhook tool from database"})
             
     except Exception as e:
-        print(f"❌ Error: Failed to delete webhook tool: {str(e)}")
+        print(f"Error: Failed to delete webhook tool: {str(e)}")
         return JSONResponse(status_code=500, content={"status": "error", "message": "Something went wrong!", "error": str(e)})
     
 
@@ -1586,11 +1586,11 @@ async def get_custom_functions(request: Request):
         
         function = ElevenLabsWebhookToolModel.get_by_id(function_id)
         if function:
-            # print(f"🔍 Debug: get_custom_functions - Raw database values:")
-            # print(f"🔍 Debug: - function.tool_name: '{function.tool_name}'")
-            # print(f"🔍 Debug: - function.tool_description: '{function.tool_description}'")
-            # print(f"🔍 Debug: - function.tool_config type: {type(function.tool_config)}")
-            # print(f"🔍 Debug: - function.tool_config: {function.tool_config}")
+            # print(f"Debug: get_custom_functions - Raw database values:")
+            # print(f"Debug: - function.tool_name: '{function.tool_name}'")
+            # print(f"Debug: - function.tool_description: '{function.tool_description}'")
+            # print(f"Debug: - function.tool_config type: {type(function.tool_config)}")
+            # print(f"Debug: - function.tool_config: {function.tool_config}")
             
             # Extract api_url and timeout from tool_config
             tool_config = function.tool_config or {}
@@ -1615,13 +1615,13 @@ async def get_custom_functions(request: Request):
                 "function_parameters": function.tool_config
             }
             
-            # print(f"🔍 Debug: get_custom_functions returning data for function_id {function_id}:")
-            # print(f"🔍 Debug: - id: {function_data['id']}")
-            # print(f"🔍 Debug: - function_name: '{function_data['function_name']}'")
-            # print(f"🔍 Debug: - function_description: '{function_data['function_description']}'")
-            # print(f"🔍 Debug: - function_url: '{function_data['function_url']}'")
-            # print(f"🔍 Debug: - function_timeout: {function_data['function_timeout']}")
-            # print(f"🔍 Debug: - function_parameters keys: {list(function_data['function_parameters'].keys()) if function_data['function_parameters'] else 'None'}")
+            # print(f"Debug: get_custom_functions returning data for function_id {function_id}:")
+            # print(f"Debug: - id: {function_data['id']}")
+            # print(f"Debug: - function_name: '{function_data['function_name']}'")
+            # print(f"Debug: - function_description: '{function_data['function_description']}'")
+            # print(f"Debug: - function_url: '{function_data['function_url']}'")
+            # print(f"Debug: - function_timeout: {function_data['function_timeout']}")
+            # print(f"Debug: - function_parameters keys: {list(function_data['function_parameters'].keys()) if function_data['function_parameters'] else 'None'}")
             
             response = {
                 "status": "success",
@@ -1700,9 +1700,9 @@ async def edit_custom_functions(function_id: int, request: Request):
 
             try:
                 tool_config = build_elevenlabs_tool_config(function_parameters)
-                print(f"✅ Successfully built tool config for function: {function_name}")
+                print(f"Successfully built tool config for function: {function_name}")
             except ValueError as ve:
-                print(f"❌ Validation error building tool config: {str(ve)}")
+                print(f"Validation error building tool config: {str(ve)}")
                 return JSONResponse(
                     status_code=400,
                     content={
@@ -1712,7 +1712,7 @@ async def edit_custom_functions(function_id: int, request: Request):
                     }
                 )
             except Exception as e:
-                print(f"❌ Error building tool config: {str(e)}")
+                print(f"Error building tool config: {str(e)}")
                 return JSONResponse(
                     status_code=500,
                     content={
@@ -1728,7 +1728,7 @@ async def edit_custom_functions(function_id: int, request: Request):
             result = elevenlabs_crud.update_webhook_tool(function.elevenlabs_tool_id, tool_config)
             
             if "error" in result:
-                print(f"❌ Error updating ElevenLabs tool: {result}")
+                print(f"Error updating ElevenLabs tool: {result}")
                 return JSONResponse(
                     status_code=500, 
                     content={
@@ -1738,10 +1738,10 @@ async def edit_custom_functions(function_id: int, request: Request):
                     }
                 )
             else:
-                print(f"✅ Successfully updated ElevenLabs tool: {result}")
+                print(f"Successfully updated ElevenLabs tool: {result}")
             
         except Exception as elevenlabs_error:
-            print(f"❌ Error updating ElevenLabs tool: {elevenlabs_error}")
+            print(f"Error updating ElevenLabs tool: {elevenlabs_error}")
             return JSONResponse(
                 status_code=500, 
                 content={
@@ -1758,10 +1758,10 @@ async def edit_custom_functions(function_id: int, request: Request):
             if not function:
                 return JSONResponse(status_code=404, content={"status": "error", "message": "Custom function not found"})
             
-            # print(f"🔍 Debug: Updating local database with:")
-            # print(f"🔍 Debug: - function_name: '{function_name}'")
-            # print(f"🔍 Debug: - function_description: '{function_description}'")
-            # print(f"🔍 Debug: - function_parameters: {function_parameters}")
+            # print(f"Debug: Updating local database with:")
+            # print(f"Debug: - function_name: '{function_name}'")
+            # print(f"Debug: - function_description: '{function_description}'")
+            # print(f"Debug: - function_parameters: {function_parameters}")
             
             # Store old values for comparison
             old_name = function.tool_name
@@ -1773,31 +1773,31 @@ async def edit_custom_functions(function_id: int, request: Request):
             # Store in the same nested structure as creation for consistency
             function.tool_config = {"tool_config": tool_config}
             
-            # print(f"🔍 Debug: Database changes:")
-            # print(f"🔍 Debug: - tool_name: '{old_name}' → '{function.tool_name}'")
-            # print(f"🔍 Debug: - tool_description: '{old_description}' → '{function.tool_description}'")
-            # print(f"🔍 Debug: - tool_config changed: {old_config != function.tool_config}")
+            # print(f"Debug: Database changes:")
+            # print(f"Debug: - tool_name: '{old_name}' → '{function.tool_name}'")
+            # print(f"Debug: - tool_description: '{old_description}' → '{function.tool_description}'")
+            # print(f"Debug: - tool_config changed: {old_config != function.tool_config}")
             
             # Explicitly add the object to the session to ensure it's tracked
             db.session.add(function)
-            # print(f"🔍 Debug: Object added to session")
+            # print(f"Debug: Object added to session")
             
             # Commit the changes
             db.session.commit()
-            # print(f"✅ Debug: Database commit successful")
+            # print(f"Debug: Database commit successful")
             
             # Force a flush to ensure changes are written to database
             db.session.flush()
-            # print(f"✅ Debug: Database flush completed")
+            # print(f"Debug: Database flush completed")
             
             # Verify the data was actually saved by reading it back
             verification_function = ElevenLabsWebhookToolModel.get_by_id(function_id)
-            # print(f"🔍 Debug: Verification read - tool_description: '{verification_function.tool_description}'")
+            # print(f"Debug: Verification read - tool_description: '{verification_function.tool_description}'")
             
             # Also check if the object is dirty (has uncommitted changes)
-            # print(f"🔍 Debug: Function object dirty: {db.session.dirty}")
-            # print(f"🔍 Debug: Function object new: {db.session.new}")
-            # print(f"🔍 Debug: Function object deleted: {db.session.deleted}")
+            # print(f"Debug: Function object dirty: {db.session.dirty}")
+            # print(f"Debug: Function object new: {db.session.new}")
+            # print(f"Debug: Function object deleted: {db.session.deleted}")
             
             # Prepare response data using the verification function
             # Extract URL and timeout from the stored nested structure
@@ -1820,12 +1820,12 @@ async def edit_custom_functions(function_id: int, request: Request):
                 "function_parameters": verification_function.tool_config
             }
         
-        # print(f"🔍 Debug: Response data being sent to frontend:")
-        # print(f"🔍 Debug: - id: {function_data['id']}")
-        # print(f"🔍 Debug: - function_name: '{function_data['function_name']}'")
-        # print(f"🔍 Debug: - function_description: '{function_data['function_description']}'")
-        # print(f"🔍 Debug: - function_url: '{function_data['function_url']}'")
-        # print(f"🔍 Debug: - function_timeout: {function_data['function_timeout']}")
+        # print(f"Debug: Response data being sent to frontend:")
+        # print(f"Debug: - id: {function_data['id']}")
+        # print(f"Debug: - function_name: '{function_data['function_name']}'")
+        # print(f"Debug: - function_description: '{function_data['function_description']}'")
+        # print(f"Debug: - function_url: '{function_data['function_url']}'")
+        # print(f"Debug: - function_timeout: {function_data['function_timeout']}")
         
         response = {
             "status": "success",
@@ -1915,14 +1915,14 @@ async def add_url(request: Request):
         response = requests.get(url, headers=headers)
         if response.status_code == 200:
             data = response.json()
-            print("✅ Successfully fetched document data!")
+            print("Successfully fetched document data!")
             html_content = data["extracted_inner_html"]
     
             # Clean it with BeautifulSoup
             soup = BeautifulSoup(html_content, "html.parser")
             clean_text = soup.get_text(separator="\n", strip=True)
             
-            print("🧹 Cleaned Text:\n")
+            print("Cleaned Text:\n")
             print(clean_text)
 
             # Save cleaned text to the temp file that was created earlier
@@ -1949,7 +1949,7 @@ async def add_url(request: Request):
                 }
             )
         else:
-            print("❌ Error fetching document data:")
+            print("Error fetching document data:")
             print("Response:", response.text)
             return JSONResponse(
                 status_code=500,
@@ -2385,7 +2385,7 @@ async def delete_audio_recording(request: Request, audio_recording_id: int = Non
                         
                         db.session.delete(call_record)
                     else:
-                        logger.warning(f"⚠️ Call record not found for call_id: {call_id}")
+                        logger.warning(f"Call record not found for call_id: {call_id}")
                 
                 # Commit all database deletions in one transaction
                 db.session.commit()
@@ -2411,9 +2411,9 @@ async def delete_audio_recording(request: Request, audio_recording_id: int = Non
                         os.remove(file_path)
                         
                     else:
-                        logger.warning(f"⚠️ Audio file not found: {file_path}")
+                        logger.warning(f"Audio file not found: {file_path}")
                 except Exception as e:
-                    logger.warning(f"⚠️ Could not delete audio file: {e}")
+                    logger.warning(f"Could not delete audio file: {e}")
             
             return JSONResponse(status_code=200, content={"status": "success", "message": "Call history and audio deleted successfully"})
     
