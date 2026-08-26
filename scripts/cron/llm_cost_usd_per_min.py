@@ -2,7 +2,7 @@ import sys
 from datetime import datetime, timezone
 from sqlalchemy import create_engine, text
 
-DB_URL = "postgresql://snakescriptacc:snake@localhost/voice_ninja_db"
+DB_URL = ""
 
 if not DB_URL:
     print("Error: DB_URL must be set.")

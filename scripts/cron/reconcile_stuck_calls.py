@@ -5,12 +5,12 @@ import requests
 
 # Base URL of this app's own API (e.g. "https://api.voiceninja.ai" or
 # "http://127.0.0.1:8000" if the cron job runs on the same host as the app).
-BASE_URL = "https://server.voiceninja.ai"
+BASE_URL = ""
 
 # Must match app_v2/core/config.py's INTERNAL_API_SECRET_KEY (env var
 # INTERNAL_API_SECRET_KEY on the server running the app) — sent as
 # `Authorization: Bearer <this>`.
-INTERNAL_API_SECRET_KEY = "7e02fd66f79be438bfaa1dfba6fc1b50bb19b4338a1c5f329cbcfdb4c4fe46c0"
+INTERNAL_API_SECRET_KEY = ""
 
 # How many stuck rows to reconcile in a single run — matches the endpoint's
 # own default, set here explicitly so it's visible/tunable from the cron job.
