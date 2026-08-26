@@ -7,17 +7,17 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-SMTP_SERVER = ""
+SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
-SMTP_USERNAME = ""
-SMTP_PASSWORD = ""
+SMTP_USERNAME = "itachisnakescript@gmail.com"
+SMTP_PASSWORD = "bctcpgmsyzgdwzjg"
 
 FROM_EMAIL = SMTP_USERNAME
-TO_EMAIL = []
+TO_EMAIL = ["shakir.sadiq@wope.ai","official@snakescript.com","hitesh@wope.ai","amol@wope.ai"]
 
-FRONTEND_URL = ""
-ELEVENLABS_API_KEY = ""
+FRONTEND_URL = "https://dev.voiceninja.ai"
+ELEVENLABS_API_KEY = "sk_38ed9a8f57b35d5d01354d08f2966460e18881cf5f096785"
 
 if not FRONTEND_URL or not ELEVENLABS_API_KEY or not TO_EMAIL or not SMTP_USERNAME or not SMTP_PASSWORD:
     print("Error: TO_EMAIL, SMTP_USERNAME, and SMTP_PASSWORD,FRONTEND_URL,ELEVENLABS_API_KEY  must be set in the environment variables.")

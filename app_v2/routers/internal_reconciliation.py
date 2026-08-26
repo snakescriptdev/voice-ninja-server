@@ -90,6 +90,168 @@ def _require_internal_auth(http_request: Request) -> None:
         raise HTTPException(status_code=401, detail="Unauthorized")
 
 
+async def reconcile_conversation_row(conversation_row_id: int, conv_id: str, channel, agent_id: int, el_conv: ElevenLabsConversation) -> dict:
+    """
+    Checks a single conversation's real ElevenLabs status and, if the call
+    has actually ended, retries metadata extraction and finalizes it via the
+    exact same finalize_conversation()/maybe_send_notifications() pipeline
+    every live call flow uses. Never raises — callers should re-query the
+    row afterward to see the resulting state.
+
+    Shared by the cron-driven reconcile_stuck_calls() endpoint below and the
+    user-facing manual "retry" endpoint (conversation_router.py), so both
+    paths go through one, single-maintained copy of the billing/finalize
+    logic instead of two.
+
+    Returns {"outcome": "finalized" | "still_in_progress" | "still_processing"
+    | "already_claimed" | "error", "metadata": <dict, only on "finalized">,
+    "error": <str, only on "error">}.
+    """
+    try:
+        response = await asyncio.to_thread(el_conv.get_conversation, conv_id)
+    except Exception as e:
+        logger.error(f"reconcile: status check failed for row={conversation_row_id}: {e}")
+        return {"outcome": "error", "stage": "status_check", "error": str(e)}
+
+    if not response.status or not response.data:
+        return {
+            "outcome": "error", "stage": "status_check",
+            "error": response.error_message or "empty response",
+        }
+
+    el_status = response.data.get("status")
+    if el_status in STILL_LIVE_STATUSES:
+        return {"outcome": "still_in_progress"}
+    if el_status == "processing":
+        return {"outcome": "still_processing"}
+    if el_status not in ENDED_STATUSES:
+        # Unrecognized status — be conservative and leave it alone rather
+        # than guessing whether the call actually ended.
+        logger.warning(f"reconcile: unexpected EL status '{el_status}' for row={conversation_row_id}")
+        return {"outcome": "still_in_progress"}
+
+    # el_status is "done" or "failed" — the call genuinely ended.
+    try:
+        # Atomically claim this row before doing the slow EL-metadata fetch
+        # + finalize work below. Postgres serializes concurrent UPDATEs to
+        # the same row, so if two overlapping reconcile attempts (e.g. the
+        # cron job and a manual retry click) both reach this point for the
+        # same row, the second one's UPDATE blocks until the first commits,
+        # then re-evaluates its WHERE clause against the now-committed state
+        # — error_message IS NULL is required (not just call_status)
+        # precisely so that re-evaluation fails for the second run (the
+        # first already set it to a non-null marker), giving rowcount 0.
+        # Without the error_message check here, both runs would still match
+        # on call_status='in_progress' alone (unchanged by the claim itself)
+        # and both would proceed to finalize — double-charging the user,
+        # which is exactly what happened before this guard existed.
+        def _claim():
+            with db():
+                updated = (
+                    db.session.query(ConversationsModel)
+                    .filter(
+                        ConversationsModel.id == conversation_row_id,
+                        ConversationsModel.call_status == CallStatusEnum.in_progress,
+                        ConversationsModel.error_message.is_(None),
+                    )
+                    .update({"error_message": "Reconciliation: claimed"}, synchronize_session=False)
+                )
+                db.session.commit()
+                return updated
+
+        claimed_rows = await asyncio.to_thread(_claim)
+        if claimed_rows == 0:
+            logger.info(f"reconcile: row={conversation_row_id} already claimed/finalized elsewhere, skipping")
+            return {"outcome": "already_claimed"}
+
+        metadata = await asyncio.to_thread(
+            el_conv.extract_conversation_metadata, conv_id, METADATA_MAX_RETRIES, METADATA_RETRY_DELAY_SECONDS,
+        )
+        if not metadata:
+            with db():
+                mark_conversation_failed(conversation_row_id, "Reconciliation: metadata extraction failed")
+            return {"outcome": "error", "stage": "metadata", "error": "empty metadata"}
+
+        def _finalize():
+            with db():
+                # reference_type="conversation" (the default) — matching
+                # every live call flow — is required for the admin/user
+                # dashboards' "Charged" columns to find this deduction: they
+                # look up coins_ledger filtered by an exact
+                # reference_type=="conversation" match (see
+                # admin_dashboard.py), so any other string here silently
+                # displays as 0 charged even though the coins were correctly
+                # deducted.
+                record = finalize_conversation(conversation_row_id, metadata, conv_id)
+                # finalize_conversation() only ever WRITES error_message when
+                # its own error_message param is truthy (which we never
+                # pass) — on the success path it leaves whatever was already
+                # there untouched, so our claim marker from _claim() above
+                # would otherwise survive on an otherwise-healthy,
+                # successfully-billed conversation.
+                if record.error_message == "Reconciliation: claimed":
+                    record.error_message = None
+                    db.session.commit()
+                agent = db.session.query(AgentModel).filter(AgentModel.id == agent_id).first()
+                agent_name = agent.agent_name if agent else "Agent"
+                db.session.refresh(record)
+                return record, agent_name
+
+        record, agent_name = await asyncio.to_thread(_finalize)
+
+        logger.info(f"reconcile: finalized row={conversation_row_id} conv_id={conv_id}")
+
+        if channel in (ChannelEnum.widget, ChannelEnum.web_agent):
+            # The specific widget/lead used for this call only ever lived
+            # in-memory during the live session and is lost once the
+            # process crashed, so the owner notification is attributed to
+            # the agent's name rather than the exact widget, and the lead
+            # (if any) is left unlinked.
+            fake_ctx = SimpleNamespace(user_id=record.user_id, widget_name=agent_name)
+            await maybe_send_notifications(fake_ctx, record, metadata, lead_id=None)
+
+        return {"outcome": "finalized", "metadata": metadata}
+
+    except Exception:
+        logger.error(f"reconcile: failed to finalize row={conversation_row_id}:\n{traceback.format_exc()}")
+        with db():
+            mark_conversation_failed(conversation_row_id, "Reconciliation: failed to save conversation")
+        return {"outcome": "error", "stage": "finalize", "error": "see server logs"}
+
+
+async def reconcile_conversation_rows(rows: list, el_conv: ElevenLabsConversation) -> dict:
+    """
+    Runs reconcile_conversation_row() over a batch of (id, conv_id, channel,
+    agent_id) tuples and aggregates the per-row outcomes into one summary.
+
+    Shared by the cron-driven reconcile_stuck_calls() endpoint below and the
+    user-facing "retry all my in-progress calls" endpoint
+    (conversation_router.py) — one aggregation loop instead of two.
+    """
+    summary = {
+        "checked": len(rows),
+        "finalized": 0,
+        "still_in_progress": 0,
+        "still_processing": 0,
+        "already_claimed": 0,
+        "errors": [],
+    }
+
+    for conversation_row_id, conv_id, channel, agent_id in rows:
+        result = await reconcile_conversation_row(conversation_row_id, conv_id, channel, agent_id, el_conv)
+        outcome = result["outcome"]
+        if outcome == "error":
+            summary["errors"].append({
+                "conversation_row_id": conversation_row_id,
+                "stage": result.get("stage"),
+                "error": result.get("error"),
+            })
+        else:
+            summary[outcome] += 1
+
+    return summary
+
+
 @router.post("/reconcile-stuck-calls")
 async def reconcile_stuck_calls(http_request: Request, max_rows: int = 2):
     """
@@ -116,134 +278,5 @@ async def reconcile_stuck_calls(http_request: Request, max_rows: int = 2):
         # detached the moment this `with db():` block closes.
         rows = [(r.id, r.elevenlabs_conv_id, r.channel, r.agent_id) for r in stuck]
 
-    summary = {
-        "checked": len(rows),
-        "finalized": 0,
-        "still_in_progress": 0,
-        "still_processing": 0,
-        "already_claimed": 0,
-        "errors": [],
-    }
-
     el_conv = ElevenLabsConversation()
-
-    for conversation_row_id, conv_id, channel, agent_id in rows:
-        try:
-            response = await asyncio.to_thread(el_conv.get_conversation, conv_id)
-        except Exception as e:
-            logger.error(f"reconcile: status check failed for row={conversation_row_id}: {e}")
-            summary["errors"].append({"conversation_row_id": conversation_row_id, "stage": "status_check", "error": str(e)})
-            continue
-
-        if not response.status or not response.data:
-            summary["errors"].append({
-                "conversation_row_id": conversation_row_id, "stage": "status_check",
-                "error": response.error_message or "empty response",
-            })
-            continue
-
-        el_status = response.data.get("status")
-        if el_status in STILL_LIVE_STATUSES:
-            summary["still_in_progress"] += 1
-            continue
-        if el_status == "processing":
-            summary["still_processing"] += 1
-            continue
-        if el_status not in ENDED_STATUSES:
-            # Unrecognized status — be conservative and leave it alone
-            # rather than guessing whether the call actually ended.
-            logger.warning(f"reconcile: unexpected EL status '{el_status}' for row={conversation_row_id}")
-            summary["still_in_progress"] += 1
-            continue
-
-        # el_status is "done" or "failed" — the call genuinely ended.
-        try:
-            # Atomically claim this row before doing the slow EL-metadata
-            # fetch + finalize work below. Postgres serializes concurrent
-            # UPDATEs to the same row, so if two overlapping reconciliation
-            # runs both reach this point for the same row, the second one's
-            # UPDATE blocks until the first commits, then re-evaluates its
-            # WHERE clause against the now-committed state — error_message
-            # IS NULL is required (not just call_status) precisely so that
-            # re-evaluation fails for the second run (the first already set
-            # it to a non-null marker), giving rowcount 0. Without the
-            # error_message check here, both runs would still match on
-            # call_status='in_progress' alone (unchanged by the claim
-            # itself) and both would proceed to finalize — double-charging
-            # the user, which is exactly what happened before this guard
-            # existed.
-            def _claim():
-                with db():
-                    updated = (
-                        db.session.query(ConversationsModel)
-                        .filter(
-                            ConversationsModel.id == conversation_row_id,
-                            ConversationsModel.call_status == CallStatusEnum.in_progress,
-                            ConversationsModel.error_message.is_(None),
-                        )
-                        .update({"error_message": "Reconciliation: claimed"}, synchronize_session=False)
-                    )
-                    db.session.commit()
-                    return updated
-
-            claimed_rows = await asyncio.to_thread(_claim)
-            if claimed_rows == 0:
-                logger.info(f"reconcile: row={conversation_row_id} already claimed/finalized elsewhere, skipping")
-                summary["already_claimed"] += 1
-                continue
-
-            metadata = await asyncio.to_thread(
-                el_conv.extract_conversation_metadata, conv_id, METADATA_MAX_RETRIES, METADATA_RETRY_DELAY_SECONDS,
-            )
-            if not metadata:
-                with db():
-                    mark_conversation_failed(conversation_row_id, "Reconciliation: metadata extraction failed")
-                summary["errors"].append({"conversation_row_id": conversation_row_id, "stage": "metadata", "error": "empty metadata"})
-                continue
-
-            def _finalize():
-                with db():
-                    # reference_type="conversation" (the default) — matching
-                    # every live call flow — is required for the admin/user
-                    # dashboards' "Charged" columns to find this deduction:
-                    # they look up coins_ledger filtered by an exact
-                    # reference_type=="conversation" match (see
-                    # admin_dashboard.py), so any other string here silently
-                    # displays as 0 charged even though the coins were
-                    # correctly deducted.
-                    record = finalize_conversation(conversation_row_id, metadata, conv_id)
-                    # finalize_conversation() only ever WRITES error_message
-                    # when its own error_message param is truthy (which we
-                    # never pass) — on the success path it leaves whatever
-                    # was already there untouched, so our claim marker from
-                    # _claim() above would otherwise survive on an
-                    # otherwise-healthy, successfully-billed conversation.
-                    if record.error_message == "Reconciliation: claimed":
-                        record.error_message = None
-                        db.session.commit()
-                    agent = db.session.query(AgentModel).filter(AgentModel.id == agent_id).first()
-                    agent_name = agent.agent_name if agent else "Agent"
-                    db.session.refresh(record)
-                    return record, agent_name
-
-            record, agent_name = await asyncio.to_thread(_finalize)
-
-            summary["finalized"] += 1
-            logger.info(f"reconcile: finalized row={conversation_row_id} conv_id={conv_id}")
-
-            if channel in (ChannelEnum.widget, ChannelEnum.web_agent):
-                # The specific widget/lead used for this call only ever
-                # lived in-memory during the live session and is lost once
-                # the process crashed, so the owner notification is
-                # attributed to the agent's name rather than the exact
-                # widget, and the lead (if any) is left unlinked.
-                fake_ctx = SimpleNamespace(user_id=record.user_id, widget_name=agent_name)
-                await maybe_send_notifications(fake_ctx, record, metadata, lead_id=None)
-
-        except Exception:
-            logger.error(f"reconcile: failed to finalize row={conversation_row_id}:\n{traceback.format_exc()}")
-            with db():
-                mark_conversation_failed(conversation_row_id, "Reconciliation: failed to save conversation")
-            summary["errors"].append({"conversation_row_id": conversation_row_id, "stage": "finalize", "error": "see server logs"})
-
-    return summary
+    return await reconcile_conversation_rows(rows, el_conv)

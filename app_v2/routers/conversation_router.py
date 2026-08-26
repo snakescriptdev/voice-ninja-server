@@ -12,6 +12,7 @@ import io
 from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.schemas.pagination import PageSize
 from sqlalchemy import desc
+from app_v2.routers.internal_reconciliation import reconcile_conversation_row, reconcile_conversation_rows
 
 security = HTTPBearer()
 
@@ -128,6 +129,41 @@ def get_conversation_audio(conversation_id: int,current_user:UnifiedAuthModel= D
 		raise HTTPException(status_code=404,detail="audio content missing")
 	return Response(content=audio_content,media_type=media_type)
 
+def _seconds_to_timer(secs):
+	if not secs:
+		return "00:00:00"
+	secs = int(secs)
+	hours, remainder = divmod(secs, 3600)
+	minutes, seconds = divmod(remainder, 60)
+	return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+
+def _serialize_conversation_details(conv: ConversationsModel, transcript: list) -> dict:
+	return {
+		"conversation_details": {
+			"datetime": conv.created_at.isoformat(),
+			"duration": _seconds_to_timer(conv.duration),
+			"messages": conv.message_count,
+			"channel": conv.channel.value if conv.channel else None,
+			"cost": conv.cost_inr or 0,
+            "error_message": conv.error_message,
+            "ended_due_to_low_balance": conv.ended_due_to_low_balance,
+		},
+		"call_info": {
+			"agent": getattr(conv.agent, "agent_name", None),
+			"status": conv.call_status.name if conv.call_status else None,
+			"lead": {
+				"name": conv.lead.name,
+				"email": conv.lead.email,
+				"phone": conv.lead.phone,
+				"custom_data": conv.lead.custom_data,
+				"created_at": conv.lead.created_at.isoformat()
+			} if conv.lead else None
+		},
+		"transcripts": transcript
+	}
+
+
 # 3. Get conversation details (db + 11labs transcript)
 @router.get("/{conversation_id}/details",openapi_extra={"security":[{"BearerAuth": []}]})
 def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel = Depends(require_active_user())):
@@ -150,37 +186,90 @@ def get_conversation_details(conversation_id: int,current_user: UnifiedAuthModel
 		meta = el_conv.extract_conversation_metadata(elevenlabs_conv_id, max_retries=5, delay_seconds=3.0)
 		transcript = meta.get("transcript", [])
 
-	def seconds_to_timer(secs):
-		if not secs:
-			return "00:00:00"
-		secs = int(secs)
-		hours, remainder = divmod(secs, 3600)
-		minutes, seconds = divmod(remainder, 60)
-		return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+	return _serialize_conversation_details(conv, transcript)
 
+
+# 3b. Retry/refetch a stuck call — re-runs the exact same status-check +
+# metadata-retry + finalize pipeline reconcile_stuck_calls() uses for calls
+# whose process crashed before the live flow could finalize them, but
+# on-demand for a single conversation the owning user is looking at, instead
+# of waiting for the next cron pass.
+@router.post("/{conversation_id}/retry",openapi_extra={"security":[{"BearerAuth": []}]})
+async def retry_conversation(conversation_id: int,current_user: UnifiedAuthModel = Depends(require_active_user())):
+	with db():
+		conv = db.session.query(ConversationsModel).options(
+			joinedload(ConversationsModel.agent),
+			joinedload(ConversationsModel.lead),
+		).filter(ConversationsModel.id == conversation_id,ConversationsModel.user_id==current_user.id).first()
+		if not conv:
+			raise HTTPException(status_code=404, detail="Conversation not found")
+		if not conv.elevenlabs_conv_id:
+			raise HTTPException(status_code=400, detail="Call has no ElevenLabs conversation to retry")
+
+		is_in_progress = conv.call_status == CallStatusEnum.in_progress
+		elevenlabs_conv_id = conv.elevenlabs_conv_id
+		channel = conv.channel
+		agent_id = conv.agent_id
+
+	if not is_in_progress:
+		# Already finalized — finalize_conversation() deducts coins on every
+		# call, so it must never run twice for the same row. Just refresh
+		# the transcript/details for display instead.
+		el_conv = ElevenLabsConversation()
+		meta = el_conv.extract_conversation_metadata(elevenlabs_conv_id, max_retries=5, delay_seconds=3.0)
+		with db():
+			conv = db.session.query(ConversationsModel).options(
+				joinedload(ConversationsModel.agent),
+				joinedload(ConversationsModel.lead),
+			).filter(ConversationsModel.id == conversation_id).first()
+		return {"outcome": "already_finalized", **_serialize_conversation_details(conv, meta.get("transcript", []))}
+
+	el_conv = ElevenLabsConversation()
+	result = await reconcile_conversation_row(conversation_id, elevenlabs_conv_id, channel, agent_id, el_conv)
+
+	with db():
+		conv = db.session.query(ConversationsModel).options(
+			joinedload(ConversationsModel.agent),
+			joinedload(ConversationsModel.lead),
+		).filter(ConversationsModel.id == conversation_id).first()
+		if not conv:
+			raise HTTPException(status_code=404, detail="Conversation not found")
+
+	transcript = result.get("metadata", {}).get("transcript", []) if result.get("outcome") == "finalized" else []
 	return {
-		"conversation_details": {
-			"datetime": conv.created_at.isoformat(),
-			"duration": seconds_to_timer(conv.duration),
-			"messages": conv.message_count,
-			"channel": conv.channel.value if conv.channel else None,
-			"cost": conv.cost_inr or 0,
-            "error_message": conv.error_message,
-            "ended_due_to_low_balance": conv.ended_due_to_low_balance,
-		},
-		"call_info": {
-			"agent": getattr(conv.agent, "agent_name", None),
-			"status": conv.call_status.name if conv.call_status else None,
-			"lead": {
-				"name": conv.lead.name,
-				"email": conv.lead.email,
-				"phone": conv.lead.phone,
-				"custom_data": conv.lead.custom_data,
-				"created_at": conv.lead.created_at.isoformat()
-			} if conv.lead else None
-		},
-		"transcripts": transcript
+		"outcome": result.get("outcome"),
+		"error": result.get("error"),
+		**_serialize_conversation_details(conv, transcript),
 	}
+
+
+# 3c. Retry/refetch ALL of the current user's stuck "in progress" calls in
+# one go — same reconcile_conversation_row()/reconcile_conversation_rows()
+# pipeline as the single-conversation retry above and the
+# reconcile_stuck_calls() cron, just scoped by user_id instead of by a
+# specific id or the internal-secret cron auth.
+MAX_USER_RETRY_ROWS = 25
+
+@router.post("/retry-in-progress",openapi_extra={"security":[{"BearerAuth": []}]})
+async def retry_in_progress_conversations(current_user: UnifiedAuthModel = Depends(require_active_user())):
+	with db():
+		stuck = (
+			db.session.query(ConversationsModel)
+			.filter(
+				ConversationsModel.user_id == current_user.id,
+				ConversationsModel.call_status == CallStatusEnum.in_progress,
+				ConversationsModel.elevenlabs_conv_id.isnot(None),
+			)
+			.order_by(ConversationsModel.created_at.asc())
+			.limit(MAX_USER_RETRY_ROWS)
+			.all()
+		)
+		# Snapshot the handful of fields we need — the rows themselves get
+		# detached the moment this `with db():` block closes.
+		rows = [(r.id, r.elevenlabs_conv_id, r.channel, r.agent_id) for r in stuck]
+
+	el_conv = ElevenLabsConversation()
+	return await reconcile_conversation_rows(rows, el_conv)
 
 # 4. Delete conversation (atomic: 11labs + db)
 @router.delete("/{conversation_id}",openapi_extra={"security":[{"BearerAuth": []}]})
