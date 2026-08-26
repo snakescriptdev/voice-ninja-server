@@ -7,17 +7,16 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
-SMTP_SERVER = "smtp.gmail.com"
+SMTP_SERVER = ""
 SMTP_PORT = 587
 
 SMTP_USERNAME = ""
 SMTP_PASSWORD = ""
 
 FROM_EMAIL = SMTP_USERNAME
-TO_EMAIL = ["shakir@snakescript.com","official@snakescript.com"]
+TO_EMAIL = []
 
-
-FRONTEND_URL = "https://dev.voiceninja.ai"
+FRONTEND_URL = ""
 ELEVENLABS_API_KEY = ""
 
 if not FRONTEND_URL or not ELEVENLABS_API_KEY or not TO_EMAIL or not SMTP_USERNAME or not SMTP_PASSWORD:
@@ -127,7 +126,7 @@ async def send_subscription_email(summary, credits_left):
                 <br>
 
                 <p style="font-size:12px;color:gray;">
-                    Generated automatically on {datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")}
+                    Generated automatically on {datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")}
                 </p>
 
             </td>
@@ -167,7 +166,7 @@ async def run_expiry_alert():
     """
     try:
         next_reset = None
-        print(f"[{datetime.utcnow()}] Starting coin expiry alert process...")
+        print(f"[{datetime.now(timezone.utc)}] Starting coin expiry alert process...")
         subscription = client.user.subscription.get()
         character_count = getattr(subscription, "character_count", 0)
         character_limit = getattr(subscription, "character_limit", 0)
@@ -210,9 +209,8 @@ async def run_expiry_alert():
             }
         else:
             billing_summary["next_invoice"] = None
-
         if credits_left <= 10000:
-            print(f"[{datetime.utcnow()}] Warning: Character count is low.")
+            print(f"[{datetime.now(timezone.utc)}] Warning: Character count is low.")
 
             await send_subscription_email(
                 billing_summary,
