@@ -30,8 +30,8 @@ def _validate_variables(value: Optional[Dict[str, str]]) -> Optional[Dict[str, s
     for key, val in value.items():
         if not isinstance(key, str) or not key.strip():
             raise ValueError("Variable keys cannot be empty or contain only spaces")
-        if not isinstance(val, str) or not val.strip():
-            raise ValueError(f"Variable '{key}' cannot be empty or contain only spaces")
+        if not isinstance(val, str):
+            raise ValueError(f"Variable '{key}' must be a string")
     return value
 
 
@@ -195,7 +195,7 @@ class PublicAgentCreate(BaseModel):
     ai_model: int = Field(..., description="(numeric id, NOT a string) The `id` field from a GET /api/v2/public/ai-models response item — not its `model_name`. The `custom-llm` model cannot be used to create an agent via this API.")
     language: int = Field(..., description="(numeric id, NOT a string) The `id` field from a GET /api/v2/public/languages response item — not its `lang_code`.")
     knowledgebase: Optional[List[int | Dict]] = Field(default=[], description="(list of numeric ids, NOT strings) Personal knowledge base items to attach — either a list of integer ids or a list of objects shaped `{\"id\": <int>}`. Each id is the `id` field from a GET /api/v2/public/personal-kb response item.", examples=[[101, 102]])
-    variables: Optional[Dict[str, str]] = Field(default={}, description="(object of string: string) Dynamic variables for the agent, e.g. `{\"key_1\": \"value_1\"}` — keys and values are both strings. Values cannot be empty or whitespace-only.", examples=[{"key_1": "value_1", "key_2": "value_2"}])
+    variables: Optional[Dict[str, str]] = Field(default={}, description="(object of string: string) Dynamic variables for the agent, e.g. `{\"key_1\": \"value_1\"}` — keys and values are both strings. Values may be empty strings.", examples=[{"key_1": "value_1", "key_2": "value_2"}])
     tools: Optional[List[int | Dict]] = Field(default=[], description="(list of numeric ids, NOT strings) Tool ids to attach — either a list of integer ids or a list of objects shaped `{\"id\": <int>}`. Each id is the `id` field from a GET /api/v2/public/functions response item.", examples=[[201, 202]])
     built_in_tools: Optional[PublicBuiltInToolsParams] = Field(default=None, description="(nested object, not a string or id) Configuration for built-in tools. Only end_call and transfer_to_agent are supported via this API.")
     timezone: Optional[str] = Field(default=None, description="(string, not an id) IANA timezone name for the agent, e.g. 'America/New_York' — required only if `system_prompt` uses a `{{system__time}}`-style placeholder.")
@@ -243,7 +243,7 @@ class PublicAgentUpdate(BaseModel):
     ai_model: int = Field(..., description="(numeric id, NOT a string) The `id` field from a GET /api/v2/public/ai-models response item — not its `model_name`. The `custom-llm` model cannot be used for an agent via this API.")
     language: int = Field(..., description="(numeric id, NOT a string) The `id` field from a GET /api/v2/public/languages response item — not its `lang_code`.")
     knowledgebase: Optional[List[int | Dict]] = Field(default=None, description="(list of numeric ids, NOT strings) Personal knowledge base items to attach — either a list of integer ids or a list of objects shaped `{\"id\": <int>}`. Each id is the `id` field from a GET /api/v2/public/personal-kb response item. Omit to leave the current attachments unchanged.", examples=[[101, 102]])
-    variables: Optional[Dict[str, str]] = Field(default=None, description="(object of string: string) Dynamic variables for the agent, e.g. `{\"key_1\": \"value_1\"}` — keys and values are both strings. Omit to leave unchanged. Values cannot be empty or whitespace-only.", examples=[{"key_1": "value_1", "key_2": "value_2"}])
+    variables: Optional[Dict[str, str]] = Field(default=None, description="(object of string: string) Dynamic variables for the agent, e.g. `{\"key_1\": \"value_1\"}` — keys and values are both strings. Omit to leave unchanged. Values may be empty strings.", examples=[{"key_1": "value_1", "key_2": "value_2"}])
     tools: Optional[List[int | Dict]] = Field(default=None, description="(list of numeric ids, NOT strings) Tool ids to attach — either a list of integer ids or a list of objects shaped `{\"id\": <int>}`. Each id is the `id` field from a GET /api/v2/public/functions response item. Omit to leave the current tools unchanged.", examples=[[201, 202]])
     built_in_tools: Optional[PublicBuiltInToolsParams] = Field(default=None, description="(nested object, not a string or id) Configuration for built-in tools. Only end_call and transfer_to_agent are supported via this API. Omit to leave unchanged.")
     timezone: Optional[str] = Field(default=None, description="(string, not an id) IANA timezone name for the agent, e.g. 'America/New_York'. Omit or send null to clear.")
