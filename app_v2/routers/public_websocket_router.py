@@ -13,7 +13,7 @@ from fastapi_sqlalchemy import db
 
 from app_v2.core.elevenlabs_config import ELEVENLABS_API_KEY
 from app_v2.databases.models import AgentModel, APIKeyModel, ChannelEnum, CoinUsageSettingsModel
-from app_v2.utils.coin_utils import get_user_coin_balance
+from app_v2.utils.coin_utils import get_user_coin_balance, coins_to_inr
 from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.feature_access import check_feature_limit_and_usage, get_feature_limit, get_feature_usage
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
@@ -140,18 +140,20 @@ async def public_websocket_agent(
         # 3. Check Balance and Limits
         user_balance = get_user_coin_balance(user_id)
         minimum_required = get_minimum_call_balance()
-        if user_balance < minimum_required:
+        if user_balance <= 0 or user_balance < minimum_required:
+            minimum_required_inr = coins_to_inr(minimum_required, coin_settings.credits_per_rupee)
+            insufficient_balance_message = f"Insufficient balance. Minimum ₹{minimum_required_inr:,.2f} required to start a call."
             finalize_ws_call_log(
                 ws_log_id, is_success=False, status_code=1008,
-                error_message=f"Insufficient coins. Minimum {minimum_required} coins required to start a call.",
+                error_message=insufficient_balance_message,
             )
             await websocket.send_json({
                 "type": "error",
                 "reason": "insufficient_credits",
-                "message": f"Insufficient coins. Minimum {minimum_required} coins required to start a call.",
+                "message": insufficient_balance_message,
                 "code": 1008,
             })
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Insufficient coins")
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Insufficient balance")
             return
 
         try:

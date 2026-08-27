@@ -263,7 +263,7 @@ def _has_sufficient_coins(user_balance: int) -> tuple[bool, int]:
     Keeps the threshold calculation in one place so it can be logged clearly.
     """
     minimum = get_minimum_call_balance()
-    return user_balance >= minimum, minimum
+    return user_balance > 0 and user_balance >= minimum, minimum
 
 
 async def check_user_limits(
@@ -289,9 +289,11 @@ async def check_user_limits(
         sufficient, minimum_required = _has_sufficient_coins(user_balance)
 
         if not sufficient:
+            credits_per_rupee = CoinUsageSettingsModel.get_settings().credits_per_rupee
+            minimum_required_inr = coins_to_inr(minimum_required, credits_per_rupee)
             await _reject(
-                f"Insufficient coins. Minimum {minimum_required} coins required to start a call.",
-                "Insufficient coins",
+                f"Insufficient balance. Minimum ₹{minimum_required_inr:,.2f} required to start a call.",
+                "Insufficient balance",
             )
             logger.error(
                 f"User {user_id} has insufficient coins "

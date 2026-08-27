@@ -132,7 +132,7 @@ def _reject_ws(websocket: WebSocket, message: str, code: int = 1008):
 def _has_sufficient_coins(user_balance: int) -> tuple[bool, int]:
     """Returns (is_sufficient, minimum_required). Must be inside db() context."""
     minimum = get_minimum_call_balance()
-    return user_balance >= minimum, minimum
+    return user_balance > 0 and user_balance >= minimum, minimum
 
 
 async def fetch_and_validate_widget(
@@ -190,13 +190,16 @@ async def fetch_and_validate_widget(
                 "Owner %s has insufficient coins (balance=%s, required=%s)",
                 user_id, owner_balance, minimum_required,
             )
+            credits_per_rupee = CoinUsageSettingsModel.get_settings().credits_per_rupee
+            minimum_required_inr = coins_to_inr(minimum_required, credits_per_rupee)
+            insufficient_balance_message = f"Insufficient balance. Minimum ₹{minimum_required_inr:,.2f} required."
             finalize_ws_call_log(
                 ws_log_id, is_success=False,
-                error_message=f"Insufficient coins. Minimum {minimum_required} coins required.",
+                error_message=insufficient_balance_message,
             )
             await _reject_ws(
                 websocket,
-                f"Insufficient coins. Minimum {minimum_required} coins required.",
+                insufficient_balance_message,
             )
             return None
 
