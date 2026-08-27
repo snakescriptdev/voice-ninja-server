@@ -74,7 +74,7 @@ UPLOAD_DIR = "uploads/personal_kb"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-MAX_FILE_SIZE_IN_MB = 20
+MAX_FILE_SIZE_IN_MB = VoiceSettings.MAX_FILE_UPLOAD_MB
 ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt"}
 
 
@@ -362,7 +362,7 @@ async def add_files(
                 if file_size == 0:
                     raise HTTPException(status_code=400, detail=f"File {file.filename} is empty")
                 if file_size_mb > MAX_FILE_SIZE_IN_MB:
-                    raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds system 20MB hard limit.")
+                    raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds system {MAX_FILE_SIZE_IN_MB}MB hard limit.")
 
                 file_path = os.path.join(UPLOAD_DIR, f"{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
                 with open(file_path, "wb") as buffer:

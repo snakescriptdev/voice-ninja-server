@@ -14,7 +14,10 @@ class Settings(BaseSettings):
     
     # Database Configuration
     DB_URL: str
-    
+
+    # Uploads
+    MAX_FILE_UPLOAD_MB: int = 5
+
     # Mail Configuration
     MAIL_USERNAME: str = os.getenv("MAIL_USERNAME")
     MAIL_PASSWORD: str = os.getenv("MAIL_PASSWORD")

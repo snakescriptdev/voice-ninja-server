@@ -88,6 +88,7 @@ def list_user_conversations(
 		for conv in conversations:
 			results.append({
 				"id": conv.id,
+				"datetime": conv.created_at.isoformat(),
 				"date": conv.created_at.strftime("%b %d, %Y"),
 				"time": conv.created_at.strftime("%I:%M %p"),
 				"agent_id": conv.agent_id,

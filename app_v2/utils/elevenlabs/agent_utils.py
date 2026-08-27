@@ -40,6 +40,18 @@ _VOICE_ONLY_GUARDRAIL = (
     "user to type, text, or write anything; always ask them to speak instead."
 )
 
+# Silence/turn-taking behavior applied to every agent, create and update
+# alike, so existing agents self-heal to this config the next time they're
+# saved rather than staying stuck on whatever was set when they were first
+# created. turn_timeout is how long the agent waits in silence before
+# treating the turn as over and re-engaging (e.g. "are you still there?") -
+# too low and the agent talks over pauses/impatiently interrupts silence.
+_DEFAULT_TURN_CONFIG = {
+    "turn_timeout": 30.0,
+    "silence_end_call_timeout": 60,
+    "turn_eagerness": "eager",
+}
+
 _FRIENDLY_AGENT_SYNC_ERRORS = {
     "file_too_large": (
         "The prompt length is too long for this model. Please try changing "
@@ -156,11 +168,7 @@ class ElevenLabsAgent(BaseElevenLabs):
                 "user_input_audio_format": "pcm_16000",
                 "keywords": []
             },
-            "turn": {
-                "turn_timeout": 1.0,
-                "silence_end_call_timeout": 60,
-                "turn_eagerness": "eager"
-            }
+            "turn": dict(_DEFAULT_TURN_CONFIG)
         }
 
         if timezone:
@@ -438,7 +446,15 @@ class ElevenLabsAgent(BaseElevenLabs):
                 current_config["agent"]["prompt"] = {}
             current_config["agent"]["prompt"]["built_in_tools"] = built_in_tools
             config_updated = True
-        
+
+        # Self-heal the turn/silence config to our current default on every
+        # save, so agents created before a tuning change (e.g. the old
+        # turn_timeout=1.0 that made agents interrupt short pauses) pick up
+        # the fix the next time they're edited, without a one-off migration.
+        if current_config.get("turn") != _DEFAULT_TURN_CONFIG:
+            current_config["turn"] = dict(_DEFAULT_TURN_CONFIG)
+            config_updated = True
+
         if config_updated:
             # Always ensure exclusivity of tools and tool_ids in the prompt config
             # ElevenLabs rejects requests that contain both fields

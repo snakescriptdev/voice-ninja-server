@@ -2190,7 +2190,9 @@ UPLOAD_DIR = "uploads"
 if not os.path.exists(UPLOAD_DIR):
     os.makedirs(UPLOAD_DIR)
 
-MAX_FILE_SIZE = 10 * 1024 * 1024 # 10 MB
+from app_v2.core.config import VoiceSettings
+
+MAX_FILE_SIZE = VoiceSettings.MAX_FILE_UPLOAD_MB * 1024 * 1024
 ALLOWED_EXTENSIONS = {".docx", ".pdf", ".txt"}
 
 def sync_agent_kb_logic(agent_id: int):
@@ -2377,7 +2379,7 @@ async def create_kb_file_public(
             file_size = file.file.tell()
             file.file.seek(0)
             if file_size > MAX_FILE_SIZE:
-                raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds 10MB limit")
+                raise HTTPException(status_code=400, detail=f"File {file.filename} exceeds {VoiceSettings.MAX_FILE_UPLOAD_MB}MB limit")
 
             file_path = os.path.join(UPLOAD_DIR, f"pub_{current_user.id}_{datetime.now(timezone.utc).timestamp()}_{file.filename}")
             with open(file_path, "wb") as buffer:

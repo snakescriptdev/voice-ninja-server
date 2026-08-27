@@ -163,3 +163,4 @@ class ProfileInfo(BaseModel):
     notification_settings: Optional[UserNotificationRead] = Field(None, description="User notification settings")
     is_new_user: bool = Field(False, description="Flag indicating if the user is new (first login session)")
     feature_limits: Optional[Dict[str, Optional[float]]] = Field(None, description="User plan limits")
+    max_file_upload_mb: Optional[int] = Field(None, description="Max file size (in MB) accepted for knowledge base file uploads")

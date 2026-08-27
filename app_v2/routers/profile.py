@@ -15,6 +15,7 @@ logger = setup_logger(__name__)
 from app_v2.databases.models import UnifiedAuthModel, UserNotificationSettings
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.utils.feature_access import get_all_feature_limits
+from app_v2.core.config import VoiceSettings
 from app_v2.schemas.profile import (
     ProfileRequest,
     ProfileResponse,
@@ -146,7 +147,8 @@ async def get_profile(current_user = Depends(get_current_user)):
                         "reason": user.suspension_reason
                     },
                     "is_new_user": not user.has_completed_onboarding,
-                    "feature_limits": get_all_feature_limits(user.id)
+                    "feature_limits": get_all_feature_limits(user.id),
+                    "max_file_upload_mb": VoiceSettings.MAX_FILE_UPLOAD_MB
                 }
             }
 
@@ -409,10 +411,11 @@ async def update_profile(
                         "current_status": "suspended" if user.is_suspended else "active",
                         "reason": user.suspension_reason
                     },
-                    "feature_limits": get_all_feature_limits(user.id)
+                    "feature_limits": get_all_feature_limits(user.id),
+                    "max_file_upload_mb": VoiceSettings.MAX_FILE_UPLOAD_MB
                 }
             }
-            
+
             # Add notification settings to response
             if user.notification_settings:
                 response["profile"]["notification_settings"] = {
