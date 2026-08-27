@@ -17,7 +17,6 @@ from app_v2.schemas.enum_types import PhoneNumberAssignStatus, PlanFeatureEnum
 from app_v2.core.logger import setup_logger
 from app_v2.utils.jwt_utils import get_current_user
 from app_v2.utils.public_auth import get_public_api_user
-from app_v2.utils.coin_utils import get_user_coin_balance
 
 
 logger = setup_logger(__name__)
@@ -130,18 +129,12 @@ def check_feature_limit_and_usage(user_id: int, feature_key: str, allow_coin_fal
     """
     Check if user has access to a feature.
 
-    Access is gated purely on coin balance now — no subscription or plan-based
-    count limit is checked. `allow_coin_fallback` is accepted for call-site
-    compatibility but no longer changes behavior; coin balance is the only path.
+    Managing resources (create/edit/delete/view) is not coin-gated — only
+    actually starting a call is (enforced separately at the websocket layer).
+    `feature_key`/`allow_coin_fallback` are accepted for call-site
+    compatibility but no longer change behavior.
     """
-    if get_user_coin_balance(user_id) > 0:
-        return True
-
-    feature_key_display_name = feature_key.replace("_", " ").title()
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail=f"Insufficient coin balance to access feature: {feature_key_display_name}. Please add credits to continue.",
-    )
+    return True
 
 
 def get_feature_limit(user_id: int, feature_key: str) -> Optional[float]:
@@ -175,32 +168,21 @@ def check_can_enable_resource(user_id: int, feature_key: str, allow_coin_fallbac
     Called specifically when a user tries to ENABLE an existing resource
     (agent, widget etc.) that is currently disabled.
 
-    Access is gated purely on coin balance now — no plan-based enabled-count
-    limit is checked. `allow_coin_fallback` is accepted for call-site
-    compatibility but no longer changes behavior; coin balance is the only path.
+    Enabling a resource is not coin-gated — only actually starting a call is
+    (enforced separately at the websocket layer). `feature_key`/
+    `allow_coin_fallback` are accepted for call-site compatibility but no
+    longer change behavior.
     """
-    if get_user_coin_balance(user_id) > 0:
-        return True
-
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Insufficient coin balance. Please add credits to continue.",
-    )
+    return True
 
 
 def require_feature_enabled(user_id: int, feature_key: str):
     """
     Check that a user can access a feature's management (view/create/edit/
-    delete), gated purely on coin balance — no subscription/plan required.
+    delete). Not coin-gated — only actually starting a call is (enforced
+    separately at the websocket layer).
     """
-    if get_user_coin_balance(user_id) > 0:
-        return True
-
-    feature_key_display_name = feature_key.replace("_", " ").title()
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail=f"Insufficient coin balance to access feature: {feature_key_display_name}. Please add credits to continue.",
-    )
+    return True
 
 
 # ------------------------------------------------------------------
