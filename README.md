@@ -14,7 +14,7 @@ pip install -r requirements.txt
 ```
 
 ### 3. Configuration
-Ensure your `.env` file is configured with the necessary environment variables. See `archive/.env.example` for reference if needed.
+Ensure your `.env` file is configured with the necessary environment variables. See `.env.example` for reference if needed.
 
 Required variables for app_v2:
 - `DB_URL`: Database connection string
@@ -41,6 +41,9 @@ python manage_db.py migrate
 # View migration status
 python manage_db.py show
 ```
+
+## Populate Reference Data
+Run `python populate_elevenlabs_data.py` after setting up the database — this needs to be executed so that LLM models, languages, and voices get populated in the database.
 
 ## Project Structure
 
