@@ -145,10 +145,7 @@ async def get_profile(current_user = Depends(get_current_user)):
                         "current_status": "suspended" if user.is_suspended else "active",
                         "reason": user.suspension_reason
                     },
-                    "is_new_user": (
-                        (user.last_login - user.created_at).total_seconds() < 300 
-                        if user.last_login and user.created_at else False
-                    ),
+                    "is_new_user": not user.has_completed_onboarding,
                     "feature_limits": get_all_feature_limits(user.id)
                 }
             }
@@ -353,9 +350,14 @@ async def update_profile(
 
         # Update the user
         update_data = request.model_dump(exclude_unset=True)
-        
+
         # Prevent SQLAlchemy mapping error on relationship
         update_data.pop("notification_settings", None)
+
+        # Reaching this endpoint at all - whether the user filled in fields
+        # or hit "Skip for Now" with an empty payload - means they've been
+        # through the post-signup profile screen. Don't show it again.
+        update_data["has_completed_onboarding"] = True
 
         updated_user = UnifiedAuthModel.update(current_user.id, **update_data)
         if not updated_user:

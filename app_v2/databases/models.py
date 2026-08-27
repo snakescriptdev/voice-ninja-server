@@ -161,6 +161,14 @@ class UnifiedAuthModel(Base):
     critical_credits_banner_dismissed = Column(Boolean, default=False, server_default="false")
     critical_credits_banner_recovered = Column(Boolean, default=False, server_default="false")
 
+    # Whether the user has been through the post-signup "complete your
+    # profile" screen at least once (either by saving it or clicking skip).
+    # Drives is_new_user in the profile response — new column default is
+    # False for newly-created accounts; the migration that added this column
+    # backfills existing accounts to True so they aren't sent through
+    # onboarding again.
+    has_completed_onboarding = Column(Boolean, default=False, server_default="false")
+
     # Matches idx_unified_auth_username_ci/idx_unified_auth_email_ci/
     # idx_unified_auth_phone  — get_by_username()
     # filters on func.lower(username)/func.lower(email)/phone, which the
