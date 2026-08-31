@@ -379,6 +379,12 @@
           if (data.reason) {
             log(`Server ending call — reason: ${data.reason} (${data.message || ''})`, 'log-error');
           }
+          if (data.type === 'call_ended' && ws) {
+            // Defensive client-side close: don't rely solely on the server's
+            // close frame arriving — if it's ever delayed or dropped, the UI
+            // would otherwise stay stuck showing CONNECTED indefinitely.
+            ws.close(1000, `Server call_ended: ${data.reason || ''}`);
+          }
         } catch (e) { /* not JSON, ignore */ }
       } else {
         playAgentAudioChunk(event.data);
