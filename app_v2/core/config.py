@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     
     # ElevenLabs Configuration
     ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY")
+    ELEVENLABS_WEBHOOK_SECRET: str = os.getenv("ELEVENLABS_WEBHOOK_SECRET", "")
 
     # Shared secret for internal server-to-server webhooks — e.g. ElevenLabs
     # must send this back (as `Authorization: Bearer <key>`) when calling the

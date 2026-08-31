@@ -3,6 +3,7 @@ venv
 server.log
 .env
 audio_storage/
+webhook_captures/
 .DS_Store
 alembic/versions/*.py
 media/
