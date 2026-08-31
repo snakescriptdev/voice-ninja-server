@@ -39,7 +39,12 @@ TOOL_DESCRIPTION = (
     "user's question or topic whenever they ask something that might be "
     "answered by their own uploaded documents or notes. Also pass a brief "
     "summary of the recent conversation relevant to the question, if any — it "
-    "helps resolve follow-up questions that depend on earlier context."
+    "helps resolve follow-up questions that depend on earlier context. Call "
+    "this tool again, fresh, for every new question or topic — even if you "
+    "already called it earlier in this same conversation for a different "
+    "question. A prior call and its result only ever apply to the topic they "
+    "were about; they say nothing about whether a new, different question can "
+    "be answered."
 )
 
 _PROMPT_BLOCK_START = "<!-- personal_kb_tool:start -->"
@@ -49,7 +54,7 @@ _PROMPT_BLOCK_PATTERN = re.compile(
 )
 _PROMPT_BLOCK_TEXT = (
     f"\n\n{_PROMPT_BLOCK_START}\n"
-    f"You have access to a custom knowledge base its accessed from tool of name search_personal_knowledge_base. You are strictly forbidden from answering questions about any query using your own pre-trained knowledge. If the user asks about any topic, you MUST call the search_personal_knowledge_base tool. If the information is not found there, explicitly state that you do not have that information"
+    f"You have access to a custom knowledge base its accessed from tool of name search_personal_knowledge_base. You are strictly forbidden from answering questions about any query using your own pre-trained knowledge. If the user asks about any topic, you MUST call the search_personal_knowledge_base tool. This applies to EVERY new question in the conversation, not just the first one: even if you already called this tool earlier for a different question and it found nothing, you must still call it again for each subsequent new question or topic — a previous search result never tells you whether the knowledge base has information about a different topic. Never skip the call just because you called it before. If the information is not found there, explicitly state that you do not have that information"
     f"{_PROMPT_BLOCK_END}"
 )
 
@@ -226,8 +231,13 @@ def ensure_personal_kb_tool_for_agent(agent_id: int) -> None:
                 logger.error(f"Failed to provision personal KB tool for agent {agent_id}: {e}")
                 return
 
-        if _PROMPT_BLOCK_START not in (agent.system_prompt or ""):
-            agent.system_prompt = _add_prompt_block(agent.system_prompt or "")
+        # Always refresh (strip + re-add), not just insert-if-absent, so an
+        # already-attached agent's block gets updated to the current
+        # _PROMPT_BLOCK_TEXT whenever another KB item is attached — otherwise
+        # an agent whose block was written before a prompt-wording change
+        # would keep the stale text forever, since attaching more KBs is the
+        # only other time this function runs for it.
+        agent.system_prompt = _add_prompt_block(agent.system_prompt or "")
 
         try:
             _resync_agent(agent, ElevenLabsAgent())
