@@ -10,6 +10,13 @@ class UserCostItem(BaseModel):
 
     model_config = {"from_attributes": True}
 
+class ElevenLabsCreditBannerResponse(BaseModel):
+    """Whether the low-ElevenLabs-credits header banner should be shown to
+    admins right now — see admin_dashboard.get_elevenlabs_credit_banner."""
+    credits_left: int
+    show_banner: bool
+
+
 class ConversationSettingsSnapshot(BaseModel):
     """
     The exact billing-relevant CoinUsageSettingsModel values in effect when a
