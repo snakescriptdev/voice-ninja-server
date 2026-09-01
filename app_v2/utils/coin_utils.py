@@ -5,6 +5,11 @@ from app_v2.databases.models import (
     CoinTransactionTypeEnum,
     CoinUsageSettingsModel,
     ConversationsModel,
+    PaymentModel,
+    PaymentStatusEnum,
+    UnifiedAuthModel,
+    AIModels,
+    VoiceModel,
 )
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone
@@ -326,3 +331,114 @@ def admin_adjust_coins(
         if commit:
             db.session.rollback()
         return False
+
+
+def grant_signup_credit(user_id: int, commit: bool = True) -> bool:
+    """
+    One-time free INR credit grant for a brand-new signup, converted to coins
+    via CoinUsageSettingsModel.credits_per_rupee. Idempotent via
+    UnifiedAuthModel.signup_credit_granted — safe to call multiple times, and
+    must only ever be invoked on true first-time signup (not re-login).
+
+    If the configured signup_free_credit_inr is <= 0, the user is still
+    marked signup_credit_granted so a later increase to the setting doesn't
+    retroactively re-trigger a grant for already-processed users.
+
+    Must be called within an active db() session block.
+    """
+    try:
+        user = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.id == user_id).first()
+        if not user:
+            logger.error(f"grant_signup_credit: user {user_id} not found")
+            return False
+        if user.signup_credit_granted:
+            return True
+
+        settings = CoinUsageSettingsModel.get_settings()
+        inr_amount = settings.signup_free_credit_inr if settings else 0
+
+        if not inr_amount or inr_amount <= 0:
+            user.signup_credit_granted = True
+            if commit:
+                db.session.commit()
+            return True
+
+        credits_per_rupee = settings.credits_per_rupee or 1.0
+        coins_amount = int(round(inr_amount * credits_per_rupee))
+
+        if coins_amount > 0:
+            current_balance = get_user_coin_balance(user_id)
+            ledger_entry = CoinsLedgerModel(
+                user_id=user_id,
+                transaction_type=CoinTransactionTypeEnum.signup_bonus,
+                coins=coins_amount,
+                remaining_coins=coins_amount,
+                reference_type="signup_bonus",
+                reference_id=None,
+                balance_after=current_balance + coins_amount,
+                created_at=datetime.now(timezone.utc),
+                notes=f"Free signup credit: ₹{inr_amount}",
+            )
+            db.session.add(ledger_entry)
+
+        user.signup_credit_granted = True
+        if commit:
+            db.session.commit()
+        logger.info(f"Granted signup credit to user {user_id}: ₹{inr_amount} ({coins_amount} coins)")
+        return True
+    except Exception as e:
+        import traceback
+        logger.error(
+            f"Failed to grant signup credit for user {user_id}: {e}\n{traceback.format_exc()}"
+        )
+        if commit:
+            db.session.rollback()
+        return False
+
+
+def user_has_successful_payment(user_id: int) -> bool:
+    """
+    True once this user has at least one PaymentModel row with
+    status == success — independent of remaining coin balance. This is a
+    one-way, permanent unlock: once true, always true, even if the balance is
+    later driven to 0.
+
+    Must be called within an active db() session block.
+    """
+    return (
+        db.session.query(PaymentModel.id)
+        .filter(
+            PaymentModel.user_id == user_id,
+            PaymentModel.status == PaymentStatusEnum.success,
+        )
+        .first()
+        is not None
+    )
+
+
+def get_free_tier_defaults() -> tuple["AIModels | None", "VoiceModel | None"]:
+    """
+    Returns (free_tier_model, free_tier_voice) — the admin-designated
+    free-tier default AI model and voice, or None for either if not yet
+    configured. Voice lookup is scoped to user_id IS NULL (system voices
+    only) — a user's own custom voice can never be the global default.
+
+    Callers should treat an unconfigured default (None) as "gate is a no-op"
+    — never lock a user out before an admin has actually configured this.
+
+    Must be called within an active db() session block.
+    """
+    free_model = (
+        db.session.query(AIModels)
+        .filter(AIModels.is_free_tier_default == True)  # noqa: E712
+        .first()
+    )
+    free_voice = (
+        db.session.query(VoiceModel)
+        .filter(
+            VoiceModel.is_free_tier_default == True,  # noqa: E712
+            VoiceModel.user_id.is_(None),
+        )
+        .first()
+    )
+    return free_model, free_voice

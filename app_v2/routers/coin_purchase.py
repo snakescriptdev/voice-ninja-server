@@ -39,7 +39,7 @@ from app_v2.utils.invoice_utils import generate_invoice_pdf, generate_invoice_re
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone
-from app_v2.utils.coin_utils import get_user_coin_balance, coins_to_inr, apply_banner_rearm
+from app_v2.utils.coin_utils import get_user_coin_balance, coins_to_inr, apply_banner_rearm, get_free_tier_defaults
 from app_v2.utils.conversation_lifecycle import SETTINGS_VERSION_FIELDS, maybe_create_new_settings_version
 from app_v2.schemas.admin_settings import CoinUsageSettingsResponse, CoinUsageSettingsUpdate
 from fastapi.responses import HTMLResponse
@@ -480,10 +480,29 @@ def update_coin_usage_settings(data: CoinUsageSettingsUpdate, admin: UnifiedAuth
                 settings.credits_per_rupee = data.credits_per_rupee
             if data.minimum_purchase_amount_inr is not None:
                 settings.minimum_purchase_amount_inr = data.minimum_purchase_amount_inr
+            if data.signup_free_credit_inr is not None:
+                settings.signup_free_credit_inr = data.signup_free_credit_inr
+
+            # A signup credit is only meaningful if there's a free-tier
+            # default model/voice for the new user to actually spend it on —
+            # checked against the resulting value (whether just patched above
+            # or already set from before), not just the incoming payload, so
+            # this can't be bypassed by omitting the field on a later PUT.
+            if settings.signup_free_credit_inr and settings.signup_free_credit_inr > 0:
+                free_model, free_voice = get_free_tier_defaults()
+                if not free_model or not free_voice:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Select a free-tier default AI model and voice before enabling a signup free credit.",
+                    )
+
             maybe_create_new_settings_version(settings, before)
             db.session.commit()
             db.session.refresh(settings)
             return settings
+    except HTTPException:
+        db.session.rollback()
+        raise
     except Exception as e:
         db.session.rollback()
         logger.error(f"Error in update_coin_usage_settings: {e}")

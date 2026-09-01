@@ -40,6 +40,7 @@ from app_v2.databases.models import (
     CoinUsageSettingsModel,
 )
 from app_v2.utils.conversation_lifecycle import is_agents_first_call
+from app_v2.utils.coin_utils import user_has_successful_payment, get_free_tier_defaults
 from app_v2.schemas.function_schema import (
     FunctionCreateSchema,
     FunctionUpdateSchema,
@@ -855,6 +856,29 @@ async def create_agent(
         if ai_model.model_name == CUSTOM_LLM_MODEL_NAME:
             raise HTTPException(status_code=400, detail="The custom-llm model cannot be used to create an agent via this API")
 
+        # Free-tier enforcement: same gate as the non-public create_agent —
+        # until the user has made at least one successful payment, only the
+        # admin-designated free-tier default model/voice are allowed. No-op
+        # if neither default has been configured yet.
+        if not user_has_successful_payment(user_id):
+            free_tier_model, free_tier_voice = get_free_tier_defaults()
+            if free_tier_model and ai_model.id != free_tier_model.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"AI model '{ai_model.model_name}' requires a purchase. "
+                        "Only the free-tier default model is available until you make a purchase."
+                    ),
+                )
+            if free_tier_voice and voice.id != free_tier_voice.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Voice '{voice.voice_name}' requires a purchase. "
+                        "Only the free-tier default voice is available until you make a purchase."
+                    ),
+                )
+
         language = db.session.query(LanguageModel).filter(LanguageModel.id == agent_in.language).first()
         if not language:
             raise HTTPException(status_code=400, detail="Invalid language id")
@@ -1057,6 +1081,28 @@ async def update_agent_public(
             raise HTTPException(status_code=400, detail="Invalid AI model id")
         if ai_model.model_name == CUSTOM_LLM_MODEL_NAME:
             raise HTTPException(status_code=400, detail="The custom-llm model cannot be used for an agent via this API")
+
+        # Free-tier enforcement: same gate as create_agent above. This is a
+        # true PUT (voice/ai_model are always required and applied), so the
+        # gate is unconditional here rather than patch-presence-gated.
+        if not user_has_successful_payment(user_id):
+            free_tier_model, free_tier_voice = get_free_tier_defaults()
+            if free_tier_model and ai_model.id != free_tier_model.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"AI model '{ai_model.model_name}' requires a purchase. "
+                        "Only the free-tier default model is available until you make a purchase."
+                    ),
+                )
+            if free_tier_voice and voice.id != free_tier_voice.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Voice '{voice.voice_name}' requires a purchase. "
+                        "Only the free-tier default voice is available until you make a purchase."
+                    ),
+                )
 
         language = db.session.query(LanguageModel).filter(LanguageModel.id == agent_in.language).first()
         if not language:

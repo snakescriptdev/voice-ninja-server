@@ -20,7 +20,7 @@ from app_v2.utils.elevenlabs.agent_utils import ElevenLabsAgent
 from app_v2.utils.elevenlabs.kb_utils import ElevenLabsKB
 from app_v2.utils.elevenlabs.phone_connection import ElevenLabsPhoneConnection
 from app_v2.utils.conversation_lifecycle import is_agents_first_call
-from app_v2.utils.coin_utils import coins_to_inr
+from app_v2.utils.coin_utils import coins_to_inr, user_has_successful_payment, get_free_tier_defaults
 from app_v2.utils.feature_access import check_can_enable_resource, require_feature_enabled
 
 from app_v2.utils.jwt_utils import HTTPBearer,require_active_user
@@ -664,6 +664,30 @@ async def create_agent(
 
     if not ai_model:
         raise HTTPException(status_code=400, detail="Invalid AI model")
+
+    # -------------------------------------------------
+    # Free-tier enforcement: until the user has made at least one successful
+    # payment, they may only use the admin-designated free-tier default model
+    # and voice. No-op if the admin hasn't configured either default yet.
+    # -------------------------------------------------
+    if not user_has_successful_payment(user_id):
+        free_tier_model, free_tier_voice = get_free_tier_defaults()
+        if free_tier_model and ai_model.id != free_tier_model.id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"AI model '{ai_model.model_name}' requires a purchase. "
+                    "Only the free-tier default model is available until you make a purchase."
+                ),
+            )
+        if free_tier_voice and voice.id != free_tier_voice.id:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Voice '{voice.voice_name}' requires a purchase. "
+                    "Only the free-tier default voice is available until you make a purchase."
+                ),
+            )
 
     # -------------------------------------------------
     # Language validation (single)
@@ -1551,6 +1575,16 @@ async def update_agent(
                 status_code=400,
                 detail=f"Voice '{agent_in.voice}' is disabled",
             )
+        if not user_has_successful_payment(current_user.id):
+            _, free_tier_voice = get_free_tier_defaults()
+            if free_tier_voice and voice.id != free_tier_voice.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Voice '{agent_in.voice}' requires a purchase. "
+                        "Only the free-tier default voice is available until you make a purchase."
+                    ),
+                )
         agent.agent_voice = voice.id
         el_update_params["voice_id"] = voice.elevenlabs_voice_id
 
@@ -1568,6 +1602,17 @@ async def update_agent(
 
         if not ai_model:
             raise HTTPException(status_code=400, detail="Invalid AI model")
+
+        if not user_has_successful_payment(current_user.id):
+            free_tier_model, _ = get_free_tier_defaults()
+            if free_tier_model and ai_model.id != free_tier_model.id:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"AI model '{agent_in.ai_model}' requires a purchase. "
+                        "Only the free-tier default model is available until you make a purchase."
+                    ),
+                )
 
         db.session.add(
             AgentAIModelBridge(

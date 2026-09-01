@@ -13,10 +13,12 @@ class AIModelIn(AIModelBaseSchema):
 class AIModelUpdate(BaseModel):
     provider: Optional[str] = None
     model_name: Optional[str] = None
+    is_free_tier_default: Optional[bool] = None
 
 
 class AIModelRead(AIModelBaseSchema):
     id: int
+    is_free_tier_default: bool = False
 
     class Config:
         from_attributes = True

@@ -23,6 +23,7 @@ logger = setup_logger(__name__)
 from app_v2.databases.models import UserModel, OAuthProviderModel, UnifiedAuthModel, UserNotificationSettings
 from app_v2.utils.jwt_utils import create_access_token, create_refresh_token, create_user_session, get_client_ip, parse_device_label
 from app_v2.utils.email_service import send_new_login_email
+from app_v2.utils.coin_utils import grant_signup_credit, user_has_successful_payment
 
 from app_v2.constants import (
     STATUS_SUCCESS,
@@ -266,6 +267,12 @@ async def google_callback(code: str, http_request: Request, background_tasks: Ba
                     db.session.add(notification_settings)
                     db.session.commit()
 
+                # One-time free signup credit — this branch only runs for a
+                # brand-new UnifiedAuthModel row, never on subsequent Google
+                # logins (those hit the `if unified_user:` branch above).
+                with db():
+                    grant_signup_credit(unified_user.id)
+
                 user_created = True
                 user_id = unified_user.id
                 user_email = unified_user.email
@@ -356,7 +363,11 @@ async def google_callback(code: str, http_request: Request, background_tasks: Ba
                 'email': user_email,
                 'phone': user_phone,
                 'role': 'admin' if user_is_admin else 'user',
-                'is_new_user': user_created
+                'is_new_user': user_created,
+                # Included directly here (rather than relying on a follow-up
+                # /profile fetch) so a returning already-paid user isn't shown
+                # the free-tier lock UI until a hard refresh.
+                'has_paid': user_has_successful_payment(user_id),
             },
             'expires_at': datetime.now(timezone.utc) + timedelta(minutes=5),
             'used': False

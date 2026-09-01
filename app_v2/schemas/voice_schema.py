@@ -22,7 +22,11 @@ class VoiceRead(BaseModel):
     sample_audio_url: Optional[str] = None
     is_enabled: bool
     agents: list
-    
+    # Admin-designated free-tier default voice — set only via the admin-only
+    # PATCH /admin/voice/{voice_id}/free-tier-default endpoint, never via a
+    # regular user's own PUT /voice/{id} (not on VoiceUpdate).
+    is_free_tier_default: bool = False
+
 
     class Config:
         from_attributes = True

@@ -2,7 +2,7 @@
 This file has CRUD routes defined for the voice 
 """
 from fastapi import HTTPException, APIRouter, status, Depends, Form, UploadFile, File
-from app_v2.utils.jwt_utils import HTTPBearer, require_active_user
+from app_v2.utils.jwt_utils import HTTPBearer, require_active_user, is_admin
 from app_v2.utils.feature_access import RequireFeature
 from fastapi_sqlalchemy import db
 from typing import Optional, List
@@ -71,11 +71,11 @@ ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a"}
 def voice_to_read(voice: VoiceModel) -> VoiceRead:
     gender = GenderEnum.male
     nationality = "british"
-    
+    agent_list = [agent.agent_name for agent in voice.agents] if voice.agents else []
+
     if voice.traits:
         gender = voice.traits.gender.value if hasattr(voice.traits.gender, 'value') else str(voice.traits.gender)
         nationality = voice.traits.nationality
-        agent_list = [agent.agent_name for agent in voice.agents] if voice.agents else []   
 
     return VoiceRead(
         id=voice.id,
@@ -87,7 +87,8 @@ def voice_to_read(voice: VoiceModel) -> VoiceRead:
         has_sample_audio=voice.has_sample_audio,
         sample_audio_url=voice.audio_file,
         is_enabled=voice.is_enabled,
-        agents= agent_list
+        agents= agent_list,
+        is_free_tier_default=voice.is_free_tier_default,
     )
 
 @router.get("/voice", response_model=PaginatedResponse[VoiceRead], status_code=status.HTTP_200_OK, openapi_extra={"security":[{"BearerAuth":[]}]}, summary="lists available voices", description="return the list of available voices for user (both custom and predefined). Use synced_only=true to list only voices usable for agent creation (have ElevenLabs ID).")
@@ -428,6 +429,53 @@ async def update_voice(
         raise e
     except Exception as e:
         logger.error(f"Error updating voice: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error:{str(e)}")
+
+
+@router.patch(
+    "/admin/voice/{voice_id}/free-tier-default",
+    response_model=VoiceRead,
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def set_voice_free_tier_default(
+    voice_id: int,
+    admin: UnifiedAuthModel = Depends(is_admin),
+):
+    """
+    Admin-only: designate a system voice (user_id IS NULL) as the free-tier
+    default. Clears the flag on every other system voice first, in the same
+    transaction, since uniqueness is enforced at the application level (not
+    a DB constraint). Scoped to user_id IS NULL for both lookup and clearing
+    siblings — a user's own custom voice can never become the global
+    default, and this endpoint can never touch another user's custom voice.
+    """
+    try:
+        with db():
+            voice = db.session.query(VoiceModel).options(selectinload(VoiceModel.traits)).filter(
+                VoiceModel.id == voice_id,
+                VoiceModel.user_id.is_(None),
+            ).first()
+
+            if not voice:
+                raise HTTPException(status_code=404, detail="System voice not found")
+
+            db.session.query(VoiceModel).filter(
+                VoiceModel.user_id.is_(None),
+                VoiceModel.id != voice_id,
+            ).update({VoiceModel.is_free_tier_default: False}, synchronize_session=False)
+
+            voice.is_free_tier_default = True
+            db.session.commit()
+            db.session.refresh(voice)
+            if voice.traits:
+                db.session.refresh(voice.traits)
+
+            logger.info(f"Voice {voice_id} set as free-tier default by admin {admin.id}")
+            return voice_to_read(voice)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Error setting voice free-tier default: {e}")
         raise HTTPException(status_code=500, detail=f"Internal server error:{str(e)}")
 
 

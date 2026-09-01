@@ -15,6 +15,7 @@ class CoinUsageSettingsResponse(BaseModel):
     tool_llm_cost_multiplier: float
     credits_per_rupee: float
     minimum_purchase_amount_inr: float
+    signup_free_credit_inr: float
     updated_at: datetime
     updated_by: str | None = None
     # Per-field attribution, e.g. {"elevenlabs_conversation_credits_per_minute":
@@ -38,3 +39,4 @@ class CoinUsageSettingsUpdate(BaseModel):
     tool_llm_cost_multiplier: float | None = Field(default=None, gt=0)
     credits_per_rupee: float | None = Field(default=None, gt=0)
     minimum_purchase_amount_inr: float | None = Field(default=None, ge=0)
+    signup_free_credit_inr: float | None = Field(default=None, ge=0)
