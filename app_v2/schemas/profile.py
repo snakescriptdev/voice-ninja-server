@@ -162,5 +162,6 @@ class ProfileInfo(BaseModel):
     address: Optional[str] = Field(None, description='User address')
     notification_settings: Optional[UserNotificationRead] = Field(None, description="User notification settings")
     is_new_user: bool = Field(False, description="Flag indicating if the user is new (first login session)")
+    has_paid: bool = Field(False, description="True once the user has at least one successful payment — permanent, independent of remaining coin balance")
     feature_limits: Optional[Dict[str, Optional[float]]] = Field(None, description="User plan limits")
     max_file_upload_mb: Optional[int] = Field(None, description="Max file size (in MB) accepted for knowledge base file uploads")

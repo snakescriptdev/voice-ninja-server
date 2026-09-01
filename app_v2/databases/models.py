@@ -169,6 +169,12 @@ class UnifiedAuthModel(Base):
     # onboarding again.
     has_completed_onboarding = Column(Boolean, default=False, server_default="false")
 
+    # Idempotency flag for the one-time free signup credit grant — see
+    # grant_signup_credit() in app_v2/utils/coin_utils.py. Set True the first
+    # time it runs for this user (even if the configured amount was 0 at the
+    # time), so a later increase to the setting never retroactively re-grants.
+    signup_credit_granted = Column(Boolean, default=False, server_default="false")
+
     # Matches idx_unified_auth_username_ci/idx_unified_auth_email_ci/
     # idx_unified_auth_phone  — get_by_username()
     # filters on func.lower(username)/func.lower(email)/phone, which the
@@ -334,6 +340,11 @@ class VoiceModel(Base):
     audio_file = Column(String, nullable=True)
     is_enabled = Column(Boolean, default=True,server_default="true")
 
+    # Admin-designated free-tier default voice. Uniqueness enforced at the
+    # application level, scoped to user_id IS NULL rows (system voices) — a
+    # user's own custom voice must never be eligible as the global default.
+    is_free_tier_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
     user = relationship("UnifiedAuthModel", back_populates="voices")
     agents = relationship("AgentModel",back_populates="voice")
     traits = relationship("VoiceTraitsModel", back_populates="voice", uselist=False, cascade="all, delete-orphan")
@@ -415,6 +426,11 @@ class AIModels(Base):
     model_name: Mapped[str] = mapped_column(String,nullable=False,unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
+    # Admin-designated free-tier default AI model. Uniqueness enforced at the
+    # application level — the admin update handler clears it on all other
+    # rows in the same transaction before setting it true on one.
+    is_free_tier_default: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
     agent_ai_models =  relationship("AgentAIModelBridge",back_populates="ai_model",cascade="all, delete-orphan")
 
@@ -1096,6 +1112,11 @@ class CoinUsageSettingsModel(Base):
     # purchase. Admin-set (not derived) — see MIN_PURCHASE_AMOUNT in
     # schemas/coin_purchase.py for the absolute floor enforced regardless.
     minimum_purchase_amount_inr: Mapped[float] = mapped_column(Float, default=500.0, server_default="500.0")
+
+    # Free INR credit granted once to every new signup (converted to coins via
+    # credits_per_rupee at grant time). 0 disables the grant. See
+    # grant_signup_credit() in app_v2/utils/coin_utils.py.
+    signup_free_credit_inr: Mapped[float] = mapped_column(Float, default=0.0, server_default="0")
 
     # Points at the CoinUsageSettingsVersionModel snapshot currently in
     # effect. A new version is created (and this repointed) only when a

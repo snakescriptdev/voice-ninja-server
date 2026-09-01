@@ -484,9 +484,12 @@ def get_coin_buckets(
         for item in buckets_query:
             source_name = "Added Amount"
 
-            payment = payment_map.get(item.reference_id)
-            if payment and payment.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
-                source_name = "Amount Purchase"
+            if item.transaction_type == CoinTransactionTypeEnum.signup_bonus:
+                source_name = "Free Signup Credit"
+            else:
+                payment = payment_map.get(item.reference_id)
+                if payment and payment.payment_type in (PaymentTypeEnum.coin_purchase, PaymentTypeEnum.addon):
+                    source_name = "Amount Purchase"
 
             buckets.append(
                 CoinBucketItem(

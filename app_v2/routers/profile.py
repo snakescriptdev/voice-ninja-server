@@ -15,6 +15,7 @@ logger = setup_logger(__name__)
 from app_v2.databases.models import UnifiedAuthModel, UserNotificationSettings
 from app_v2.utils.jwt_utils import get_current_user, HTTPBearer
 from app_v2.utils.feature_access import get_all_feature_limits
+from app_v2.utils.coin_utils import user_has_successful_payment
 from app_v2.core.config import VoiceSettings
 from app_v2.schemas.profile import (
     ProfileRequest,
@@ -147,6 +148,7 @@ async def get_profile(current_user = Depends(get_current_user)):
                         "reason": user.suspension_reason
                     },
                     "is_new_user": not user.has_completed_onboarding,
+                    "has_paid": user_has_successful_payment(user.id),
                     "feature_limits": get_all_feature_limits(user.id),
                     "max_file_upload_mb": VoiceSettings.MAX_FILE_UPLOAD_MB
                 }

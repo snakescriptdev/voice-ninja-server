@@ -32,6 +32,7 @@ from app_v2.utils.jwt_utils import (
     parse_device_label,
 )
 from app_v2.utils.email_service import send_new_login_email
+from app_v2.utils.coin_utils import grant_signup_credit, user_has_successful_payment
 
 from app_v2.constants import (
     STATUS_SUCCESS,
@@ -451,6 +452,14 @@ async def verify_otp(
             last_login=datetime.now(timezone.utc)
         )
 
+        # Grant the one-time free signup credit only on true first-time
+        # signup (is_new_user was captured above, before is_verified was
+        # flipped to True) — never on a plain re-login. grant_signup_credit
+        # is itself idempotent via signup_credit_granted, this gate is just
+        # to avoid the extra query on every ordinary login.
+        if is_new_user:
+            grant_signup_credit(unified_user.id)
+
         # Link any anonymous "contact us" tickets submitted with this same
         # email to this account, so they show up under the user's own
         # support tickets now that the email is confirmed to be theirs.
@@ -534,8 +543,11 @@ async def verify_otp(
                 'last_name': unified_user.last_name,
                 'address': unified_user.address,
                 'role': 'admin' if unified_user.is_admin else 'user',
-                "is_new_user":is_new_user
-                
+                "is_new_user":is_new_user,
+                # Included directly in the login response (rather than relying
+                # on a follow-up /profile fetch) so a returning already-paid
+                # user isn't shown the free-tier lock UI until a hard refresh.
+                "has_paid": user_has_successful_payment(unified_user.id),
             }
         }
 
