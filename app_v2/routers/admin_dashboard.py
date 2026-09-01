@@ -19,7 +19,9 @@ from app_v2.schemas.admin_dashboard import (
     AdminPublicLogUserListResponse,
     AdminWebhookEventItem,
     AdminPaymentItem,
+    ElevenLabsCreditBannerResponse,
 )
+from app_v2.utils.coin_utils import apply_banner_rearm
 from app_v2.schemas.enum_types import CallStatusEnum, PublicLogChannelEnum, ChannelEnum
 from app_v2.schemas.pagination import PaginatedResponse, PageSize
 from app_v2.core.logger import setup_logger
@@ -216,13 +218,17 @@ def get_elevenlabs_usage_and_billing():
             except Exception:
                 next_reset = None
 
+        character_count = getattr(subscription, "character_count", 0) or 0
+        character_limit = getattr(subscription, "character_limit", 0) or 0
+
         billing_summary = {
             "tier": getattr(subscription, "tier", None),
             "currency": getattr(subscription, "currency", None),
             "billing_period": getattr(subscription, "billing_period", None),
             "has_open_invoices": getattr(subscription, "has_open_invoices", None),
-            "character_count": getattr(subscription, "character_count", 0),
-            "character_limit": getattr(subscription, "character_limit", 0),
+            "character_count": character_count,
+            "character_limit": character_limit,
+            "credits_left": character_limit - character_count,
             "next_character_count_reset": next_reset,
         }
 
@@ -266,6 +272,70 @@ def get_elevenlabs_usage_and_billing():
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Failed to fetch usage and billing information."
         )
+
+
+# Show the admin header banner once ElevenLabs credits drop below this.
+ELEVENLABS_LOW_CREDITS_THRESHOLD = 10000
+
+
+@router.get(
+    "/elevenlabs/credit-banner",
+    response_model=ElevenLabsCreditBannerResponse,
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def get_elevenlabs_credit_banner():
+    """
+    Whether the low-ElevenLabs-credits header banner should be shown to admins
+    right now. There's one shared ElevenLabs account (not per-admin), so
+    dismissal is persisted globally on CoinUsageSettingsModel's singleton row
+    — any admin dismissing it hides it for every admin until credits recover
+    above the threshold and later drop again (a new low-credit episode).
+    """
+    try:
+        subscription = client.user.subscription.get()
+    except Exception as e:
+        logger.error(f"Error fetching ElevenLabs subscription for credit banner: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Failed to fetch ElevenLabs credits."
+        )
+
+    character_count = getattr(subscription, "character_count", 0) or 0
+    character_limit = getattr(subscription, "character_limit", 0) or 0
+    credits_left = character_limit - character_count
+
+    settings = CoinUsageSettingsModel.get_settings()
+    dismissed, recovered, show_banner = apply_banner_rearm(
+        settings.elevenlabs_credits_banner_dismissed,
+        settings.elevenlabs_credits_banner_recovered,
+        credits_left < ELEVENLABS_LOW_CREDITS_THRESHOLD,
+    )
+
+    if (
+        dismissed != settings.elevenlabs_credits_banner_dismissed
+        or recovered != settings.elevenlabs_credits_banner_recovered
+    ):
+        settings.elevenlabs_credits_banner_dismissed = dismissed
+        settings.elevenlabs_credits_banner_recovered = recovered
+        db.session.commit()
+
+    return ElevenLabsCreditBannerResponse(credits_left=credits_left, show_banner=show_banner)
+
+
+@router.post(
+    "/elevenlabs/credit-banner/dismiss",
+    dependencies=[Depends(is_admin)],
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+def dismiss_elevenlabs_credit_banner():
+    """Persist that an admin closed the low-ElevenLabs-credits banner —
+    globally, since it reflects one shared ElevenLabs account."""
+    settings = CoinUsageSettingsModel.get_settings()
+    settings.elevenlabs_credits_banner_dismissed = True
+    settings.elevenlabs_credits_banner_recovered = False
+    db.session.commit()
+    return {"message": "Banner dismissed"}
 
 @router.get("/users-cost", response_model=PaginatedResponse[UserCostItem],dependencies=[Depends(is_admin)],openapi_extra={"security":[{"BearerAuth":[]}]})
 def get_users_cost(

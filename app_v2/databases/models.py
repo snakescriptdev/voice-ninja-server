@@ -1105,6 +1105,16 @@ class CoinUsageSettingsModel(Base):
         Integer, ForeignKey("coin_usage_settings_versions.id"), nullable=True
     )
 
+    # Persisted state for the admin-facing "low ElevenLabs credits" header
+    # banner. There's one shared ElevenLabs account (not per-admin), so this
+    # lives on the singleton settings row rather than per-user like the coin
+    # balance banners on UnifiedAuthModel — any admin dismissing it hides it
+    # for all admins until credits recover above the threshold and later drop
+    # again (a new low-credit episode). See apply_banner_rearm() in
+    # app_v2/utils/coin_utils.py.
+    elevenlabs_credits_banner_dismissed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    elevenlabs_credits_banner_recovered: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+
     # Singleton guard: only one row can have this value
     singleton_guard: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 

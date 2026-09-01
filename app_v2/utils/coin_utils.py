@@ -50,6 +50,32 @@ def coins_to_inr(coins: float, credits_per_rupee: float | None) -> float:
     return round(float(coins) / credits_per_rupee, 2)
 
 
+def apply_banner_rearm(dismissed: bool, recovered: bool, condition_active: bool):
+    """
+    Given a low-X-banner's persisted dismissal state and whether its trigger
+    condition is true right now, decide whether to show it — and whether the
+    persisted state needs to change.
+
+    Once dismissed, a banner stays hidden through the SAME low episode. If the
+    condition clears (condition_active goes False), we mark it `recovered`.
+    The next time the condition becomes True again after that, it's a NEW
+    episode, so the dismissal is cleared (re-armed) and the banner shows again
+    — instead of staying hidden forever after one click.
+
+    Shared by both the per-user coin-balance banners (coin_purchase.py) and
+    the global ElevenLabs-credits admin banner (admin_dashboard.py) — the
+    caller decides what row the persisted (dismissed, recovered) state lives
+    on (per-user vs. a single shared settings row).
+    """
+    if not dismissed:
+        return False, False, condition_active
+    if condition_active:
+        if recovered:
+            return False, False, True
+        return True, False, False
+    return True, True, False
+
+
 def get_user_coin_balance(user_id: int) -> int:
     """
     Returns the current coin balance for a user by reading balance_after
