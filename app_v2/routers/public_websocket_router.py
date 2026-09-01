@@ -16,11 +16,11 @@ from app_v2.databases.models import AgentModel, APIKeyModel, ChannelEnum, CoinUs
 from app_v2.utils.coin_utils import get_user_coin_balance, coins_to_inr
 from app_v2.utils.activity_logger import log_activity
 from app_v2.utils.feature_access import check_feature_limit_and_usage, get_feature_limit, get_feature_usage
-from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.conversation_lifecycle import (
     start_conversation,
     finalize_conversation,
     mark_conversation_failed,
+    mark_call_ended_pending_webhook,
     set_conversation_conv_id,
     get_minimum_call_balance,
     is_balance_exhausted,
@@ -56,6 +56,45 @@ async def _send_disconnect_notice(websocket: WebSocket, reason: str, message: st
         await websocket.send_json({"type": msg_type, "reason": reason, "message": message})
     except Exception:
         pass
+
+
+def mark_public_conversation_failed(conversation_row_id: Optional[int], ws_log_id: Optional[int], error_message: str) -> None:
+    """Shared failure path: mark the row failed and record the ws_call_log audit entry. Must be called inside db()."""
+    mark_conversation_failed(conversation_row_id, error_message)
+    finalize_ws_call_log(ws_log_id, is_success=False, status_code=1011, error_message=error_message)
+
+
+def finalize_public_conversation(
+    conversation_row_id: int,
+    metadata: dict,
+    elevenlabs_conv_id: str,
+    ws_log_id: Optional[int],
+    error_message: Optional[str] = None,
+):
+    """
+    Finalizes a public API conversation row using ElevenLabs metadata (now
+    supplied by the post-call webhook rather than fetched here), deducts
+    coins, and writes the ws_call_log audit entry. Must be called inside
+    db() — called from app_v2/routers/elevenlabs_webhook.py.
+    """
+    conversation_data = finalize_conversation(
+        conversation_row_id, metadata, elevenlabs_conv_id,
+        error_message=error_message,
+    )
+    finalize_ws_call_log(
+        ws_log_id,
+        is_success=not error_message,
+        status_code=1000,
+        response_body=sanitize_for_log({"conversation_id": elevenlabs_conv_id, "cost": conversation_data.cost}),
+        error_message=error_message,
+    )
+    # finalize_ws_call_log's own commit() expires every object in this
+    # session (SQLAlchemy expire_on_commit default). Refresh conversation_data
+    # now, while the session is still open, so its attributes stay readable
+    # after this returns — otherwise the next access raises
+    # DetachedInstanceError.
+    db.session.refresh(conversation_data)
+    return conversation_data
 
 @router.websocket("/ws/{agent_id}")
 async def public_websocket_agent(
@@ -408,8 +447,7 @@ async def public_websocket_agent(
         except Exception as e:
             logger.error(f"ElevenLabs connection failed: {e}")
             with db():
-                mark_conversation_failed(conversation_row_id, "Failed to connect to voice engine")
-                finalize_ws_call_log(ws_log_id, is_success=False, status_code=1011, error_message="Failed to connect to voice engine")
+                mark_public_conversation_failed(conversation_row_id, ws_log_id, "Failed to connect to voice engine")
             await websocket.send_json({"type": "error", "reason": "server_error", "message": "Failed to connect to voice engine", "code": 1011})
             await websocket.close(code=status.WS_1011_INTERNAL_ERROR, reason="Failed to connect to voice engine")
 
@@ -437,80 +475,17 @@ async def public_websocket_agent(
                 description=f"Completed public voice chat for agent: {agent_name}",
                 metadata={"agent_id": agent_id, "conversation_id": conversation_id}
             )
-
-        try:
-            el_conv = ElevenLabsConversation()
-            metadata = await asyncio.to_thread(
-                el_conv.extract_conversation_metadata,
-                conversation_id
+            # Cost calc no longer happens here — ElevenLabs' post-call webhook
+            # (app_v2/routers/elevenlabs_webhook.py) does the metadata fetch +
+            # finalize once analysis is ready. This just records the
+            # connection-scoped context (limit_error, ws_log_id) that payload
+            # can't carry, so the webhook handler can pick it up later.
+            mark_call_ended_pending_webhook(
+                conversation_row_id,
+                {"limit_error": limit_error, "ws_log_id": ws_log_id},
             )
-
-            if not metadata:
-                logger.error(f"Metadata extraction failed for public WS conversation {conversation_id}")
-
-                def _mark_metadata_failed():
-                    with db():
-                        mark_conversation_failed(conversation_row_id, limit_error or "Metadata extraction failed")
-                        finalize_ws_call_log(
-                            ws_log_id, is_success=False, status_code=1011,
-                            error_message=limit_error or "Metadata extraction failed",
-                        )
-                await asyncio.to_thread(_mark_metadata_failed)
-                return
-
-            def _finalize():
-                with db():
-                    conversation_data = finalize_conversation(
-                        conversation_row_id, metadata, conversation_id,
-                        error_message=limit_error,
-                    )
-                    finalize_ws_call_log(
-                        ws_log_id,
-                        is_success=not limit_error,
-                        status_code=1000,
-                        response_body=sanitize_for_log({"conversation_id": conversation_id, "cost": conversation_data.cost}),
-                        error_message=limit_error,
-                    )
-                    # finalize_ws_call_log's own commit() expires every object in
-                    # this session (SQLAlchemy expire_on_commit default). Refresh
-                    # conversation_data now, while the session is still open, so
-                    # its attributes stay readable below after this block closes
-                    # and detaches it — otherwise the next access raises
-                    # DetachedInstanceError.
-                    db.session.refresh(conversation_data)
-                    return conversation_data
-
-            # This does several synchronous DB round-trips (query, flush,
-            # deduct_coins, two commits, refresh) — offloaded to a worker
-            # thread via asyncio.to_thread so it doesn't stall every other
-            # concurrent connection on this single-worker server for as long
-            # as it takes (see incident: a slow finalize here froze the event
-            # loop long enough that unrelated concurrent websockets got force
-            # -killed by uvicorn's "took too long to shut down" watchdog).
-            conversation_data = await asyncio.to_thread(_finalize)
-
-            logger.info(
-                f"✅ Public Conversation {conversation_id} stored successfully "
-                f"(cost={conversation_data.cost})"
-            )
-
-        except Exception:
-            logger.error(f"Error while saving public WS conversation:\n{traceback.format_exc()}")
-
-            def _mark_save_failed():
-                with db():
-                    mark_conversation_failed(conversation_row_id, limit_error or "Failed to save conversation")
-                    finalize_ws_call_log(
-                        ws_log_id, is_success=False, status_code=1011,
-                        error_message=limit_error or "Failed to save conversation",
-                    )
-            await asyncio.to_thread(_mark_save_failed)
     else:
         def _mark_no_conv_id():
             with db():
-                mark_conversation_failed(conversation_row_id, limit_error or "No conversation ID captured")
-                finalize_ws_call_log(
-                    ws_log_id, is_success=False, status_code=1011,
-                    error_message=limit_error or "No conversation ID captured",
-                )
+                mark_public_conversation_failed(conversation_row_id, ws_log_id, limit_error or "No conversation ID captured")
         await asyncio.to_thread(_mark_no_conv_id)

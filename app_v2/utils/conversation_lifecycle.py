@@ -545,6 +545,26 @@ def set_conversation_conv_id(conversation_row_id: int, elevenlabs_conv_id: str) 
     db.session.commit()
 
 
+def mark_call_ended_pending_webhook(conversation_row_id: int, pending_context: Optional[dict] = None) -> None:
+    """
+    Records that the live call ended, without fetching ElevenLabs metadata or
+    finalizing cost — that now happens asynchronously once ElevenLabs' post-call
+    webhook arrives (see app_v2/routers/elevenlabs_webhook.py). Replaces the old
+    inline retry-then-finalize step that used to block WS teardown.
+
+    pending_context carries connection-scoped data the webhook payload can't
+    supply on its own: `limit_error` (monthly-limit/low-balance/first-call-cap
+    reason), `ws_log_id`, and for widget calls `lead_id`/`public_id`/
+    `widget_name`. Must be called inside db().
+    """
+    record = db.session.query(ConversationsModel).get(conversation_row_id)
+    if record is None:
+        return
+    record.call_ended_at = datetime.now(timezone.utc)
+    record.pending_finalize_context = pending_context or {}
+    db.session.commit()
+
+
 def finalize_conversation(
     conversation_row_id: int,
     metadata: dict,
@@ -708,3 +728,43 @@ async def mark_conversation_failed_async(conversation_row_id: Optional[int], err
         with db():
             mark_conversation_failed(conversation_row_id, error_message)
     await asyncio.to_thread(_run)
+
+
+def claim_conversation_for_finalize(conversation_row_id: int) -> bool:
+    """
+    Atomically claims a row for finalize, so a redelivered webhook, a manual
+    retry, and the internal reconciliation sweep can't all call
+    finalize_conversation() on the same row at once — it has no idempotency
+    of its own, and deduct_coins(force=True) would double-charge the user if
+    it ran twice. Returns True if this call won the claim. Must be called
+    inside db().
+
+    Uses the dedicated finalize_claimed_at column rather than error_message —
+    error_message is user-facing (the real failure reason shown in the UI),
+    so it must never hold an internal lock marker. See ConversationsModel.
+    """
+    updated = (
+        db.session.query(ConversationsModel)
+        .filter(
+            ConversationsModel.id == conversation_row_id,
+            ConversationsModel.call_status == CallStatusEnum.in_progress,
+            ConversationsModel.finalize_claimed_at.is_(None),
+        )
+        .update({"finalize_claimed_at": datetime.now(timezone.utc)}, synchronize_session=False)
+    )
+    db.session.commit()
+    return updated > 0
+
+
+def release_conversation_finalize_claim(conversation_row_id: int) -> None:
+    """
+    Unconditionally clears finalize_claimed_at, so a row stuck mid-claim
+    (e.g. a hard process crash between claiming and finishing finalize) can
+    be reclaimed. Only safe to call from a deliberate, human-triggered retry
+    — never from an automatic background path, since those must respect the
+    claim to avoid a double-charge race. Must be called inside db().
+    """
+    db.session.query(ConversationsModel).filter(
+        ConversationsModel.id == conversation_row_id
+    ).update({"finalize_claimed_at": None}, synchronize_session=False)
+    db.session.commit()

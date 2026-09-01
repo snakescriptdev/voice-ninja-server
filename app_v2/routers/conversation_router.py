@@ -13,6 +13,7 @@ from app_v2.utils.jwt_utils import require_active_user, HTTPBearer
 from app_v2.schemas.pagination import PageSize
 from sqlalchemy import desc
 from app_v2.routers.internal_reconciliation import reconcile_conversation_row, reconcile_conversation_rows
+from app_v2.utils.conversation_lifecycle import release_conversation_finalize_claim
 
 security = HTTPBearer()
 
@@ -225,6 +226,14 @@ async def retry_conversation(conversation_id: int,current_user: UnifiedAuthModel
 			).filter(ConversationsModel.id == conversation_id).first()
 		return {"outcome": "already_finalized", **_serialize_conversation_details(conv, meta.get("transcript", []))}
 
+	# Unconditionally clear any leftover finalize claim before retrying — safe
+	# here because this is a deliberate, user-triggered action, not a
+	# background race. Recovers a row that got stuck mid-claim (e.g. a hard
+	# process crash between claiming and finishing finalize), which neither
+	# the webhook nor the cron sweep could otherwise ever reclaim.
+	with db():
+		release_conversation_finalize_claim(conversation_id)
+
 	el_conv = ElevenLabsConversation()
 	result = await reconcile_conversation_row(conversation_id, elevenlabs_conv_id, channel, agent_id, el_conv)
 
@@ -268,6 +277,12 @@ async def retry_in_progress_conversations(current_user: UnifiedAuthModel = Depen
 		# Snapshot the handful of fields we need — the rows themselves get
 		# detached the moment this `with db():` block closes.
 		rows = [(r.id, r.elevenlabs_conv_id, r.channel, r.agent_id) for r in stuck]
+
+		# Unconditionally clear any leftover finalize claim on these rows
+		# before retrying — see the single-conversation retry above for why
+		# this is safe only because it's a deliberate, user-triggered action.
+		for row_id, _, _, _ in rows:
+			release_conversation_finalize_claim(row_id)
 
 	el_conv = ElevenLabsConversation()
 	return await reconcile_conversation_rows(rows, el_conv)

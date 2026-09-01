@@ -31,7 +31,6 @@ import asyncio
 import secrets
 import traceback
 from datetime import datetime, timezone, timedelta
-from types import SimpleNamespace
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi_sqlalchemy import db
@@ -41,7 +40,7 @@ from app_v2.core.logger import setup_logger
 from app_v2.databases.models import ConversationsModel, AgentModel
 from app_v2.schemas.enum_types import CallStatusEnum, ChannelEnum
 from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
-from app_v2.utils.conversation_lifecycle import finalize_conversation, mark_conversation_failed
+from app_v2.utils.conversation_lifecycle import finalize_conversation, mark_conversation_failed, claim_conversation_for_finalize
 from app_v2.routers.widget import maybe_send_notifications
 
 logger = setup_logger(__name__)
@@ -133,34 +132,18 @@ async def reconcile_conversation_row(conversation_row_id: int, conv_id: str, cha
     # el_status is "done" or "failed" — the call genuinely ended.
     try:
         # Atomically claim this row before doing the slow EL-metadata fetch
-        # + finalize work below. Postgres serializes concurrent UPDATEs to
-        # the same row, so if two overlapping reconcile attempts (e.g. the
-        # cron job and a manual retry click) both reach this point for the
-        # same row, the second one's UPDATE blocks until the first commits,
-        # then re-evaluates its WHERE clause against the now-committed state
-        # — error_message IS NULL is required (not just call_status)
-        # precisely so that re-evaluation fails for the second run (the
-        # first already set it to a non-null marker), giving rowcount 0.
-        # Without the error_message check here, both runs would still match
-        # on call_status='in_progress' alone (unchanged by the claim itself)
-        # and both would proceed to finalize — double-charging the user,
-        # which is exactly what happened before this guard existed.
+        # + finalize work below, using the same dedicated finalize_claimed_at
+        # lock (see conversation_lifecycle.claim_conversation_for_finalize)
+        # the ElevenLabs post-call webhook handler uses — one shared claim
+        # implementation instead of two subtly different ones, so a webhook
+        # delivery, a manual retry click, and this cron sweep can't all race
+        # to finalize the same row and double-charge the user.
         def _claim():
             with db():
-                updated = (
-                    db.session.query(ConversationsModel)
-                    .filter(
-                        ConversationsModel.id == conversation_row_id,
-                        ConversationsModel.call_status == CallStatusEnum.in_progress,
-                        ConversationsModel.error_message.is_(None),
-                    )
-                    .update({"error_message": "Reconciliation: claimed"}, synchronize_session=False)
-                )
-                db.session.commit()
-                return updated
+                return claim_conversation_for_finalize(conversation_row_id)
 
-        claimed_rows = await asyncio.to_thread(_claim)
-        if claimed_rows == 0:
+        claimed = await asyncio.to_thread(_claim)
+        if not claimed:
             logger.info(f"reconcile: row={conversation_row_id} already claimed/finalized elsewhere, skipping")
             return {"outcome": "already_claimed"}
 
@@ -183,15 +166,6 @@ async def reconcile_conversation_row(conversation_row_id: int, conv_id: str, cha
                 # displays as 0 charged even though the coins were correctly
                 # deducted.
                 record = finalize_conversation(conversation_row_id, metadata, conv_id)
-                # finalize_conversation() only ever WRITES error_message when
-                # its own error_message param is truthy (which we never
-                # pass) — on the success path it leaves whatever was already
-                # there untouched, so our claim marker from _claim() above
-                # would otherwise survive on an otherwise-healthy,
-                # successfully-billed conversation.
-                if record.error_message == "Reconciliation: claimed":
-                    record.error_message = None
-                    db.session.commit()
                 agent = db.session.query(AgentModel).filter(AgentModel.id == agent_id).first()
                 agent_name = agent.agent_name if agent else "Agent"
                 db.session.refresh(record)
@@ -207,8 +181,7 @@ async def reconcile_conversation_row(conversation_row_id: int, conv_id: str, cha
             # process crashed, so the owner notification is attributed to
             # the agent's name rather than the exact widget, and the lead
             # (if any) is left unlinked.
-            fake_ctx = SimpleNamespace(user_id=record.user_id, widget_name=agent_name)
-            await maybe_send_notifications(fake_ctx, record, metadata, lead_id=None)
+            await maybe_send_notifications(record.user_id, agent_name, record, metadata, lead_id=None)
 
         return {"outcome": "finalized", "metadata": metadata}
 

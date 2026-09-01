@@ -3,7 +3,8 @@ Widget router
 Structure:
   validation/    → fetch_and_validate_widget(), check_owner_limits()
   bridge/        → BrowserAudioInterface, run_widget_session()
-  storage/       → save_web_conversation(), maybe_send_notifications()
+  storage/       → finalize_web_conversation_and_notify() (called by the ElevenLabs
+                   post-call webhook, app_v2/routers/elevenlabs_webhook.py)
   activity/      → log_web_chat_started(), log_web_chat_ended()
   routes/        → embed_script, ws proxy, config, lead — all thin orchestrators
 """
@@ -41,6 +42,7 @@ from app_v2.utils.conversation_lifecycle import (
     start_conversation,
     finalize_conversation,
     mark_conversation_failed,
+    mark_call_ended_pending_webhook,
     set_conversation_conv_id,
     get_minimum_call_balance,
     is_balance_exhausted,
@@ -51,7 +53,6 @@ from app_v2.utils.conversation_lifecycle import (
     LOW_BALANCE_ERROR_MESSAGE,
     FIRST_CALL_DURATION_LIMIT_ERROR_MESSAGE,
 )
-from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.email_service import send_conversation_notification_email, send_low_coins_email
 from app_v2.utils.feature_access import (
     check_feature_limit_and_usage,
@@ -630,22 +631,23 @@ def _fetch_owner_notification_settings(user_id: int, lead_id: Optional[int]) -> 
 
 
 async def maybe_send_notifications(
-    ctx: WidgetContext,
+    user_id: int,
+    widget_name: str,
     record: ConversationsModel,
     metadata: dict,
     lead_id: Optional[int],
 ) -> None:
     """Sends conversation notification and low-coins alert emails if enabled."""
     with db():
-        notif, lead_name = _fetch_owner_notification_settings(ctx.user_id, lead_id)
-        current_balance = get_user_coin_balance(ctx.user_id)
+        notif, lead_name = _fetch_owner_notification_settings(user_id, lead_id)
+        current_balance = get_user_coin_balance(user_id)
         credits_per_rupee = CoinUsageSettingsModel.get_settings().credits_per_rupee
 
     if notif.email and notif.email_notifications:
         try:
             await send_conversation_notification_email(
                 company_email=notif.email,
-                agent_name=ctx.widget_name,
+                agent_name=widget_name,
                 conversation_id=str(record.id),
                 base_url=VoiceSettings.FRONTEND_URL,
                 user_name=lead_name,
@@ -669,82 +671,83 @@ async def maybe_send_notifications(
             logger.error("Failed to send low coins email:\n%s", traceback.format_exc())
 
 
-async def save_web_conversation(
-    ctx: WidgetContext,
+def mark_web_conversation_failed(conversation_row_id: Optional[int], ws_log_id: Optional[int], error_message: str) -> None:
+    """Shared failure path: mark the row failed and record the ws_call_log audit entry. Must be called inside db()."""
+    mark_conversation_failed(conversation_row_id, error_message)
+    finalize_ws_call_log(ws_log_id, is_success=False, error_message=error_message)
+
+
+def finalize_web_conversation(
+    conversation_row_id: int,
+    metadata: dict,
     conv_id: str,
     lead_id: Optional[int],
-    conversation_row_id: int,
+    ws_log_id: Optional[int],
     error_message: Optional[str] = None,
-) -> None:
+) -> ConversationsModel:
     """
-    Fetches ElevenLabs metadata, finalizes the in_progress conversation row
-    created at call start, deducts coins, links lead, and dispatches
+    Finalizes a widget/web-agent conversation row using ElevenLabs metadata
+    (now supplied by the post-call webhook rather than fetched here), deducts
+    coins, links the lead, and writes the ws_call_log audit entry. Must be
+    called inside db() — called from app_v2/routers/elevenlabs_webhook.py.
+    """
+    record = _persist_web_conversation(conversation_row_id, metadata, conv_id, lead_id, error_message=error_message)
+    finalize_ws_call_log(
+        ws_log_id,
+        is_success=not error_message,
+        status_code=1000,
+        response_body=sanitize_for_log({"conversation_id": conv_id, "cost": record.cost}),
+        error_message=error_message,
+    )
+    # _persist_web_conversation's lead-link commit and finalize_ws_call_log's
+    # own commit both expire every object in this session (SQLAlchemy
+    # expire_on_commit default). Refresh record now, while the session is
+    # still open, so its attributes stay readable after this returns and the
+    # session detaches — otherwise the next access raises
+    # DetachedInstanceError.
+    db.session.refresh(record)
+    return record
+
+
+async def finalize_web_conversation_and_notify(
+    conversation_row_id: int,
+    metadata: dict,
+    conv_id: str,
+    lead_id: Optional[int],
+    ws_log_id: Optional[int],
+    widget_name: str,
+    error_message: Optional[str] = None,
+) -> ConversationsModel:
+    """
+    Async entry point used by the webhook handler: runs finalize_web_conversation
+    off the event loop (several synchronous DB round-trips — deduct_coins,
+    two commits, refresh — that would otherwise stall every other concurrent
+    connection on this single-worker server; that's what dropped a concurrent
+    test-connection call's cost save in production once), then dispatches
     notification emails.
-
-    error_message: passed through to finalize_conversation() when the call
-    still produced real metadata but was cut short for a known reason (e.g.
-    monthly minutes limit) — preserves transcript/history instead of
-    discarding it via mark_conversation_failed().
     """
+    def _finalize():
+        with db():
+            return finalize_web_conversation(conversation_row_id, metadata, conv_id, lead_id, ws_log_id, error_message=error_message)
+
+    record = await asyncio.to_thread(_finalize)
+
+    logger.info(
+        "Conversation %s saved (duration=%ss, messages=%s, cost=%s)",
+        conv_id, metadata.get("duration"), metadata.get("message_count"), record.cost,
+    )
+
+    # finalize_web_conversation above already committed the charge and set
+    # call_status=success/failed — a notification failure past this point
+    # must never propagate to the webhook handler's catch-all, which would
+    # otherwise re-mark this row as failed even though coins were already
+    # deducted, with no way to fix it afterward (retry only handles rows
+    # still in_progress).
     try:
-        el_conv = ElevenLabsConversation()
-        metadata = await asyncio.to_thread(el_conv.extract_conversation_metadata, conv_id)
-
-        if not metadata:
-            logger.error("Metadata extraction failed for conversation %s", conv_id)
-
-            def _mark_metadata_failed():
-                with db():
-                    mark_conversation_failed(conversation_row_id, error_message or "Metadata extraction failed")
-                    finalize_ws_call_log(
-                        ctx.ws_log_id, is_success=False,
-                        error_message=error_message or "Metadata extraction failed",
-                    )
-            await asyncio.to_thread(_mark_metadata_failed)
-            return
-
-        def _finalize():
-            with db():
-                record = _persist_web_conversation(conversation_row_id, metadata, conv_id, lead_id, error_message=error_message)
-                finalize_ws_call_log(
-                    ctx.ws_log_id,
-                    is_success=not error_message,
-                    status_code=1000,
-                    response_body=sanitize_for_log({"conversation_id": conv_id, "cost": record.cost}),
-                    error_message=error_message,
-                )
-                # _persist_web_conversation's lead-link commit and
-                # finalize_ws_call_log's own commit both expire every object in
-                # this session (SQLAlchemy expire_on_commit default). Refresh
-                # record now, while the session is still open, so its attributes
-                # stay readable below and in maybe_send_notifications() after
-                # this block closes and detaches it — otherwise the next access
-                # raises DetachedInstanceError.
-                db.session.refresh(record)
-                return record
-
-        # Several synchronous DB round-trips (query, flush, deduct_coins,
-        # two commits, refresh) — offloaded to a worker thread so a slow
-        # finalize can't stall every other concurrent call on this
-        # single-worker server (that's what dropped a concurrent
-        # test-connection call's cost save in production).
-        record = await asyncio.to_thread(_finalize)
-
-        logger.info(
-            "Conversation %s saved (duration=%ss, messages=%s, cost=%s)",
-            conv_id, metadata.get("duration"), metadata.get("message_count"), record.cost,
-        )
-
-        await maybe_send_notifications(ctx, record, metadata, lead_id)
-
+        await maybe_send_notifications(record.user_id, widget_name, record, metadata, lead_id)
     except Exception:
-        logger.error("save_web_conversation failed:\n%s", traceback.format_exc())
-
-        def _mark_save_failed():
-            with db():
-                mark_conversation_failed(conversation_row_id, "Failed to save conversation")
-                finalize_ws_call_log(ctx.ws_log_id, is_success=False, error_message="Failed to save conversation")
-        await asyncio.to_thread(_mark_save_failed)
+        logger.error("maybe_send_notifications failed for conversation %s:\n%s", record.id, traceback.format_exc())
+    return record
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1389,14 +1392,28 @@ async def widget_ws(websocket: WebSocket, public_id: str, lead_id: Optional[int]
     # attached) so transcript/history still shows up, instead of discarding
     # it via mark_conversation_failed().
     if conv_id:
-        await save_web_conversation(ctx, conv_id, lead_id, conversation_row_id, error_message=limit_error)
+        with db():
+            # Cost calc no longer happens here — ElevenLabs' post-call webhook
+            # (app_v2/routers/elevenlabs_webhook.py) does the metadata fetch +
+            # finalize once analysis is ready. This just records the
+            # connection-scoped context (limit_error, ws_log_id, lead_id,
+            # widget_name) that payload can't carry, so the webhook handler
+            # can pick it up later.
+            mark_call_ended_pending_webhook(
+                conversation_row_id,
+                {
+                    "limit_error": limit_error,
+                    "ws_log_id": ctx.ws_log_id,
+                    "lead_id": lead_id,
+                    "widget_name": ctx.widget_name,
+                },
+            )
     else:
         def _mark_no_conv_id():
             with db():
-                mark_conversation_failed(conversation_row_id, limit_error or failure_reason or "No conversation ID captured")
-                finalize_ws_call_log(
-                    ctx.ws_log_id, is_success=False,
-                    error_message=limit_error or failure_reason or "No conversation ID captured",
+                mark_web_conversation_failed(
+                    conversation_row_id, ctx.ws_log_id,
+                    limit_error or failure_reason or "No conversation ID captured",
                 )
         await asyncio.to_thread(_mark_no_conv_id)
 

@@ -13,6 +13,76 @@ from app_v2.utils.log_sanitizer import redact
 logger = setup_logger(__name__)
 
 
+def build_metadata_from_conv_data(conv_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Shared field-path mapping from an ElevenLabs conversation object to our
+    internal metadata dict — used both by extract_conversation_metadata()
+    (polling GET /convai/conversations/{id}) and by the post-call webhook
+    handler (app_v2/routers/elevenlabs_webhook.py), since ElevenLabs' webhook
+    payload's `data` field is the same conversation object shape as the GET
+    response body (confirmed against a real captured webhook delivery).
+
+    Returns {} if metadata/analysis/transcript are missing or incomplete —
+    callers decide what to do next (retry, or treat as unrecoverable).
+    """
+    has_metadata = bool(conv_data.get("metadata"))
+    has_analysis = bool(conv_data.get("analysis"))
+    transcript_data = conv_data.get("transcript", [])
+    has_transcript = isinstance(transcript_data, list) and len(transcript_data) > 0
+
+    if not (has_metadata and has_analysis and has_transcript):
+        return {}
+
+    try:
+        el_metadata = conv_data.get("metadata") or {}
+        charging = el_metadata.get("charging") or {}
+        metadata = {
+            "agent_name": conv_data.get("agent_name"),
+            "duration": el_metadata.get("call_duration_secs"),
+            # ElevenLabs reports this as the string "success"/"failure"/
+            # "unknown", not a boolean — an earlier truthiness check here
+            # would have treated "failure" as truthy too.
+            "call_successful": (conv_data.get("analysis") or {}).get("call_successful") == "success",
+            "transcript_summary": (conv_data.get("analysis") or {}).get("transcript_summary"),
+            # Total ElevenLabs cost for the call, in EL credits.
+            "cost": el_metadata.get("cost"),
+            # LLM portion of that cost (EL credits), 0 if unavailable.
+            "llm_credits": _extract_llm_credits(charging),
+            "total_llm_usd_price": charging.get("llm_price"),
+        }
+
+        transcript_list = []
+        for msg in transcript_data:
+            transcript_list.append(
+                {
+                    "role": msg.get("role", "user"),  # 'user' or 'agent'
+                    "message": msg.get("message", ""),
+                    # tool_calls carries the raw outbound webhook request
+                    # ElevenLabs made for each tool (URL, headers, body) -
+                    # for our own system tools (e.g. the personal-KB
+                    # search webhook) that includes the internal
+                    # Authorization bearer secret we configured on the
+                    # tool. redact() strips that before this ever leaves
+                    # the server, since it's a static, account-wide
+                    # secret that also guards other internal endpoints.
+                    "tool_calls": redact(msg.get("tool_calls")),
+                    "tool_result": msg.get("tool_results"),
+                    "rag_retrieval_info": msg.get("rag_retrieval_info"),
+                }
+            )
+        metadata["transcript"] = transcript_list
+        metadata["message_count"] = len(transcript_list)
+        # Split by role for LLM-cost calibration: cost tracks turn
+        # count (every turn re-sends the whole history), and user
+        # vs. agent turns can differ (e.g. multi-part replies).
+        metadata["user_message_count"] = sum(1 for t in transcript_list if t["role"] == "user")
+        metadata["agent_message_count"] = sum(1 for t in transcript_list if t["role"] == "agent")
+        return metadata
+    except Exception as e:
+        logger.error(f"Error extracting conversation metadata: {str(e)}")
+        return {}
+
+
 def _extract_llm_credits(charging: Dict[str, Any]) -> float:
     """
     Best-effort pull of the LLM portion (in EL credits) out of the conversation
@@ -154,73 +224,21 @@ class ElevenLabsConversation(BaseElevenLabs):
 
             conv_data = response.data
 
-            # Check if required fields are present and not empty
             has_metadata = bool(conv_data.get("metadata"))
             has_analysis = bool(conv_data.get("analysis"))
             transcript_data = conv_data.get("transcript", [])
             has_transcript = isinstance(transcript_data, list) and len(transcript_data) > 0
-            total_llm_usd_price = (
-                response.data.get("metadata", {})
-                    .get("charging", {})
-                    .get("llm_price")
-            )
 
             if has_metadata and has_analysis and has_transcript:
-                try:
-                    el_metadata = conv_data.get("metadata") or {}
-                    charging = el_metadata.get("charging") or {}
-                    # Log once per successful extract so the exact LLM-credit
-                    # field name in `charging` can be confirmed against reality.
-                    logger.info(f"Charging block for {conversation_id}: {charging}")
-                    metadata = {
-                        "agent_name": conv_data.get("agent_name"),
-                        "duration": el_metadata.get("call_duration_secs"),
-                        "call_successful": (conv_data.get("analysis") or {}).get("call_successful", True),
-                        "transcript_summary": (conv_data.get("analysis") or {}).get("transcript_summary"),
-                        # Total ElevenLabs cost for the call, in EL credits.
-                        "cost": el_metadata.get("cost"),
-                        # LLM portion of that cost (EL credits), 0 if unavailable.
-                        "llm_credits": _extract_llm_credits(charging),
-                        "total_llm_usd_price":total_llm_usd_price
-                    }
-
-                    transcript_list = []
-                    for idx, msg in enumerate(transcript_data):
-                        transcript_list.append(
-                            {
-                                "role": msg.get("role", "user"),  # 'user' or 'agent'
-                                "message": msg.get("message", ""),
-                                # tool_calls carries the raw outbound webhook request
-                                # ElevenLabs made for each tool (URL, headers, body) -
-                                # for our own system tools (e.g. the personal-KB
-                                # search webhook) that includes the internal
-                                # Authorization bearer secret we configured on the
-                                # tool. redact() strips that before this ever leaves
-                                # the server, since it's a static, account-wide
-                                # secret that also guards other internal endpoints.
-                                "tool_calls": redact(msg.get("tool_calls")),
-                                "tool_result": msg.get("tool_results"),
-                                "rag_retrieval_info": msg.get("rag_retrieval_info")
-                            }
-                        )
-                    metadata["transcript"] = transcript_list
-                    metadata["message_count"] = len(transcript_list)
-                    # Split by role for LLM-cost calibration: cost tracks turn
-                    # count (every turn re-sends the whole history), and user
-                    # vs. agent turns can differ (e.g. multi-part replies).
-                    metadata["user_message_count"] = sum(
-                        1 for t in transcript_list if t["role"] == "user"
-                    )
-                    metadata["agent_message_count"] = sum(
-                        1 for t in transcript_list if t["role"] == "agent"
-                    )
-
+                # A genuine mapping failure here (not "data incomplete yet")
+                # means the shape is wrong / a bug — return immediately
+                # rather than burning through retries that would all fail
+                # identically.
+                metadata = build_metadata_from_conv_data(conv_data)
+                if metadata:
                     logger.info(f"✅ Extracted metadata for conversation {conversation_id}: "
                                 f"duration={metadata.get('duration')}s, messages={metadata.get('message_count')}")
-                    return metadata
-                except Exception as e:
-                    logger.error(f"Error extracting conversation metadata: {str(e)}")
-                    return {}
+                return metadata
             else:
                 logger.warning(f"Conversation data incomplete on attempt {attempt}/{max_retries}. "
                                f"metadata: {has_metadata}, analysis: {has_analysis}, transcript: {has_transcript}. Retrying after {delay_seconds}s...")

@@ -746,10 +746,28 @@ class ConversationsModel(Base):
     channel: Mapped[ChannelEnum] = mapped_column(Enum(ChannelEnum),nullable=True)
     transcript_summary: Mapped[str] = mapped_column(String,nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    elevenlabs_conv_id: Mapped[str] = mapped_column(String,nullable=True)
+    elevenlabs_conv_id: Mapped[str] = mapped_column(String, nullable=True, unique=True, index=True)
     # Actual TOTAL ElevenLabs cost for the call, in EL credits (from metadata.cost).
     cost: Mapped[int] = mapped_column(Integer,nullable=True)
     error_message : Mapped[str] = mapped_column(String,nullable=True)
+
+    # Set by the live WS handler the moment the call ends, before the
+    # ElevenLabs post-call webhook has arrived — distinct from created_at
+    # (call *start*). Lets the webhook handler / manual retry tell "call
+    # over, awaiting webhook" apart from "still an ongoing call".
+    call_ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Connection-scoped context the webhook payload can't carry (limit_error,
+    # ws_log_id, and for widget calls lead_id/public_id/widget_name) — written
+    # at call-end time by the live WS handler, read back by the webhook
+    # handler when it finalizes. See conversation_lifecycle.py.
+    pending_finalize_context: Mapped[Optional[dict]] = mapped_column(MutableDict.as_mutable(JSONB), nullable=True)
+    # Dedicated claim/lock marker for finalize (webhook handler, manual
+    # retry). Deliberately NOT reusing error_message for this — error_message
+    # is user-facing (the real failure reason), and conflating the two meant
+    # a row that died mid-claim showed a nonsense reason to the user *and*
+    # could never be reclaimed (every claimer required error_message IS
+    # NULL). See claim_conversation_for_finalize() in conversation_lifecycle.py.
+    finalize_claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # ---- Cost audit columns (see app_v2/utils/cost_utils.py) ----
     # Live estimates accumulated during the call, stored in ₹ for the admin audit.

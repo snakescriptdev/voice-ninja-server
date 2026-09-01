@@ -6,7 +6,8 @@ Structure:
   agent/         → fetch_and_validate_agent()
   limits/        → check_user_limits()
   bridge/        → browser_to_elevenlabs(), elevenlabs_to_browser()
-  storage/       → save_conversation(), maybe_send_low_coins_alert()
+  storage/       → finalize_test_connection_and_alert() (called by the ElevenLabs
+                   post-call webhook, app_v2/routers/elevenlabs_webhook.py)
   handler        → websocket_test_agent()  ← only orchestrates, zero logic
 """
 
@@ -45,6 +46,7 @@ from app_v2.utils.conversation_lifecycle import (
     finalize_conversation_async,
     mark_conversation_failed,
     mark_conversation_failed_async,
+    mark_call_ended_pending_webhook,
     set_conversation_conv_id,
     get_minimum_call_balance,
     is_balance_exhausted,
@@ -56,7 +58,6 @@ from app_v2.utils.conversation_lifecycle import (
     FIRST_CALL_DURATION_LIMIT_ERROR_MESSAGE,
 )
 from app_v2.utils.email_service import send_low_coins_email
-from app_v2.utils.elevenlabs.conversation_utils import ElevenLabsConversation
 from app_v2.utils.feature_access import (
     check_feature_limit_and_usage,
     get_feature_limit,
@@ -664,46 +665,31 @@ async def maybe_send_low_coins_alert(user_id: int) -> None:
         logger.error(f"Low coins alert failed:\n{traceback.format_exc()}")
 
 
-async def save_conversation(
+async def finalize_test_connection_and_alert(
     user_id: int,
-    agent_id: int,
-    conversation_id: str,
     conversation_row_id: int,
+    metadata: dict,
+    conversation_id: str,
     error_message: Optional[str] = None,
-) -> None:
+) -> ConversationsModel:
     """
-    Fetches ElevenLabs metadata, finalizes the in_progress conversation row
-    created at call start, deducts coins, and triggers low-balance alert if
-    needed.
-
-    error_message: passed through to finalize_conversation() when the call
-    still produced real metadata but was cut short for a known reason (e.g.
-    monthly minutes limit) — preserves transcript/history instead of
-    discarding it via mark_conversation_failed().
+    Async entry point used by the webhook handler: finalizes the in_progress
+    conversation row using ElevenLabs metadata (now supplied by the post-call
+    webhook rather than fetched here), deducts coins, and triggers the
+    low-balance alert if needed. finalize_conversation_async already runs the
+    synchronous DB work off the event loop.
     """
-    try:
-        el_conv = ElevenLabsConversation()
-        metadata = await asyncio.to_thread(el_conv.extract_conversation_metadata, conversation_id)
+    record = await finalize_conversation_async(conversation_row_id, metadata, conversation_id, error_message=error_message)
 
-        if not metadata:
-            logger.error(f"Metadata extraction failed for conversation {conversation_id}")
-            await mark_conversation_failed_async(conversation_row_id, error_message or "Metadata extraction failed")
-            return
+    logger.info(
+        f"Conversation {conversation_id} saved "
+        f"(duration={metadata.get('duration')}s, "
+        f"messages={metadata.get('message_count')}, "
+        f"cost={record.cost})"
+    )
 
-        record = await finalize_conversation_async(conversation_row_id, metadata, conversation_id, error_message=error_message)
-
-        logger.info(
-            f"Conversation {conversation_id} saved "
-            f"(duration={metadata.get('duration')}s, "
-            f"messages={metadata.get('message_count')}, "
-            f"cost={record.cost})"
-        )
-
-        await maybe_send_low_coins_alert(user_id)
-
-    except Exception:
-        logger.error(f"save_conversation failed:\n{traceback.format_exc()}")
-        await mark_conversation_failed_async(conversation_row_id, "Failed to save conversation")
+    await maybe_send_low_coins_alert(user_id)
+    return record
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -828,7 +814,13 @@ async def websocket_test_agent(websocket: WebSocket, agent_id: int):
             mark_conversation_failed(conversation_row_id, limit_error or "No conversation ID captured")
         return
 
-    await save_conversation(auth.user_id, agent_id, conversation_id, conversation_row_id, error_message=limit_error)
+    with db():
+        # Cost calc no longer happens here — ElevenLabs' post-call webhook
+        # (app_v2/routers/elevenlabs_webhook.py) does the metadata fetch +
+        # finalize once analysis is ready. This just records the
+        # connection-scoped limit_error, which the webhook payload can't
+        # carry, so the webhook handler can pick it up later.
+        mark_call_ended_pending_webhook(conversation_row_id, {"limit_error": limit_error})
 
 
 @router.get("/{agent_id}/test-connection/info", tags=["WebSocket"])
