@@ -39,7 +39,7 @@ from app_v2.utils.invoice_utils import generate_invoice_pdf, generate_invoice_re
 from app_v2.core.config import VoiceSettings
 from app_v2.core.logger import setup_logger
 from datetime import datetime, timezone
-from app_v2.utils.coin_utils import get_user_coin_balance, coins_to_inr
+from app_v2.utils.coin_utils import get_user_coin_balance, coins_to_inr, apply_banner_rearm
 from app_v2.utils.conversation_lifecycle import SETTINGS_VERSION_FIELDS, maybe_create_new_settings_version
 from app_v2.schemas.admin_settings import CoinUsageSettingsResponse, CoinUsageSettingsUpdate
 from fastapi.responses import HTMLResponse
@@ -105,27 +105,6 @@ def get_call_config():
 LOW_CREDITS_MULTIPLIER = 2
 
 
-def _apply_banner_rearm(dismissed: bool, recovered: bool, condition_active: bool):
-    """
-    Given a banner's persisted dismissal state and whether its low-balance
-    condition is true right now, decide whether to show it — and whether the
-    persisted state needs to change.
-
-    Once dismissed, a banner stays hidden through the SAME low-balance episode.
-    If the balance recovers above the threshold (condition_active goes False),
-    we mark it `recovered`. The next time the condition becomes True again
-    after that, it's a NEW episode, so the dismissal is cleared (re-armed) and
-    the banner shows again — instead of staying hidden forever after one click.
-    """
-    if not dismissed:
-        return False, False, condition_active
-    if condition_active:
-        if recovered:
-            return False, False, True
-        return True, False, False
-    return True, True, False
-
-
 @router.get(
     "/credit-banners",
     response_model=CreditBannerStatusResponse,
@@ -136,7 +115,7 @@ def get_credit_banner_status(current_user: UnifiedAuthModel = Depends(require_ac
     """
     Whether the two low-credit header banners should be shown for the current
     user right now. Persists the dismissal/re-arm state on the user row so a
-    dismissal sticks across devices and sessions (see _apply_banner_rearm).
+    dismissal sticks across devices and sessions (see apply_banner_rearm).
     """
     settings = CoinUsageSettingsModel.get_settings()
     minimum_call_balance = int(settings.minimum_credits_per_minute * settings.minimum_call_minutes)
@@ -147,12 +126,12 @@ def get_credit_banner_status(current_user: UnifiedAuthModel = Depends(require_ac
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
-    low_dismissed, low_recovered, show_low = _apply_banner_rearm(
+    low_dismissed, low_recovered, show_low = apply_banner_rearm(
         user.low_credits_banner_dismissed,
         user.low_credits_banner_recovered,
         available_coins < low_credits_threshold,
     )
-    critical_dismissed, critical_recovered, show_critical = _apply_banner_rearm(
+    critical_dismissed, critical_recovered, show_critical = apply_banner_rearm(
         user.critical_credits_banner_dismissed,
         user.critical_credits_banner_recovered,
         available_coins < minimum_call_balance,
@@ -188,7 +167,7 @@ def dismiss_credit_banner(
     current_user: UnifiedAuthModel = Depends(require_active_user()),
 ):
     """Persist that the current user closed one of the low-credit header
-    banners, so it stays hidden (until it re-arms — see _apply_banner_rearm)."""
+    banners, so it stays hidden (until it re-arms — see apply_banner_rearm)."""
     user = db.session.query(UnifiedAuthModel).filter(UnifiedAuthModel.id == current_user.id).first()
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
