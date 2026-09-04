@@ -15,6 +15,19 @@ def setup_logger(name: str) -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
+    # getLogger(name) returns the SAME cached logger object on every call for
+    # a given name (e.g. re-imports under uvicorn --reload) - skip re-adding
+    # handlers if this logger is already configured, or every message would
+    # print once per past call to setup_logger(name).
+    if logger.handlers:
+        return logger
+
+    # Don't propagate to the root logger: third-party libraries (e.g. absl-py,
+    # pulled in by google-generativeai) attach their own handler to the root
+    # logger, so a propagated record gets printed a second time in their
+    # format on top of ours.
+    logger.propagate = False
+
     # Create handlers
     console_handler = logging.StreamHandler()
     file_handler = RotatingFileHandler(
@@ -34,4 +47,4 @@ def setup_logger(name: str) -> logging.Logger:
     logger.addHandler(console_handler)
     logger.addHandler(file_handler)
 
-    return logger 
+    return logger

@@ -155,6 +155,18 @@ class SupportTicketStatusEnum(str, Enum):
     closed = "closed"
 
 
+class AgentBuildStatusEnum(str, Enum):
+    understanding_requirement = "understanding_requirement"
+    generating_conversation = "generating_conversation"
+    configuring_agent = "configuring_agent"
+    configuring_knowledge = "configuring_knowledge"
+    configuring_voice = "configuring_voice"
+    creating_voice_agent = "creating_voice_agent"
+    finalizing = "finalizing"
+    completed = "completed"
+    failed = "failed"
+
+
 class SubscriptionBillingEventEnum(str, Enum):
     """
     ActivityLogModel.event_type values for subscription lifecycle changes

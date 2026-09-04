@@ -82,7 +82,7 @@ async def generate_system_prompt_async(
             response_style=config.response_style,
         )
 
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-3.6-flash")
         
         response = await model.generate_content_async(
             formatted_prompt,
@@ -152,7 +152,7 @@ async def generate_system_prompt_from_instructions_async(instructions: str) -> s
             instructions=instructions.strip(),
         )
 
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-3.6-flash")
 
         response = await model.generate_content_async(
             formatted_prompt,
