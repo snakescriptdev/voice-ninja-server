@@ -47,6 +47,7 @@ from app_v2.databases.models import (
     WebAgentPageModel,
     ConversationsModel,
     WidgetLeadModel,
+    AgentBuildJobModel,
 )
 from app_v2.schemas.agent_schema import AgentCreate, AgentRead, AgentUpdate
 from app_v2.schemas.llm_pricing import LlmPricingResponse, LlmPriceItem
@@ -593,18 +594,8 @@ def unassign_phone_numbers_for_connector(session: Session, user_id: int, connect
 
 # -------------------- CREATE --------------------
 
-@router.post(
-    "/",
-    status_code=status.HTTP_201_CREATED,
-    summary="Create agent",
-    openapi_extra={"security": [{"BearerAuth": []}]},
-)
-async def create_agent(
-    agent_in: AgentCreate,
-    current_user: UnifiedAuthModel = Depends(RequireFeature("ai_voice_agents", allow_coin_fallback=True)),
-):
-    user_id = current_user.id
-    
+async def create_agent_core(agent_in: AgentCreate, user_id: int) -> AgentModel:
+
     #removed the name uniqueness constraint may switch in future
 
     # #check for agent existence 
@@ -946,6 +937,20 @@ async def create_agent(
             detail=f"Failed to save agent: {str(db_error)}",
         )
 
+    return new_agent
+
+
+@router.post(
+    "/",
+    status_code=status.HTTP_201_CREATED,
+    summary="Create agent",
+    openapi_extra={"security": [{"BearerAuth": []}]},
+)
+async def create_agent(
+    agent_in: AgentCreate,
+    current_user: UnifiedAuthModel = Depends(RequireFeature("ai_voice_agents", allow_coin_fallback=True)),
+):
+    new_agent = await create_agent_core(agent_in, current_user.id)
     return agent_to_read(new_agent)
 
 
@@ -1934,6 +1939,13 @@ async def delete_agent(
         delete_agent_personal_kb_tool(agent_id)
     except Exception as e:
         logger.warning(f"Failed to clean up personal KB tool for deleted agent {agent_id}: {e}")
+
+    # Build jobs are audit/history rows and intentionally survive their
+    # generated agent. Clear their optional link first so PostgreSQL does not
+    # reject deletion through agent_build_jobs_agent_id_fkey.
+    db.session.query(AgentBuildJobModel).filter(
+        AgentBuildJobModel.agent_id == agent_id
+    ).update({AgentBuildJobModel.agent_id: None}, synchronize_session=False)
 
     db.session.delete(agent)
     db.session.commit()

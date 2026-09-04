@@ -427,9 +427,31 @@ def get_or_create_current_settings_version(settings: CoinUsageSettingsModel) -> 
     yet (e.g. an install from before this feature shipped). Must be called
     inside db().
     """
+    # Serialize lazy initialization on the singleton settings row. Without
+    # this lock, two calls finishing together can both observe a null
+    # current_version_id and both try to insert version 1.
+    settings = (
+        db.session.query(CoinUsageSettingsModel)
+        .filter(CoinUsageSettingsModel.id == settings.id)
+        .with_for_update()
+        .populate_existing()
+        .one()
+    )
     if settings.current_version_id:
         return settings.current_version_id
-    version = _snapshot_settings_version(settings, version_number=1)
+
+    # A process may have inserted the first snapshot but failed before it
+    # linked the singleton row (or this database may predate that link). Adopt
+    # the newest existing snapshot instead of colliding with version_number's
+    # unique constraint or discarding established version history.
+    version = (
+        db.session.query(CoinUsageSettingsVersionModel)
+        .order_by(CoinUsageSettingsVersionModel.version_number.desc())
+        .first()
+    )
+    if version is None:
+        version = _snapshot_settings_version(settings, version_number=1)
+
     settings.current_version_id = version.id
     db.session.commit()
     return version.id

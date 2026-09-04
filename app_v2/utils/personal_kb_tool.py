@@ -309,6 +309,16 @@ def delete_agent_personal_kb_tool(agent_id: int) -> None:
 
         if elevenlabs_tool_id:
             try:
-                ElevenLabsAgent().delete_tool(elevenlabs_tool_id)
+                el_client = ElevenLabsAgent()
+                response = el_client.delete_tool(elevenlabs_tool_id)
+                if not response.status and "conflict" in (response.error_message or "").lower():
+                    logger.info(
+                        f"Force deleting personal KB tool {elevenlabs_tool_id} after dependency conflict"
+                    )
+                    response = el_client.delete_tool(elevenlabs_tool_id, force=True)
+                if not response.status:
+                    logger.warning(
+                        f"Failed to delete ElevenLabs tool {elevenlabs_tool_id}: {response.error_message}"
+                    )
             except Exception as e:
                 logger.warning(f"Failed to delete ElevenLabs tool {elevenlabs_tool_id}: {e}")

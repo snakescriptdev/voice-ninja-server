@@ -608,7 +608,7 @@ class ElevenLabsAgent(BaseElevenLabs):
         return response
 
 
-    def delete_tool(self, tool_id: str) -> ElevenLabsResponse:
+    def delete_tool(self, tool_id: str, force: bool = False) -> ElevenLabsResponse:
         """
         Delete a tool from ElevenLabs ConvAI.
 
@@ -621,7 +621,10 @@ class ElevenLabsAgent(BaseElevenLabs):
 
         logger.info(f"Deleting ElevenLabs tool: {tool_id}")
 
-        response = self._delete(f"/convai/tools/{tool_id}")
+        endpoint = f"/convai/tools/{tool_id}"
+        if force:
+            endpoint += "?force=true"
+        response = self._delete(endpoint)
 
         if response.status:
             logger.info(f"✅ Tool deleted successfully: {tool_id}")

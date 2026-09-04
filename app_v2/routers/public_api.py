@@ -38,6 +38,7 @@ from app_v2.databases.models import (
     WidgetLeadModel,
     VoiceTraitsModel,
     CoinUsageSettingsModel,
+    AgentBuildJobModel,
 )
 from app_v2.utils.conversation_lifecycle import is_agents_first_call
 from app_v2.utils.coin_utils import user_has_successful_payment, get_free_tier_defaults
@@ -1400,6 +1401,9 @@ async def delete_agent_public(
             AgentModel.id == agent_id, AgentModel.user_id == current_user.id
         ).first()
         if agent:
+            db.session.query(AgentBuildJobModel).filter(
+                AgentBuildJobModel.agent_id == agent_id
+            ).update({AgentBuildJobModel.agent_id: None}, synchronize_session=False)
             db.session.delete(agent)
             db.session.commit()
     return None
@@ -3411,4 +3415,3 @@ async def unbind_function_public(
             ElevenLabsAgent().update_agent(agent_id=agent.elevenlabs_agent_id, tool_ids=tool_ids)
 
     return {"message": "Function unbound successfully"}
-

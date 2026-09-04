@@ -1,0 +1,12 @@
+/Users/macstudio/Documents/voice-ninja/voice-ninja-server/.venv/lib/python3.12/site-packages/pydantic/_internal/_config.py:295: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.10/migration/
+  warnings.warn(DEPRECATION_MESSAGE, DeprecationWarning)
+INFO:     Started server process [77651]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+2026-09-04 15:36:04,530 - app_v2.utils.embedding_utils - INFO - Loading embedding model: sentence-transformers/all-MiniLM-L6-v2
+2026-09-04 15:36:04,530 - 6223835136 - embedding_utils.py-embedding_utils:37 - INFO: Loading embedding model: sentence-transformers/all-MiniLM-L6-v2
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [77651]

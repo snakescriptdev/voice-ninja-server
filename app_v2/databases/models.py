@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, DateTime, Date, Boolean, Float, ForeignKey, Table, create_engine, Enum, Text, Index, UniqueConstraint
 from sqlalchemy.orm import relationship,Mapped,mapped_column
-from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, PaymentProviderEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, PublicLogChannelEnum, SupportTicketCategoryEnum, SupportTicketStatusEnum
+from app_v2.schemas.enum_types import RequestMethodEnum, GenderEnum, PhoneNumberAssignStatus,ChannelEnum,CallStatusEnum, WidgetPosition, PaymentProviderEnum, PaymentStatusEnum, PaymentTypeEnum, CoinTransactionTypeEnum, PublicLogChannelEnum, SupportTicketCategoryEnum, SupportTicketStatusEnum, AgentBuildStatusEnum
 from sqlalchemy.sql import func
 from sqlalchemy.ext.declarative import declarative_base
 from typing import Optional, List, Dict
@@ -1425,3 +1425,42 @@ class SupportTicketModel(Base):
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user = relationship("UnifiedAuthModel", back_populates="support_tickets")
+
+
+class AgentBuildJobModel(Base):
+    """Tracks the async pipeline that turns a freeform "build me an agent"
+    requirement into a fully-configured AgentModel (see
+    app_v2/utils/agent_build_pipeline.py)."""
+    __tablename__ = "agent_build_jobs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("unified_auth.id"), nullable=False, index=True)
+    requirement: Mapped[str] = mapped_column(Text, nullable=False)
+
+    status: Mapped[AgentBuildStatusEnum] = mapped_column(
+        Enum(AgentBuildStatusEnum),
+        nullable=False,
+        default=AgentBuildStatusEnum.understanding_requirement,
+        server_default=AgentBuildStatusEnum.understanding_requirement.value,
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agent_id: Mapped[int | None] = mapped_column(ForeignKey("agents.id"), nullable=True)
+
+    # Optional knowledge attachments captured at submit time (see
+    # app_v2/routers/agent_build.py's multipart handler) and ingested into
+    # the new agent's personal KB during the pipeline's configuring_knowledge
+    # step (see app_v2/utils/agent_build_pipeline.py). knowledge_files stores
+    # [{"path": ..., "filename": ...}, ...] for files already saved to disk;
+    # knowledge_urls stores the raw URL strings.
+    knowledge_urls: Mapped[list | None] = mapped_column(MutableList.as_mutable(JSONB), nullable=True)
+    knowledge_files: Mapped[list | None] = mapped_column(MutableList.as_mutable(JSONB), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    modified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    user = relationship("UnifiedAuthModel")
+    agent = relationship("AgentModel")
